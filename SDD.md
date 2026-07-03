@@ -2712,3 +2712,13 @@ Core sentence:
 ## Decision Log
 
 Format: `YYYY-MM-DD — decision in one phrase; rejected alternative and why.`
+
+- 2026-07-03 — Keep the SDD as a single file navigated via the § Index (map-as-interface);
+  a physical split into a map file plus per-section files is deferred until after the
+  structural dedup pass, and if done, must be a purely mechanical commit (concatenated
+  section files must reproduce the original). Revisit triggers: code lands and sections
+  graduate into living docs/tests; full-pass reviews start hitting context limits; parallel
+  per-section editing becomes the norm; the file exceeds ~30–40K tokens despite dedup.
+  Rejected alternative: splitting now — point reads already load only the needed section
+  (§ Index + grep), a split does not fix the actual pain (cross-section duplication and
+  drift), and splitting before dedup would migrate content about to be merged or deleted.
