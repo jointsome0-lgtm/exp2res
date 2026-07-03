@@ -10,7 +10,44 @@
 
 ---
 
-## 0. Change From v0.1
+## § Index
+
+Section numbers are stable: issues and the Decision Log cite them as `§13` / `§13.2`. Never renumber. New sections take the next free number or a sub-number; update this index when sections change.
+
+- §0 Change From v0.1 — recentering: mirror first, resume is a secondary export
+- §1 Executive Summary — evidence → facts → signals → assessment → optional exports
+- §2 Product Framing — weak framings to avoid; strong framing
+- §3 Core Purpose — orientation, not impressiveness
+- §4 Goals and Non-Goals — product/cognitive goals; forbidden inflations
+- §5 Core Principles — truth over comfort; append-only; recorded_at ≠ occurred_at; no precision/ownership inflation; contradictions first-class; no automatic semantic promotion
+- §6 System Boundaries — relations to Tick-like, Atlas, GitHub, resume export
+- §7 High-Level Architecture — pipeline diagram
+- §8 Runtime Architecture — Python, Typer, SQLite, Pydantic; CLI-first
+- §9 Domain Model — ontology, claim kinds, confidence layers, evidence strength
+- §10 Enumerations — Literal types: temporal, entry/source, ownership, context, claims, verification
+- §11 Pydantic Domain Models — OccurredAt, RawLog, EvidenceItem, ExperienceFact, SelfSignal, SelfClaim, AssessmentSnapshot, ResumeBullet
+- §12 SQLite Schema — raw_logs, evidence_items, experience_facts, fact_sources, signals/claims, snapshots, jd, resume, processing_runs
+- §13 Pipeline Specification — 12 stages: capture → normalize → extract → gaps → signals → assess → verify → jd → match → generate → verify → export
+- §14 CLI Specification — init, log, correction, import, extract, gaps, signals, assess, jd/match/resume/verify/export
+- §15 LLM Contracts — structured I/O for extractor, signal extractor, assessment writer/verifier, resume writer/verifier
+- §16 Verification Rules — evidence, mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, diagnostic
+- §17 Self-Assessment Report Format — mirror report skeleton and tone
+- §18 Resume Export Rules — pipeline and export-fail conditions
+- §19 Integration Contracts — Tick-like / Atlas / GitHub import behavior
+- §20 Suggested Repository Structure — target file tree
+- §21 Evals — 10 behavioral tests against overclaiming
+- §22 Implementation Plan — Phase 0–5 with definitions of done
+- §23 End-to-End Demo — retro log → facts → signal → claim → verified bullet
+- §24 Acceptance Criteria — 14 V1 checks
+- §25 Risks and Mitigations — resume-drift, flattery, punitive tone, overclaim, integration pollution, diagnosis
+- §26 README Positioning — intro and taglines
+- §27 Key Invariants — the non-negotiables list
+- §28 Final Design Statement — three layers that must never collapse
+- Decision Log — dated one-line decisions with rejected alternatives
+
+---
+
+## §0. Change From v0.1
 
 The previous framing centered Exp2Res around grounded resume generation.
 
@@ -44,7 +81,7 @@ self-assessment model -> job-relevant projection -> grounded resume
 
 ---
 
-## 1. Executive Summary
+## §1. Executive Summary
 
 Exp2Res is a local-first system for converting lived experience into an honest, inspectable model of the user.
 
@@ -73,9 +110,9 @@ Every external claim must remain traceable to internal evidence.
 
 ---
 
-## 2. Product Framing
+## §2. Product Framing
 
-### 2.1 Weak Framing
+### §2.1 Weak Framing
 
 Exp2Res should not be framed primarily as:
 
@@ -90,7 +127,7 @@ productivity dashboard
 
 These framings distort the system toward performance and external approval.
 
-### 2.2 Strong Framing
+### §2.2 Strong Framing
 
 Exp2Res is:
 
@@ -113,7 +150,7 @@ It shows what experience says about me, with evidence, uncertainty, gaps, and co
 
 ---
 
-## 3. Core Purpose
+## §3. Core Purpose
 
 The user wants to move forward without burning himself out and without becoming trapped in endless meta-planning.
 
@@ -135,9 +172,9 @@ It exists to make the user more oriented.
 
 ---
 
-## 4. Goals and Non-Goals
+## §4. Goals and Non-Goals
 
-## 4.1 Product Goals
+## §4.1 Product Goals
 
 Exp2Res should:
 
@@ -158,7 +195,7 @@ Exp2Res should:
 15. Verify generated resume bullets phrase-by-phrase.
 16. Export Markdown reports, evidence maps, verification reports, and resume files.
 
-## 4.2 Cognitive Goals
+## §4.2 Cognitive Goals
 
 Exp2Res should help the user say:
 
@@ -170,7 +207,7 @@ I can export myself honestly when needed.
 I do not need to invent a fake narrative to move.
 ```
 
-## 4.3 Non-Goals
+## §4.3 Non-Goals
 
 Exp2Res is not:
 
@@ -203,9 +240,9 @@ turn a flattering narrative into truth
 
 ---
 
-## 5. Core Principles
+## §5. Core Principles
 
-## 5.1 Truth Over Comfort
+## §5.1 Truth Over Comfort
 
 The system should prefer an uncomfortable accurate model over a comforting false one.
 
@@ -225,7 +262,7 @@ You are an experienced production AI infrastructure engineer.
 
 Unless that claim is supported by evidence.
 
-## 5.2 Uncertainty Is a Valid State
+## §5.2 Uncertainty Is a Valid State
 
 The system must not force closure.
 
@@ -242,7 +279,7 @@ hypothesis
 
 A system that says “I don’t know” is more trustworthy than one that invents coherence.
 
-## 5.3 Append-Only Experience Memory
+## §5.3 Append-Only Experience Memory
 
 All raw records are immutable.
 
@@ -250,7 +287,7 @@ If the user corrects a memory, Exp2Res stores a new correction event and recompu
 
 The old record is not deleted or silently edited.
 
-## 5.4 recorded_at Is Not occurred_at
+## §5.4 recorded_at Is Not occurred_at
 
 Every raw record has two independent time dimensions:
 
@@ -261,7 +298,7 @@ occurred_at = when the described experience happened
 
 This allows retrospective reconstruction without pretending exact memory.
 
-## 5.5 Temporal Precision Must Not Be Inflated
+## §5.5 Temporal Precision Must Not Be Inflated
 
 If the user remembers:
 
@@ -277,7 +314,7 @@ April 12, 2026
 
 unless stronger evidence exists.
 
-## 5.6 Ownership Must Not Be Inflated
+## §5.6 Ownership Must Not Be Inflated
 
 Ownership levels are ordered roughly as:
 
@@ -288,7 +325,7 @@ observed < studied < participated < experimented < contributed < implemented < b
 The system may preserve or lower ownership confidence.
 It must not upgrade ownership without evidence.
 
-## 5.7 Experience Is Not Resume
+## §5.7 Experience Is Not Resume
 
 A real experience can be messy, partial, private, emotional, exploratory, or uncertain.
 
@@ -302,7 +339,7 @@ Experience model > self-assessment > export projection > resume
 
 The resume must never become the master model.
 
-## 5.8 Self-Assessment Is Not Identity
+## §5.8 Self-Assessment Is Not Identity
 
 Exp2Res can say:
 
@@ -318,7 +355,7 @@ This is who you are forever.
 
 Self-assessment snapshots are time-bounded and revisable.
 
-## 5.9 Contradictions Are First-Class
+## §5.9 Contradictions Are First-Class
 
 If evidence conflicts, the system stores the conflict.
 
@@ -332,7 +369,7 @@ Signal B: user reports burnout when trying to execute even minimal plans.
 Assessment: high architecture drive, limited sustainable execution capacity under pressure.
 ```
 
-## 5.10 No Automatic Semantic Promotion
+## §5.10 No Automatic Semantic Promotion
 
 Across systems and internal stages:
 
@@ -350,9 +387,9 @@ Every promotion must be explicit, reviewed, and traceable.
 
 ---
 
-## 6. System Boundaries
+## §6. System Boundaries
 
-## 6.1 Relation to Tick-like
+## §6.1 Relation to Tick-like
 
 Tick-like is the operational surface of the day.
 
@@ -384,7 +421,7 @@ Not automatically:
   "Designed a verifier architecture"
 ```
 
-## 6.2 Relation to Atlas
+## §6.2 Relation to Atlas
 
 Atlas is the knowledge-state atlas.
 
@@ -417,7 +454,7 @@ Not automatically:
   "Strong backend distributed systems skill"
 ```
 
-## 6.3 Relation to GitHub
+## §6.3 Relation to GitHub
 
 GitHub can provide strong artifact evidence:
 
@@ -433,7 +470,7 @@ source code
 
 But code existence does not automatically imply impact, production use, leadership, or mastery.
 
-## 6.4 Relation to Resume Export
+## §6.4 Relation to Resume Export
 
 Resume export is a projection.
 
@@ -451,7 +488,7 @@ Resume output must not mutate the internal model.
 
 ---
 
-## 7. High-Level Architecture
+## §7. High-Level Architecture
 
 ```text
                            +------------------------+
@@ -500,7 +537,7 @@ Resume output must not mutate the internal model.
 
 ---
 
-## 8. Runtime Architecture
+## §8. Runtime Architecture
 
 V1 should be local-first and CLI-first.
 
@@ -525,9 +562,9 @@ LLM use is allowed, but all LLM outputs must be structured, validated, and verif
 
 ---
 
-## 9. Domain Model
+## §9. Domain Model
 
-## 9.1 Ontology Overview
+## §9.1 Ontology Overview
 
 ```text
 RawLog              = immutable user/imported source record
@@ -544,7 +581,7 @@ ResumeBullet        = generated resume phrase with evidence links
 VerificationFinding = verifier output over claim/bullet/snapshot
 ```
 
-## 9.2 Confidence Layers
+## §9.2 Confidence Layers
 
 Every non-raw claim should have a type:
 
@@ -566,7 +603,7 @@ high
 unknown
 ```
 
-## 9.3 Evidence Strength
+## §9.3 Evidence Strength
 
 Evidence strength values:
 
@@ -589,7 +626,7 @@ A strong artifact may support a narrow fact, but not a broad identity claim.
 
 ---
 
-## 10. Enumerations
+## §10. Enumerations
 
 ```python
 from typing import Literal
@@ -684,9 +721,9 @@ VerificationStatus = Literal[
 
 ---
 
-## 11. Pydantic Domain Models
+## §11. Pydantic Domain Models
 
-## 11.1 OccurredAt
+## §11.1 OccurredAt
 
 ```python
 from datetime import datetime
@@ -707,7 +744,7 @@ class OccurredAt(BaseModel):
     confidence: TemporalConfidence
 ```
 
-## 11.2 RawLog
+## §11.2 RawLog
 
 ```python
 from datetime import datetime
@@ -726,7 +763,7 @@ class RawLog(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-## 11.3 EvidenceItem
+## §11.3 EvidenceItem
 
 ```python
 class EvidenceItem(BaseModel):
@@ -741,7 +778,7 @@ class EvidenceItem(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-## 11.4 ExperienceFact
+## §11.4 ExperienceFact
 
 ```python
 class ExperienceFact(BaseModel):
@@ -772,7 +809,7 @@ class ExperienceFact(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-## 11.5 SelfSignal
+## §11.5 SelfSignal
 
 ```python
 class SelfSignal(BaseModel):
@@ -794,7 +831,7 @@ class SelfSignal(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-## 11.6 SelfClaim
+## §11.6 SelfClaim
 
 ```python
 class SelfClaim(BaseModel):
@@ -821,7 +858,7 @@ class SelfClaim(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-## 11.7 AssessmentSnapshot
+## §11.7 AssessmentSnapshot
 
 ```python
 class AssessmentSnapshot(BaseModel):
@@ -837,7 +874,7 @@ class AssessmentSnapshot(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-## 11.8 ResumeBullet
+## §11.8 ResumeBullet
 
 ```python
 class ResumeBullet(BaseModel):
@@ -864,9 +901,9 @@ class ResumeBullet(BaseModel):
 
 ---
 
-## 12. SQLite Schema
+## §12. SQLite Schema
 
-## 12.1 raw_logs
+## §12.1 raw_logs
 
 ```sql
 CREATE TABLE IF NOT EXISTS raw_logs (
@@ -889,7 +926,7 @@ CREATE TABLE IF NOT EXISTS raw_logs (
 );
 ```
 
-## 12.2 evidence_items
+## §12.2 evidence_items
 
 ```sql
 CREATE TABLE IF NOT EXISTS evidence_items (
@@ -909,7 +946,7 @@ CREATE TABLE IF NOT EXISTS evidence_items (
 );
 ```
 
-## 12.3 experience_facts
+## §12.3 experience_facts
 
 ```sql
 CREATE TABLE IF NOT EXISTS experience_facts (
@@ -944,7 +981,7 @@ CREATE TABLE IF NOT EXISTS experience_facts (
 );
 ```
 
-## 12.4 fact_sources
+## §12.4 fact_sources
 
 ```sql
 CREATE TABLE IF NOT EXISTS fact_sources (
@@ -961,7 +998,7 @@ CREATE TABLE IF NOT EXISTS fact_sources (
 );
 ```
 
-## 12.5 self_signals
+## §12.5 self_signals
 
 ```sql
 CREATE TABLE IF NOT EXISTS self_signals (
@@ -975,7 +1012,7 @@ CREATE TABLE IF NOT EXISTS self_signals (
 );
 ```
 
-## 12.6 self_claims
+## §12.6 self_claims
 
 ```sql
 CREATE TABLE IF NOT EXISTS self_claims (
@@ -995,7 +1032,7 @@ CREATE TABLE IF NOT EXISTS self_claims (
 );
 ```
 
-## 12.7 contradictions
+## §12.7 contradictions
 
 ```sql
 CREATE TABLE IF NOT EXISTS contradictions (
@@ -1015,7 +1052,7 @@ CREATE TABLE IF NOT EXISTS contradictions (
 );
 ```
 
-## 12.8 gap_questions
+## §12.8 gap_questions
 
 ```sql
 CREATE TABLE IF NOT EXISTS gap_questions (
@@ -1036,7 +1073,7 @@ CREATE TABLE IF NOT EXISTS gap_questions (
 );
 ```
 
-## 12.9 assessment_snapshots
+## §12.9 assessment_snapshots
 
 ```sql
 CREATE TABLE IF NOT EXISTS assessment_snapshots (
@@ -1055,7 +1092,7 @@ CREATE TABLE IF NOT EXISTS assessment_snapshots (
 );
 ```
 
-## 12.10 job_descriptions
+## §12.10 job_descriptions
 
 ```sql
 CREATE TABLE IF NOT EXISTS job_descriptions (
@@ -1069,7 +1106,7 @@ CREATE TABLE IF NOT EXISTS job_descriptions (
 );
 ```
 
-## 12.11 resume_branches
+## §12.11 resume_branches
 
 ```sql
 CREATE TABLE IF NOT EXISTS resume_branches (
@@ -1086,7 +1123,7 @@ CREATE TABLE IF NOT EXISTS resume_branches (
 );
 ```
 
-## 12.12 resume_bullets
+## §12.12 resume_bullets
 
 ```sql
 CREATE TABLE IF NOT EXISTS resume_bullets (
@@ -1112,7 +1149,7 @@ CREATE TABLE IF NOT EXISTS resume_bullets (
 );
 ```
 
-## 12.13 processing_runs
+## §12.13 processing_runs
 
 ```sql
 CREATE TABLE IF NOT EXISTS processing_runs (
@@ -1129,9 +1166,9 @@ CREATE TABLE IF NOT EXISTS processing_runs (
 
 ---
 
-## 13. Pipeline Specification
+## §13. Pipeline Specification
 
-## 13.1 Stage 1 — Raw Capture
+## §13.1 Stage 1 — Raw Capture
 
 Inputs:
 
@@ -1163,7 +1200,7 @@ Rules:
 4. Imported artifacts must keep source URI/path.
 5. Nothing is interpreted as a strong fact at capture time.
 
-## 13.2 Stage 2 — Evidence Normalization
+## §13.2 Stage 2 — Evidence Normalization
 
 Purpose:
 
@@ -1182,7 +1219,7 @@ Manual retro memory -> EvidenceItem(manual_claim)
 
 Normalization does not create self-claims.
 
-## 13.3 Stage 3 — Experience Fact Extraction
+## §13.3 Stage 3 — Experience Fact Extraction
 
 Command:
 
@@ -1227,7 +1264,7 @@ The user wrote a system design document for Atlas.
 The user repeatedly worked with provenance-heavy local-first system ideas.
 ```
 
-## 13.4 Stage 4 — Gap and Contradiction Detection
+## §13.4 Stage 4 — Gap and Contradiction Detection
 
 Command:
 
@@ -1260,7 +1297,7 @@ Fact A: resume bullet says production-grade.
 Fact B: evidence only supports local prototype.
 ```
 
-## 13.5 Stage 5 — Self-Signal Extraction
+## §13.5 Stage 5 — Self-Signal Extraction
 
 Command:
 
@@ -1307,7 +1344,7 @@ Example signal:
 }
 ```
 
-## 13.6 Stage 6 — Self-Assessment Synthesis
+## §13.6 Stage 6 — Self-Assessment Synthesis
 
 Command:
 
@@ -1359,7 +1396,7 @@ counterevidence
 next questions
 ```
 
-## 13.7 Stage 7 — Assessment Verification
+## §13.7 Stage 7 — Assessment Verification
 
 Command:
 
@@ -1377,7 +1414,7 @@ Verifier checks:
 6. No clinical/diagnostic claims are generated.
 7. No resume-style overclaiming leaks into mirror mode.
 
-## 13.8 Stage 8 — Job Description Parsing
+## §13.8 Stage 8 — Job Description Parsing
 
 Command:
 
@@ -1397,7 +1434,7 @@ keywords
 red flags
 ```
 
-## 13.9 Stage 9 — Relevance Matching
+## §13.9 Stage 9 — Relevance Matching
 
 Command:
 
@@ -1414,7 +1451,7 @@ Select relevant facts and self-claims for a specific external context.
 The matcher must not invent relevance.
 It can rank evidence by fit.
 
-## 13.10 Stage 10 — Resume Generation
+## §13.10 Stage 10 — Resume Generation
 
 Command:
 
@@ -1435,7 +1472,7 @@ Hard constraints:
 9. Do not use unsupported production/scale claims.
 10. Prefer concrete engineering language over self-description.
 
-## 13.11 Stage 11 — Resume Verification
+## §13.11 Stage 11 — Resume Verification
 
 Command:
 
@@ -1458,7 +1495,7 @@ Verifier findings:
 "reduced hallucinations by 40%" -> unsupported
 ```
 
-## 13.12 Stage 12 — Export
+## §13.12 Stage 12 — Export
 
 Command:
 
@@ -1490,9 +1527,9 @@ Export must fail if required evidence links are missing.
 
 ---
 
-## 14. CLI Specification
+## §14. CLI Specification
 
-## 14.1 Initialize Project
+## §14.1 Initialize Project
 
 ```bash
 exp2res init
@@ -1509,7 +1546,7 @@ evidence/
 out/
 ```
 
-## 14.2 Add Daily Log
+## §14.2 Add Daily Log
 
 ```bash
 exp2res log today
@@ -1517,7 +1554,7 @@ exp2res log today --project Exp2Res
 exp2res log today --file notes/today.md
 ```
 
-## 14.3 Add Retrospective Log
+## §14.3 Add Retrospective Log
 
 ```bash
 exp2res log retro
@@ -1533,7 +1570,7 @@ Project/activity?
 Describe what you remember.
 ```
 
-## 14.4 Add Correction
+## §14.4 Add Correction
 
 ```bash
 exp2res correction add --log-id log_001
@@ -1541,7 +1578,7 @@ exp2res correction add --log-id log_001
 
 Stores a new raw log with `entry_type = correction`.
 
-## 14.5 Import Evidence
+## §14.5 Import Evidence
 
 ```bash
 exp2res import tick-like path/to/export.jsonl
@@ -1550,7 +1587,7 @@ exp2res import github --repo owner/name
 exp2res import file docs/design.md --project Exp2Res
 ```
 
-## 14.6 Extract Facts
+## §14.6 Extract Facts
 
 ```bash
 exp2res extract
@@ -1559,7 +1596,7 @@ exp2res facts list
 exp2res facts show fact_001
 ```
 
-## 14.7 Generate Gaps and Contradictions
+## §14.7 Generate Gaps and Contradictions
 
 ```bash
 exp2res gaps
@@ -1568,14 +1605,14 @@ exp2res contradictions list
 exp2res contradictions show contradiction_001
 ```
 
-## 14.8 Generate Self-Signals
+## §14.8 Generate Self-Signals
 
 ```bash
 exp2res signals generate
 exp2res signals list
 ```
 
-## 14.9 Generate Self-Assessment
+## §14.9 Generate Self-Assessment
 
 ```bash
 exp2res assess generate
@@ -1585,7 +1622,7 @@ exp2res assess verify snapshot_001
 exp2res export assessment --snapshot snapshot_001
 ```
 
-## 14.10 Resume Export Flow
+## §14.10 Resume Export Flow
 
 ```bash
 exp2res jd add jobs/agent_engineer.md
@@ -1597,9 +1634,9 @@ exp2res export resume --branch agent-engineer
 
 ---
 
-## 15. LLM Contracts
+## §15. LLM Contracts
 
-## 15.1 General LLM Requirements
+## §15.1 General LLM Requirements
 
 All LLM calls must:
 
@@ -1618,7 +1655,7 @@ if retry fails, mark processing run failed
 do not insert partial invalid objects
 ```
 
-## 15.2 Fact Extractor Contract
+## §15.2 Fact Extractor Contract
 
 Input:
 
@@ -1667,7 +1704,7 @@ Output:
 
 Extractor must be conservative.
 
-## 15.3 Self-Signal Extractor Contract
+## §15.3 Self-Signal Extractor Contract
 
 Input:
 
@@ -1704,7 +1741,7 @@ Do not infer identity from one artifact.
 Do not hide counterevidence.
 ```
 
-## 15.4 Self-Assessment Writer Contract
+## §15.4 Self-Assessment Writer Contract
 
 Input:
 
@@ -1749,7 +1786,7 @@ Preserve uncertainty.
 Mention weak evidence where relevant.
 ```
 
-## 15.5 Assessment Verifier Contract
+## §15.5 Assessment Verifier Contract
 
 Input:
 
@@ -1773,7 +1810,7 @@ Output:
 }
 ```
 
-## 15.6 Resume Writer Contract
+## §15.6 Resume Writer Contract
 
 Same as v0.1, but resume writer may additionally reference supported self_claims.
 
@@ -1783,7 +1820,7 @@ Hard rule:
 Self-claims can guide selection and wording, but resume bullets must still link to concrete experience facts and raw logs.
 ```
 
-## 15.7 Resume Verifier Contract
+## §15.7 Resume Verifier Contract
 
 The resume verifier must check:
 
@@ -1800,19 +1837,19 @@ section placement
 
 ---
 
-## 16. Verification Rules
+## §16. Verification Rules
 
-## 16.1 Evidence Rule
+## §16.1 Evidence Rule
 
 Every exported self-claim or resume bullet must link to evidence.
 
-## 16.2 Mirror Rule
+## §16.2 Mirror Rule
 
 Self-assessment claims must be allowed to be uncomfortable.
 
 The system must not rewrite them into motivational language.
 
-## 16.3 Anti-Flattery Rule
+## §16.3 Anti-Flattery Rule
 
 Forbidden without evidence:
 
@@ -1826,27 +1863,27 @@ proven leader
 visionary
 ```
 
-## 16.4 Ownership Rule
+## §16.4 Ownership Rule
 
 A claim cannot use stronger ownership language than source evidence supports.
 
-## 16.5 Metric Rule
+## §16.5 Metric Rule
 
 Numeric metrics must appear in source logs, imported artifacts, or gap answers.
 
-## 16.6 Production Rule
+## §16.6 Production Rule
 
 Do not claim production/customer/scale/revenue/reliability unless evidence explicitly supports it.
 
-## 16.7 Temporal Rule
+## §16.7 Temporal Rule
 
 Do not upgrade time precision.
 
-## 16.8 Employment Rule
+## §16.8 Employment Rule
 
 Independent projects, competitions, and learning must not be rendered as employment.
 
-## 16.9 Identity Rule
+## §16.9 Identity Rule
 
 Do not turn temporary patterns into permanent identity claims.
 
@@ -1866,7 +1903,7 @@ You will always...
 Your true identity is...
 ```
 
-## 16.10 Diagnostic Rule
+## §16.10 Diagnostic Rule
 
 The system must not generate medical, psychiatric, or clinical labels.
 
@@ -1884,7 +1921,7 @@ The user has depression / ADHD / anxiety disorder.
 
 ---
 
-## 17. Self-Assessment Report Format
+## §17. Self-Assessment Report Format
 
 Default output:
 
@@ -1929,7 +1966,7 @@ evidence-aware
 
 ---
 
-## 18. Resume Export Rules
+## §18. Resume Export Rules
 
 Resume export remains useful, but secondary.
 
@@ -1967,9 +2004,9 @@ bullet contains unsupported ownership, metric, production, or employment framing
 
 ---
 
-## 19. Integration Contracts
+## §19. Integration Contracts
 
-## 19.1 Tick-like Event Contract
+## §19.1 Tick-like Event Contract
 
 ```json
 {
@@ -1991,7 +2028,7 @@ create evidence_item(strength=imported_activity_event)
 do not create strong fact without extraction/review
 ```
 
-## 19.2 Atlas Artifact Contract
+## §19.2 Atlas Artifact Contract
 
 ```json
 {
@@ -2011,7 +2048,7 @@ create evidence_item(strength=artifact_reference)
 extract facts only if artifact content/source supports them
 ```
 
-## 19.3 GitHub Commit Contract
+## §19.3 GitHub Commit Contract
 
 ```json
 {
@@ -2034,7 +2071,7 @@ extract narrow implementation facts
 
 ---
 
-## 20. Suggested Repository Structure
+## §20. Suggested Repository Structure
 
 ```text
 exp2res/
@@ -2147,9 +2184,9 @@ exp2res/
 
 ---
 
-## 21. Evals
+## §21. Evals
 
-## 21.1 No Unsupported Self-Claim
+## §21.1 No Unsupported Self-Claim
 
 Test:
 
@@ -2159,7 +2196,7 @@ When assessment writer says "strong expertise"
 Then verifier rejects or rewrites the claim
 ```
 
-## 21.2 No Automatic Skill From Tick-like
+## §21.2 No Automatic Skill From Tick-like
 
 Test:
 
@@ -2170,7 +2207,7 @@ Then system may create weak activity fact
 But must not create "verifier loop expert"
 ```
 
-## 21.3 Atlas Trail Does Not Equal Mastery
+## §21.3 Atlas Trail Does Not Equal Mastery
 
 Test:
 
@@ -2181,7 +2218,7 @@ Then it may create context evidence
 But must not claim Kafka mastery
 ```
 
-## 21.4 No Hidden Contradiction
+## §21.4 No Hidden Contradiction
 
 Test:
 
@@ -2191,7 +2228,7 @@ When assessment is generated
 Then contradiction/risk is preserved
 ```
 
-## 21.5 No Invented Metrics
+## §21.5 No Invented Metrics
 
 Test:
 
@@ -2201,7 +2238,7 @@ When resume writer creates "reduced latency by 40%"
 Then verifier rejects it
 ```
 
-## 21.6 No Ownership Upgrade
+## §21.6 No Ownership Upgrade
 
 Test:
 
@@ -2211,7 +2248,7 @@ When output says led/designed/owned
 Then verifier rejects it
 ```
 
-## 21.7 Temporal Precision Preservation
+## §21.7 Temporal Precision Preservation
 
 Test:
 
@@ -2221,7 +2258,7 @@ When output contains exact day
 Then verifier rejects it
 ```
 
-## 21.8 No Diagnostic Labels
+## §21.8 No Diagnostic Labels
 
 Test:
 
@@ -2232,7 +2269,7 @@ Then system may mention reported burnout
 But must not assign clinical diagnoses
 ```
 
-## 21.9 Resume Requires Evidence
+## §21.9 Resume Requires Evidence
 
 Test:
 
@@ -2241,7 +2278,7 @@ Given bullet has no source_fact_ids or source_log_ids
 Then export fails
 ```
 
-## 21.10 Assessment Requires Evidence
+## §21.10 Assessment Requires Evidence
 
 Test:
 
@@ -2252,7 +2289,7 @@ Then assessment verification fails
 
 ---
 
-## 22. Implementation Plan
+## §22. Implementation Plan
 
 ## Phase 0 — Skeleton
 
@@ -2415,9 +2452,9 @@ External evidence can enter as raw logs/evidence items without automatic overcla
 
 ---
 
-## 23. End-to-End Demo
+## §23. End-to-End Demo
 
-## 23.1 Input
+## §23.1 Input
 
 ```markdown
 # Exp2Res retrospective
@@ -2432,7 +2469,7 @@ The core idea became: honest model of self from immutable evidence, with resume 
 I emphasized truth over comfort, provenance, verifier gates, and no automatic semantic promotion from activity to skill.
 ```
 
-## 23.2 Extracted Facts
+## §23.2 Extracted Facts
 
 ```json
 [
@@ -2459,7 +2496,7 @@ I emphasized truth over comfort, provenance, verifier gates, and no automatic se
 ]
 ```
 
-## 23.3 Self-Signals
+## §23.3 Self-Signals
 
 ```json
 [
@@ -2472,7 +2509,7 @@ I emphasized truth over comfort, provenance, verifier gates, and no automatic se
 ]
 ```
 
-## 23.4 Self-Assessment Claim
+## §23.4 Self-Assessment Claim
 
 ```json
 {
@@ -2485,7 +2522,7 @@ I emphasized truth over comfort, provenance, verifier gates, and no automatic se
 }
 ```
 
-## 23.5 Resume Bullet Candidate
+## §23.5 Resume Bullet Candidate
 
 ```text
 Designed Exp2Res, a local-first self-assessment system that converts immutable experience evidence into verified self-claims and job-targeted resume exports.
@@ -2503,7 +2540,7 @@ Verifier result:
 
 ---
 
-## 24. Acceptance Criteria
+## §24. Acceptance Criteria
 
 V1 is acceptable when:
 
@@ -2524,9 +2561,9 @@ V1 is acceptable when:
 
 ---
 
-## 25. Risks and Mitigations
+## §25. Risks and Mitigations
 
-## 25.1 Risk: Exp2Res Becomes a Resume Tool Again
+## §25.1 Risk: Exp2Res Becomes a Resume Tool Again
 
 Mitigation:
 
@@ -2537,7 +2574,7 @@ resume branch references assessment snapshot
 self-assessment tests are required before resume tests
 ```
 
-## 25.2 Risk: The System Becomes Flattering Fiction
+## §25.2 Risk: The System Becomes Flattering Fiction
 
 Mitigation:
 
@@ -2549,7 +2586,7 @@ unknowns section
 contradictions table
 ```
 
-## 25.3 Risk: The System Becomes Punitive
+## §25.3 Risk: The System Becomes Punitive
 
 Mitigation:
 
@@ -2560,7 +2597,7 @@ no productivity grades
 no global worth claims
 ```
 
-## 25.4 Risk: Agents Overclaim
+## §25.4 Risk: Agents Overclaim
 
 Mitigation:
 
@@ -2572,7 +2609,7 @@ source requirements
 unsupported phrase detection
 ```
 
-## 25.5 Risk: External Integrations Pollute Truth Model
+## §25.5 Risk: External Integrations Pollute Truth Model
 
 Mitigation:
 
@@ -2583,7 +2620,7 @@ per-source evidence strength
 review gates for high-impact claims
 ```
 
-## 25.6 Risk: Self-Assessment Becomes Diagnosis
+## §25.6 Risk: Self-Assessment Becomes Diagnosis
 
 Mitigation:
 
@@ -2595,7 +2632,7 @@ include non-clinical language tests
 
 ---
 
-## 26. README Positioning
+## §26. README Positioning
 
 Recommended README intro:
 
@@ -2621,7 +2658,7 @@ Evidence-backed self-assessment and verifier-gated resume generation from immuta
 
 ---
 
-## 27. Key Invariants
+## §27. Key Invariants
 
 ```text
 Raw logs are append-only.
@@ -2641,7 +2678,7 @@ Resume is an export, not the master model.
 
 ---
 
-## 28. Final Design Statement
+## §28. Final Design Statement
 
 Exp2Res should preserve three layers that must never collapse into one:
 
@@ -2669,3 +2706,9 @@ I am not trapped in a sweet lie.
 Core sentence:
 
 > **Exp2Res is a local-first mirror of real experience: honest before comforting, evidence before narrative, assessment before export.**
+
+---
+
+## Decision Log
+
+Format: `YYYY-MM-DD — decision in one phrase; rejected alternative and why.`
