@@ -26,7 +26,7 @@ Section numbers are stable: issues and the Decision Log cite them as `§13` / `�
 - §9 Domain Model — ontology, claim kinds, confidence layers, evidence strength
 - §10 Enumerations — Literal types: temporal, entry/source, ownership, context, claims, verification
 - §11 Pydantic Domain Models — OccurredAt, RawLog, EvidenceItem, ExperienceFact, SelfSignal, SelfClaim, AssessmentSnapshot, ResumeBullet
-- §12 SQLite Schema — raw_logs, evidence_items, experience_facts, fact_sources, signals/claims, snapshots, jd, resume, processing_runs
+- §12 SQLite Schema — derivation rules from §11 models; normative DDL for fact_sources, contradictions, gap_questions, job_descriptions, resume_branches, processing_runs
 - §13 Pipeline Specification — 12 stages: capture → normalize → extract → gaps → signals → assess → verify → jd → match → generate → verify → export
 - §14 CLI Specification — init, log, correction, import, extract, gaps, signals, assess, jd/match/resume/verify/export
 - §15 LLM Contracts — structured I/O for extractor, signal extractor, assessment writer/verifier, resume writer/verifier
@@ -224,19 +224,7 @@ one-click resume SaaS
 LinkedIn content generator
 ```
 
-Exp2Res must not:
-
-```text
-hide uncertainty
-inflate ownership
-invent impact
-invent metrics
-turn independent work into employment
-turn learning into mastery
-turn interest into skill
-turn aspiration into evidence
-turn a flattering narrative into truth
-```
+Exp2Res must not inflate or invent: the normative rules are the Verification Rules (§16, esp. §16.3 anti-flattery) together with §5.10 (no automatic semantic promotion); the invariants are restated in §27.
 
 ---
 
@@ -244,23 +232,7 @@ turn a flattering narrative into truth
 
 ## §5.1 Truth Over Comfort
 
-The system should prefer an uncomfortable accurate model over a comforting false one.
-
-Allowed output:
-
-```text
-You repeatedly return to provenance-heavy local-first systems.
-Evidence is strong for design interest and architecture work.
-Evidence is weaker for production deployment.
-```
-
-Forbidden output:
-
-```text
-You are an experienced production AI infrastructure engineer.
-```
-
-Unless that claim is supported by evidence.
+The system should prefer an uncomfortable accurate model over a comforting false one. For the normative phrase-level rules see §16.3 (anti-flattery) and §16.6 (production).
 
 ## §5.2 Uncertainty Is a Valid State
 
@@ -376,8 +348,10 @@ Across systems and internal stages:
 ```text
 check-in ≠ evidence of skill
 artifact ≠ mastery
+learning ≠ mastery
 interest ≠ competence
 plan ≠ experience
+aspiration ≠ evidence
 experience fact ≠ resume claim
 Atlas trail ≠ Exp2Res skill claim
 Tick-like event ≠ self-assessment conclusion
@@ -903,83 +877,16 @@ class ResumeBullet(BaseModel):
 
 ## §12. SQLite Schema
 
-## §12.1 raw_logs
+The SQLite schema is derived from the Pydantic models in §11; §11 is the normative source for all mirrored entities and fields. Derivation rules:
 
-```sql
-CREATE TABLE IF NOT EXISTS raw_logs (
-    id TEXT PRIMARY KEY,
-    recorded_at TEXT NOT NULL,
+1. Tables mirror the Pydantic models 1:1: RawLog → raw_logs, EvidenceItem → evidence_items, ExperienceFact → experience_facts, SelfSignal → self_signals, SelfClaim → self_claims, AssessmentSnapshot → assessment_snapshots, ResumeBullet → resume_bullets. Column names match field names; required fields are NOT NULL.
+2. list/dict fields are stored as JSON TEXT columns named `<field>_json`, NOT NULL with DEFAULT '[]' / '{}'.
+3. datetime fields are stored as ISO 8601 TEXT.
+4. An embedded OccurredAt is flattened into occurred_kind, occurred_start, occurred_end, temporal_precision, temporal_confidence columns.
+5. References to other entities become FOREIGN KEY columns (e.g. evidence_items.raw_log_id → raw_logs.id, resume_bullets.branch_id → resume_branches.id).
+6. Exceptions: ExperienceFact.source_log_ids and evidence_item_ids are not stored as columns — fact provenance lives in the fact_sources join table (§12.4); resume_bullets additionally carries a created_at TEXT NOT NULL column.
 
-    entry_type TEXT NOT NULL,
-    source_type TEXT NOT NULL,
-
-    occurred_kind TEXT NOT NULL,
-    occurred_start TEXT,
-    occurred_end TEXT,
-    temporal_precision TEXT NOT NULL,
-    temporal_confidence TEXT NOT NULL,
-
-    project TEXT,
-    external_ref TEXT,
-    raw_text TEXT NOT NULL,
-    metadata_json TEXT NOT NULL DEFAULT '{}'
-);
-```
-
-## §12.2 evidence_items
-
-```sql
-CREATE TABLE IF NOT EXISTS evidence_items (
-    id TEXT PRIMARY KEY,
-    raw_log_id TEXT NOT NULL,
-
-    evidence_type TEXT NOT NULL,
-    title TEXT,
-    summary TEXT NOT NULL,
-    uri TEXT,
-    path TEXT,
-    strength TEXT NOT NULL,
-
-    metadata_json TEXT NOT NULL DEFAULT '{}',
-
-    FOREIGN KEY (raw_log_id) REFERENCES raw_logs(id)
-);
-```
-
-## §12.3 experience_facts
-
-```sql
-CREATE TABLE IF NOT EXISTS experience_facts (
-    id TEXT PRIMARY KEY,
-
-    claim TEXT NOT NULL,
-    claim_kind TEXT NOT NULL,
-
-    project TEXT,
-    role TEXT,
-    company TEXT,
-    context TEXT NOT NULL,
-    ownership_level TEXT NOT NULL,
-
-    action TEXT,
-    object TEXT,
-    outcome TEXT,
-
-    skills_json TEXT NOT NULL DEFAULT '[]',
-    technologies_json TEXT NOT NULL DEFAULT '[]',
-    themes_json TEXT NOT NULL DEFAULT '[]',
-
-    occurred_kind TEXT NOT NULL,
-    occurred_start TEXT,
-    occurred_end TEXT,
-    temporal_precision TEXT NOT NULL,
-    temporal_confidence TEXT NOT NULL,
-
-    confidence TEXT NOT NULL,
-    verification_status TEXT NOT NULL,
-    metadata_json TEXT NOT NULL DEFAULT '{}'
-);
-```
+The tables below have no Pydantic counterpart; their DDL is normative here. Subsection numbers of the removed derivable tables (§12.1–§12.3, §12.5, §12.6, §12.9, §12.12) are retired, not reused.
 
 ## §12.4 fact_sources
 
@@ -995,40 +902,6 @@ CREATE TABLE IF NOT EXISTS fact_sources (
     FOREIGN KEY (fact_id) REFERENCES experience_facts(id),
     FOREIGN KEY (raw_log_id) REFERENCES raw_logs(id),
     FOREIGN KEY (evidence_item_id) REFERENCES evidence_items(id)
-);
-```
-
-## §12.5 self_signals
-
-```sql
-CREATE TABLE IF NOT EXISTS self_signals (
-    id TEXT PRIMARY KEY,
-    signal_type TEXT NOT NULL,
-    statement TEXT NOT NULL,
-    supporting_fact_ids_json TEXT NOT NULL DEFAULT '[]',
-    counter_fact_ids_json TEXT NOT NULL DEFAULT '[]',
-    confidence TEXT NOT NULL,
-    metadata_json TEXT NOT NULL DEFAULT '{}'
-);
-```
-
-## §12.6 self_claims
-
-```sql
-CREATE TABLE IF NOT EXISTS self_claims (
-    id TEXT PRIMARY KEY,
-    claim TEXT NOT NULL,
-    claim_kind TEXT NOT NULL,
-    dimension TEXT NOT NULL,
-
-    source_signal_ids_json TEXT NOT NULL DEFAULT '[]',
-    source_fact_ids_json TEXT NOT NULL DEFAULT '[]',
-    counterevidence_json TEXT NOT NULL DEFAULT '[]',
-
-    confidence TEXT NOT NULL,
-    verification_status TEXT NOT NULL,
-    uncertainty TEXT,
-    metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 ```
 
@@ -1073,25 +946,6 @@ CREATE TABLE IF NOT EXISTS gap_questions (
 );
 ```
 
-## §12.9 assessment_snapshots
-
-```sql
-CREATE TABLE IF NOT EXISTS assessment_snapshots (
-    id TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL,
-    scope TEXT NOT NULL,
-    title TEXT NOT NULL,
-    summary TEXT NOT NULL,
-
-    self_claim_ids_json TEXT NOT NULL DEFAULT '[]',
-    gap_question_ids_json TEXT NOT NULL DEFAULT '[]',
-    contradiction_ids_json TEXT NOT NULL DEFAULT '[]',
-
-    verification_status TEXT NOT NULL,
-    metadata_json TEXT NOT NULL DEFAULT '{}'
-);
-```
-
 ## §12.10 job_descriptions
 
 ```sql
@@ -1120,32 +974,6 @@ CREATE TABLE IF NOT EXISTS resume_branches (
 
     FOREIGN KEY (job_description_id) REFERENCES job_descriptions(id),
     FOREIGN KEY (assessment_snapshot_id) REFERENCES assessment_snapshots(id)
-);
-```
-
-## §12.12 resume_bullets
-
-```sql
-CREATE TABLE IF NOT EXISTS resume_bullets (
-    id TEXT PRIMARY KEY,
-    branch_id TEXT NOT NULL,
-
-    text TEXT NOT NULL,
-    target_section TEXT NOT NULL,
-    target_role_relevance TEXT NOT NULL,
-
-    matched_jd_requirements_json TEXT NOT NULL DEFAULT '[]',
-    source_fact_ids_json TEXT NOT NULL DEFAULT '[]',
-    source_log_ids_json TEXT NOT NULL DEFAULT '[]',
-    source_self_claim_ids_json TEXT NOT NULL DEFAULT '[]',
-
-    verification_status TEXT NOT NULL,
-    unsupported_phrases_json TEXT NOT NULL DEFAULT '[]',
-    verifier_reason TEXT,
-
-    created_at TEXT NOT NULL,
-
-    FOREIGN KEY (branch_id) REFERENCES resume_branches(id)
 );
 ```
 
@@ -1632,6 +1460,12 @@ exp2res verify --branch agent-engineer
 exp2res export resume --branch agent-engineer
 ```
 
+## §14.11 Inspect Raw Logs
+
+```bash
+exp2res logs list
+```
+
 ---
 
 ## §15. LLM Contracts
@@ -1775,16 +1609,7 @@ Output:
 }
 ```
 
-Hard instructions:
-
-```text
-Do not motivate.
-Do not flatter.
-Do not diagnose.
-Do not create a fixed identity.
-Preserve uncertainty.
-Mention weak evidence where relevant.
-```
+Hard instructions: apply §16.2 (mirror, no motivational rewriting), §16.3 (anti-flattery), §16.9 (identity), §16.10 (diagnostic); preserve uncertainty and mention weak evidence where relevant.
 
 ## §15.5 Assessment Verifier Contract
 
@@ -1873,7 +1698,7 @@ Numeric metrics must appear in source logs, imported artifacts, or gap answers.
 
 ## §16.6 Production Rule
 
-Do not claim production/customer/scale/revenue/reliability unless evidence explicitly supports it.
+Do not claim impact/production/customer/scale/revenue/reliability unless evidence explicitly supports it.
 
 ## §16.7 Temporal Rule
 
@@ -2188,7 +2013,7 @@ exp2res/
 
 ## §21.1 No Unsupported Self-Claim
 
-Test:
+Test (enforces §16.3):
 
 ```text
 Given one weak raw log
@@ -2291,164 +2116,16 @@ Then assessment verification fails
 
 ## §22. Implementation Plan
 
-## Phase 0 — Skeleton
+Phases sequence the pipeline stages of §13. Commands per phase are specified in §14, tables in §12, models in §11, LLM contracts in §15.
 
-Build:
-
-```text
-Typer CLI
-SQLite connection
-Pydantic models
-raw_logs table
-evidence_items table
-basic config
-```
-
-Commands:
-
-```bash
-exp2res init
-exp2res log today
-exp2res log retro
-exp2res logs list
-```
-
-Definition of done:
-
-```text
-Can create local database.
-Can add daily and retrospective logs.
-Can inspect raw logs.
-```
-
-## Phase 1 — Evidence and Fact Extraction
-
-Build:
-
-```text
-evidence normalization
-fact extractor schema
-experience_facts table
-fact_sources table
-```
-
-Commands:
-
-```bash
-exp2res extract
-exp2res facts list
-exp2res facts show <id>
-```
-
-Definition of done:
-
-```text
-Raw logs become atomic facts with source_log_ids.
-No fact can exist without source.
-```
-
-## Phase 2 — Gaps and Contradictions
-
-Build:
-
-```text
-gap question generator
-contradiction detector
-gap answer flow
-correction flow
-```
-
-Commands:
-
-```bash
-exp2res gaps
-exp2res gaps answer <id>
-exp2res contradictions list
-exp2res correction add
-```
-
-Definition of done:
-
-```text
-Weak facts generate useful questions.
-Contradictions are stored, not hidden.
-Corrections append new records.
-```
-
-## Phase 3 — Self-Signals and Assessment
-
-Build:
-
-```text
-self_signals table
-self_claims table
-assessment_snapshots table
-assessment writer
-assessment verifier
-Markdown assessment export
-```
-
-Commands:
-
-```bash
-exp2res signals generate
-exp2res assess generate
-exp2res assess verify <snapshot_id>
-exp2res export assessment --snapshot <id>
-```
-
-Definition of done:
-
-```text
-System produces an evidence-backed self-assessment with strengths, gaps, contradictions, unknowns, and evidence map.
-```
-
-## Phase 4 — Resume Export
-
-Build:
-
-```text
-job description parser
-JD matcher
-resume branch table
-resume writer
-resume verifier
-resume export
-```
-
-Commands:
-
-```bash
-exp2res jd add <file>
-exp2res match --jd <id>
-exp2res resume generate --jd <id> --branch <name>
-exp2res verify --branch <name>
-exp2res export resume --branch <name>
-```
-
-Definition of done:
-
-```text
-System generates a job-targeted Markdown resume with evidence map and verification report.
-Unsupported bullets are blocked.
-```
-
-## Phase 5 — Integrations
-
-Build:
-
-```text
-Tick-like JSONL import
-Atlas artifact/trail import
-GitHub commit/PR import
-local file import
-```
-
-Definition of done:
-
-```text
-External evidence can enter as raw logs/evidence items without automatic overclaiming.
-```
+| Phase | Pipeline stages (§13) | Definition of done |
+|-------|-----------------------|--------------------|
+| 0 — Skeleton | Runtime skeleton (§8, §14.1) + Stage 1, manual capture only | Local database can be created; daily and retrospective logs can be added and inspected. |
+| 1 — Evidence and Fact Extraction | Stages 2–3 | Raw logs become atomic facts with source_log_ids; no fact can exist without a source. |
+| 2 — Gaps and Contradictions | Stage 4 + correction flow (§5.3, §14.4) | Weak facts generate useful questions; contradictions are stored, not hidden; corrections append new records. |
+| 3 — Self-Signals and Assessment | Stages 5–7 + assessment export (Stage 12) | System produces an evidence-backed self-assessment with strengths, gaps, contradictions, unknowns, and evidence map. |
+| 4 — Resume Export | Stages 8–12 | System generates a job-targeted Markdown resume with evidence map and verification report; unsupported bullets are blocked. |
+| 5 — Integrations | Stage 1 importers (§19) | External evidence can enter as raw logs/evidence items without automatic overclaiming. |
 
 ---
 
@@ -2576,15 +2253,7 @@ self-assessment tests are required before resume tests
 
 ## §25.2 Risk: The System Becomes Flattering Fiction
 
-Mitigation:
-
-```text
-anti-flattery verifier
-counterevidence fields
-confidence levels
-unknowns section
-contradictions table
-```
+Mitigation: anti-flattery verification per §16.3; counterevidence fields, confidence levels, unknowns section, contradictions table.
 
 ## §25.3 Risk: The System Becomes Punitive
 
@@ -2722,3 +2391,12 @@ Format: `YYYY-MM-DD — decision in one phrase; rejected alternative and why.`
   Rejected alternative: splitting now — point reads already load only the needed section
   (§ Index + grep), a split does not fix the actual pain (cross-section duplication and
   drift), and splitting before dedup would migrate content about to be merged or deleted.
+- 2026-07-04 — Structural dedup pass: §12 recognized as derived from §11 and replaced with
+  derivation rules — with the exception of fact_sources and processing_runs, plus (found
+  during the loss check) contradictions, gap_questions, job_descriptions, resume_branches,
+  which also have no Pydantic counterpart and keep normative DDL; §22 compressed to a
+  phase → §13-stages → definition-of-done table (commands live in §14; `exp2res logs list`
+  rehomed to §14.11); anti-flattery mantras consolidated into §16 (+§5.10, §27) with
+  one-line references from §4.3, §5.1, §15.4, §21.1, §25.2. Version not bumped — no
+  decisions changed. Rejected alternative: leaving duplicates as-is — duplication cost is
+  paid again in every polishing session and cross-copy drift risk grows.
