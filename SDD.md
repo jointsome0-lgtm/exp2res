@@ -11,7 +11,7 @@
 
 ## § Index
 
-Section numbers are stable: issues and the Decision Log cite them as `§13` / `§13.2`. Never renumber. New sections take the next free number or a sub-number; update this index when sections change. Retired numbers are never reused: §12.1–§12.3, §12.5, §12.6, §12.9, §12.12 (2026-07-04, derivable tables replaced by §12's derivation rules from §11).
+Section numbers are stable: issues and the Decision Log cite them as `§13` / `§13.2`. Never renumber. New sections take the next free number or a sub-number; update this index when sections change. Retired numbers are never reused: §12.1–§12.3, §12.5, §12.6, §12.9, §12.12 (2026-07-04, derivable tables replaced by §12's derivation rules from §11); §12.7, §12.8, §12.10, §12.11 (2026-07-04, issue #2 — Contradiction, GapQuestion, JobDescription, ResumeBranch got §11 models, their DDL is now derived).
 
 Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file name starts with the § number); the Decision Log lives in `DECISION-LOG.md`. Point reads: open the § file. Full pass: read `spec/` files in index order.
 
@@ -25,9 +25,9 @@ Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file
 - §7 High-Level Architecture — pipeline diagram
 - §8 Runtime Architecture — Python, Typer, SQLite, Pydantic; CLI-first
 - §9 Domain Model — ontology, claim kinds, confidence layers, evidence strength
-- §10 Enumerations — Literal types: temporal, entry/source, ownership, context, claims, verification
-- §11 Pydantic Domain Models — OccurredAt, RawLog, EvidenceItem, ExperienceFact, SelfSignal, SelfClaim, AssessmentSnapshot, ResumeBullet
-- §12 SQLite Schema — derivation rules from §11 models; normative DDL for fact_sources, contradictions, gap_questions, job_descriptions, resume_branches, processing_runs
+- §10 Enumerations — Literal types: temporal, entry/source, ownership, context, claims, verification, entity refs, gap triggers
+- §11 Pydantic Domain Models — OccurredAt, RawLog, EvidenceItem, ExperienceFact, SelfSignal, SelfClaim, AssessmentSnapshot, ResumeBullet, Contradiction, GapQuestion, JobDescription, ResumeBranch
+- §12 SQLite Schema — derivation rules from §11 models; normative DDL only for the storage artifacts fact_sources and processing_runs
 - §13 Pipeline Specification — 12 stages: capture → normalize → extract → gaps → signals → assess → verify → jd → match → generate → verify → export
 - §14 CLI Specification — init, log, correction, import, extract, gaps, signals, assess, jd/match/resume/verify/export
 - §15 LLM Contracts — structured I/O for extractor, signal extractor, assessment writer/verifier, resume writer/verifier

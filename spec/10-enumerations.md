@@ -89,6 +89,28 @@ VerificationStatus = Literal[
     "unsupported",
     "rejected",
 ]
+
+EntityRefType = Literal[
+    "raw_log",
+    "evidence_item",
+    "experience_fact",
+    "self_signal",
+    "self_claim",
+    "assessment_snapshot",
+    "resume_bullet",
+]
+
+GapTrigger = Literal[
+    "missing_metric",
+    "missing_scale",
+    "missing_ownership",
+    "missing_context",
+    "ambiguous_time",
+    "ambiguous_claim",
+    "weak_evidence",
+    "unsupported_skill_claim",
+    "unclear_artifact_status",
+]
 ```
 
 ---

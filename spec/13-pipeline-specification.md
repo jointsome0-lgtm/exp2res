@@ -105,19 +105,7 @@ exp2res gaps
 exp2res contradictions
 ```
 
-Gap triggers:
-
-```text
-missing_metric
-missing_scale
-missing_ownership
-missing_context
-ambiguous_time
-ambiguous_claim
-weak_evidence
-unsupported_skill_claim
-unclear_artifact_status
-```
+Gap triggers: the `GapTrigger` values (§10); each generated gap question records its trigger as `GapQuestion.reason` (§11.10).
 
 Contradiction examples:
 

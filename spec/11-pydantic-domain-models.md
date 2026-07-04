@@ -1,5 +1,7 @@
 ## §11. Pydantic Domain Models
 
+§11 defines the persisted domain entities: every §9.1 ontology entity except VerificationFinding, which is not persisted as its own entity — its transport shape is fixed by the verifier contracts (§15.5, §15.7) and its results are stored denormalized on the verified targets (verification_status fields, SelfClaim.counterevidence, ResumeBullet.unsupported_phrases / verifier_reason). Storage-only artifacts (join tables, telemetry) have no models here; their DDL is normative in §12.
+
 ## §11.1 OccurredAt
 
 ```python
@@ -174,6 +176,69 @@ class ResumeBullet(BaseModel):
     verification_status: VerificationStatus
     unsupported_phrases: list[str] = Field(default_factory=list)
     verifier_reason: Optional[str] = None
+```
+
+## §11.9 Contradiction
+
+```python
+class Contradiction(BaseModel):
+    id: str
+    created_at: datetime
+    title: str
+    description: str
+
+    left_ref_type: EntityRefType
+    left_ref_id: str
+    right_ref_type: EntityRefType
+    right_ref_id: str
+
+    status: Literal["open", "resolved", "dismissed"]
+    resolution_note: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+```
+
+## §11.10 GapQuestion
+
+```python
+class GapQuestion(BaseModel):
+    id: str
+    created_at: datetime
+
+    target_type: EntityRefType
+    target_id: str
+
+    question: str
+    reason: GapTrigger
+    priority: Literal["low", "medium", "high"]
+
+    answered: bool = False
+    answer_log_id: Optional[str] = None
+```
+
+## §11.11 JobDescription
+
+```python
+class JobDescription(BaseModel):
+    id: str
+    created_at: datetime
+
+    title: Optional[str] = None
+    company: Optional[str] = None
+    raw_text: str
+    parsed: dict = Field(default_factory=dict)
+```
+
+## §11.12 ResumeBranch
+
+```python
+class ResumeBranch(BaseModel):
+    id: str
+    name: str
+    job_description_id: Optional[str] = None
+    assessment_snapshot_id: Optional[str] = None
+
+    created_at: datetime
+    metadata: dict = Field(default_factory=dict)
 ```
 
 ---
