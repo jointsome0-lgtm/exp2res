@@ -35,7 +35,7 @@ Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file
 - §17 Self-Assessment Report Format — mirror report skeleton and tone
 - §18 Resume Export Rules — pipeline and export-fail conditions
 - §19 Integration Contracts — Tick-like / Atlas / GitHub import behavior
-- §20 Suggested Repository Structure — target file tree
+- §20 Suggested Repository Structure — placement principles + normative skeleton
 - §21 Evals — 10 behavioral tests against overclaiming
 - §22 Implementation Plan — Phase 0–5 with definitions of done
 - §23 End-to-End Demo — retro log → facts → signal → claim → verified bullet
