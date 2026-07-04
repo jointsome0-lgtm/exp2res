@@ -20,4 +20,4 @@
 
 ## Скиллы
 
-Общие скиллы — плагин `sdd` из репо `agent-skills` (маркетплейс Claude Code): `/plugin marketplace add jointsome0-lgtm/agent-skills` (или локальный чекаут `~/projects/agent-skills`), затем `/plugin install sdd@selfos`. Для грилля спеки — `/sdd:grill-sdd`. Если нужного скилла нет в сессии — попроси пользователя установить/обновить плагин.
+Общие скиллы — плагин `sdd` из репо `selfos-skills` (маркетплейс Claude Code): `/plugin marketplace add jointsome0-lgtm/selfos-skills` (или локальный чекаут `~/projects/selfos-skills`), затем `/plugin install sdd@selfos`. Для грилля спеки — `/sdd:grill-sdd`. Если нужного скилла нет в сессии — попроси пользователя установить/обновить плагин.
