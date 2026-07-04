@@ -2,7 +2,6 @@
 
 **Version:** 0.2  
 **Status:** Draft / implementation-oriented  
-**Date:** 2026-07-03  
 **Project:** Exp2Res — Experience to Self-Assessment to Resume  
 **Primary goal:** Build a local-first, provenance-heavy self-assessment system from immutable experience evidence.  
 **Secondary goal:** Generate job-targeted resume exports from the same evidence model without unsupported claims.  
@@ -12,7 +11,7 @@
 
 ## § Index
 
-Section numbers are stable: issues and the Decision Log cite them as `§13` / `§13.2`. Never renumber. New sections take the next free number or a sub-number; update this index when sections change.
+Section numbers are stable: issues and the Decision Log cite them as `§13` / `§13.2`. Never renumber. New sections take the next free number or a sub-number; update this index when sections change. Retired numbers are never reused: §12.1–§12.3, §12.5, §12.6, §12.9, §12.12 (2026-07-04, derivable tables replaced by §12's derivation rules from §11).
 
 Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file name starts with the § number); the Decision Log lives in `DECISION-LOG.md`. Point reads: open the § file. Full pass: read `spec/` files in index order.
 
