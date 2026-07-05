@@ -9,7 +9,7 @@ Placement principles:
 2. tests/ holds one behavioral test per §21 eval and one per §27
    invariant.
 3. examples/ mirrors what the contracts already define: raw logs
-   (§14.2–14.3), import payloads (§19), job descriptions (§13.11),
+   (§14.2–14.3), import payloads (§19), job descriptions (§13.8),
    outputs (§13.12).
 4. File names inside the packages, tests/, and examples/ are content,
    not structure: the spec does not predict them.

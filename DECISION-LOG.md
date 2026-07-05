@@ -39,3 +39,7 @@ Format: `YYYY-MM-DD — decision in one phrase; rejected alternative and why.`
   storage-level-only in §12 — saves no spec volume (models replace equal-sized DDL), leaves a
   third of the ontology without domain representation, and defers the same modeling work to
   implementation time where it would happen ad hoc and unreviewed.
+- 2026-07-05 — Issue #24: §20 principle 3 points job descriptions to §13.8
+  (Stage 8 — Job Description Parsing) instead of §13.11 (Resume Verification).
+  Rejected alternative: leaving the pointer for readers to infer — it sends
+  `examples/` population to the wrong pipeline stage.
