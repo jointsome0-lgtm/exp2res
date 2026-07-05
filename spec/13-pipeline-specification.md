@@ -140,18 +140,7 @@ Output:
 self_signals
 ```
 
-Signal categories:
-
-```text
-skill_signal
-interest_signal
-direction_signal
-execution_pattern
-avoidance_pattern
-constraint_signal
-capacity_signal
-contradiction_signal
-```
+Signal categories are the `SignalType` values (§10), carried by `SelfSignal.signal_type` (§11.5). §13 must not restate them.
 
 Example signal:
 
@@ -188,19 +177,7 @@ self_claims
 assessment_snapshots
 ```
 
-Assessment dimensions:
-
-```text
-technical_skill
-domain_interest
-working_style
-execution_capacity
-constraint
-risk
-gap
-trajectory
-identity_hypothesis
-```
+Assessment dimensions are the `SelfClaimDimension` values (§10), carried by `SelfClaim.dimension` (§11.6). §13 must not restate them.
 
 The assessment must include:
 
@@ -346,4 +323,3 @@ out/<branch>/gap_questions.md
 Export must fail if required evidence links are missing.
 
 ---
-

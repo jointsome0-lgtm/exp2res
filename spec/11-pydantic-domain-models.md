@@ -7,16 +7,10 @@
 ```python
 from datetime import datetime
 from pydantic import BaseModel
-from typing import Optional, Literal
+from typing import Optional
 
 class OccurredAt(BaseModel):
-    kind: Literal[
-        "exact_datetime",
-        "exact_day",
-        "date_range",
-        "approximate_range",
-        "unknown",
-    ]
+    kind: OccurredAtKind
     start: Optional[datetime] = None
     end: Optional[datetime] = None
     precision: TemporalPrecision
@@ -93,16 +87,7 @@ class ExperienceFact(BaseModel):
 ```python
 class SelfSignal(BaseModel):
     id: str
-    signal_type: Literal[
-        "skill_signal",
-        "interest_signal",
-        "direction_signal",
-        "execution_pattern",
-        "avoidance_pattern",
-        "constraint_signal",
-        "capacity_signal",
-        "contradiction_signal",
-    ]
+    signal_type: SignalType
     statement: str
     supporting_fact_ids: list[str]
     counter_fact_ids: list[str] = Field(default_factory=list)
@@ -117,17 +102,7 @@ class SelfClaim(BaseModel):
     id: str
     claim: str
     claim_kind: ClaimKind
-    dimension: Literal[
-        "technical_skill",
-        "domain_interest",
-        "working_style",
-        "execution_capacity",
-        "constraint",
-        "risk",
-        "gap",
-        "trajectory",
-        "identity_hypothesis",
-    ]
+    dimension: SelfClaimDimension
     source_signal_ids: list[str]
     source_fact_ids: list[str]
     confidence: TemporalConfidence
@@ -143,7 +118,7 @@ class SelfClaim(BaseModel):
 class AssessmentSnapshot(BaseModel):
     id: str
     created_at: datetime
-    scope: Literal["global", "project", "career", "learning", "custom"]
+    scope: AssessmentScope
     title: str
     summary: str
     self_claim_ids: list[str]
@@ -160,15 +135,8 @@ class ResumeBullet(BaseModel):
     id: str
     branch_id: str
     text: str
-    target_section: Literal[
-        "summary",
-        "professional_experience",
-        "selected_projects",
-        "competitions",
-        "skills",
-        "education",
-    ]
-    target_role_relevance: Literal["low", "medium", "high"]
+    target_section: ResumeTargetSection
+    target_role_relevance: TargetRoleRelevance
     matched_jd_requirements: list[str] = Field(default_factory=list)
     source_fact_ids: list[str]
     source_log_ids: list[str]
@@ -192,7 +160,7 @@ class Contradiction(BaseModel):
     right_ref_type: EntityRefType
     right_ref_id: str
 
-    status: Literal["open", "resolved", "dismissed"]
+    status: ContradictionStatus
     resolution_note: Optional[str] = None
     metadata: dict = Field(default_factory=dict)
 ```
@@ -209,7 +177,7 @@ class GapQuestion(BaseModel):
 
     question: str
     reason: GapTrigger
-    priority: Literal["low", "medium", "high"]
+    priority: GapPriority
 
     answered: bool = False
     answer_log_id: Optional[str] = None
@@ -242,4 +210,3 @@ class ResumeBranch(BaseModel):
 ```
 
 ---
-
