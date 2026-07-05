@@ -1,23 +1,23 @@
-# exp2res — инструкции для агентов
+# exp2res — agent instructions
 
-Проект на стадии проектирования: кода нет, основной артефакт — спецификация: `SDD.md` (карта) + `spec/` (тело, один файл на §).
-Текущая задача — дорабатывать SDD: уточнять требования, находить противоречия и дыры, предлагать альтернативы. Код не писать, пока SDD не согласован.
+Design-stage project: no code yet; the primary artifact is the specification — `SDD.md` (map) + `spec/` (body, one file per §).
+The current task is refining the SDD: sharpening requirements, finding contradictions and gaps, proposing alternatives. No code until the SDD is agreed.
 
-## Правила доработки SDD
+## SDD refinement rules
 
-- Находки ревью → GitHub issues (цитата раздела + severity). Файлы-отчёты не создавать.
-- Вердикт ревью фальсифицируем: BLOCKED | NEEDS_FIXES | APPROVED_WITH_NOTES. «В целом норм» запрещено.
-- Решение = правка SDD в том же заходе + строка в Decision Log + обоснование в коммите.
-- Сессия, после которой не изменился SDD и не закрылся/появился issue, не состоялась.
+- Review findings → GitHub issues (section quote + severity). Never create report files.
+- Review verdicts are falsifiable: BLOCKED | NEEDS_FIXES | APPROVED_WITH_NOTES. "Fine overall" is forbidden.
+- A decision = an SDD edit in the same pass + a Decision Log line + the rationale in the commit message.
+- A session after which the SDD did not change and no issue was opened or closed did not happen.
 
-## Канон
+## Canon
 
-Спецификация: `SDD.md` — карта (§-индекс и правила нумерации), тело — в `spec/` (один файл на §, имя начинается с номера), решения — в `DECISION-LOG.md`. Карта импортируется в контекст сессии (строка ниже); тело и лог @-импортировать запрещено:
-- точечная задача → выбери § по индексу карты, читай только его файл в `spec/`;
-- полное чтение (весь `spec/` в порядке индекса) — только для full-pass ревью или кросс-раздельных решений.
+Specification: `SDD.md` is the map (§ index and numbering rules); the body lives in `spec/` (one file per §, file names start with the § number); decisions live in `DECISION-LOG.md`. The map is imported into session context (line below); @-importing the body or the log is forbidden:
+- point task → pick the § from the map's index and read only its file in `spec/`;
+- full read (all of `spec/` in index order) — only for full-pass reviews or cross-section decisions.
 
 @SDD.md
 
-## Скиллы
+## Skills
 
-Общие скиллы — плагин `sdd` из репо `selfos-skills` (маркетплейс Claude Code): `/plugin marketplace add jointsome0-lgtm/selfos-skills` (или локальный чекаут `~/projects/selfos-skills`), затем `/plugin install sdd@selfos`. Для грилля спеки — `/sdd:grill-sdd`. Если нужного скилла нет в сессии — попроси пользователя установить/обновить плагин.
+Shared skills ship as the `sdd` plugin from the `selfos-skills` repo (a Claude Code plugin marketplace): `/plugin marketplace add jointsome0-lgtm/selfos-skills` (or the local checkout `~/projects/selfos-skills`), then `/plugin install sdd@selfos`. To grill the spec: `/sdd:grill-sdd`. If a needed skill is missing from a session, ask the user to install/update the plugin.
