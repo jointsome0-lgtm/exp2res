@@ -44,7 +44,7 @@ class RawLog(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-At capture, `corrects_log_id` is required exactly when `entry_type == "correction"`, must resolve to an existing `RawLog`, and must not create a correction cycle. Correction text must be self-contained. Owner deletion may later set this field to `None`; the surviving correction then becomes the root of its own correction lineage (§12, §13.3).
+`corrects_log_id` is a capture-time requirement, not a standing invariant: §14.4 must set it when a correction is captured (`entry_type == "correction"`), it must then resolve to an existing `RawLog`, and it must not create a correction cycle. Correction text must be self-contained. A correction row with `corrects_log_id = None` is nevertheless a valid model state that hydration, §12 rule 10 validation, and the §13.13 rebuild accept: it arises only when owner deletion removes the target (§12 rule 6 `ON DELETE SET NULL`), and such an orphaned correction is the root of its own correction lineage (§13.3 rule 10). No flow other than owner deletion may null or rewrite the field.
 
 ## §11.3 EvidenceItem
 
