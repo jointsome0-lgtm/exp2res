@@ -10,7 +10,7 @@ Every stage validates its typed output references under §12 rule 10 before comm
 
 Whenever a status-bearing row is offered to resume generation or either export, the consumer applies the canonical `VerificationStatus` allowlists in §16.11. No consumer may replace those allowlists with a denylist or treat an unnamed status as passing.
 
-Whenever any transition supersedes a current `AssessmentSnapshot`, `ResumeBranch`, or `ResumeBullet`, it also enumerates and attempts to remove all dependent managed assessment/resume artifacts under `out/`. Database invalidation remains committed if cleanup fails; every residual path is reported as an unsuccessful invalidation and no command may report the stale files as current output.
+Whenever any transition supersedes a current `AssessmentSnapshot`, `ResumeBranch`, or `ResumeBullet`, it also enumerates and attempts to remove all dependent managed assessment/resume artifacts under `out/`. Database invalidation remains committed if cleanup fails; every residual path is reported as an unsuccessful invalidation and no command may report the stale files as current output. `gaps answer` triggers the same enumeration, removal attempt, and residual-path reporting for the managed exports its answered state makes stale, without superseding any row (§14.7).
 
 ## §13.1 Stage 1 — Raw Capture and Evidence Recording
 

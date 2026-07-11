@@ -391,7 +391,9 @@ Then Stage 6 excludes it from the gap input and rejects it if the writer returns
 Given a current snapshot references a gap that the owner answers afterwards
 When the snapshot is rendered or exported without regeneration
 Then the snapshot, its branches, and its bullets remain current and the assessment stays exportable
+And the answer transaction removes the dependent managed assessment and branch exports or reports residual paths, superseding no row
 And §17 marks that reference answered since synthesis and drops it from Questions Worth Answering
+And a following export renders that answered-since-synthesis state
 And the next Stage 6 generation excludes the answered row
 ```
 
