@@ -387,6 +387,12 @@ Then the complete-state check fails and no snapshot batch commits
 
 Given a current gap has answered = true under §14.7
 Then Stage 6 excludes it from the gap input and rejects it if the writer returns it as an unknown
+
+Given a current snapshot references a gap that the owner answers afterwards
+When the snapshot is rendered or exported without regeneration
+Then the snapshot, its branches, and its bullets remain current and the assessment stays exportable
+And §17 marks that reference answered since synthesis and drops it from Questions Worth Answering
+And the next Stage 6 generation excludes the answered row
 ```
 
 ---
