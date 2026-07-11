@@ -12,7 +12,7 @@ Contradiction       = conflict between claims, facts, or signals
 GapQuestion         = question needed to improve weak/uncertain model
 AssessmentSnapshot  = versioned self-assessment at a time
 JobDescription      = external context for export
-ResumeBranch        = job-targeted resume candidate branch
+ResumeBranch        = job-targeted resume candidate branch anchored to one assessment snapshot
 ResumeBullet        = generated resume phrase with evidence links
 VerificationFinding = verifier output over claim/bullet/snapshot
 ```

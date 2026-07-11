@@ -104,6 +104,8 @@ exp2res contradictions show --contradiction-id contradiction_001
 
 Gap answers are self-contained at capture, like corrections: the command copies the answered question's text and `GapQuestion.reason` into the answer's `RawLog.metadata` (`question_text`, `question_reason`). The answer therefore remains interpretable evidence if its question row is later superseded by a Stage 4 regeneration or purged by the §13.13 reset. Question-to-answer links are never re-created after regeneration: an uncertainty a stored answer resolves simply no longer fires its gap trigger against the current facts, and a gap that regenerates anyway is genuinely still open. The copied question text becomes part of the owner's raw record — owner-deletable on its own, never system-edited.
 
+V1 contradiction commands generate or inspect immutable Stage 4 detections; there is no resolve, dismiss, or resolution-note command. Outside the §13.13 owner-deletion privacy reset, a conflict disappears from the current set only when the current Stage 4 inputs no longer conflict and a successful replacement generation omits it.
+
 ## §14.8 Generate Self-Signals
 
 ```bash
@@ -121,14 +123,24 @@ exp2res assess verify --snapshot snapshot_001
 exp2res export assessment --snapshot snapshot_001
 ```
 
+`assess verify` is required before assessment export. `export assessment` rejects `unverified` and every other snapshot status outside the assessment-export allowlist in §16.11.
+
+V1 defines no claim-confirm, dispute, or override command. `assess verify` is the system verifier gate defined by §5.10, not an owner verdict stored on a regenerated claim.
+
+`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion is advisory: it is neither persisted nor applied, and verification never invokes `assess generate`. The owner may add or correct raw evidence and request a new assessment generation; any changed claim wording belongs to that new Stage 6 generation.
+
 ## §14.10 Resume Export Flow
 
 ```bash
 exp2res jd add jobs/agent_engineer.md
-exp2res resume generate --jd jd_001 --branch agent-engineer
+exp2res resume generate --jd jd_001 --snapshot snapshot_001 --branch agent-engineer
 exp2res verify --branch agent-engineer
 exp2res export resume --branch agent-engineer
 ```
+
+`--snapshot` is a required stored-record selector for the exact assessment anchor governed by §18. It has no latest-snapshot default. A missing, superseded, `unverified`, or otherwise Stage-10-ineligible snapshot fails before a branch or bullet is inserted; the persisted branch records exactly the selected ID.
+
+`verify --branch` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values; it never applies a suggestion or invokes `resume generate`. Changed bullet wording requires a later explicit `resume generate` command and a replacement branch generation.
 
 ## §14.11 Manage Raw Logs
 
@@ -148,5 +160,7 @@ exp2res recompute --log-id log_001
 ```
 
 The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global higher-layer regeneration. This command orchestrates the existing Stage 3–7 triggers under §13.13; it is not a new pipeline stage and does not create a synthetic stage identifier.
+
+`recompute`, and correction or deletion commands that invoke the same flow, present every Stage 7 finding to the owner, including advisory `suggested_rewrite` values. They do not apply those suggestions or invoke another Stage 6 generation.
 
 ---

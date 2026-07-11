@@ -7,7 +7,7 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 3. datetime fields are stored as ISO 8601 TEXT.
 4. bool fields are stored as INTEGER 0/1, NOT NULL; a model default becomes the column DEFAULT (GapQuestion.answered → answered INTEGER NOT NULL DEFAULT 0).
 5. An embedded OccurredAt is flattened into occurred_start, occurred_end, temporal_precision, temporal_confidence columns; `temporal_precision` is the sole shape discriminator under §11.1.
-6. Scalar references to other entities become FOREIGN KEY columns. `evidence_items.raw_log_id` references `raw_logs.id ON DELETE CASCADE`; `raw_logs.corrects_log_id` is a self-reference with `ON DELETE SET NULL`; and `gap_questions.answer_log_id` references `raw_logs.id ON DELETE SET NULL`. Other scalar references use the default restrictive action. No foreign key may block the owner-deletion operation in §13.13.
+6. Scalar references to other entities become FOREIGN KEY columns. `evidence_items.raw_log_id` references `raw_logs.id ON DELETE CASCADE`; `raw_logs.corrects_log_id` is a self-reference with `ON DELETE SET NULL`; and `gap_questions.answer_log_id` references `raw_logs.id ON DELETE SET NULL`. The required `ResumeBranch.assessment_snapshot_id` derives as `TEXT NOT NULL REFERENCES assessment_snapshots(id)`; its stronger current-anchor check is rule 10. Other scalar references use the default restrictive action. No foreign key may block the owner-deletion operation in §13.13.
 7. A polymorphic reference — an (`*_type: EntityRefType`, `*_id`) field pair such as Contradiction.left_ref_* / right_ref_* or GapQuestion.target_* — becomes two plain TEXT NOT NULL columns with no FOREIGN KEY because the target table varies per row; rule 10 supplies its write-time integrity check.
 8. Exception: `ExperienceFact.source_log_ids` and `evidence_item_ids` are not stored as columns. They are non-empty, duplicate-free views hydrated from the `fact_sources → evidence_items` relation in §12.4.
 9. Queries that feed processing, verification, generation, or export must filter every recomputable table to `superseded_at IS NULL`. Historical inspection is the only normal read path that may include superseded rows.
@@ -21,11 +21,15 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 | `AssessmentSnapshot.self_claim_ids` | `self_claims` |
 | `AssessmentSnapshot.gap_question_ids` | `gap_questions` |
 | `AssessmentSnapshot.contradiction_ids` | `contradictions` |
+| `ResumeBranch.assessment_snapshot_id` | `assessment_snapshots` |
+| `ResumeBullet.branch_id` | `resume_branches` |
 | `ResumeBullet.source_fact_ids` | `experience_facts` |
 | `ResumeBullet.source_log_ids` | retained `raw_logs` |
 | `ResumeBullet.source_self_claim_ids` | `self_claims` |
 
-Stage 6 adds one complete-state cardinality check at the same transaction boundary: after candidate inserts and supersession transitions are staged, every current `SelfClaim.id` must occur in exactly one current `AssessmentSnapshot.self_claim_ids`, and every listed claim must be current. Sharing a current claim between snapshots or leaving one unowned fails the batch before commit.
+Stage 6 adds one complete-state cardinality check at the same transaction boundary: after candidate inserts and supersession transitions are staged, every current `SelfClaim.id` must occur in exactly one current `AssessmentSnapshot.self_claim_ids`, and every listed claim must be current. Each snapshot must contain exactly one `narrative_summary` claim whose text equals `AssessmentSnapshot.summary`. Sharing a current claim between snapshots, leaving one unowned, or exposing unmatched summary prose fails the batch before commit.
+
+Stage 10 adds one branch-anchor consistency check at that boundary: the candidate `ResumeBranch.assessment_snapshot_id` must equal the exact snapshot selected under §18; every candidate bullet must reference that branch; and every `ResumeBullet.source_self_claim_ids` value must occur in the selected snapshot's `self_claim_ids`. The list is duplicate-free under rule 10 and must equal the service-selected claim IDs passed to the writer under §13.10/§15.6. A branch that merely names one snapshot while consuming a claim owned by another fails before any branch or bullet becomes current.
 
 `processing_runs.input_ids_json` and `output_ids_json` are the explicit exception: they are opaque historical telemetry, not typed domain references, and are not subject to rule 10.
 

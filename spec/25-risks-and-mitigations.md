@@ -7,7 +7,7 @@ Mitigation:
 ```text
 assessment pipeline comes before resume pipeline
 README states resume is secondary export
-resume branch references assessment snapshot
+every resume branch uses §18's required explicit current snapshot anchor with no latest default
 self-assessment tests are required before resume tests
 ```
 
@@ -34,7 +34,7 @@ Mitigation:
 structured outputs
 Pydantic validation
 transactional typed-reference resolution before persistence
-verifier loop
+fail-closed single-pass verifier gates whose non-passing findings never trigger automatic repair
 complete current provenance-chain requirements
 unsupported phrase detection
 ```
@@ -47,7 +47,7 @@ Mitigation:
 imported data enters only as a RawLog plus linked EvidenceItem
 no automatic semantic promotion
 per-source evidence strength
-review gates for high-impact claims
+Stage 7 assessment and Stage 11 resume verifier gates before external projection
 ```
 
 ## §25.6 Risk: Self-Assessment Becomes Diagnosis

@@ -4,7 +4,7 @@
 
 Every typed domain reference must resolve to the current target required by §12 rule 10 when written; missing, wrong-type, superseded, or duplicate IDs fail the producing operation atomically. JSON storage is not an integrity exception.
 
-Every current self-claim and resume bullet — and any row entering verification or export — must resolve a complete current chain through at least one fact, one `fact_sources` row with `support_type = direct`, its non-null `EvidenceItem`, and that item's retained `RawLog`. Superseded rows are exempt inspect-only history: after a lifecycle swap their references legitimately point at superseded targets, which is why §12 rule 9 keeps them out of processing, verification, generation, and export inputs. A resume bullet's `source_log_ids` must equal the distinct raw logs reachable from its `source_fact_ids`; a non-empty but inconsistent ID list fails verification and export. Owner deletion is handled before those consumers run: §13.13 purges the derived database graph, attempts verified managed-output removal with residual-path reporting, and then rebuilds from retained raw records instead of treating vanished private sources as skippable evidence.
+Every current self-claim and resume bullet — and any row entering verification or export — must resolve a complete current chain through at least one fact, one `fact_sources` row with `support_type = direct`, its non-null `EvidenceItem`, and that item's retained `RawLog`. Every current resume branch must resolve its required current assessment snapshot, every bullet must resolve its current branch, and each source self-claim on that bullet must belong to that exact snapshot. `ResumeBullet.source_self_claim_ids` must be the duplicate-free exact set of claims used by the writer and must be empty iff no claim guided the bullet. Superseded rows are exempt inspect-only history: after a lifecycle swap their references legitimately point at superseded targets, which is why §12 rule 9 keeps them out of processing, verification, generation, and export inputs. A resume bullet's `source_log_ids` must equal the distinct raw logs reachable from its `source_fact_ids`; a non-empty but inconsistent ID list fails verification and export. Owner deletion is handled before those consumers run: §13.13 purges the derived database graph, attempts verified managed-output removal with residual-path reporting, and then rebuilds from retained raw records instead of treating vanished private sources as skippable evidence.
 
 ## §16.2 Mirror Rule
 
@@ -87,5 +87,36 @@ Forbidden:
 ```text
 The user has depression / ADHD / anxiety disorder.
 ```
+
+## §16.11 Verification-Status Semantics and Consumer Gates
+
+`VerificationStatus` has one operational meaning per member and is enforced through role-aware allowlists. The Stage 10 column distinguishes a snapshot anchor from a self-claim input; resume export considers its snapshot anchor, source self-claims, and `ResumeBullet`; assessment export considers its `AssessmentSnapshot` and claim presentation.
+
+| Status | Meaning | May feed Stage 10 | May pass resume export | May pass assessment export |
+|---|---|---|---|---|
+| `unverified` | No successful semantic verifier verdict exists for the current row. | No | No | No |
+| `supported` | Every material assertion is adequately grounded in current evidence. | Snapshot anchor and self-claim | Snapshot anchor, source self-claim, and bullet | Snapshot and claim presentation |
+| `partially_supported` | A grounded core remains, but some phrasing or inference is not fully supported. | Snapshot anchor only | Snapshot anchor only | Snapshot and claim presentation, visibly labeled |
+| `inferred_but_acceptable` | A bounded inference is acceptable inside the mirror but not as an external claim. | Snapshot anchor only | Snapshot anchor only | Snapshot and claim presentation, visibly labeled |
+| `needs_clarification` | Current evidence is too incomplete or ambiguous for a safe conclusion. | No | No | Snapshot and claim presentation as uncertainty or a question |
+| `contradicted` | Current evidence materially conflicts with the assertion. | No | No | Snapshot and claim presentation with contradiction and counterevidence visible |
+| `unsupported` | Current evidence does not adequately support the assertion. | No | No | No |
+| `rejected` | The candidate violates a verification rule and requires replacement rather than qualification. | No | No | No |
+
+Thus the Stage 10 snapshot-anchor allowlist is exactly `supported`, `partially_supported`, and `inferred_but_acceptable`; only a `supported` self-claim may guide resume generation, and only a `supported` bullet may export. Assessment export permits `supported`, `partially_supported`, `inferred_but_acceptable`, `needs_clarification`, and `contradicted` snapshots because the mirror must preserve visibly labeled weakness and conflict. `unverified` blocks all three gated consumer classes in the table: validation or generation alone is not verification.
+
+Stage 6 initializes every new claim and snapshot to `unverified`. Stage 7 verifies every claim, then computes the snapshot status atomically from the complete claim-status set. Any `unverified` claim leaves the snapshot `unverified`; an empty claim set is invalid under §11.7/§12 and cannot be aggregated; otherwise the first status present in this most-restrictive-first precedence is the aggregate:
+
+```text
+rejected
+unsupported
+contradicted
+needs_clarification
+partially_supported
+inferred_but_acceptable
+supported
+```
+
+Stage 7 is the only operation that may write this aggregate while the snapshot is current. Claim verification fields, the aggregate, and dependent branch/bullet supersession commit in one database transaction. Stage 7 and assessment export must reject a snapshot unless exactly one member claim is a `narrative_summary` whose claim text equals `AssessmentSnapshot.summary`; every gated consumer must also reject a stored aggregate that does not equal a fresh reduction of the current claims. Managed-file removal is attempted under §13's lifecycle rules, cannot roll back that database state, and reports residual paths on failure. Stage 10 initializes bullets to `unverified`, and Stage 11 alone assigns their semantic verdicts.
 
 ---
