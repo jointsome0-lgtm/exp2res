@@ -173,10 +173,15 @@ Output:
 {
   "status": "partially_supported",
   "unsupported_phrases": ["strong production experience"],
+  "counterevidence": [
+    "fact_007: the only deployment fact describes a local demo, not a production environment"
+  ],
   "suggested_rewrite": "Evidence supports repeated design work around local-first provenance systems, but not production experience.",
   "reason": "No source facts support production deployment or production ownership."
 }
 ```
+
+`counterevidence` lists contrary-evidence statements grounded in the supplied sources (empty when none); Stage 7 persists it to `SelfClaim.counterevidence` (§11.6, §13.7).
 
 ## §15.6 Resume Writer Contract
 
