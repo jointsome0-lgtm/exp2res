@@ -276,4 +276,117 @@ When the owner later requests revised wording
 Then it appears only in an explicit Stage 6 or Stage 10 replacement generation
 ```
 
+## §21.21 Occurred Provenance Is Conservative
+
+Test:
+
+```text
+Given a governing RawLog OccurredAt and no stronger temporal statement in the selected extraction context
+When the fact extractor widens beyond that source window, emits a stronger TemporalPrecision, or raises TemporalConfidence
+Then structured validation fails and no replacement fact generation commits
+
+Given selected in-context evidence explicitly supports a contained narrower placement
+When the extractor uses only that supported placement and does not raise confidence above the governing source
+Then the placement may validate under §13.3, §15.2, and §16.7
+And containment is computed from §16.7's anchored uncertainty intervals rather than inferred calendar alignment
+```
+
+## §21.22 Typed JD Requirement References
+
+Test:
+
+```text
+Given Stage 8 persisted a ParsedJD with stable duplicate-free JDRequirement IDs
+When Stage 10 emits a bullet
+Then every matched_jd_requirements entry resolves in the exact supplied ParsedJD
+And every source_self_claim_ids entry is the exact supported claim set supplied for that bullet
+And source_log_ids is the exact raw-log set reachable through its selected source facts
+
+Given a missing, duplicate, free-form, or different-job requirement reference
+When Stage 10 attempts to persist the branch batch
+Then §12 rule 10 fails the batch atomically
+```
+
+## §21.23 Stage 4 Contract Is Complete and Schema-Only Retried
+
+Test:
+
+```text
+Given all current facts and their complete retained evidence context
+When the Stage 4 detector returns a schema-valid complete candidate set
+Then that set replaces the current gap and contradiction generation atomically
+And its polymorphic targets are limited to supplied raw logs, evidence items, and current facts
+And it exposes no status, resolution, dismissal, or verdict channel
+
+Given the detector returns invalid structure, enum values, or references
+When §15.1 retries once
+Then no partial candidate persists
+And a schema-valid semantic inclusion or omission never triggers a retry or writer repair
+
+Given a schema-valid detector question, title, description, or warning violates the generated-voice rules
+Then Stage 4 fails atomically without persisting it, assigning a verdict, or invoking another LLM call
+```
+
+## §21.24 Stage 8 Contract Persists Only Typed ParsedJD
+
+Test:
+
+```text
+Given a raw job description
+When the Stage 8 parser returns invalid structure or an invalid JDRequirementKind
+Then §15.1 performs at most its one schema retry
+And no partial JobDescription or untyped parsed JSON persists
+
+When a valid parser candidate returns
+Then Stage 8 assigns stable requirement IDs, validates the final ParsedJD, and commits it atomically
+And a schema-valid parse is not treated as a verdict or sent through writer repair
+
+Given service ID allocation collides or the enriched final ParsedJD is invalid
+Then the service reallocates locally when safe or fails the run atomically
+And it does not invoke the parser again
+```
+
+## §21.25 Voice Rules Bind Generated Text, Not Source Text
+
+Test:
+
+```text
+Given a RawLog, gap answer, or §19 import contains the word "expert"
+When the structurally valid source is ingested
+Then its natural-language value is retained unchanged and no §16 voice rule blocks it
+
+Given unsupported Exp2Res-authored assessment, report, or resume prose uses "expert"
+When generated voice is verified
+Then §16.3 blocks or gates that generated candidate
+And malformed keys, types, enums, or references still fail on either side of the voice boundary
+
+Given an LLM output copies source wording without a typed source reference and exact substring validation
+Then that output remains generated voice
+But the same wording in a typed, exact source segment adjacent to generated prose is structure-only scanned without exempting the generated segment
+```
+
+## §21.26 Assessment Unknowns and Counterevidence Surface Without a Gate Bypass
+
+Test:
+
+```text
+Given a project assessment writer emits typed current unanswered GapQuestion references as unknowns and Stage 7 records claim counterevidence
+When Stage 6 persists and §17 renders the snapshot
+Then scope_target equals the exact §14.9 project selector
+And gap_question_ids exactly equals the duplicate-free writer unknown set
+And Unknowns and Questions Worth Answering dereference those rows without adding declarative snapshot prose
+And every non-empty claim counterevidence list renders with its claim ID and visible status
+And neither channel improves §16.11 aggregation or independently guides Stage 10
+
+Given a missing, duplicate, superseded, or free-form unknown value
+Then Stage 6 fails atomically instead of storing it in metadata or another prose field
+
+Given at least one current unanswered Stage 4 gap exists
+When the assessment writer omits it or returns an empty unknowns array
+Then the complete-state check fails and no snapshot batch commits
+
+Given a current gap has answered = true under §14.7
+Then Stage 6 excludes it from the gap input and rejects it if the writer returns it as an unknown
+```
+
 ---

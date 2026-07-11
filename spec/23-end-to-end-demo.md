@@ -6,7 +6,7 @@
 # Exp2Res retrospective
 
 Period: June-July 2026
-Precision: month
+Precision: approximate range
 Confidence: medium
 Context: independent_project
 
@@ -15,7 +15,7 @@ The core idea became: honest model of self from owner-controlled evidence protec
 I emphasized truth over comfort, provenance, verifier gates, and no automatic semantic promotion from activity to skill.
 ```
 
-The retrospective capture operation persists this text as a `RawLog` and creates its linked `EvidenceItem(strength=manual_claim)` before fact extraction starts (§13.1).
+The retrospective capture operation persists this text as a `RawLog` with `occurred = {start: 2026-06-01, end: 2026-08-01, precision: approximate_range, confidence: medium}` and creates its linked `EvidenceItem(strength=manual_claim)` before fact extraction starts (§13.1). The demo contains no narrower temporal evidence, so both facts inherit that placement unchanged.
 
 ## §23.2 Extracted Facts
 
@@ -23,27 +23,49 @@ The retrospective capture operation persists this text as a `RawLog` and creates
 [
   {
     "id": "fact_001",
+    "created_at": "2026-07-11T10:00:00+02:00",
+    "superseded_at": null,
     "claim": "Redesigned Exp2Res from a resume-first tool into a self-assessment-first system.",
+    "claim_kind": "observed_fact",
+    "project": "Exp2Res",
+    "role": null,
+    "company": null,
     "context": "independent_project",
     "ownership_level": "designed",
+    "action": "redesigned",
+    "object": "Exp2Res product framing",
+    "outcome": "Self-assessment became the primary model and resume generation a secondary export.",
     "skills": ["system design", "product architecture"],
+    "technologies": [],
     "themes": ["self-assessment", "provenance", "grounded generation"],
-    "occurred": {"start": "2026-06-01T00:00:00+02:00", "precision": "month", "confidence": "medium"},
+    "occurred": {"start": "2026-06-01T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00", "precision": "approximate_range", "confidence": "medium"},
     "source_log_ids": ["log_001"],
     "evidence_item_ids": ["evidence_001"],
-    "confidence": "medium"
+    "confidence": "medium",
+    "metadata": {}
   },
   {
     "id": "fact_002",
+    "created_at": "2026-07-11T10:00:00+02:00",
+    "superseded_at": null,
     "claim": "Defined resume generation as a secondary export grounded in the internal evidence model.",
+    "claim_kind": "observed_fact",
+    "project": "Exp2Res",
+    "role": null,
+    "company": null,
     "context": "independent_project",
     "ownership_level": "designed",
+    "action": "defined",
+    "object": "resume generation boundary",
+    "outcome": "Resume output depends on the internal evidence and assessment layers.",
     "skills": ["system design", "verification"],
+    "technologies": [],
     "themes": ["resume export", "evidence mapping"],
-    "occurred": {"start": "2026-06-01T00:00:00+02:00", "precision": "month", "confidence": "medium"},
+    "occurred": {"start": "2026-06-01T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00", "precision": "approximate_range", "confidence": "medium"},
     "source_log_ids": ["log_001"],
     "evidence_item_ids": ["evidence_001"],
-    "confidence": "medium"
+    "confidence": "medium",
+    "metadata": {}
   }
 ]
 ```

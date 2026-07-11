@@ -123,6 +123,8 @@ exp2res assess verify --snapshot snapshot_001
 exp2res export assessment --snapshot snapshot_001
 ```
 
+`--scope project` requires a non-blank `--project` value. Stage 6 stores that exact parsed option value as `AssessmentSnapshot.scope_target`; the LLM receives it as structural context but cannot author or normalize it. The currently defined non-project forms store `scope_target = None`. No scope value list is duplicated here; `AssessmentScope` in §10 is canonical.
+
 `assess verify` is required before assessment export. `export assessment` rejects `unverified` and every other snapshot status outside the assessment-export allowlist in §16.11.
 
 V1 defines no claim-confirm, dispute, or override command. `assess verify` is the system verifier gate defined by §5.10, not an owner verdict stored on a regenerated claim.
@@ -139,6 +141,8 @@ exp2res export resume --branch agent-engineer
 ```
 
 `--snapshot` is a required stored-record selector for the exact assessment anchor governed by §18. It has no latest-snapshot default. A missing, superseded, `unverified`, or otherwise Stage-10-ineligible snapshot fails before a branch or bullet is inserted; the persisted branch records exactly the selected ID.
+
+`--jd` must resolve to a persisted typed `JobDescription`; Stage 10 copies that exact ID into the candidate `ResumeBranch.job_description_id` so verification and export can resolve every matched requirement. This producer rule does not change §11.12's optional field declaration; a Stage 10 candidate that omits or changes the selected ID fails atomically.
 
 `verify --branch` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values; it never applies a suggestion or invokes `resume generate`. Changed bullet wording requires a later explicit `resume generate` command and a replacement branch generation.
 
