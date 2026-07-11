@@ -8,7 +8,7 @@ All LLM calls must:
 2. Be validated with Pydantic.
 3. Fail closed on invalid output.
 4. Store processing run metadata.
-5. Never create or mutate raw logs.
+5. Never create, mutate, or delete raw logs; automation's raw-layer authority is append-only and capture/import services own those appends (§5.3).
 6. Preserve provenance links.
 
 If validation fails:
@@ -19,23 +19,28 @@ if retry fails, mark processing run failed
 do not insert partial invalid objects
 ```
 
+Structured-output validation includes §12 rule 10. If any typed reference is missing, wrong-type, superseded, or duplicated, no candidate business output is committed; §12.13 defines the failed `processing_runs` result and diagnostic metadata.
+
 ## §15.2 Fact Extractor Contract
 
 Input:
 
 ```json
 {
-  "raw_log": {
-    "id": "log_001",
-    "entry_type": "manual_retro",
-    "source_type": "user_memory",
-    "occurred": {
-      "start": "2026-06-01T00:00:00+02:00",
-      "precision": "month",
-      "confidence": "medium"
-    },
-    "raw_text": "..."
-  },
+  "raw_logs": [
+    {
+      "id": "log_001",
+      "entry_type": "manual_retro",
+      "source_type": "user_memory",
+      "occurred": {
+        "start": "2026-06-01T00:00:00+02:00",
+        "precision": "month",
+        "confidence": "medium"
+      },
+      "raw_text": "...",
+      "metadata": {}
+    }
+  ],
   "evidence_items": [
     {
       "id": "evidence_001",
@@ -61,7 +66,13 @@ Output:
       "ownership_level": "designed",
       "skills": ["provenance", "LLM workflows"],
       "themes": ["grounding", "traceability"],
+      "occurred": {
+        "start": "2026-06-01T00:00:00+02:00",
+        "precision": "month",
+        "confidence": "medium"
+      },
       "source_log_ids": ["log_001"],
+      "evidence_item_ids": ["evidence_001"],
       "confidence": "medium",
       "verification_status": "unverified"
     }
@@ -76,6 +87,14 @@ Output:
 ```
 
 Extractor must be conservative.
+
+`raw_logs` is one ordered correction lineage under §13.3. The root appears first and corrections follow by `recorded_at` then ID; the extractor produces one complete replacement fact set for the lineage rather than extracting mutually inconsistent generations independently.
+
+Each raw log passes its `metadata` through this contract unmodified. For `gap_answer` logs it carries the §14.7 question context (`question_text`, `question_reason`); the extractor must interpret the answer text against that question — a contextual answer such as a bare quantity is meaningless without it — while still attributing extracted facts to the answer log itself.
+
+Each fact output selects its supporting evidence explicitly through `evidence_item_ids`. Persistence verifies that those items exist and that `source_log_ids` is exactly their distinct raw-log set before writing one `direct` §12.4 row per item; all linked strengths participate in confidence calibration.
+
+Every fact output also carries `occurred`. For corrected facts it uses the latest selected correction's effective `OccurredAt` from §14.4; for uncorrected facts it preserves the root source placement. It must satisfy §11.1 and must not increase source precision under §16.7.
 
 For `ExperienceFact.claim_kind`, `observed_fact` means the linked sources directly state or demonstrate the narrow claim; `inferred_fact` means the claim is a conservative derivation whose source links and calibrated confidence remain explicit. Other `ClaimKind` values are invalid fact-extractor outputs.
 

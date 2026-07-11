@@ -33,8 +33,9 @@ Mitigation:
 ```text
 structured outputs
 Pydantic validation
+transactional typed-reference resolution before persistence
 verifier loop
-source requirements
+complete current provenance-chain requirements
 unsupported phrase detection
 ```
 
@@ -59,5 +60,18 @@ report observed patterns only
 include non-clinical language tests
 ```
 
----
+## §25.7 Risk: Deletion Leaves Private or Stale Derivations
 
+Mitigation:
+
+```text
+automation cannot delete or rewrite raw records
+owner deletion is never blocked by provenance links
+correction replaces one coherent current generation
+owner deletion globally purges every derived database generation and verifies managed-export removal
+residual managed paths are reported as deletion_incomplete, never as success
+rebuild uses only retained raw records and may be retried without restoring deleted data
+external source files and copied exports are reported as outside Exp2Res control
+```
+
+---

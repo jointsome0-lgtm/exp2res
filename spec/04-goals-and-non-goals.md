@@ -4,7 +4,7 @@
 
 Exp2Res should:
 
-1. Store raw experience evidence in an append-only local log.
+1. Store raw experience evidence in a local log that is append-only to automation and deletable by its owner.
 2. Support precise daily logs and imprecise retrospective reconstruction.
 3. Import Tick-like events, Atlas artifact references, GitHub commits, and local design documents; accept notes and memories through manual capture.
 4. Extract atomic experience facts from raw records.
@@ -53,4 +53,3 @@ LinkedIn content generator
 Exp2Res must not inflate or invent: the normative rules are the Verification Rules (§16, esp. §16.3 anti-flattery) together with §5.10 (no automatic semantic promotion); the invariants are restated in §27.
 
 ---
-

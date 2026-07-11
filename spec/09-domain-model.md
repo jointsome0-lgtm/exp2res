@@ -3,7 +3,7 @@
 ## §9.1 Ontology Overview
 
 ```text
-RawLog              = immutable user/imported source record
+RawLog              = source record immutable to automation and deletable by its owner
 EvidenceItem        = source-linked evidence unit persisted during capture/import
 ExperienceFact      = atomic statement about what happened
 SelfSignal          = pattern signal derived from facts/evidence
@@ -16,6 +16,8 @@ ResumeBranch        = job-targeted resume candidate branch
 ResumeBullet        = generated resume phrase with evidence links
 VerificationFinding = verifier output over claim/bullet/snapshot
 ```
+
+Facts, gaps, contradictions, signals, claims, snapshots, branches, and bullets form replaceable derived generations. `superseded_at IS NULL` means current; a set timestamp means historical and unavailable to new verification, generation, or export. Correction preserves superseded history. Owner deletion purges every derived generation as the privacy-first exception (§5.3, §13.13).
 
 ## §9.2 Confidence Layers
 

@@ -8,7 +8,7 @@ The new center is:
 
 ```text
 Raw lived experience
-  -> immutable evidence
+  -> owner-controlled evidence protected from system rewrites
   -> extracted experience facts
   -> self-signals
   -> honest self-assessment
@@ -31,4 +31,3 @@ self-assessment model -> job-relevant projection -> grounded resume
 ```
 
 ---
-

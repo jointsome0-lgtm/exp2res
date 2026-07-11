@@ -55,7 +55,9 @@ The command persists `RawLog(entry_type=manual_retro, source_type=user_memory)` 
 exp2res correction add --log-id log_001
 ```
 
-Stores `RawLog(entry_type=correction, source_type=manual_entry)` and a linked `EvidenceItem(strength=manual_claim)` as a new capture operation.
+`--log-id` must resolve to an existing raw record. The command requires self-contained correction text. Its temporal prompt starts from the target's `OccurredAt`; unless the owner explicitly replaces that placement, the correction copies it exactly, so every correction stores an effective temporal value without silently increasing precision.
+
+In one database transaction, the command stores `RawLog(entry_type=correction, source_type=manual_entry, corrects_log_id=log_001)` plus its linked `EvidenceItem(strength=manual_claim)` while invalidating the exact current layers listed in §13.13. It attempts to remove managed exports before invoking the selected-lineage recompute in §14.12. The target raw record is unchanged. If invalidation cleanup or recomputation fails, the correction remains stored, stale derivations stay unavailable, residual managed paths are reported, and the command exits unsuccessfully with `exp2res recompute --log-id log_001` as the retry.
 
 ## §14.5 Import Evidence
 
@@ -86,6 +88,8 @@ exp2res facts list
 exp2res facts show --fact-id fact_001
 ```
 
+Extraction follows the correction-lineage replacement and current-generation rules in §13.3. Re-running it never appends a second current fact generation; if facts change, higher current generations are invalidated and must be rebuilt with §14.12 or their owning generation commands.
+
 ## §14.7 Generate Gaps and Contradictions
 
 ```bash
@@ -97,6 +101,8 @@ exp2res contradictions show --contradiction-id contradiction_001
 ```
 
 `gaps answer` persists `RawLog(entry_type=gap_answer, source_type=manual_entry)` plus a linked `EvidenceItem(strength=manual_claim)`, then assigns the new raw-log ID to `GapQuestion.answer_log_id` and sets `GapQuestion.answered = true` in the same transaction; `answered` is true iff `answer_log_id` is set.
+
+Gap answers are self-contained at capture, like corrections: the command copies the answered question's text and `GapQuestion.reason` into the answer's `RawLog.metadata` (`question_text`, `question_reason`). The answer therefore remains interpretable evidence if its question row is later superseded by a Stage 4 regeneration or purged by the §13.13 reset. Question-to-answer links are never re-created after regeneration: an uncertainty a stored answer resolves simply no longer fires its gap trigger against the current facts, and a gap that regenerates anyway is genuinely still open. The copied question text becomes part of the owner's raw record — owner-deletable on its own, never system-edited.
 
 ## §14.8 Generate Self-Signals
 
@@ -124,11 +130,23 @@ exp2res verify --branch agent-engineer
 exp2res export resume --branch agent-engineer
 ```
 
-## §14.11 Inspect Raw Logs
+## §14.11 Manage Raw Logs
 
 ```bash
 exp2res logs list
+exp2res logs delete --log-id log_001
+exp2res logs delete --log-id log_001 --yes
 ```
 
----
+`logs delete` is the owner's destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13. It deletes only Exp2Res-managed database records and `out/`; it does not delete a supplied source file or export copied elsewhere. Raw database deletion remains committed if output removal or rebuilding fails; residual managed paths are reported as `deletion_incomplete`, never as success.
 
+## §14.12 Recompute Derived State
+
+```bash
+exp2res recompute
+exp2res recompute --log-id log_001
+```
+
+The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global higher-layer regeneration. This command orchestrates the existing Stage 3–7 triggers under §13.13; it is not a new pipeline stage and does not create a synthetic stage identifier.
+
+---

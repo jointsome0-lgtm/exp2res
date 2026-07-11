@@ -3,7 +3,7 @@
 **Version:** 0.2  
 **Status:** Draft / implementation-oriented  
 **Project:** Exp2Res — Experience to Self-Assessment to Resume  
-**Primary goal:** Build a local-first, provenance-heavy self-assessment system from immutable experience evidence.  
+**Primary goal:** Build a local-first, provenance-heavy self-assessment system from owner-controlled experience evidence that automation cannot rewrite.
 **Secondary goal:** Generate job-targeted resume exports from the same evidence model without unsupported claims.  
 **Primary user:** The developer using the system to understand himself honestly, orient through real experience, and optionally export a truthful resume for a specific vacancy.
 
@@ -20,27 +20,27 @@ Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file
 - §2 Product Framing — weak framings to avoid; strong framing
 - §3 Core Purpose — orientation, not impressiveness
 - §4 Goals and Non-Goals — product/cognitive goals; forbidden inflations
-- §5 Core Principles — truth over comfort; append-only; recorded_at ≠ occurred_at; no precision/ownership inflation; contradictions first-class; no automatic semantic promotion
+- §5 Core Principles — truth over comfort; raw records append-only to automation and deletable by their owner; correction/recompute lifecycle; recorded_at ≠ occurred_at; no precision/ownership inflation; contradictions first-class; no automatic semantic promotion
 - §6 System Boundaries — relations to Tick-like, Atlas, GitHub, resume export
 - §7 High-Level Architecture — pipeline diagram
 - §8 Runtime Architecture — Python, Typer, SQLite, Pydantic; CLI-first
-- §9 Domain Model — ontology, claim kinds, confidence layers, evidence strength
+- §9 Domain Model — ontology, actor-scoped raw immutability, current versus superseded derived generations, claim kinds, confidence layers, evidence strength
 - §10 Enumerations — canonical Literal aliases for temporal precision/confidence, claim confidence, entry/source, evidence strength, ordered ownership, context, claims, verification, model field categories, entity refs, gap triggers
-- §11 Pydantic Domain Models — OccurredAt, RawLog, EvidenceItem, ExperienceFact, SelfSignal, SelfClaim, AssessmentSnapshot, ResumeBullet, Contradiction, GapQuestion, JobDescription, ResumeBranch
-- §12 SQLite Schema — derivation rules from §11 models; normative DDL only for the storage artifacts fact_sources and processing_runs
-- §13 Pipeline Specification — 10 active stable-number stages: capture/evidence → extract → gaps/contradictions → signals → assess → assessment verify → JD → relevance-aware resume generation → resume verify → export
-- §14 CLI Specification — sole command-form authority; init, capture/import, extract, generate, inspect, verify, export
+- §11 Pydantic Domain Models — OccurredAt, correction-linked RawLog, EvidenceItem, evidence-backed facts, lifecycle-managed derived entities, JobDescription
+- §12 SQLite Schema — derivation/deletion rules, normalized fact provenance, and transactional validation of JSON references; normative DDL only for fact_sources and processing_runs
+- §13 Pipeline Specification — 10 active stable-number stages plus shared current-generation, correction, deletion, and recompute semantics
+- §14 CLI Specification — sole command-form authority; init, capture/import, owner deletion, extract/recompute, generate, inspect, verify, export
 - §15 LLM Contracts — structured I/O for extractor, signal extractor, assessment writer/verifier, resume writer/verifier
-- §16 Verification Rules — evidence, mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, diagnostic
+- §16 Verification Rules — current and referentially valid evidence, mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, diagnostic
 - §17 Self-Assessment Report Format — mirror report skeleton and tone
 - §18 Resume Export Rules — pipeline and export-fail conditions
 - §19 Integration Contracts — Tick-like / Atlas / GitHub import behavior
 - §20 Suggested Repository Structure — placement principles + normative skeleton
-- §21 Evals — 10 behavioral tests against overclaiming
+- §21 Evals — 15 behavioral tests against overclaiming, lifecycle drift, and provenance corruption
 - §22 Implementation Plan — Phase 0–5 with definitions of done
 - §23 End-to-End Demo — retro log → facts → signal → claim → verified bullet
-- §24 Acceptance Criteria — 14 V1 checks
-- §25 Risks and Mitigations — resume-drift, flattery, punitive tone, overclaim, integration pollution, diagnosis
+- §24 Acceptance Criteria — 18 V1 checks
+- §25 Risks and Mitigations — resume-drift, flattery, punitive tone, overclaim, provenance corruption, integration pollution, diagnosis, retained private/stale derivations
 - §26 README Positioning — intro and taglines
 - §27 Key Invariants — reference-only index of non-negotiables and canonical rule pointers
 - §28 Final Design Statement — three layers that must never collapse
