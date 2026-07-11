@@ -23,6 +23,8 @@ Status-bearing rows enter generation and export only through the §16.11 allowli
 V1 review is verifier gating of assessment and resume projections, not an owner verdict on regenerated derived rows (§5.10).
 Verification is one semantic pass; findings never invoke writers or mutate derived prose, and revisions require a replacement generation (§13.7, §13.11, §15.1).
 Voice rules bind Exp2Res-authored language, never owner or system-of-record text; structural validation applies to both (§16.12).
+The owner-controlled local workspace is the only canonical persistence domain; only a foreground user-initiated run may transmit exact §15.2–§15.9 typed inputs to the explicitly chosen provider, and no other LLM/network path exists (§29).
+Secrets, ignored or non-selected files, ambient command/environment/filesystem content, and instruction-like source text never expand a prompt or authorize behavior (§29.4–§29.5).
 ```
 
 Canonical verification invariants:

@@ -29,21 +29,22 @@ Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file
 - §11 Pydantic Domain Models — lifecycle-managed entities, typed assessment scope/unknown storage, exact resume provenance, and ParsedJD requirements with stable IDs
 - §12 SQLite Schema — derived typed JSON storage, normalized fact provenance, and transactional validation of snapshot, JD-requirement, and resume references; normative DDL only for fact_sources and processing_runs
 - §13 Pipeline Specification — 10 active stable-number stages with conservative occurred provenance, LLM-backed Stage 4/8 contracts, fact-mediated gap answers, typed assessment content, and snapshot-anchored resume generation
-- §14 CLI Specification — sole command-form authority; init, capture/import, owner deletion, extract/recompute, generation with explicit selectors and persisted project scope targets, verifier findings, export
+- §14 CLI Specification — sole command-form authority; init, capture/local-payload import, owner deletion, extract/recompute, generation with explicit selectors and persisted project scope targets, verifier findings, export
 - §15 LLM Contracts — full structured extractor/writer/verifier plus Stage 4 detector and Stage 8 parser I/O; schema retry is distinct from semantic results
 - §16 Verification Rules — evidence/status gates and generated-voice-scoped mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, and diagnostic rules
 - §17 Self-Assessment Report Format — status-labeled mirror with typed scope/unknown rendering, complete contradictions, counterevidence, and origin-aware prose
 - §18 Resume Export Rules — required assessment anchoring, typed JD requirement references, voice-scoped prose, status allowlists, and export-fail conditions
 - §19 Integration Contracts — Tick-like / Atlas / GitHub import behavior with structure-only validation of system-of-record prose
 - §20 Suggested Repository Structure — placement principles + normative skeleton
-- §21 Evals — 26 behavioral tests including temporal provenance, typed JD references, Stage 4/8 contract discipline, voice scoping, and typed assessment uncertainty
+- §21 Evals — 30 behavioral tests including temporal provenance, typed JD references, Stage 4/8 contract discipline, voice scoping, typed assessment uncertainty, generated employment/identity/mirror behavior, and instruction-like JD isolation
 - §22 Implementation Plan — Phase 0–5 with definitions of done
 - §23 End-to-End Demo — approximate-range retro log → complete typed facts → signal → claim → verified bullet
-- §24 Acceptance Criteria — 29 V1 checks
+- §24 Acceptance Criteria — 33 V1 checks
 - §25 Risks and Mitigations — resume-drift, flattery, punitive tone, overclaim, single-pass verifier gates, provenance corruption, verifier-gated integration projections, diagnosis, retained private/stale derivations
 - §26 README Positioning — intro and taglines
-- §27 Key Invariants — reference-only index including typed JD/unknown references, occurred provenance, and generated/source voice boundaries
+- §27 Key Invariants — reference-only index including typed JD/unknown references, occurred provenance, generated/source voice boundaries, and the local privacy/egress boundary
 - §28 Final Design Statement — three layers that must never collapse
+- §29 Security and Privacy — private local canonical state, exhaustive user-initiated LLM transit, provider trust, secret/ignore isolation, prompt-injection bounds, and residual risks
 - Decision Log — dated one-line decisions with rejected alternatives
 
 ---

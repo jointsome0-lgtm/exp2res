@@ -64,7 +64,7 @@ In one database transaction, the command stores `RawLog(entry_type=correction, s
 ```bash
 exp2res import tick-like path/to/export.jsonl
 exp2res import atlas path/to/atlas-export.json
-exp2res import github --repo owner/name
+exp2res import github path/to/github-commit.json
 exp2res import file docs/design.md --project Exp2Res
 ```
 
@@ -76,6 +76,8 @@ V1 mappings:
 | `atlas` | §19.2 artifact reference | `atlas_artifact_ref` | `imported_artifact` | `artifact_reference` |
 | `github` | §19.3 commit | `github_commit` | `imported_artifact` | `commit_or_pr` |
 | `file` | local design document | `design_doc` | `imported_artifact` | `design_doc` |
+
+Every importer consumes a user-supplied local payload or file. The `github` form reads one local §19.3 payload whose `repo` field identifies the repository; it does not fetch from GitHub or call any network. Remote acquisition is outside Exp2Res under §29.
 
 `import file` rejects other local-file categories in V1 rather than guessing an entry type. It stores the document content in `RawLog.raw_text`, records the supplied path in `RawLog.external_ref` and `EvidenceItem.path`, and does not create a managed source copy.
 
