@@ -9,7 +9,7 @@
   "occurred_at": "2026-07-03T10:00:00+02:00",
   "event_type": "daily_note",
   "project": "Exp2Res",
-  "text": "Worked on verifier loop design.",
+  "text": "Worked on verifier-gate design.",
   "metadata": {}
 }
 ```
@@ -19,7 +19,7 @@ Import behavior:
 ```text
 create raw_log(entry_type=tick_like_event, source_type=imported_event)
 create evidence_item(strength=imported_activity_event)
-do not create strong fact without extraction/review
+import creates no fact; Stage 3 may extract only narrow source-supported facts
 ```
 
 ## §19.2 Atlas Artifact Contract
@@ -28,7 +28,7 @@ do not create strong fact without extraction/review
 {
   "source": "atlas",
   "artifact_id": "artifact:exp2res-verifier-design",
-  "concepts": ["provenance", "verifier-loop", "grounded-generation"],
+  "concepts": ["provenance", "verifier-gate", "grounded-generation"],
   "summary": "Design note about verifying generated claims.",
   "path": "docs/verifier.md"
 }
@@ -49,7 +49,7 @@ extract facts only if artifact content/source supports them
   "source": "github",
   "repo": "owner/repo",
   "commit_sha": "abc123",
-  "message": "Add verifier loop schema",
+  "message": "Add verifier-gate schema",
   "files": ["exp2res/pipeline/verify_bullets.py"],
   "url": "..."
 }
@@ -64,4 +64,3 @@ extract narrow implementation facts
 ```
 
 ---
-

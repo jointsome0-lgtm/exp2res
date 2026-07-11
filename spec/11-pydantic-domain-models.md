@@ -6,7 +6,7 @@ Every persisted entity model below other than `RawLog` carries a system-assigned
 
 Every recomputable entity — `ExperienceFact`, `SelfSignal`, `SelfClaim`, `AssessmentSnapshot`, `ResumeBullet`, `Contradiction`, `GapQuestion`, and `ResumeBranch` — also carries `superseded_at: Optional[datetime] = None`. `None` means the row belongs to the one current generation for its scope; a timestamp makes it historical. A normal rerun or correction sets this field once instead of rewriting payload or provenance. New stages, verification, generation, and export use only current rows. `JobDescription` is retained context, not a recomputed interpretation. Owner deletion is the privacy exception: §13.13 purges current and historical recomputable rows rather than retaining superseded copies.
 
-An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule.
+An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule. `VerificationStatus` is carried only by `SelfClaim`, `AssessmentSnapshot`, and `ResumeBullet`; §16.11 defines its meanings and consumer gates.
 
 ## §11.1 OccurredAt
 
@@ -90,7 +90,6 @@ class ExperienceFact(BaseModel):
     evidence_item_ids: list[str] = Field(min_length=1)
 
     confidence: Confidence
-    verification_status: VerificationStatus
     metadata: dict = Field(default_factory=dict)
 ```
 
@@ -147,6 +146,10 @@ class AssessmentSnapshot(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
+`contradiction_ids` is the complete duplicate-free set of current Stage 4 contradictions at this snapshot's synthesis boundary. Stage 6 does not scope-filter that set. There is no contradiction-status filter; §12 rule 10 rejects duplicate, missing, or superseded IDs.
+
+Exactly one claim in `self_claim_ids` has `claim_kind = "narrative_summary"`, and its `claim` equals `AssessmentSnapshot.summary`. The summary is therefore ordinary verified claim prose, not an unverified snapshot-level escape hatch.
+
 ## §11.8 ResumeBullet
 
 ```python
@@ -167,6 +170,10 @@ class ResumeBullet(BaseModel):
     verifier_reason: Optional[str] = None
 ```
 
+Stage 6 initializes new `SelfClaim.verification_status` and `AssessmentSnapshot.verification_status` values; Stage 7 owns their verifier transitions. Stage 10 initializes `ResumeBullet.verification_status`; Stage 11 owns its verifier transition. The exact initial value and all consumer permissions are defined in §13.6–§13.11 and §16.11.
+
+`source_self_claim_ids` follows the exact-use contract in §13.10/§15.6: it is the duplicate-free exact set of self-claims passed to the writer for that bullet and is empty iff the bullet was generated from facts alone.
+
 ## §11.9 Contradiction
 
 ```python
@@ -182,10 +189,10 @@ class Contradiction(BaseModel):
     right_ref_type: EntityRefType
     right_ref_id: str
 
-    status: ContradictionStatus
-    resolution_note: Optional[str] = None
     metadata: dict = Field(default_factory=dict)
 ```
+
+A current `Contradiction` is an immutable conflict detection owned by Stage 4, not a workflow item with an in-place verdict. On regeneration, Stage 4 emits a new complete current contradiction set: a continuing conflict receives a replacement row, while a conflict absent from current evidence is omitted. Prior rows become superseded inspect-only history; owner deletion may purge them under §13.13.
 
 ## §11.10 GapQuestion
 
@@ -226,11 +233,13 @@ class ResumeBranch(BaseModel):
     id: str
     name: str
     job_description_id: Optional[str] = None
-    assessment_snapshot_id: Optional[str] = None
+    assessment_snapshot_id: str
 
     created_at: datetime
     superseded_at: Optional[datetime] = None
     metadata: dict = Field(default_factory=dict)
 ```
+
+`assessment_snapshot_id` is the required exact anchor selected under the canonical resume rule in §18. It has no implicit-latest or absent state.
 
 ---

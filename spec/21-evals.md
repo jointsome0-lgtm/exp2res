@@ -7,7 +7,8 @@ Test (enforces §16.3):
 ```text
 Given one weak raw log
 When assessment writer says "strong expertise"
-Then verifier rejects or rewrites the claim
+Then verifier returns a blocking verdict and an owner-visible suggested rewrite
+And does not mutate the claim prose
 ```
 
 ## §21.2 No Automatic Skill From Tick-like
@@ -18,7 +19,7 @@ Test:
 Given Tick-like event "worked on verifier"
 When facts are extracted
 Then system may create weak activity fact
-But must not create "verifier loop expert"
+But must not create "verification expert"
 ```
 
 ## §21.3 Atlas Artifact Does Not Equal Mastery
@@ -186,6 +187,93 @@ And confidence calibration considers both distinct strengths
 Given a Stage 6 candidate shares one current SelfClaim across snapshots or leaves a current SelfClaim unowned
 When the candidate transaction is validated
 Then the complete batch fails before commit
+```
+
+## §21.16 Verification Statuses Are Allowlisted
+
+Test:
+
+```text
+Given each VerificationStatus value on a current snapshot, self-claim, or bullet
+When the row is offered to Stage 10, resume export, or assessment export
+Then the result matches the applicable §16.11 allowlist
+And unverified always fails
+And a partially_supported or inferred_but_acceptable snapshot may anchor Stage 10
+And may remain the branch anchor through resume export when every used self-claim and bullet is supported
+But a self-claim or bullet with either status cannot become resume content
+And every assessment-exported non-supported state is visibly labeled
+
+Given snapshot summary prose has no exactly matching narrative_summary member claim
+When Stage 7 or assessment export validates the snapshot
+Then the operation fails instead of bypassing claim verification
+```
+
+## §21.17 Resume Generation Has One Exact Snapshot Anchor
+
+Test:
+
+```text
+Given more than one current assessment snapshot
+When Stage 10 is invoked without §14.10's required snapshot selector
+Then command parsing fails and no branch or bullet is persisted
+
+When one eligible snapshot is selected
+Then ResumeBranch.assessment_snapshot_id equals that exact ID
+And every bullet source_self_claim_ids is the exact set of supported member claims that guided that bullet
+And generation or export fails if the anchor is superseded or becomes status-ineligible
+
+Given the writer used a self-claim but omitted its ID from source_self_claim_ids
+Then Stage 10 fails before the branch or bullet becomes current
+```
+
+## §21.18 V1 Review Is Verifier Gating
+
+Test:
+
+```text
+Given imported or captured evidence produces facts, signals, assessment claims, and resume bullets
+When an assessment or resume projection is exported
+Then Stage 7 or Stage 11 has completed for the projection
+And every status-bearing input passes the applicable §16.11 consumer allowlist
+And no intermediate row is represented as owner-confirmed
+And no owner confirm/dispute state or producerless SourceType is required
+```
+
+## §21.19 Contradictions Are Immutable Generation Outputs
+
+Test:
+
+```text
+Given current inputs still conflict
+When Stage 4 regenerates
+Then the replacement current generation retains a contradiction for that conflict
+And the prior row may become superseded but cannot be marked resolved or dismissed
+And every current snapshot references and renders the complete current Stage 4 contradiction set
+
+Given corrected or additional current evidence removes the conflict
+When recomputation succeeds
+Then the prior contradiction is superseded history
+And the replacement current generation may omit it
+```
+
+## §21.20 Verification Does Not Imply Automatic Repair
+
+Test:
+
+```text
+Given a schema-valid non-passing assessment-claim or resume-bullet verdict
+When Stage 7 or Stage 11 completes
+Then the finding is presented to the owner and every consumer disallowed by that status remains gated
+And no writer is invoked
+And no derived prose is edited or dropped
+And no gap question is created
+
+Given the verifier first returns schema-invalid output
+When §15.1 retries validation once
+Then that retry cannot consume a valid negative verdict or become semantic repair
+
+When the owner later requests revised wording
+Then it appears only in an explicit Stage 6 or Stage 10 replacement generation
 ```
 
 ---

@@ -44,7 +44,6 @@ SourceType = Literal[
     "user_memory",
     "imported_artifact",
     "imported_event",
-    "user_confirmed",
 ]
 
 EvidenceStrength = Literal[
@@ -152,12 +151,6 @@ TargetRoleRelevance = Literal[
     "high",
 ]
 
-ContradictionStatus = Literal[
-    "open",
-    "resolved",
-    "dismissed",
-]
-
 GapPriority = Literal[
     "low",
     "medium",
@@ -186,5 +179,7 @@ GapTrigger = Literal[
     "unclear_artifact_status",
 ]
 ```
+
+`VerificationStatus` members are canonical here; their operational meanings, aggregation, and consumer allowlists live only in §16.11.
 
 ---

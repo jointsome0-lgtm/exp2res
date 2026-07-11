@@ -2,6 +2,8 @@
 
 Resume export remains useful, but secondary.
 
+The canonical snapshot-anchor rule is: every `ResumeBranch` is created from exactly one current assessment snapshot named by §14.10's required `--snapshot` selector, persists that exact ID in its required `assessment_snapshot_id`, and has no implicit-latest or absent-anchor state. The selected snapshot must be eligible to anchor Stage 10 under §16.11 before any branch or bullet is inserted. Facts may still supply every concrete bullet, but the snapshot fixes the internal assessment generation context; its prose can guide generation only through a `supported` member claim listed on the bullet.
+
 Pipeline:
 
 ```text
@@ -33,11 +35,15 @@ Export must fail if:
 ```text
 bullet has no source_fact_ids
 bullet has no source_log_ids
+branch has no exact assessment snapshot anchor selected under §14.10
 snapshot, branch, bullet, fact, or self-claim is superseded
+snapshot status is outside the §16.11 Stage 10 anchor allowlist
 any required provenance ID does not resolve to a current retained entity
+bullet references a branch other than the exported branch
+bullet source_self_claim_ids is not the exact set of supported claims used by the writer, or contains a claim outside the branch snapshot
 bullet source_log_ids differs from the raw logs reached through source_fact_ids
 no source fact reaches a direct fact_sources row, EvidenceItem, and retained RawLog
-bullet status is unsupported/rejected
+bullet status is outside the §16.11 resume-export allowlist
 bullet contains unsupported ownership, metric, production, or employment framing
 ```
 

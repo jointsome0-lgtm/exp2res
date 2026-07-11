@@ -15,7 +15,7 @@ unknown
 unclear
 weakly supported
 contradicted
-requires review
+needs clarification
 hypothesis
 ```
 
@@ -100,6 +100,8 @@ If evidence conflicts, the system stores the conflict.
 
 It should not smooth contradictions away.
 
+In V1 a contradiction is an immutable Stage 4 detection, not a user-resolvable workflow row. Outside the owner-deletion privacy reset, it remains in the complete current generation while current evidence conflicts; evidence-driven regeneration may omit it only after that conflict no longer exists, while the prior row becomes superseded history.
+
 Example:
 
 ```text
@@ -124,6 +126,6 @@ Atlas artifact reference ≠ Exp2Res skill claim
 Tick-like event ≠ self-assessment conclusion
 ```
 
-Every promotion must be explicit, reviewed, and traceable.
+Every promotion must be explicit and traceable. In V1, review means verification at the externally consumable projections: Stage 7 verifies assessment claims and derives the snapshot gate before assessment export or resume generation, and Stage 11 verifies resume bullets before resume export. Intermediate facts and signals do not carry an owner confirmation, dispute, or override state, and V1 has no owner-verdict workflow on regenerated claims or bullets.
 
 ---

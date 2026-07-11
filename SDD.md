@@ -16,31 +16,31 @@ Section numbers are stable: issues and the Decision Log cite them as `§13` / `�
 Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file name starts with the § number); the Decision Log lives in `DECISION-LOG.md`. Point reads: open the § file. Full pass: read `spec/` files in index order.
 
 - §0 Change From v0.1 — recentering: mirror first, resume is a secondary export
-- §1 Executive Summary — evidence → facts → signals → assessment → optional exports
+- §1 Executive Summary — evidence → facts → signals → assessment → single-pass verifier gates → optional exports
 - §2 Product Framing — weak framings to avoid; strong framing
 - §3 Core Purpose — orientation, not impressiveness
 - §4 Goals and Non-Goals — product/cognitive goals; forbidden inflations
-- §5 Core Principles — truth over comfort; raw records append-only to automation and deletable by their owner; correction/recompute lifecycle; recorded_at ≠ occurred_at; no precision/ownership inflation; contradictions first-class; no automatic semantic promotion
+- §5 Core Principles — truth over comfort; raw records append-only to automation and deletable by their owner; correction/recompute lifecycle; recorded_at ≠ occurred_at; no precision/ownership inflation; contradictions first-class; explicit promotions and verifier-gated external projections
 - §6 System Boundaries — relations to Tick-like, Atlas, GitHub, resume export
 - §7 High-Level Architecture — pipeline diagram
 - §8 Runtime Architecture — Python, Typer, SQLite, Pydantic; CLI-first
-- §9 Domain Model — ontology, actor-scoped raw immutability, current versus superseded derived generations, claim kinds, confidence layers, evidence strength
+- §9 Domain Model — ontology, actor-scoped raw immutability, current versus superseded derived generations, snapshot-anchored resume branches, claim kinds, confidence layers, evidence strength
 - §10 Enumerations — canonical Literal aliases for temporal precision/confidence, claim confidence, entry/source, evidence strength, ordered ownership, context, claims, verification, model field categories, entity refs, gap triggers
-- §11 Pydantic Domain Models — OccurredAt, correction-linked RawLog, EvidenceItem, evidence-backed facts, lifecycle-managed derived entities, JobDescription
-- §12 SQLite Schema — derivation/deletion rules, normalized fact provenance, and transactional validation of JSON references; normative DDL only for fact_sources and processing_runs
-- §13 Pipeline Specification — 10 active stable-number stages plus shared current-generation, correction, deletion, and recompute semantics
-- §14 CLI Specification — sole command-form authority; init, capture/import, owner deletion, extract/recompute, generate, inspect, verify, export
-- §15 LLM Contracts — structured I/O for extractor, signal extractor, assessment writer/verifier, resume writer/verifier
-- §16 Verification Rules — current and referentially valid evidence, mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, diagnostic
-- §17 Self-Assessment Report Format — mirror report skeleton and tone
-- §18 Resume Export Rules — pipeline and export-fail conditions
+- §11 Pydantic Domain Models — OccurredAt, correction-linked RawLog, EvidenceItem, evidence-backed facts, claim-backed snapshot summaries, immutable derived contradiction detections, lifecycle-managed derived entities, required resume snapshot anchors, JobDescription
+- §12 SQLite Schema — derivation/deletion rules, normalized fact provenance, and transactional validation of JSON references, snapshot-summary identity, and resume snapshot membership; normative DDL only for fact_sources and processing_runs
+- §13 Pipeline Specification — 10 active stable-number stages plus complete contradiction generations, single-pass verification-status gates, snapshot-anchored resume generation, and shared current-generation, correction, deletion, and recompute semantics
+- §14 CLI Specification — sole command-form authority; init, capture/import, owner deletion, extract/recompute, generate with explicit stored-record selectors, inspect immutable contradictions, present verifier findings, export
+- §15 LLM Contracts — structured I/O for extractor, signal extractor, claim-backed assessment summaries, assessment/resume writers and verifiers; schema retry is distinct from semantic verdict handling
+- §16 Verification Rules — current and referentially valid evidence, verification-status consumer allowlists, mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, diagnostic
+- §17 Self-Assessment Report Format — mirror report skeleton, status-labeled claim projection, complete current contradictions, and tone
+- §18 Resume Export Rules — required assessment-snapshot anchoring, status allowlists, pipeline, and export-fail conditions
 - §19 Integration Contracts — Tick-like / Atlas / GitHub import behavior
 - §20 Suggested Repository Structure — placement principles + normative skeleton
-- §21 Evals — 15 behavioral tests against overclaiming, lifecycle drift, and provenance corruption
+- §21 Evals — 20 behavioral tests against overclaiming, lifecycle drift, provenance corruption, ambiguous snapshot anchoring, status-gate bypass, false owner-review state, contradiction-state loss, and implicit verifier repair
 - §22 Implementation Plan — Phase 0–5 with definitions of done
 - §23 End-to-End Demo — retro log → facts → signal → claim → verified bullet
-- §24 Acceptance Criteria — 18 V1 checks
-- §25 Risks and Mitigations — resume-drift, flattery, punitive tone, overclaim, provenance corruption, integration pollution, diagnosis, retained private/stale derivations
+- §24 Acceptance Criteria — 23 V1 checks
+- §25 Risks and Mitigations — resume-drift, flattery, punitive tone, overclaim, single-pass verifier gates, provenance corruption, verifier-gated integration projections, diagnosis, retained private/stale derivations
 - §26 README Positioning — intro and taglines
 - §27 Key Invariants — reference-only index of non-negotiables and canonical rule pointers
 - §28 Final Design Statement — three layers that must never collapse
