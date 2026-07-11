@@ -37,7 +37,8 @@ Input:
         "precision": "month",
         "confidence": "medium"
       },
-      "raw_text": "..."
+      "raw_text": "...",
+      "metadata": {}
     }
   ],
   "evidence_items": [
@@ -88,6 +89,8 @@ Output:
 Extractor must be conservative.
 
 `raw_logs` is one ordered correction lineage under §13.3. The root appears first and corrections follow by `recorded_at` then ID; the extractor produces one complete replacement fact set for the lineage rather than extracting mutually inconsistent generations independently.
+
+Each raw log passes its `metadata` through this contract unmodified. For `gap_answer` logs it carries the §14.7 question context (`question_text`, `question_reason`); the extractor must interpret the answer text against that question — a contextual answer such as a bare quantity is meaningless without it — while still attributing extracted facts to the answer log itself.
 
 Each fact output selects its supporting evidence explicitly through `evidence_item_ids`. Persistence verifies that those items exist and that `source_log_ids` is exactly their distinct raw-log set before writing one `direct` §12.4 row per item; all linked strengths participate in confidence calibration.
 
