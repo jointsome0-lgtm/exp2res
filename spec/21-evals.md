@@ -369,6 +369,11 @@ And malformed keys, types, enums, or references still fail on either side of the
 Given an LLM output copies source wording without a typed source reference and exact substring validation
 Then that output remains generated voice
 But the same wording in a typed, exact source segment adjacent to generated prose is structure-only scanned without exempting the generated segment
+
+Given a job description raw_text demands "expert-level production operations"
+When Stage 8 parses it and jd add persists the typed ParsedJD
+Then the faithful requirement text persists unrewritten and jd add succeeds
+And a generated bullet, claim, or report line asserting the owner meets that demand without evidence is still blocked
 ```
 
 ## §21.26 Assessment Unknowns and Counterevidence Surface Without a Gate Bypass
