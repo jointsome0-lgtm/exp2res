@@ -43,11 +43,13 @@ Convert raw logs and imported artifacts into referenceable evidence units.
 Example:
 
 ```text
-GitHub commit -> EvidenceItem(code_artifact)
-Tick-like daily note -> EvidenceItem(imported_activity_event)
-Atlas artifact ref -> EvidenceItem(artifact_reference)
-Manual retro memory -> EvidenceItem(manual_claim)
+GitHub commit -> EvidenceItem(strength=commit_or_pr)
+Tick-like daily note -> EvidenceItem(strength=imported_activity_event)
+Atlas artifact ref -> EvidenceItem(strength=artifact_reference)
+Manual retro memory -> EvidenceItem(strength=manual_claim)
 ```
+
+`commit_or_pr` is used for a VCS commit or pull-request reference; `code_artifact` is reserved for source or build evidence not represented by a commit or pull request.
 
 Normalization does not create self-claims.
 
@@ -75,12 +77,12 @@ fact_sources
 Rules:
 
 1. Extract atomic claims.
-2. Preserve temporal precision.
-3. Preserve ownership level.
+2. Preserve temporal precision under §16.7.
+3. Preserve ownership level under §16.4.
 4. Do not infer metrics unless evidence explicitly contains metrics.
 5. Do not infer production use unless explicitly present.
 6. Every fact must link to at least one raw log.
-7. Fact confidence must reflect source strength.
+7. `ExperienceFact.confidence` must be calibrated from linked `EvidenceItem.strength` values; confidence and evidence strength remain separate axes (§9.3).
 
 Bad fact:
 
@@ -204,7 +206,7 @@ exp2res assess verify --snapshot <id>
 Verifier checks:
 
 1. Every self-claim has sources.
-2. Confidence matches evidence strength.
+2. Each `SelfClaim.confidence` is justified by the strength and scope of its supporting facts' linked evidence; confidence and evidence strength remain separate axes (§9.3).
 3. Counterevidence is not hidden.
 4. Identity claims are not over-broad.
 5. Self-assessment does not become motivational fiction.
@@ -262,8 +264,8 @@ Hard constraints:
 2. Every bullet must include source_fact_ids.
 3. Every bullet must include source_log_ids.
 4. Do not invent metrics.
-5. Do not upgrade ownership.
-6. Do not upgrade temporal precision.
+5. Do not upgrade ownership under §16.4.
+6. Do not upgrade temporal precision under §16.7.
 7. Do not turn learning into employment.
 8. Do not turn independent projects into company roles.
 9. Do not use unsupported production/scale claims.

@@ -30,6 +30,7 @@ Input:
     "entry_type": "manual_retro",
     "source_type": "user_memory",
     "occurred": {
+      "start": "2026-06-01T00:00:00+02:00",
       "precision": "month",
       "confidence": "medium"
     },
@@ -191,4 +192,3 @@ section placement
 ```
 
 ---
-

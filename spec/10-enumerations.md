@@ -6,6 +6,10 @@ Other sections must reference the alias name and the field that carries it; they
 
 No generator, linter, generated documentation, separate machine-readable registry, or runtime schema tooling is required for MVP. If introduced after MVP, it must derive from §10 rather than creating a second enum source.
 
+`TemporalConfidence` types only confidence in an `OccurredAt` placement; `Confidence` types general confidence in derived facts, signals, and claims. The aliases intentionally remain separate even while their member sets are identical.
+
+`OwnershipLevel` is a normative total order. Members in its assignment are listed from weakest to strongest; `unknown` is the weakest value.
+
 ```python
 from typing import Literal
 
@@ -21,15 +25,8 @@ TemporalPrecision = Literal[
     "unknown",
 ]
 
-OccurredAtKind = Literal[
-    "exact_datetime",
-    "exact_day",
-    "date_range",
-    "approximate_range",
-    "unknown",
-]
-
 TemporalConfidence = Literal["low", "medium", "high", "unknown"]
+Confidence = Literal["low", "medium", "high", "unknown"]
 
 EntryType = Literal[
     "manual_daily",
@@ -57,7 +54,21 @@ SourceType = Literal[
     "user_confirmed",
 ]
 
+EvidenceStrength = Literal[
+    "weak_note",
+    "manual_claim",
+    "imported_activity_event",
+    "artifact_reference",
+    "code_artifact",
+    "commit_or_pr",
+    "test_or_demo",
+    "design_doc",
+    "external_feedback",
+    "verified_outcome",
+]
+
 OwnershipLevel = Literal[
+    "unknown",
     "observed",
     "studied",
     "participated",
@@ -68,7 +79,6 @@ OwnershipLevel = Literal[
     "designed",
     "owned",
     "led",
-    "unknown",
 ]
 
 ActivityContext = Literal[

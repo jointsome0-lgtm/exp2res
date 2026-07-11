@@ -30,35 +30,14 @@ narrative_summary
 export_claim
 ```
 
-And confidence:
-
-```text
-low
-medium
-high
-unknown
-```
+General claim confidence uses `Confidence` (§10), carried by `ExperienceFact.confidence` (§11.4), `SelfSignal.confidence` (§11.5), and `SelfClaim.confidence` (§11.6). Temporal placement confidence is a separate axis: only `OccurredAt.confidence` uses `TemporalConfidence` (§10–§11.1).
 
 ## §9.3 Evidence Strength
 
-Evidence strength values:
-
-```text
-weak_note
-manual_claim
-imported_activity_event
-artifact_reference
-code_artifact
-commit_or_pr
-test_or_demo
-design_doc
-external_feedback
-verified_outcome
-```
+Evidence strength values are the `EvidenceStrength` values (§10), carried by `EvidenceItem.strength` (§11.3).
 
 Evidence strength is not the same as confidence.
 
 A strong artifact may support a narrow fact, but not a broad identity claim.
 
 ---
-

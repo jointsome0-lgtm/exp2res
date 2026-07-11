@@ -26,7 +26,7 @@ visionary
 
 ## §16.4 Ownership Rule
 
-A claim cannot use stronger ownership language than source evidence supports.
+A verifier must normalize every ownership-bearing source and candidate phrase to `OwnershipLevel` and compare them using the normative order in §10. A candidate ownership level must not rank above the strongest level explicitly supported by its linked evidence. If no linked source establishes ownership, the supported level is `unknown`, which authorizes only `unknown`; an ownership-bearing phrase that cannot be normalized fails closed. General claim `confidence` does not change the supported ownership rank.
 
 ## §16.5 Metric Rule
 
@@ -38,7 +38,13 @@ Do not claim impact/production/customer/scale/revenue/reliability unless evidenc
 
 ## §16.7 Temporal Rule
 
-Do not upgrade time precision.
+A verifier must normalize every source and candidate time expression to `OccurredAt` before comparing precision. A candidate with no temporal expression does not introduce a precision claim.
+
+For non-range values, the normative order from weakest to strongest is `unknown < year < quarter < month < week < exact_day < exact_datetime`. For comparison with ranges, normalize these values to maximum uncertainty widths: `unknown` is unbounded, `year` is 366 days, `quarter` is 92 days, `month` is 31 days, `week` is 7 days, `exact_day` is 1 day, and `exact_datetime` is zero.
+
+For `date_range` and `approximate_range`, width is `end - start`; missing or inverted bounds are invalid and verification fails closed. A narrower width is more precise. At equal width, `approximate_range` is weaker than `date_range` or a non-range value; changing from approximate to exact bounds at the same width is therefore an upgrade.
+
+A candidate upgrades temporal precision when its normalized width is narrower than the strongest precision supported by its linked evidence, or when it strengthens exactness at equal width. The verifier must reject that candidate unless additional linked evidence supports the stronger precision.
 
 ## §16.8 Employment Rule
 
@@ -81,4 +87,3 @@ The user has depression / ADHD / anxiety disorder.
 ```
 
 ---
-

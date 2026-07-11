@@ -25,7 +25,7 @@ Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file
 - §7 High-Level Architecture — pipeline diagram
 - §8 Runtime Architecture — Python, Typer, SQLite, Pydantic; CLI-first
 - §9 Domain Model — ontology, claim kinds, confidence layers, evidence strength
-- §10 Enumerations — canonical Literal aliases for temporal, entry/source, ownership, context, claims, verification, model field categories, entity refs, gap triggers
+- §10 Enumerations — canonical Literal aliases for temporal precision/confidence, claim confidence, entry/source, evidence strength, ordered ownership, context, claims, verification, model field categories, entity refs, gap triggers
 - §11 Pydantic Domain Models — OccurredAt, RawLog, EvidenceItem, ExperienceFact, SelfSignal, SelfClaim, AssessmentSnapshot, ResumeBullet, Contradiction, GapQuestion, JobDescription, ResumeBranch
 - §12 SQLite Schema — derivation rules from §11 models; normative DDL only for the storage artifacts fact_sources and processing_runs
 - §13 Pipeline Specification — 12 stages: capture → normalize → extract → gaps → signals → assess → verify → jd → match → generate → verify → export

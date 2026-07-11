@@ -2,6 +2,8 @@
 
 §11 defines the persisted domain entities: every §9.1 ontology entity except VerificationFinding, which is not persisted as its own entity — its transport shape is fixed by the verifier contracts (§15.5, §15.7) and its results are stored denormalized on the verified targets (verification_status fields, SelfClaim.counterevidence, ResumeBullet.unsupported_phrases / verifier_reason). Storage-only artifacts (join tables, telemetry) have no models here; their DDL is normative in §12.
 
+Every persisted entity model below other than `RawLog` carries a system-assigned `created_at: datetime`, set when the entity is first persisted. `RawLog.recorded_at` retains its §5.4 meaning as the time the raw record entered Exp2Res. `processing_runs` records execution telemetry, not entity creation provenance.
+
 ## §11.1 OccurredAt
 
 ```python
@@ -10,12 +12,13 @@ from pydantic import BaseModel
 from typing import Optional
 
 class OccurredAt(BaseModel):
-    kind: OccurredAtKind
     start: Optional[datetime] = None
     end: Optional[datetime] = None
     precision: TemporalPrecision
     confidence: TemporalConfidence
 ```
+
+`OccurredAt.precision` is the sole discriminator for temporal shape; there is no separate `kind`. For `exact_datetime`, `exact_day`, `week`, `month`, `quarter`, and `year`, `start` is required and `end` must be `None`. For `date_range` and `approximate_range`, both bounds are required and `end` must not precede `start`. For `unknown`, both bounds must be `None`. `OccurredAt.confidence` expresses confidence only in temporal placement; it is independent of general claim `Confidence`.
 
 ## §11.2 RawLog
 
@@ -41,13 +44,13 @@ class RawLog(BaseModel):
 ```python
 class EvidenceItem(BaseModel):
     id: str
+    created_at: datetime
     raw_log_id: str
-    evidence_type: str
     title: Optional[str] = None
     summary: str
     uri: Optional[str] = None
     path: Optional[str] = None
-    strength: str
+    strength: EvidenceStrength
     metadata: dict = Field(default_factory=dict)
 ```
 
@@ -56,6 +59,7 @@ class EvidenceItem(BaseModel):
 ```python
 class ExperienceFact(BaseModel):
     id: str
+    created_at: datetime
     claim: str
     claim_kind: ClaimKind = "observed_fact"
 
@@ -77,7 +81,7 @@ class ExperienceFact(BaseModel):
     source_log_ids: list[str]
     evidence_item_ids: list[str] = Field(default_factory=list)
 
-    confidence: TemporalConfidence
+    confidence: Confidence
     verification_status: VerificationStatus
     metadata: dict = Field(default_factory=dict)
 ```
@@ -87,11 +91,12 @@ class ExperienceFact(BaseModel):
 ```python
 class SelfSignal(BaseModel):
     id: str
+    created_at: datetime
     signal_type: SignalType
     statement: str
     supporting_fact_ids: list[str]
     counter_fact_ids: list[str] = Field(default_factory=list)
-    confidence: TemporalConfidence
+    confidence: Confidence
     metadata: dict = Field(default_factory=dict)
 ```
 
@@ -100,12 +105,13 @@ class SelfSignal(BaseModel):
 ```python
 class SelfClaim(BaseModel):
     id: str
+    created_at: datetime
     claim: str
     claim_kind: ClaimKind
     dimension: SelfClaimDimension
     source_signal_ids: list[str]
     source_fact_ids: list[str]
-    confidence: TemporalConfidence
+    confidence: Confidence
     verification_status: VerificationStatus
     counterevidence: list[str] = Field(default_factory=list)
     uncertainty: Optional[str] = None
@@ -133,6 +139,7 @@ class AssessmentSnapshot(BaseModel):
 ```python
 class ResumeBullet(BaseModel):
     id: str
+    created_at: datetime
     branch_id: str
     text: str
     target_section: ResumeTargetSection
