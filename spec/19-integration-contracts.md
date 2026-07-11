@@ -17,7 +17,7 @@
 Import behavior:
 
 ```text
-create raw_log(entry_type=tick_like_event)
+create raw_log(entry_type=tick_like_event, source_type=imported_event)
 create evidence_item(strength=imported_activity_event)
 do not create strong fact without extraction/review
 ```
@@ -37,7 +37,7 @@ do not create strong fact without extraction/review
 Import behavior:
 
 ```text
-create raw_log(entry_type=atlas_artifact_ref)
+create raw_log(entry_type=atlas_artifact_ref, source_type=imported_artifact)
 create evidence_item(strength=artifact_reference)
 extract facts only if artifact content/source supports them
 ```
@@ -58,7 +58,7 @@ extract facts only if artifact content/source supports them
 Import behavior:
 
 ```text
-create raw_log(entry_type=github_commit)
+create raw_log(entry_type=github_commit, source_type=imported_artifact)
 create evidence_item(strength=commit_or_pr)
 extract narrow implementation facts
 ```

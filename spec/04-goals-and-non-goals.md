@@ -6,7 +6,7 @@ Exp2Res should:
 
 1. Store raw experience evidence in an append-only local log.
 2. Support precise daily logs and imprecise retrospective reconstruction.
-3. Import artifacts from local files, GitHub, Tick-like, Atlas, notes, and manual entries.
+3. Import Tick-like events, Atlas artifact references, GitHub commits, and local design documents; accept notes and memories through manual capture.
 4. Extract atomic experience facts from raw records.
 5. Track provenance from every fact back to raw evidence.
 6. Preserve temporal precision and uncertainty.

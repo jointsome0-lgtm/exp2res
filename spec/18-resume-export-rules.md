@@ -7,9 +7,10 @@ Pipeline:
 ```text
 assessment snapshot
   + job description
-  + selected facts
-  -> matched facts
-  -> resume bullets
+  + facts and supported self-claims
+  -> relevance-aware resume generation
+     (selection and matching occur inside generation;
+      relevance is persisted on each resume bullet)
   -> verifier
   -> export
 ```

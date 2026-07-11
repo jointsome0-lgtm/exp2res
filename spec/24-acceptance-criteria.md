@@ -2,8 +2,8 @@
 
 V1 is acceptable when:
 
-1. User can add daily and retrospective raw logs.
-2. User can import at least one external evidence source.
+1. User can add daily and retrospective raw logs, each with a linked `manual_claim` evidence item created in the same operation.
+2. User can import at least one external source as linked raw-log and evidence-item records.
 3. Raw logs are append-only.
 4. Corrections are stored as new events.
 5. Experience facts require source logs.

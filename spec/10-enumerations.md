@@ -35,14 +35,8 @@ EntryType = Literal[
     "correction",
     "tick_like_event",
     "atlas_artifact_ref",
-    "atlas_trail_ref",
     "github_commit",
-    "github_pr",
-    "github_issue",
-    "note_import",
     "design_doc",
-    "competition_entry",
-    "learning_entry",
 ]
 
 SourceType = Literal[
@@ -50,7 +44,6 @@ SourceType = Literal[
     "user_memory",
     "imported_artifact",
     "imported_event",
-    "llm_inferred",
     "user_confirmed",
 ]
 
@@ -100,7 +93,6 @@ ClaimKind = Literal[
     "pattern_signal",
     "hypothesis",
     "narrative_summary",
-    "export_claim",
 ]
 
 VerificationStatus = Literal[

@@ -4,7 +4,7 @@ Placement principles:
 
 ```text
 1. One package per architectural layer under exp2res/; the § that owns a
-   flow owns its module names: pipeline/ holds one module per §13 stage,
+   flow owns its module names: pipeline/ holds one module per active §13 stage,
    integrations/ one per §19 source, exports/ one per §13.12 output.
 2. tests/ holds one behavioral test per §21 eval and one per §27
    invariant.
@@ -14,9 +14,9 @@ Placement principles:
 4. File names inside the packages, tests/, and examples/ are content,
    not structure: the spec does not predict them.
 5. The spec lives at the repo root (SDD.md map + spec/ + DECISION-LOG.md);
-   no docs/ mirror restating it. The runtime workspace (.exp2res/, logs/,
-   evidence/, out/) is created by exp2res init and owned by §14.1 and
-   §13.12; it is not part of the source tree.
+   no docs/ mirror restating it. The runtime workspace (`.exp2res/` and
+   `out/`) is initialized under §14.1 and owned by §14.1 and §13.12; it is
+   not part of the source tree.
 ```
 
 Normative skeleton — the shape §20 commits to; deeper paths are content:
