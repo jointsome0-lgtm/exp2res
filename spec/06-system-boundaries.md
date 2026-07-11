@@ -15,7 +15,7 @@ manual notes
 exported JSONL
 ```
 
-Exp2Res can import Tick-like data as raw logs or weak signals.
+The V1 importer accepts Tick-like JSONL events under §19.1 and persists each as a `RawLog` plus linked `EvidenceItem`. Tick-like imports do not create `SelfSignal` records directly.
 
 But Tick-like events do not automatically become strong experience facts.
 
@@ -48,15 +48,15 @@ knowledge-state context
 frontier context
 ```
 
-Exp2Res can use Atlas to understand the conceptual context of experience.
+Atlas can contain all of the data above, but the V1 Exp2Res importer accepts only artifact-reference payloads under §19.2. Concepts, directions, materials, trail segments, knowledge-state context, and frontier context remain outside the V1 import surface until they have explicit contracts and entry types.
 
 But Atlas does not decide career/self claims.
 
 Example:
 
 ```text
-Atlas trail:
-  REST API -> Idempotency
+Atlas artifact reference:
+  "Design note about an idempotent REST API"
 
 Exp2Res possible use:
   context for an experience fact
@@ -80,6 +80,8 @@ source code
 ```
 
 But code existence does not automatically imply impact, production use, leadership, or mastery.
+
+The V1 GitHub importer accepts commit payloads under §19.3. Pull requests, issues, README files, design documents, tests, and source files may inform future integrations, but are not GitHub import payloads in V1; local design documents use §14.5 instead.
 
 ## §6.4 Relation to Resume Export
 

@@ -15,6 +15,8 @@ The core idea became: honest model of self from immutable evidence, with resume 
 I emphasized truth over comfort, provenance, verifier gates, and no automatic semantic promotion from activity to skill.
 ```
 
+The retrospective capture operation persists this text as a `RawLog` and creates its linked `EvidenceItem(strength=manual_claim)` before fact extraction starts (§13.1).
+
 ## §23.2 Extracted Facts
 
 ```json

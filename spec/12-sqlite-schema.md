@@ -47,4 +47,6 @@ CREATE TABLE IF NOT EXISTS processing_runs (
 );
 ```
 
+`stage` records the stable subsection identifier of an active §13 stage, such as `13.3`. Retired identifiers may remain in historical rows, but no new processing run may use them. Processing telemetry alone does not make an operation a pipeline stage.
+
 ---

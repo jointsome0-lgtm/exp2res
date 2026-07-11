@@ -118,7 +118,7 @@ interest ≠ competence
 plan ≠ experience
 aspiration ≠ evidence
 experience fact ≠ resume claim
-Atlas trail ≠ Exp2Res skill claim
+Atlas artifact reference ≠ Exp2Res skill claim
 Tick-like event ≠ self-assessment conclusion
 ```
 

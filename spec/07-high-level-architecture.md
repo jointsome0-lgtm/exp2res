@@ -7,12 +7,14 @@
                                        |
                                        v
                            +------------------------+
-                           | Append-only Raw Logs   |
+                           | Capture + Evidence     |
+                           | Recording              |
                            +-----------+------------+
                                        |
                                        v
                            +------------------------+
-                           | Evidence Normalization |
+                           | Raw Logs + Evidence    |
+                           | Items                  |
                            +-----------+------------+
                                        |
                                        v

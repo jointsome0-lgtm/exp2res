@@ -16,9 +16,7 @@ The resume pipeline remains in the system, but it is downstream:
 
 ```text
 Self-assessment core
-  -> relevant evidence selection
-  -> job-description matching
-  -> grounded resume bullets
+  -> relevance-aware resume generation for a job description
   -> verifier loop
   -> export
 ```

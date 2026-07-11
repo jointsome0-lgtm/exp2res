@@ -43,7 +43,7 @@ unsupported phrase detection
 Mitigation:
 
 ```text
-imported data enters only as raw evidence
+imported data enters only as a RawLog plus linked EvidenceItem
 no automatic semantic promotion
 per-source evidence strength
 review gates for high-impact claims

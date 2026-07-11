@@ -1,6 +1,12 @@
 ## §13. Pipeline Specification
 
-## §13.1 Stage 1 — Raw Capture
+A pipeline stage exists only when it has at least one CLI trigger in §14 and produces a downstream-referenceable persisted business artifact or persisted state transition. `processing_runs` telemetry alone does not qualify an operation as a stage.
+
+§14 is the sole canonical home of command forms. Each stage below points to its §14 trigger instead of restating shell syntax.
+
+## §13.1 Stage 1 — Raw Capture and Evidence Recording
+
+Triggers: capture and import commands in §14.2–§14.5; gap-answer capture in §14.7.
 
 Inputs:
 
@@ -11,13 +17,11 @@ gap answers
 corrections
 Tick-like JSONL exports
 Atlas artifact refs
-Atlas trail refs
-GitHub commits / PRs / issues
-local design docs
-notes
+GitHub commits
+local design documents
 ```
 
-Outputs:
+Persisted outputs:
 
 ```text
 raw_logs
@@ -27,39 +31,18 @@ evidence_items
 Rules:
 
 1. Raw text must be non-empty.
-2. recorded_at must always be set.
-3. occurred precision must always be explicit.
-4. Imported artifacts must keep source URI/path.
-5. Nothing is interpreted as a strong fact at capture time.
-
-## §13.2 Stage 2 — Evidence Normalization
-
-Purpose:
-
-```text
-Convert raw logs and imported artifacts into referenceable evidence units.
-```
-
-Example:
-
-```text
-GitHub commit -> EvidenceItem(strength=commit_or_pr)
-Tick-like daily note -> EvidenceItem(strength=imported_activity_event)
-Atlas artifact ref -> EvidenceItem(strength=artifact_reference)
-Manual retro memory -> EvidenceItem(strength=manual_claim)
-```
-
-`commit_or_pr` is used for a VCS commit or pull-request reference; `code_artifact` is reserved for source or build evidence not represented by a commit or pull request.
-
-Normalization does not create self-claims.
+2. `recorded_at` must always be set.
+3. Occurred precision must always be explicit.
+4. Imported artifacts must keep their source URI/path.
+5. Each accepted source record is persisted atomically as one `RawLog` plus its linked `EvidenceItem` records before the command returns; a batch import may persist multiple such pairs.
+6. A manual daily log, retrospective log, gap answer, or correction receives its linked `EvidenceItem(strength=manual_claim)` when the `RawLog` is persisted; there is no later normalization stage.
+7. Import commands create linked evidence items under §14.5; §19 defines the integration payload contracts.
+8. `commit_or_pr` is used for an imported VCS commit; `code_artifact` is reserved for source or build evidence not represented by a commit.
+9. Capture and evidence recording do not create self-claims or interpret any input as a strong fact.
 
 ## §13.3 Stage 3 — Experience Fact Extraction
 
-Command:
-
-```bash
-exp2res extract
-```
+Trigger: fact extraction in §14.6.
 
 Input:
 
@@ -67,7 +50,7 @@ Input:
 raw_logs + evidence_items
 ```
 
-Output:
+Persisted outputs:
 
 ```text
 experience_facts
@@ -83,6 +66,7 @@ Rules:
 5. Do not infer production use unless explicitly present.
 6. Every fact must link to at least one raw log.
 7. `ExperienceFact.confidence` must be calibrated from linked `EvidenceItem.strength` values; confidence and evidence strength remain separate axes (§9.3).
+8. `ExperienceFact.claim_kind` follows the fact-extractor producer semantics in §15.2; §13 does not restate that contract.
 
 Bad fact:
 
@@ -100,14 +84,16 @@ The user repeatedly worked with provenance-heavy local-first system ideas.
 
 ## §13.4 Stage 4 — Gap and Contradiction Detection
 
-Command:
+Triggers: gap and contradiction generation in §14.7.
 
-```bash
-exp2res gaps
-exp2res contradictions
+Persisted outputs:
+
+```text
+gap_questions
+contradictions
 ```
 
-Gap triggers: the `GapTrigger` values (§10); each generated gap question records its trigger as `GapQuestion.reason` (§11.10).
+Gap triggers are the `GapTrigger` values (§10); each generated gap question records its trigger as `GapQuestion.reason` (§11.10).
 
 Contradiction examples:
 
@@ -121,11 +107,7 @@ Fact B: evidence only supports local prototype.
 
 ## §13.5 Stage 5 — Self-Signal Extraction
 
-Command:
-
-```bash
-exp2res signals generate
-```
+Trigger: self-signal generation in §14.8.
 
 Input:
 
@@ -136,7 +118,7 @@ gap answers
 contradictions
 ```
 
-Output:
+Persisted output:
 
 ```text
 self_signals
@@ -157,11 +139,7 @@ Example signal:
 
 ## §13.6 Stage 6 — Self-Assessment Synthesis
 
-Command:
-
-```bash
-exp2res assess generate
-```
+Trigger: self-assessment generation in §14.9.
 
 Input:
 
@@ -172,7 +150,7 @@ contradictions
 gap questions
 ```
 
-Output:
+Persisted outputs:
 
 ```text
 self_claims
@@ -180,6 +158,8 @@ assessment_snapshots
 ```
 
 Assessment dimensions are the `SelfClaimDimension` values (§10), carried by `SelfClaim.dimension` (§11.6). §13 must not restate them.
+
+`SelfClaim.claim_kind` follows the self-assessment-writer producer semantics in §15.4; §13 does not restate that contract.
 
 The assessment must include:
 
@@ -197,10 +177,13 @@ next questions
 
 ## §13.7 Stage 7 — Assessment Verification
 
-Command:
+Trigger: assessment verification in §14.9.
 
-```bash
-exp2res assess verify --snapshot <id>
+Persisted outputs:
+
+```text
+self_claims verification_status and counterevidence
+assessment_snapshots verification_status
 ```
 
 Verifier checks:
@@ -215,10 +198,12 @@ Verifier checks:
 
 ## §13.8 Stage 8 — Job Description Parsing
 
-Command:
+Trigger: job-description addition in §14.10.
 
-```bash
-exp2res jd add jobs/agent_engineer.md
+Persisted output:
+
+```text
+job_descriptions
 ```
 
 Extract:
@@ -233,36 +218,34 @@ keywords
 red flags
 ```
 
-## §13.9 Stage 9 — Relevance Matching
+## §13.10 Stage 10 — Relevance-Aware Resume Generation
 
-Command:
+Trigger: resume generation in §14.10.
 
-```bash
-exp2res match --jd <jd_id>
-```
-
-Purpose:
+Inputs:
 
 ```text
-Select relevant facts and self-claims for a specific external context.
+job_description
+assessment_snapshot
+experience_facts
+supported self_claims
+linked raw_logs and evidence_items
 ```
 
-The matcher must not invent relevance.
-It can rank evidence by fit.
+Persisted outputs:
 
-## §13.10 Stage 10 — Resume Generation
-
-Command:
-
-```bash
-exp2res resume generate --jd <jd_id> --branch <name>
+```text
+resume_branches
+resume_bullets
 ```
+
+Generation selects and ranks relevant facts and supported self-claims for the supplied job description. Matching is internal to this stage, must not invent relevance, and is persisted on each bullet through `ResumeBullet.target_role_relevance` and `ResumeBullet.matched_jd_requirements`; there is no separate match artifact or stage.
 
 Hard constraints:
 
 1. Use only supplied facts and supported self-claims.
-2. Every bullet must include source_fact_ids.
-3. Every bullet must include source_log_ids.
+2. Every bullet must include `source_fact_ids`.
+3. Every bullet must include `source_log_ids`.
 4. Do not invent metrics.
 5. Do not upgrade ownership under §16.4.
 6. Do not upgrade temporal precision under §16.7.
@@ -273,13 +256,15 @@ Hard constraints:
 
 ## §13.11 Stage 11 — Resume Verification
 
-Command:
+Trigger: resume verification in §14.10.
 
-```bash
-exp2res verify --branch <name>
+Persisted output:
+
+```text
+resume_bullets verification_status, unsupported_phrases, and verifier_reason
 ```
 
-Verifier inspects phrases, not only whole bullets.
+The verifier inspects phrases, not only whole bullets.
 
 Example:
 
@@ -296,14 +281,9 @@ Verifier findings:
 
 ## §13.12 Stage 12 — Export
 
-Command:
+Triggers: assessment export in §14.9 and resume export in §14.10.
 
-```bash
-exp2res export assessment --snapshot <id>
-exp2res export resume --branch <name>
-```
-
-Assessment outputs:
+Persisted assessment outputs:
 
 ```text
 out/assessment/self_assessment.md
@@ -313,7 +293,7 @@ out/assessment/gap_questions.md
 out/assessment/contradictions.md
 ```
 
-Resume outputs:
+Persisted resume outputs:
 
 ```text
 out/<branch>/resume.md

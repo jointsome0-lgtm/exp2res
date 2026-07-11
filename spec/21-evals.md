@@ -21,12 +21,12 @@ Then system may create weak activity fact
 But must not create "verifier loop expert"
 ```
 
-## §21.3 Atlas Trail Does Not Equal Mastery
+## §21.3 Atlas Artifact Does Not Equal Mastery
 
 Test:
 
 ```text
-Given Atlas trail touches Kafka
+Given an Atlas artifact reference mentions Kafka
 When Exp2Res imports it
 Then it may create context evidence
 But must not claim Kafka mastery

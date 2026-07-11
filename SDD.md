@@ -11,7 +11,7 @@
 
 ## § Index
 
-Section numbers are stable: issues and the Decision Log cite them as `§13` / `§13.2`. Never renumber. New sections take the next free number or a sub-number; update this index when sections change. Retired numbers are never reused: §12.1–§12.3, §12.5, §12.6, §12.9, §12.12 (2026-07-04, derivable tables replaced by §12's derivation rules from §11); §12.7, §12.8, §12.10, §12.11 (2026-07-04, issue #2 — Contradiction, GapQuestion, JobDescription, ResumeBranch got §11 models, their DDL is now derived).
+Section numbers are stable: issues and the Decision Log cite them as `§13` / `§13.2`. Never renumber. New sections take the next free number or a sub-number; update this index when sections change. Retired numbers are never reused: §12.1–§12.3, §12.5, §12.6, §12.9, §12.12 (2026-07-04, derivable tables replaced by §12's derivation rules from §11); §12.7, §12.8, §12.10, §12.11 (2026-07-04, issue #2 — Contradiction, GapQuestion, JobDescription, ResumeBranch got §11 models, their DDL is now derived); §13.2, §13.9 (2026-07-11, issue #19 — evidence recording folded into §13.1 and relevance matching into §13.10).
 
 Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file name starts with the § number); the Decision Log lives in `DECISION-LOG.md`. Point reads: open the § file. Full pass: read `spec/` files in index order.
 
@@ -28,8 +28,8 @@ Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file
 - §10 Enumerations — canonical Literal aliases for temporal precision/confidence, claim confidence, entry/source, evidence strength, ordered ownership, context, claims, verification, model field categories, entity refs, gap triggers
 - §11 Pydantic Domain Models — OccurredAt, RawLog, EvidenceItem, ExperienceFact, SelfSignal, SelfClaim, AssessmentSnapshot, ResumeBullet, Contradiction, GapQuestion, JobDescription, ResumeBranch
 - §12 SQLite Schema — derivation rules from §11 models; normative DDL only for the storage artifacts fact_sources and processing_runs
-- §13 Pipeline Specification — 12 stages: capture → normalize → extract → gaps → signals → assess → verify → jd → match → generate → verify → export
-- §14 CLI Specification — init, log, correction, import, extract, gaps, signals, assess, jd/match/resume/verify/export
+- §13 Pipeline Specification — 10 active stable-number stages: capture/evidence → extract → gaps/contradictions → signals → assess → assessment verify → JD → relevance-aware resume generation → resume verify → export
+- §14 CLI Specification — sole command-form authority; init, capture/import, extract, generate, inspect, verify, export
 - §15 LLM Contracts — structured I/O for extractor, signal extractor, assessment writer/verifier, resume writer/verifier
 - §16 Verification Rules — evidence, mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, diagnostic
 - §17 Self-Assessment Report Format — mirror report skeleton and tone

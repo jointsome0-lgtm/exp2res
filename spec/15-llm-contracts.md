@@ -8,7 +8,7 @@ All LLM calls must:
 2. Be validated with Pydantic.
 3. Fail closed on invalid output.
 4. Store processing run metadata.
-5. Never directly mutate raw logs.
+5. Never create or mutate raw logs.
 6. Preserve provenance links.
 
 If validation fails:
@@ -36,7 +36,15 @@ Input:
     },
     "raw_text": "..."
   },
-  "evidence_items": []
+  "evidence_items": [
+    {
+      "id": "evidence_001",
+      "created_at": "2026-07-11T10:00:00+02:00",
+      "raw_log_id": "log_001",
+      "summary": "Manual retrospective about StoryWorm design work.",
+      "strength": "manual_claim"
+    }
+  ]
 }
 ```
 
@@ -68,6 +76,8 @@ Output:
 ```
 
 Extractor must be conservative.
+
+For `ExperienceFact.claim_kind`, `observed_fact` means the linked sources directly state or demonstrate the narrow claim; `inferred_fact` means the claim is a conservative derivation whose source links and calibrated confidence remain explicit. Other `ClaimKind` values are invalid fact-extractor outputs.
 
 ## §15.3 Self-Signal Extractor Contract
 
@@ -140,6 +150,8 @@ Output:
 }
 ```
 
+For `SelfClaim.claim_kind`, `pattern_signal` summarizes a recurring supported pattern, `hypothesis` marks a tentative interpretation, and `narrative_summary` synthesizes already supported claims without adding a new fact. Other `ClaimKind` values are invalid self-assessment-writer outputs.
+
 Hard instructions: apply §16.2 (mirror, no motivational rewriting), §16.3 (anti-flattery), §16.9 (identity), §16.10 (diagnostic); preserve uncertainty and mention weak evidence where relevant.
 
 ## §15.5 Assessment Verifier Contract
@@ -161,10 +173,15 @@ Output:
 {
   "status": "partially_supported",
   "unsupported_phrases": ["strong production experience"],
+  "counterevidence": [
+    "fact_007: the only deployment fact describes a local demo, not a production environment"
+  ],
   "suggested_rewrite": "Evidence supports repeated design work around local-first provenance systems, but not production experience.",
   "reason": "No source facts support production deployment or production ownership."
 }
 ```
+
+`counterevidence` lists contrary-evidence statements grounded in the supplied sources (empty when none); Stage 7 persists it to `SelfClaim.counterevidence` (§11.6, §13.7).
 
 ## §15.6 Resume Writer Contract
 
