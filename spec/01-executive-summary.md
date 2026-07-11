@@ -2,7 +2,7 @@
 
 Exp2Res is a local-first system for converting lived experience into an honest, inspectable model of the user.
 
-It stores raw logs, imported artifacts, notes, corrections, and answers as immutable records. From these records it extracts experience facts and then synthesizes a self-assessment model: skills, patterns, interests, constraints, recurring directions, evidence strength, gaps, contradictions, and uncertainty.
+It stores raw logs, imported artifacts, notes, corrections, and answers as records that automation may append but never rewrite or delete; the owner may delete any raw record. From the retained records it maintains a recomputable self-assessment model: skills, patterns, interests, constraints, recurring directions, evidence strength, gaps, contradictions, and uncertainty.
 
 The system is designed around one central principle:
 
@@ -24,4 +24,3 @@ Self-assessment core
 Every external claim must remain traceable to internal evidence.
 
 ---
-

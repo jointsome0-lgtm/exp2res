@@ -2,7 +2,9 @@
 
 ## §16.1 Evidence Rule
 
-Every exported self-claim or resume bullet must link to evidence.
+Every typed domain reference must resolve to the current target required by §12 rule 10 when written; missing, wrong-type, superseded, or duplicate IDs fail the producing operation atomically. JSON storage is not an integrity exception.
+
+Every persisted or exported self-claim and resume bullet must resolve a complete current chain through at least one fact, one `fact_sources` row with `support_type = direct`, its non-null `EvidenceItem`, and that item's retained `RawLog`. A resume bullet's `source_log_ids` must equal the distinct raw logs reachable from its `source_fact_ids`; a non-empty but inconsistent ID list fails verification and export. Owner deletion is handled before those consumers run: §13.13 purges the derived database graph, attempts verified managed-output removal with residual-path reporting, and then rebuilds from retained raw records instead of treating vanished private sources as skippable evidence.
 
 ## §16.2 Mirror Rule
 

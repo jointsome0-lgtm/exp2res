@@ -7,7 +7,7 @@ Recommended README intro:
 
 Exp2Res is a local-first, provenance-heavy self-assessment system.
 
-It turns immutable experience evidence into an honest model of skills, patterns, gaps, contradictions, and uncertainty. Resume generation is a secondary export: job-targeted bullets are generated only from supported evidence and verified before export.
+It turns owner-controlled experience evidence that automation cannot rewrite into an honest model of skills, patterns, gaps, contradictions, and uncertainty. Resume generation is a secondary export: job-targeted bullets are generated only from supported evidence and verified before export.
 ```
 
 Recommended tagline:
@@ -19,8 +19,7 @@ A mirror first. A resume exporter second.
 Portfolio tagline:
 
 ```text
-Evidence-backed self-assessment and verifier-gated resume generation from immutable experience logs.
+Evidence-backed self-assessment and verifier-gated resume generation from owner-controlled experience logs.
 ```
 
 ---
-

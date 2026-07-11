@@ -4,6 +4,10 @@
 
 Every persisted entity model below other than `RawLog` carries a system-assigned `created_at: datetime`, set when the entity is first persisted. `RawLog.recorded_at` retains its §5.4 meaning as the time the raw record entered Exp2Res. `processing_runs` records execution telemetry, not entity creation provenance.
 
+Every recomputable entity — `ExperienceFact`, `SelfSignal`, `SelfClaim`, `AssessmentSnapshot`, `ResumeBullet`, `Contradiction`, `GapQuestion`, and `ResumeBranch` — also carries `superseded_at: Optional[datetime] = None`. `None` means the row belongs to the one current generation for its scope; a timestamp makes it historical. A normal rerun or correction sets this field once instead of rewriting payload or provenance. New stages, verification, generation, and export use only current rows. `JobDescription` is retained context, not a recomputed interpretation. Owner deletion is the privacy exception: §13.13 purges current and historical recomputable rows rather than retaining superseded copies.
+
+An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule.
+
 ## §11.1 OccurredAt
 
 ```python
@@ -36,8 +40,11 @@ class RawLog(BaseModel):
     raw_text: str
     project: Optional[str] = None
     external_ref: Optional[str] = None
+    corrects_log_id: Optional[str] = None
     metadata: dict = Field(default_factory=dict)
 ```
+
+At capture, `corrects_log_id` is required exactly when `entry_type == "correction"`, must resolve to an existing `RawLog`, and must not create a correction cycle. Correction text must be self-contained. Owner deletion may later set this field to `None`; the surviving correction then becomes the root of its own correction lineage (§12, §13.3).
 
 ## §11.3 EvidenceItem
 
@@ -60,6 +67,7 @@ class EvidenceItem(BaseModel):
 class ExperienceFact(BaseModel):
     id: str
     created_at: datetime
+    superseded_at: Optional[datetime] = None
     claim: str
     claim_kind: ClaimKind = "observed_fact"
 
@@ -78,13 +86,15 @@ class ExperienceFact(BaseModel):
     themes: list[str] = Field(default_factory=list)
 
     occurred: OccurredAt
-    source_log_ids: list[str]
-    evidence_item_ids: list[str] = Field(default_factory=list)
+    source_log_ids: list[str] = Field(min_length=1)
+    evidence_item_ids: list[str] = Field(min_length=1)
 
     confidence: Confidence
     verification_status: VerificationStatus
     metadata: dict = Field(default_factory=dict)
 ```
+
+`source_log_ids` and `evidence_item_ids` are non-empty, duplicate-free views hydrated from §12.4 rather than stored on `experience_facts`. Every selected evidence item belongs to a raw log in `source_log_ids`, and every listed source log is represented by at least one selected evidence item. The two views must agree with the `fact_sources → evidence_items` relation exactly.
 
 ## §11.5 SelfSignal
 
@@ -92,6 +102,7 @@ class ExperienceFact(BaseModel):
 class SelfSignal(BaseModel):
     id: str
     created_at: datetime
+    superseded_at: Optional[datetime] = None
     signal_type: SignalType
     statement: str
     supporting_fact_ids: list[str]
@@ -106,6 +117,7 @@ class SelfSignal(BaseModel):
 class SelfClaim(BaseModel):
     id: str
     created_at: datetime
+    superseded_at: Optional[datetime] = None
     claim: str
     claim_kind: ClaimKind
     dimension: SelfClaimDimension
@@ -124,6 +136,7 @@ class SelfClaim(BaseModel):
 class AssessmentSnapshot(BaseModel):
     id: str
     created_at: datetime
+    superseded_at: Optional[datetime] = None
     scope: AssessmentScope
     title: str
     summary: str
@@ -140,6 +153,7 @@ class AssessmentSnapshot(BaseModel):
 class ResumeBullet(BaseModel):
     id: str
     created_at: datetime
+    superseded_at: Optional[datetime] = None
     branch_id: str
     text: str
     target_section: ResumeTargetSection
@@ -159,6 +173,7 @@ class ResumeBullet(BaseModel):
 class Contradiction(BaseModel):
     id: str
     created_at: datetime
+    superseded_at: Optional[datetime] = None
     title: str
     description: str
 
@@ -178,6 +193,7 @@ class Contradiction(BaseModel):
 class GapQuestion(BaseModel):
     id: str
     created_at: datetime
+    superseded_at: Optional[datetime] = None
 
     target_type: EntityRefType
     target_id: str
@@ -213,6 +229,7 @@ class ResumeBranch(BaseModel):
     assessment_snapshot_id: Optional[str] = None
 
     created_at: datetime
+    superseded_at: Optional[datetime] = None
     metadata: dict = Field(default_factory=dict)
 ```
 

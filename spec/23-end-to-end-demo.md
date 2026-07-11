@@ -11,7 +11,7 @@ Confidence: medium
 Context: independent_project
 
 I redesigned Exp2Res from a resume-first tool into a self-assessment-first system.
-The core idea became: honest model of self from immutable evidence, with resume as a secondary export.
+The core idea became: honest model of self from owner-controlled evidence protected from system rewrites, with resume as a secondary export.
 I emphasized truth over comfort, provenance, verifier gates, and no automatic semantic promotion from activity to skill.
 ```
 
@@ -28,7 +28,9 @@ The retrospective capture operation persists this text as a `RawLog` and creates
     "ownership_level": "designed",
     "skills": ["system design", "product architecture"],
     "themes": ["self-assessment", "provenance", "grounded generation"],
+    "occurred": {"start": "2026-06-01T00:00:00+02:00", "precision": "month", "confidence": "medium"},
     "source_log_ids": ["log_001"],
+    "evidence_item_ids": ["evidence_001"],
     "confidence": "medium"
   },
   {
@@ -38,7 +40,9 @@ The retrospective capture operation persists this text as a `RawLog` and creates
     "ownership_level": "designed",
     "skills": ["system design", "verification"],
     "themes": ["resume export", "evidence mapping"],
+    "occurred": {"start": "2026-06-01T00:00:00+02:00", "precision": "month", "confidence": "medium"},
     "source_log_ids": ["log_001"],
+    "evidence_item_ids": ["evidence_001"],
     "confidence": "medium"
   }
 ]
@@ -73,7 +77,7 @@ The retrospective capture operation persists this text as a `RawLog` and creates
 ## §23.5 Resume Bullet Candidate
 
 ```text
-Designed Exp2Res, a local-first self-assessment system that converts immutable experience evidence into verified self-claims and job-targeted resume exports.
+Designed Exp2Res, a local-first self-assessment system that converts owner-controlled experience evidence into verified self-claims and job-targeted resume exports.
 ```
 
 Verifier result:
@@ -87,4 +91,3 @@ Verifier result:
 ```
 
 ---
-
