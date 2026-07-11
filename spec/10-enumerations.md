@@ -47,16 +47,11 @@ SourceType = Literal[
 ]
 
 EvidenceStrength = Literal[
-    "weak_note",
     "manual_claim",
     "imported_activity_event",
     "artifact_reference",
-    "code_artifact",
     "commit_or_pr",
-    "test_or_demo",
     "design_doc",
-    "external_feedback",
-    "verified_outcome",
 ]
 
 OwnershipLevel = Literal[

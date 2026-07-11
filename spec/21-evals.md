@@ -236,7 +236,7 @@ When an assessment or resume projection is exported
 Then Stage 7 or Stage 11 has completed for the projection
 And every status-bearing input passes the applicable §16.11 consumer allowlist
 And no intermediate row is represented as owner-confirmed
-And no owner confirm/dispute state or producerless SourceType is required
+And no owner confirm/dispute state or producerless SourceType or EvidenceStrength value is required
 ```
 
 ## §21.19 Contradictions Are Immutable Generation Outputs

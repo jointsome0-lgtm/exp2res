@@ -45,7 +45,7 @@ Rules:
 5. Each accepted source record is persisted atomically as one `RawLog` plus its linked `EvidenceItem` records before the command returns; a batch import may persist multiple such pairs.
 6. A manual daily log, retrospective log, gap answer, or correction receives its linked `EvidenceItem(strength=manual_claim)` when the `RawLog` is persisted; there is no later normalization stage.
 7. Import commands create linked evidence items under §14.5; §19 defines the integration payload contracts.
-8. `commit_or_pr` is used for an imported VCS commit; `code_artifact` is reserved for source or build evidence not represented by a commit.
+8. `commit_or_pr` is used for an imported VCS commit. Source or build evidence not represented by a commit has no V1 importer; a future importer must reintroduce its strength value together with its producing flow.
 9. Capture and evidence recording do not create self-claims or interpret any input as a strong fact.
 10. Automation may not update or delete a retained `RawLog` or its linked `EvidenceItem`s. A correction is an appended, self-contained `RawLog` whose validated `corrects_log_id` identifies its target; §14.4 then invokes §13.13.
 
