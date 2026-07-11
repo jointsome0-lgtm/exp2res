@@ -10,6 +10,8 @@ All LLM calls must:
 4. Store processing run metadata.
 5. Never create, mutate, or delete raw logs; automation's raw-layer authority is append-only and capture/import services own those appends (§5.3).
 6. Preserve provenance links.
+7. Preserve the generated-voice/source-voice boundary in §16.12: structured source text may be evidence input, but voice rules evaluate only Exp2Res-authored candidate language and never rewrite or reject source material.
+8. Forbid undeclared output fields; an extra key is invalid structured output rather than ignored data.
 
 If validation fails:
 
@@ -23,6 +25,17 @@ This retry handles only invalid structured output, including reference-validatio
 
 Structured-output validation includes §12 rule 10. If any typed reference is missing, wrong-type, superseded, or duplicated, no candidate business output is committed; §12.13 defines the failed `processing_runs` result and diagnostic metadata.
 
+Every contract `warnings` field is `list[ContractWarning]`, where each item has exactly two non-empty string fields and no extras:
+
+```json
+{
+  "type": "stable_machine_code",
+  "message": "Owner-facing explanation grounded in this call's input."
+}
+```
+
+The one retry above applies only to an invalid model response. Failure in deterministic service enrichment after a valid response — such as allocating a collision-free service-owned ID — must be retried locally when safe or fail the processing run atomically; it must not invoke the LLM again.
+
 ## §15.2 Fact Extractor Contract
 
 Input:
@@ -32,14 +45,19 @@ Input:
   "raw_logs": [
     {
       "id": "log_001",
+      "recorded_at": "2026-07-11T09:55:00+02:00",
       "entry_type": "manual_retro",
       "source_type": "user_memory",
       "occurred": {
         "start": "2026-06-01T00:00:00+02:00",
+        "end": null,
         "precision": "month",
         "confidence": "medium"
       },
       "raw_text": "...",
+      "project": "StoryWorm",
+      "external_ref": null,
+      "corrects_log_id": null,
       "metadata": {}
     }
   ],
@@ -48,8 +66,12 @@ Input:
       "id": "evidence_001",
       "created_at": "2026-07-11T10:00:00+02:00",
       "raw_log_id": "log_001",
+      "title": null,
       "summary": "Manual retrospective about StoryWorm design work.",
-      "strength": "manual_claim"
+      "uri": null,
+      "path": null,
+      "strength": "manual_claim",
+      "metadata": {}
     }
   ]
 }
@@ -64,18 +86,26 @@ Output:
       "claim": "Designed provenance links between generated outputs and source records.",
       "claim_kind": "observed_fact",
       "project": "StoryWorm",
+      "role": null,
+      "company": null,
       "context": "independent_project",
       "ownership_level": "designed",
+      "action": "designed",
+      "object": "provenance links between generated outputs and source records",
+      "outcome": null,
       "skills": ["provenance", "LLM workflows"],
+      "technologies": [],
       "themes": ["grounding", "traceability"],
       "occurred": {
         "start": "2026-06-01T00:00:00+02:00",
+        "end": null,
         "precision": "month",
         "confidence": "medium"
       },
       "source_log_ids": ["log_001"],
       "evidence_item_ids": ["evidence_001"],
-      "confidence": "medium"
+      "confidence": "medium",
+      "metadata": {}
     }
   ],
   "warnings": [
@@ -95,7 +125,9 @@ Each raw log passes its `metadata` through this contract unmodified. For `gap_an
 
 Each fact output selects its supporting evidence explicitly through `evidence_item_ids`. Persistence verifies that those items exist and that `source_log_ids` is exactly their distinct raw-log set before writing one `direct` §12.4 row per item; all linked strengths participate in confidence calibration.
 
-Every fact output also carries `occurred`. For corrected facts it uses the latest selected correction's effective `OccurredAt` from §14.4; for uncorrected facts it preserves the root source placement. It must satisfy §11.1 and must not increase source precision under §16.7.
+Every fact output carries every writer-settable §11.4 field shown above; Stage 3 supplies only `id`, `created_at`, and `superseded_at`. Optional/default fields are explicit in the contract so a model change cannot silently fall outside the structured boundary.
+
+Every fact output also carries `occurred`. For corrected facts the governing source placement is the latest selected correction's effective `OccurredAt` from §14.4; for uncorrected facts it is the root log's placement. The extractor copies that `OccurredAt` by default. It may emit a contained narrower placement only when the selected raw/evidence context explicitly states the narrower time; this is the additional linked support required by §16.7, not a model inference. It may never widen beyond the governing source window, set `occurred.precision` / persisted `temporal_precision` stronger than the strongest explicit in-context temporal support, or set `occurred.confidence` / persisted `temporal_confidence` above the governing source confidence under §10's order. When support conflicts or containment cannot be established, preserve the governing placement and lower temporal confidence if necessary rather than change its window or choose a stronger one.
 
 For `ExperienceFact.claim_kind`, `observed_fact` means the linked sources directly state or demonstrate the narrow claim; `inferred_fact` means the claim is a conservative derivation whose source links and calibrated confidence remain explicit. Other `ClaimKind` values are invalid fact-extractor outputs.
 
@@ -106,7 +138,7 @@ Input:
 ```json
 {
   "facts": [],
-  "existing_signals": [],
+  "evidence_items": [],
   "contradictions": []
 }
 ```
@@ -136,15 +168,101 @@ Do not infer identity from one artifact.
 Do not hide counterevidence.
 ```
 
+`evidence_items` is exactly the duplicate-free set reached through the supplied current facts and is context for evidence-strength calibration; signal provenance remains the fact IDs in §11.5. Prior signals are never inputs because Stage 5 produces a complete replacement generation. Raw gap answers are not inputs either: §13.5 requires them to pass through Stage 3 first, so only re-extracted current facts and their linked evidence can influence this contract.
+
 ## §15.4 Self-Assessment Writer Contract
 
 Input:
 
 ```json
 {
-  "signals": [],
-  "facts": [],
-  "gaps": [],
+  "scope": "project",
+  "scope_target": "Exp2Res",
+  "signals": [
+    {
+      "id": "signal_001",
+      "created_at": "2026-07-11T10:02:00+02:00",
+      "superseded_at": null,
+      "signal_type": "direction_signal",
+      "statement": "The user repeatedly returns to provenance-heavy local-first systems.",
+      "supporting_fact_ids": ["fact_001", "fact_002"],
+      "counter_fact_ids": [],
+      "confidence": "medium",
+      "metadata": {}
+    }
+  ],
+  "facts": [
+    {
+      "id": "fact_001",
+      "created_at": "2026-07-11T10:00:00+02:00",
+      "superseded_at": null,
+      "claim": "Designed provenance links for Exp2Res.",
+      "claim_kind": "observed_fact",
+      "project": "Exp2Res",
+      "role": null,
+      "company": null,
+      "context": "independent_project",
+      "ownership_level": "designed",
+      "action": "designed",
+      "object": "provenance links",
+      "outcome": null,
+      "skills": ["system design"],
+      "technologies": [],
+      "themes": ["provenance"],
+      "occurred": {
+        "start": "2026-06-01T00:00:00+02:00",
+        "end": null,
+        "precision": "month",
+        "confidence": "medium"
+      },
+      "source_log_ids": ["log_001"],
+      "evidence_item_ids": ["evidence_001"],
+      "confidence": "medium",
+      "metadata": {}
+    },
+    {
+      "id": "fact_002",
+      "created_at": "2026-07-11T10:00:00+02:00",
+      "superseded_at": null,
+      "claim": "Designed provenance links for another local-first system.",
+      "claim_kind": "observed_fact",
+      "project": "StoryWorm",
+      "role": null,
+      "company": null,
+      "context": "independent_project",
+      "ownership_level": "designed",
+      "action": "designed",
+      "object": "provenance links",
+      "outcome": null,
+      "skills": ["system design"],
+      "technologies": [],
+      "themes": ["provenance"],
+      "occurred": {
+        "start": "2026-06-01T00:00:00+02:00",
+        "end": null,
+        "precision": "month",
+        "confidence": "medium"
+      },
+      "source_log_ids": ["log_002"],
+      "evidence_item_ids": ["evidence_002"],
+      "confidence": "medium",
+      "metadata": {}
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap_001",
+      "created_at": "2026-07-11T10:03:00+02:00",
+      "superseded_at": null,
+      "target_type": "experience_fact",
+      "target_id": "fact_001",
+      "question": "What implementation evidence demonstrates the current depth?",
+      "reason": "weak_evidence",
+      "priority": "medium",
+      "answered": false,
+      "answer_log_id": null
+    }
+  ],
   "contradictions": []
 }
 ```
@@ -174,7 +292,11 @@ Output:
     }
   ],
   "summary": "Current evidence suggests a recurring interest in provenance-heavy systems, while implementation depth remains uncertain.",
-  "unknowns": [],
+  "unknowns": [
+    {
+      "gap_question_id": "gap_001"
+    }
+  ],
   "warnings": []
 }
 ```
@@ -182,6 +304,8 @@ Output:
 For `SelfClaim.claim_kind`, `pattern_signal` summarizes a recurring supported pattern, `hypothesis` marks a tentative interpretation, and `narrative_summary` synthesizes already supported claims without adding a new fact. Other `ClaimKind` values are invalid self-assessment-writer outputs.
 
 The writer emits exactly one `narrative_summary` self-claim whose `claim` equals the top-level `summary`. Stage 6 assigns its ID and includes it in the snapshot's `self_claim_ids`; there is no separate unverified summary channel.
+
+`scope` is a canonical `AssessmentScope` and `scope_target` is service-supplied structural context from §14.9. The writer must return neither field and cannot rewrite the target. `gaps` is the complete current unanswered set; answered current rows are not passed. Each `unknowns` entry has exactly one `gap_question_id` and no prose field. The IDs must be the duplicate-free exact set of all supplied `gaps`; an empty `unknowns` array is valid only when that input is empty. Stage 6 stores the set unchanged as `AssessmentSnapshot.gap_question_ids`. Known-gap assertions belong in status-bearing `SelfClaim(dimension="gap")` output. An unknown reference can render only the referenced question/uncertainty under §17; it is not an independent claim or a §16.11 bypass.
 
 Hard instructions: apply §16.2 (mirror, no motivational rewriting), §16.3 (anti-flattery), §16.9 (identity), §16.10 (diagnostic); preserve uncertainty and mention weak evidence where relevant.
 
@@ -220,7 +344,136 @@ Every `status` uses the canonical meaning in §16.11. Stage 7 validates one find
 
 ## §15.6 Resume Writer Contract
 
-Same as v0.1, but the resume writer may additionally reference self-claims whose status is `supported` under §16.11.
+Input:
+
+```json
+{
+  "branch": {
+    "name": "agent-engineer",
+    "job_description_id": "jd_001",
+    "assessment_snapshot_id": "snapshot_001",
+    "assessment_scope": "project",
+    "assessment_scope_target": "Exp2Res"
+  },
+  "job_description": {
+    "id": "jd_001",
+    "title": "Agent Engineer",
+    "company": "Example Co",
+    "parsed": {
+      "requirements": [
+        {
+          "id": "jdreq_001",
+          "kind": "required_skill",
+          "text": "Design evidence-grounded LLM workflows.",
+          "keywords": ["LLM", "evidence"]
+        }
+      ],
+      "seniority_signals": [],
+      "domain_signals": ["LLM systems"],
+      "keywords": ["provenance"],
+      "red_flags": []
+    }
+  },
+  "selected_facts": [
+    {
+      "fact": {
+        "id": "fact_001",
+        "created_at": "2026-07-11T10:00:00+02:00",
+        "superseded_at": null,
+        "claim": "Designed provenance links for an LLM workflow.",
+        "claim_kind": "observed_fact",
+        "project": "Exp2Res",
+        "role": null,
+        "company": null,
+        "context": "independent_project",
+        "ownership_level": "designed",
+        "action": "designed",
+        "object": "provenance links for an LLM workflow",
+        "outcome": null,
+        "skills": ["provenance"],
+        "technologies": [],
+        "themes": ["grounding"],
+        "occurred": {
+          "start": "2026-06-01T00:00:00+02:00",
+          "end": null,
+          "precision": "month",
+          "confidence": "medium"
+        },
+        "source_log_ids": ["log_001"],
+        "evidence_item_ids": ["evidence_001"],
+        "confidence": "medium",
+        "metadata": {}
+      },
+      "evidence": [
+        {
+          "evidence_item": {
+            "id": "evidence_001",
+            "created_at": "2026-07-11T09:56:00+02:00",
+            "raw_log_id": "log_001",
+            "title": "Exp2Res design record",
+            "summary": "Design record for the provenance workflow.",
+            "uri": null,
+            "path": "docs/design.md",
+            "strength": "design_doc",
+            "metadata": {}
+          },
+          "raw_log": {
+            "id": "log_001",
+            "recorded_at": "2026-07-11T09:55:00+02:00",
+            "entry_type": "design_doc",
+            "source_type": "imported_artifact",
+            "occurred": {
+              "start": "2026-06-01T00:00:00+02:00",
+              "end": null,
+              "precision": "month",
+              "confidence": "medium"
+            },
+            "raw_text": "...",
+            "project": "Exp2Res",
+            "external_ref": "docs/design.md",
+            "corrects_log_id": null,
+            "metadata": {}
+          }
+        }
+      ]
+    }
+  ],
+  "supported_self_claims": [
+    {
+      "id": "claim_001",
+      "created_at": "2026-07-11T10:05:00+02:00",
+      "superseded_at": null,
+      "claim": "Current evidence supports recurring work on provenance-heavy systems.",
+      "claim_kind": "pattern_signal",
+      "dimension": "domain_interest",
+      "source_signal_ids": ["signal_001"],
+      "source_fact_ids": ["fact_001"],
+      "confidence": "medium",
+      "verification_status": "supported",
+      "counterevidence": [],
+      "uncertainty": null,
+      "metadata": {}
+    }
+  ]
+}
+```
+
+Output:
+
+```json
+{
+  "bullet": {
+    "text": "Designed provenance links for an evidence-grounded LLM workflow.",
+    "target_section": "selected_projects",
+    "target_role_relevance": "high",
+    "matched_jd_requirements": ["jdreq_001"],
+    "source_fact_ids": ["fact_001"],
+    "source_log_ids": ["log_001"],
+    "source_self_claim_ids": ["claim_001"]
+  },
+  "warnings": []
+}
+```
 
 Hard rule:
 
@@ -228,7 +481,11 @@ Hard rule:
 Self-claims can guide selection and wording, but resume bullets must still link to concrete experience facts and raw logs.
 ```
 
-Stage 10 passes the writer only the `supported` self-claims selected for that bullet; it does not pass `AssessmentSnapshot.title` or `.summary` as independent prose inputs. The bullet's `source_self_claim_ids` is the duplicate-free exact ID set of that writer input and is empty iff the writer received no self-claim. The writer may neither use an unlisted self-claim nor list one it did not receive.
+Stage 10 invokes this contract in an isolated model context once per planned bullet and passes only the `supported` self-claims selected for that bullet. No invocation can see another bullet's facts or claims. It does not pass `AssessmentSnapshot.title` or `.summary` as independent prose inputs. The bullet's `source_self_claim_ids` is the duplicate-free exact ID set of that writer input and is empty iff the writer received no self-claim. The writer may neither use an unlisted self-claim nor list one it did not receive.
+
+`source_fact_ids` is non-empty, duplicate-free, and names only supplied selected facts; `source_log_ids` is the exact duplicate-free raw-log set reachable through those facts; and `source_self_claim_ids` is the exact supported-self-claim input set. Every `matched_jd_requirements` value is duplicate-free and resolves to a `JDRequirement.id` in the supplied `ParsedJD`. Stage 10 rejects any out-of-context provenance, unsupported claim, free-form requirement label, missing requirement ID, or wrong-job ID under §12 rule 10.
+
+The writer sets only the seven output fields shown. Stage 10 supplies `id`, `created_at`, `superseded_at`, `branch_id`, and initial `verification_status = "unverified"`; Stage 11 alone supplies verifier fields. The writer receives snapshot ID/scope/target only as structural branch context, never as another prose source.
 
 ## §15.7 Resume Verifier Contract
 
@@ -240,7 +497,23 @@ Input:
   "source_facts": [],
   "source_logs": [],
   "source_self_claims": [],
-  "job_description": {}
+  "job_description": {
+    "id": "jd_001",
+    "parsed": {
+      "requirements": [
+        {
+          "id": "jdreq_001",
+          "kind": "required_skill",
+          "text": "Design evidence-grounded LLM workflows.",
+          "keywords": ["LLM", "evidence"]
+        }
+      ],
+      "seniority_signals": [],
+      "domain_signals": [],
+      "keywords": [],
+      "red_flags": []
+    }
+  }
 }
 ```
 
@@ -269,5 +542,156 @@ time precision
 unsupported phrases
 section placement
 ```
+
+Stage 11 loads this exact typed job description through `resume_bullet.branch_id → ResumeBranch.job_description_id`. The verifier resolves every `resume_bullet.matched_jd_requirements` entry against its `parsed`; an absent branch association or a missing, duplicate, or wrong-job requirement ID is invalid structured input and fails closed before a semantic verdict.
+
+## §15.8 Gap and Contradiction Detector Contract
+
+Input:
+
+```json
+{
+  "facts": [
+    {
+      "id": "fact_001",
+      "created_at": "2026-07-11T10:00:00+02:00",
+      "superseded_at": null,
+      "claim": "Designed a local prototype.",
+      "claim_kind": "observed_fact",
+      "project": "Exp2Res",
+      "role": null,
+      "company": null,
+      "context": "independent_project",
+      "ownership_level": "designed",
+      "action": "designed",
+      "object": "local prototype",
+      "outcome": null,
+      "skills": ["system design"],
+      "technologies": [],
+      "themes": ["prototyping"],
+      "occurred": {
+        "start": "2026-06-01T00:00:00+02:00",
+        "end": null,
+        "precision": "month",
+        "confidence": "medium"
+      },
+      "source_log_ids": ["log_001"],
+      "evidence_item_ids": ["evidence_001"],
+      "confidence": "medium",
+      "metadata": {}
+    }
+  ],
+  "evidence_context": [
+    {
+      "evidence_item": {
+        "id": "evidence_001",
+        "created_at": "2026-07-11T09:56:00+02:00",
+        "raw_log_id": "log_001",
+        "title": null,
+        "summary": "The source describes a local prototype.",
+        "uri": null,
+        "path": null,
+        "strength": "manual_claim",
+        "metadata": {}
+      },
+      "raw_log": {
+        "id": "log_001",
+        "recorded_at": "2026-07-11T09:55:00+02:00",
+        "entry_type": "manual_retro",
+        "source_type": "user_memory",
+        "occurred": {
+          "start": "2026-06-01T00:00:00+02:00",
+          "end": null,
+          "precision": "month",
+          "confidence": "medium"
+        },
+        "raw_text": "I tested this only locally, but I also called it production-grade; I do not know whether it works at production scale.",
+        "project": "Exp2Res",
+        "external_ref": null,
+        "corrects_log_id": null,
+        "metadata": {}
+      }
+    }
+  ]
+}
+```
+
+Output:
+
+```json
+{
+  "gap_questions": [
+    {
+      "target_type": "experience_fact",
+      "target_id": "fact_001",
+      "question": "Was the prototype ever used outside a local environment?",
+      "reason": "unclear_artifact_status",
+      "priority": "medium"
+    }
+  ],
+  "contradictions": [
+    {
+      "title": "Prototype scope conflicts with a production claim",
+      "description": "The current fact supports a local prototype while another supplied statement claims production use.",
+      "left_ref_type": "experience_fact",
+      "left_ref_id": "fact_001",
+      "right_ref_type": "raw_log",
+      "right_ref_id": "log_001"
+    }
+  ],
+  "warnings": []
+}
+```
+
+The input arrays contain complete §11.4 `ExperienceFact`, §11.3 `EvidenceItem`, and §11.2 `RawLog` objects. `facts` is the complete current fact set; `evidence_context` covers the effective lineage evidence defined in §13.4 — every governing raw log and its linked evidence items under §13.3 rule 10 and §14.4, including effective records that produced no fact. Records displaced by a selected correction are not inputs: a correction is a supersession of raw interpretation, not a conflicting current position for the detector to rediscover.
+
+The output is the complete candidate generation for the complete input, not an incremental patch and not a verifier verdict. `target_type`, `left_ref_type`, and `right_ref_type` are restricted to `raw_log`, `evidence_item`, or `experience_fact`; every target must occur in the input and pass §12 rule 10. Gap `reason` and `priority` use `GapTrigger` and `GapPriority` (§10). The service supplies IDs, timestamps, supersession fields, empty `Contradiction.metadata`, and initial gap answer state; no detector output field or metadata channel can carry verification status, resolution, dismissal, or a resolution note.
+
+Schema, enum, reference, or completeness-shape invalidity follows the single §15.1 retry and atomic failure path. Before persistence, every detector-authored `question`, `title`, `description`, and warning message must also pass the generated-voice rules in §16.12; a voice violation fails the Stage 4 candidate atomically without an LLM retry, status, verdict, or repair call. A schema-valid and voice-valid semantic set completes the LLM call even when it reports a conflict or no conflict; it never triggers writer repair, mutates prior detections, or becomes an owner-verdict channel.
+
+## §15.9 Job Description Parser Contract
+
+Input:
+
+```json
+{
+  "job_description": {
+    "id": "jd_001",
+    "raw_text": "We require evidence-grounded LLM workflow design. Production operations experience is preferred."
+  }
+}
+```
+
+Output:
+
+```json
+{
+  "title": null,
+  "company": null,
+  "parsed": {
+    "requirements": [
+      {
+        "kind": "required_skill",
+        "text": "Evidence-grounded LLM workflow design",
+        "keywords": ["LLM", "evidence-grounded"]
+      },
+      {
+        "kind": "preferred_skill",
+        "text": "Production operations experience",
+        "keywords": ["production operations"]
+      }
+    ],
+    "seniority_signals": [],
+    "domain_signals": ["LLM systems"],
+    "keywords": ["LLM", "evidence-grounded", "production operations"],
+    "red_flags": []
+  },
+  "warnings": []
+}
+```
+
+The parser output contains every model-authored field of `JobDescription` and `ParsedJD`; as with entity IDs in sibling contracts, it omits service-set `JobDescription.id`, `created_at`, and `JDRequirement.id`. Stage 8 assigns a globally unique opaque ID to every validated requirement, constructs the final §11.13 `ParsedJD`, and validates that typed model plus ID uniqueness before atomically persisting the `JobDescription`. No untyped parsed payload may be stored.
+
+`kind` uses `JDRequirementKind` (§10). Requirement text must preserve the source's required/preferred modality and must not convert a keyword, signal, or red flag into a matchable requirement. Parsed requirement/signal/keyword/red-flag text is LLM output and therefore generated voice under §16.12 — structurally validated, bound by this contract's fidelity rules, never a quotation channel — while only the input `JobDescription.raw_text` is source voice. Under §16.12's owner-referential rule, faithfully preserved demand wording such as "expert" or "production" characterizes the vacancy, not the owner: it cannot make a faithful parse unpersistable, and no §16 rule may force rewriting the demand's meaning. Any Exp2Res-authored assertion that the owner satisfies a requirement remains fully bound wherever it appears. Invalid model-authored structure or enum values receive only the schema retry in §15.1. Failure to allocate valid service-owned IDs is handled locally or fails atomically without another parser call. A schema-valid parse is not a verdict and does not invoke another writer or mutate the source job-description text.
 
 ---

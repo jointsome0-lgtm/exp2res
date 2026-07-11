@@ -1,5 +1,7 @@
 ## §19. Integration Contracts
 
+Every importer validates the payload's keys, types, closed-enum mappings, and required identifiers. Its natural-language values remain system-of-record source voice under §16.12: Tick-like `text`, Atlas `summary` and referenced artifact text, GitHub `message`, and local imported-document text are preserved and structure-only scanned at ingestion. A voice rule may constrain a later Exp2Res-authored fact, claim, report sentence, or resume bullet that uses this material, but may never reject, rewrite, or block the imported value itself because of its wording.
+
 ## §19.1 Tick-like Event Contract
 
 ```json

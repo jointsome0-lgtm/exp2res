@@ -15,7 +15,7 @@ Section numbers are stable: issues and the Decision Log cite them as `§13` / `�
 
 Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file name starts with the § number); the Decision Log lives in `DECISION-LOG.md`. Point reads: open the § file. Full pass: read `spec/` files in index order.
 
-- §0 Change From v0.1 — recentering: mirror first, resume is a secondary export
+- §0 Historical Change Note — recentering: mirror first, resume is a secondary export
 - §1 Executive Summary — evidence → facts → signals → assessment → single-pass verifier gates → optional exports
 - §2 Product Framing — weak framings to avoid; strong framing
 - §3 Core Purpose — orientation, not impressiveness
@@ -25,24 +25,24 @@ Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file
 - §7 High-Level Architecture — pipeline diagram
 - §8 Runtime Architecture — Python, Typer, SQLite, Pydantic; CLI-first
 - §9 Domain Model — ontology, actor-scoped raw immutability, current versus superseded derived generations, snapshot-anchored resume branches, claim kinds, confidence layers, evidence strength
-- §10 Enumerations — canonical Literal aliases for temporal precision/confidence, claim confidence, entry/source, evidence strength, ordered ownership, context, claims, verification, model field categories, entity refs, gap triggers
-- §11 Pydantic Domain Models — OccurredAt, correction-linked RawLog, EvidenceItem, evidence-backed facts, claim-backed snapshot summaries, immutable derived contradiction detections, lifecycle-managed derived entities, required resume snapshot anchors, JobDescription
-- §12 SQLite Schema — derivation/deletion rules, normalized fact provenance, and transactional validation of JSON references, snapshot-summary identity, and resume snapshot membership; normative DDL only for fact_sources and processing_runs
-- §13 Pipeline Specification — 10 active stable-number stages plus complete contradiction generations, single-pass verification-status gates, snapshot-anchored resume generation, and shared current-generation, correction, deletion, and recompute semantics
-- §14 CLI Specification — sole command-form authority; init, capture/import, owner deletion, extract/recompute, generate with explicit stored-record selectors, inspect immutable contradictions, present verifier findings, export
-- §15 LLM Contracts — structured I/O for extractor, signal extractor, claim-backed assessment summaries, assessment/resume writers and verifiers; schema retry is distinct from semantic verdict handling
-- §16 Verification Rules — current and referentially valid evidence, verification-status consumer allowlists, mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, diagnostic
-- §17 Self-Assessment Report Format — mirror report skeleton, status-labeled claim projection, complete current contradictions, and tone
-- §18 Resume Export Rules — required assessment-snapshot anchoring, status allowlists, pipeline, and export-fail conditions
-- §19 Integration Contracts — Tick-like / Atlas / GitHub import behavior
+- §10 Enumerations — canonical Literal aliases plus temporal-confidence order and typed JD requirement kinds
+- §11 Pydantic Domain Models — lifecycle-managed entities, typed assessment scope/unknown storage, exact resume provenance, and ParsedJD requirements with stable IDs
+- §12 SQLite Schema — derived typed JSON storage, normalized fact provenance, and transactional validation of snapshot, JD-requirement, and resume references; normative DDL only for fact_sources and processing_runs
+- §13 Pipeline Specification — 10 active stable-number stages with conservative occurred provenance, LLM-backed Stage 4/8 contracts, fact-mediated gap answers, typed assessment content, and snapshot-anchored resume generation
+- §14 CLI Specification — sole command-form authority; init, capture/import, owner deletion, extract/recompute, generation with explicit selectors and persisted project scope targets, verifier findings, export
+- §15 LLM Contracts — full structured extractor/writer/verifier plus Stage 4 detector and Stage 8 parser I/O; schema retry is distinct from semantic results
+- §16 Verification Rules — evidence/status gates and generated-voice-scoped mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, and diagnostic rules
+- §17 Self-Assessment Report Format — status-labeled mirror with typed scope/unknown rendering, complete contradictions, counterevidence, and origin-aware prose
+- §18 Resume Export Rules — required assessment anchoring, typed JD requirement references, voice-scoped prose, status allowlists, and export-fail conditions
+- §19 Integration Contracts — Tick-like / Atlas / GitHub import behavior with structure-only validation of system-of-record prose
 - §20 Suggested Repository Structure — placement principles + normative skeleton
-- §21 Evals — 20 behavioral tests against overclaiming, lifecycle drift, provenance corruption, ambiguous snapshot anchoring, status-gate bypass, false owner-review state, contradiction-state loss, and implicit verifier repair
+- §21 Evals — 26 behavioral tests including temporal provenance, typed JD references, Stage 4/8 contract discipline, voice scoping, and typed assessment uncertainty
 - §22 Implementation Plan — Phase 0–5 with definitions of done
-- §23 End-to-End Demo — retro log → facts → signal → claim → verified bullet
-- §24 Acceptance Criteria — 23 V1 checks
+- §23 End-to-End Demo — approximate-range retro log → complete typed facts → signal → claim → verified bullet
+- §24 Acceptance Criteria — 29 V1 checks
 - §25 Risks and Mitigations — resume-drift, flattery, punitive tone, overclaim, single-pass verifier gates, provenance corruption, verifier-gated integration projections, diagnosis, retained private/stale derivations
 - §26 README Positioning — intro and taglines
-- §27 Key Invariants — reference-only index of non-negotiables and canonical rule pointers
+- §27 Key Invariants — reference-only index including typed JD/unknown references, occurred provenance, and generated/source voice boundaries
 - §28 Final Design Statement — three layers that must never collapse
 - Decision Log — dated one-line decisions with rejected alternatives
 

@@ -1,6 +1,6 @@
-## §0. Change From v0.1
+## §0. Historical Change Note
 
-The previous framing centered Exp2Res around grounded resume generation.
+This note records the change from v0.1, whose framing centered Exp2Res around grounded resume generation.
 
 That resume pipeline remains important, but it is no longer the conceptual center.
 

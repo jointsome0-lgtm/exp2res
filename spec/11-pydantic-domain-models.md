@@ -24,6 +24,8 @@ class OccurredAt(BaseModel):
 
 `OccurredAt.precision` is the sole discriminator for temporal shape; there is no separate `kind`. For `exact_datetime`, `exact_day`, `week`, `month`, `quarter`, and `year`, `start` is required and `end` must be `None`. For `date_range` and `approximate_range`, both bounds are required and `end` must be strictly after `start` — a zero-width period is not a range and must be expressed as `exact_datetime` or `exact_day`, so range widths under §16.7 are always positive. For `unknown`, both bounds must be `None`. `OccurredAt.confidence` expresses confidence only in temporal placement; it is independent of general claim `Confidence`.
 
+For provenance containment, a non-range `start` is the anchor of the normative uncertainty interval defined in §16.7; it is not silently re-aligned by an extractor.
+
 ## §11.2 RawLog
 
 ```python
@@ -137,6 +139,7 @@ class AssessmentSnapshot(BaseModel):
     created_at: datetime
     superseded_at: Optional[datetime] = None
     scope: AssessmentScope
+    scope_target: Optional[str] = None
     title: str
     summary: str
     self_claim_ids: list[str]
@@ -147,6 +150,12 @@ class AssessmentSnapshot(BaseModel):
 ```
 
 `contradiction_ids` is the complete duplicate-free set of current Stage 4 contradictions at this snapshot's synthesis boundary. Stage 6 does not scope-filter that set. There is no contradiction-status filter; §12 rule 10 rejects duplicate, missing, or superseded IDs.
+
+For `scope = "project"`, `scope_target` is required, non-blank, and is the exact `--project` value supplied under §14.9; the assessment writer cannot author or normalize it. For the currently defined non-project command forms it is `None`. It is a user-supplied scope label, not an entity reference and not a second snapshot-generation key: the existing one-current-snapshot-per-`AssessmentScope` replacement rule remains in force.
+
+`gap_question_ids` is the duplicate-free complete set of current unanswered (`answered = false`) Stage 4 gaps at the snapshot's synthesis boundary and must exactly match the validated §15.4 `unknowns` output. Stage 6 does not scope-filter or permit the writer to omit an open gap; an answered current row is deliberately excluded because it is no longer an unknown even before Stage 4 regeneration. The output carries references only: the stored unknown content remains the referenced current `GapQuestion.question`, `reason`, `priority`, and target. Known-gap assertions are status-bearing `SelfClaim` rows, not free prose on the snapshot. At the Stage 6 transaction boundary, missing, duplicate, superseded, answered, omitted, or output-inconsistent gap references fail under §12 rule 10 and the Stage 6 transaction checks.
+
+A later `gaps answer` on a referenced question is normal owner activity, not snapshot corruption: it supersedes no derived row and blocks no consumer, and `gap_question_ids` remains the honest record of what was unknown at synthesis; stale managed exports are refreshed by §14.7's removal-and-report rule, not by superseding the snapshot. The answered state becomes visible read-time context under §17, and the next Stage 6 generation excludes the answered row. Read-time consumers re-validate reference integrity — resolvable, duplicate-free, current rows — but never fail a current snapshot because a referenced gap was answered after synthesis.
 
 Exactly one claim in `self_claim_ids` has `claim_kind = "narrative_summary"`, and its `claim` equals `AssessmentSnapshot.summary`. The summary is therefore ordinary verified claim prose, not an unverified snapshot-level escape hatch.
 
@@ -162,8 +171,8 @@ class ResumeBullet(BaseModel):
     target_section: ResumeTargetSection
     target_role_relevance: TargetRoleRelevance
     matched_jd_requirements: list[str] = Field(default_factory=list)
-    source_fact_ids: list[str]
-    source_log_ids: list[str]
+    source_fact_ids: list[str] = Field(min_length=1)
+    source_log_ids: list[str] = Field(min_length=1)
     source_self_claim_ids: list[str] = Field(default_factory=list)
     verification_status: VerificationStatus
     unsupported_phrases: list[str] = Field(default_factory=list)
@@ -173,6 +182,8 @@ class ResumeBullet(BaseModel):
 Stage 6 initializes new `SelfClaim.verification_status` and `AssessmentSnapshot.verification_status` values; Stage 7 owns their verifier transitions. Stage 10 initializes `ResumeBullet.verification_status`; Stage 11 owns its verifier transition. The exact initial value and all consumer permissions are defined in §13.6–§13.11 and §16.11.
 
 `source_self_claim_ids` follows the exact-use contract in §13.10/§15.6: it is the duplicate-free exact set of self-claims passed to the writer for that bullet and is empty iff the bullet was generated from facts alone.
+
+Every `matched_jd_requirements` entry is a stable `JDRequirement.id` from the exact `ParsedJD` supplied to Stage 10. The list is duplicate-free and is validated under §12 rule 10 plus the Stage 10 selected-job-description check; free-form requirement labels are invalid in this field.
 
 ## §11.9 Contradiction
 
@@ -223,7 +234,7 @@ class JobDescription(BaseModel):
     title: Optional[str] = None
     company: Optional[str] = None
     raw_text: str
-    parsed: dict = Field(default_factory=dict)
+    parsed: "ParsedJD"
 ```
 
 ## §11.12 ResumeBranch
@@ -241,5 +252,30 @@ class ResumeBranch(BaseModel):
 ```
 
 `assessment_snapshot_id` is the required exact anchor selected under the canonical resume rule in §18. It has no implicit-latest or absent state.
+
+Without changing the field's optional type, every branch produced by Stage 10 copies the exact §14.10 `--jd` record into `job_description_id`; verification and export recover the typed requirements through that persisted ID. The separate question of whether every possible `ResumeBranch` must require a job description is outside this decision.
+
+## §11.13 Parsed Job Description
+
+```python
+class JDRequirement(BaseModel):
+    id: str = Field(min_length=1)
+    kind: JDRequirementKind
+    text: str = Field(min_length=1)
+    keywords: list[str] = Field(default_factory=list)
+
+class ParsedJD(BaseModel):
+    requirements: list[JDRequirement] = Field(default_factory=list)
+    seniority_signals: list[str] = Field(default_factory=list)
+    domain_signals: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    red_flags: list[str] = Field(default_factory=list)
+
+JobDescription.model_rebuild()
+```
+
+`JDRequirement.id` is a service-assigned opaque ID, globally unique and immutable after its containing `JobDescription` is persisted; it is never an array index or model-authored prose. Requirement IDs are duplicate-free within `ParsedJD`. Required skills, preferred skills, and responsibilities are represented only as `requirements` with the canonical `JDRequirementKind` (§10); signals, keywords, and red flags are typed context but are not matchable requirement targets.
+
+`ParsedJD` is an embedded Pydantic model, not an independently persisted ontology entity. `JobDescription.parsed` is quoted because this appended subsection defines the type later in the module; `model_rebuild()` resolves that forward reference after both classes exist. Stage 8 validates the parser candidate, assigns requirement IDs, validates the final `ParsedJD`, and persists it atomically with its `JobDescription` under §12 and §15.9.
 
 ---

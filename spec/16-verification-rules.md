@@ -8,13 +8,13 @@ Every current self-claim and resume bullet — and any row entering verification
 
 ## §16.2 Mirror Rule
 
-Self-assessment claims must be allowed to be uncomfortable.
+Within the generated-voice scope in §16.12, self-assessment claims must be allowed to be uncomfortable.
 
 The system must not rewrite them into motivational language.
 
 ## §16.3 Anti-Flattery Rule
 
-Forbidden without evidence:
+In generated voice as defined by §16.12, the following are forbidden without evidence:
 
 ```text
 exceptional
@@ -44,6 +44,8 @@ A verifier must normalize every source and candidate time expression to `Occurre
 
 For non-range values, the normative order from weakest to strongest is `unknown < year < quarter < month < week < exact_day < exact_datetime`. For comparison with ranges, normalize these values to maximum uncertainty widths: `unknown` is unbounded, `year` is 366 days, `quarter` is 92 days, `month` is 31 days, `week` is 7 days, `exact_day` is 1 day, and `exact_datetime` is zero.
 
+For containment and widening checks, normalize an `OccurredAt` to an anchored uncertainty interval. `unknown` is the unbounded timeline; `exact_datetime` is the singleton at `start`; every other non-range value is the half-open interval from `start` to `start +` its maximum uncertainty width above; and `date_range` / `approximate_range` use the half-open interval `[start, end)`. An extractor candidate is contained only when its normalized interval is a subset of the governing source interval. The extractor must not re-align the source anchor to manufacture containment.
+
 For `date_range` and `approximate_range`, width is `end - start`; missing, inverted, or zero-width bounds are invalid (§11.1) and verification fails closed. A narrower width is more precise. At equal width, `approximate_range` is weaker than `date_range` or a non-range value; changing from approximate to exact bounds at the same width is therefore an upgrade.
 
 A candidate upgrades temporal precision when its normalized width is narrower than the strongest precision supported by its linked evidence, or when it strengthens exactness at equal width. The verifier must reject that candidate unless additional linked evidence supports the stronger precision.
@@ -54,7 +56,7 @@ Independent projects, competitions, and learning must not be rendered as employm
 
 ## §16.9 Identity Rule
 
-Do not turn temporary patterns into permanent identity claims.
+Generated voice under §16.12 must not turn temporary patterns into permanent identity claims.
 
 Allowed:
 
@@ -74,7 +76,7 @@ Your true identity is...
 
 ## §16.10 Diagnostic Rule
 
-The system must not generate medical, psychiatric, or clinical labels.
+Generated voice under §16.12 must not author medical, psychiatric, or clinical labels.
 
 Allowed:
 
@@ -118,5 +120,22 @@ supported
 ```
 
 Stage 7 is the only operation that may write this aggregate while the snapshot is current. Claim verification fields, the aggregate, and dependent branch/bullet supersession commit in one database transaction. Stage 7 and assessment export must reject a snapshot unless exactly one member claim is a `narrative_summary` whose claim text equals `AssessmentSnapshot.summary`; every gated consumer must also reject a stored aggregate that does not equal a fresh reduction of the current claims. Managed-file removal is attempted under §13's lifecycle rules, cannot roll back that database state, and reports residual paths on failure. Stage 10 initializes bullets to `unverified`, and Stage 11 alone assigns their semantic verdicts.
+
+## §16.12 Generated-Voice Boundary
+
+Verification has two orthogonal scopes:
+
+1. Structural validation applies to every payload: required keys, field types, closed-enum values, typed-reference resolution, current/superseded constraints, §16.1 provenance chains, and §16.11 status semantics and allowlists. Natural-language origin never exempts malformed structure.
+2. The natural-language rules in §16.2–§16.10 bind only Exp2Res-authored voice. By default this includes generated fact, signal, claim, gap, contradiction, verifier, and resume language from §15; system-authored report prose in §17; and generated resume prose in §18. §16.3, §16.9, and §16.10 use this boundary explicitly. For §16.4–§16.8, source text may be an evidence operand, but only the generated candidate phrase can violate the rule.
+
+The §16.2–§16.10 prohibitions are owner-referential: they constrain generated language that characterizes the owner — skill, experience, identity, health, impact — wherever it appears. A generated description of an external demand, such as §15.9 `ParsedJD` requirement, signal, keyword, or red-flag text, remains generated voice for structural validation and §15.9's parse-fidelity rules, but faithfully preserved demand wording ("expert Python", "production operations") characterizes the vacancy, not the owner; §16.3–§16.10 neither reject it nor force its rewriting. The moment any Exp2Res-authored text asserts that the owner meets a demand — in a bullet, claim, or report line — that assertion is owner-referential generated voice and every applicable rule binds in full.
+
+Source voice is owner or system-of-record material, not an Exp2Res claim. `RawLog.raw_text`, owner-authored gap-answer text, `JobDescription.raw_text`, imported artifact content, and natural-language values in §19 payloads receive structure-only validation at ingestion. Voice rules may consult them as evidence but must never reject, rewrite, redact, normalize, or block their persistence because of their wording. A retained source may therefore contain flattery terms, permanent-identity wording, diagnostic language, metrics, production claims, or employment language without itself violating §16.
+
+Every natural-language field emitted by an LLM is generated voice by default, including parser text, detector questions/descriptions, verifier counterevidence/reasons, warnings, and text that merely resembles a quotation. A rendered segment retains source voice only when its contract carries a typed source reference and the renderer verifies the segment byte-for-byte against the referenced persisted source value or a contiguous substring of it. Untagged, unresolved, normalized, or paraphrased text is generated voice. Validators scan every generated segment and only the structure around a validated source segment; they must not concatenate mixed-origin text and run a full-blob voice scan.
+
+`GapQuestion.question` is generated voice and must pass §16 before Stage 4 persistence. At `gaps answer` capture, the service verifies that `RawLog.metadata.question_text` is an exact copy of that already validated question. Once copied into the owner-controlled raw record, the field is immutable source context for later extraction and is not rewritten or blocked by a later voice scan; this one-way handoff cannot admit unvalidated question text. In every case, a voice finding must never force a rewrite of owner memory or system-of-record material.
+
+This subsection does not change §16.1 or any §16.11 status meaning, aggregation rule, or consumer allowlist. Voice compliance is a phrase/content check on generated candidates; status gates remain the independent permission layer for assessment and resume consumers.
 
 ---

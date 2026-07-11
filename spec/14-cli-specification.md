@@ -100,7 +100,7 @@ exp2res contradictions list
 exp2res contradictions show --contradiction-id contradiction_001
 ```
 
-`gaps answer` persists `RawLog(entry_type=gap_answer, source_type=manual_entry)` plus a linked `EvidenceItem(strength=manual_claim)`, then assigns the new raw-log ID to `GapQuestion.answer_log_id` and sets `GapQuestion.answered = true` in the same transaction; `answered` is true iff `answer_log_id` is set.
+`gaps answer` persists `RawLog(entry_type=gap_answer, source_type=manual_entry)` plus a linked `EvidenceItem(strength=manual_claim)`, then assigns the new raw-log ID to `GapQuestion.answer_log_id` and sets `GapQuestion.answered = true` in the same transaction; `answered` is true iff `answer_log_id` is set. That transaction supersedes no current `AssessmentSnapshot`, branch, or bullet referencing the question: the answer is new raw evidence that reaches derived state only through extraction and regeneration (§13.5 via Stage 3, §13.6), while §17 renders the question's answered state on the still-current snapshot and §13.12 keeps that snapshot exportable. It does apply §13's managed-output invalidation semantics to the exports the answer makes stale: while any current snapshot references the answered question, it enumerates the managed `out/assessment/` files and the managed `out/<branch>/` set of every current branch anchored to such a snapshot, attempts removal, and reports every residual path as an unsuccessful invalidation. Database state remains committed regardless; the snapshot and branches stay immediately re-exportable with the answered-since-synthesis rendering.
 
 Gap answers are self-contained at capture, like corrections: the command copies the answered question's text and `GapQuestion.reason` into the answer's `RawLog.metadata` (`question_text`, `question_reason`). The answer therefore remains interpretable evidence if its question row is later superseded by a Stage 4 regeneration or purged by the §13.13 reset. Question-to-answer links are never re-created after regeneration: an uncertainty a stored answer resolves simply no longer fires its gap trigger against the current facts, and a gap that regenerates anyway is genuinely still open. The copied question text becomes part of the owner's raw record — owner-deletable on its own, never system-edited.
 
@@ -123,6 +123,8 @@ exp2res assess verify --snapshot snapshot_001
 exp2res export assessment --snapshot snapshot_001
 ```
 
+`--scope project` requires a non-blank `--project` value. Stage 6 stores that exact parsed option value as `AssessmentSnapshot.scope_target`; the LLM receives it as structural context but cannot author or normalize it. The currently defined non-project forms store `scope_target = None`. No scope value list is duplicated here; `AssessmentScope` in §10 is canonical.
+
 `assess verify` is required before assessment export. `export assessment` rejects `unverified` and every other snapshot status outside the assessment-export allowlist in §16.11.
 
 V1 defines no claim-confirm, dispute, or override command. `assess verify` is the system verifier gate defined by §5.10, not an owner verdict stored on a regenerated claim.
@@ -139,6 +141,8 @@ exp2res export resume --branch agent-engineer
 ```
 
 `--snapshot` is a required stored-record selector for the exact assessment anchor governed by §18. It has no latest-snapshot default. A missing, superseded, `unverified`, or otherwise Stage-10-ineligible snapshot fails before a branch or bullet is inserted; the persisted branch records exactly the selected ID.
+
+`--jd` must resolve to a persisted typed `JobDescription`; Stage 10 copies that exact ID into the candidate `ResumeBranch.job_description_id` so verification and export can resolve every matched requirement. This producer rule does not change §11.12's optional field declaration; a Stage 10 candidate that omits or changes the selected ID fails atomically.
 
 `verify --branch` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values; it never applies a suggestion or invokes `resume generate`. Changed bullet wording requires a later explicit `resume generate` command and a replacement branch generation.
 
