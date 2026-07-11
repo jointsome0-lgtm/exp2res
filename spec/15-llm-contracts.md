@@ -36,7 +36,7 @@ Every contract `warnings` field is `list[ContractWarning]`, where each item has 
 
 The one retry above applies only to an invalid model response. Failure in deterministic service enrichment after a valid response — such as allocating a collision-free service-owned ID — must be retried locally when safe or fail the processing run atomically; it must not invoke the LLM again.
 
-Example notation: each entity's full-shape example lives once, at its producing contract — §15.2 for `ExperienceFact`, `EvidenceItem`, and `RawLog` (its input shows persisted `RawLog`/`EvidenceItem` rows; its output shows the model-emitted fact); §15.4 for `SelfSignal` and `GapQuestion` inputs and `SelfClaim` output; §15.6 for a verified `SelfClaim` input; §15.9 for `ParsedJD`. Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string. A placeholder always denotes the complete persisted §11 shape: where the producing contract's example is the model-emitted subset, the persisted shape is that example plus exactly the service-set fields the producer's prose names (§15.2: Stage 3's `id`, `created_at`, `superseded_at`; §15.9: Stage 8's `JobDescription.id`/`created_at` and `JDRequirement.id`). §11 remains the normative field source (§12 rule 1); the placeholder is example notation only, and the service always passes the complete typed objects the surrounding prose requires.
+Example notation: an entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.3 (signal), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-set fields the producer's prose names (§15.2: Stage 3's `id`/`created_at`/`superseded_at`; §15.3 and §15.8: the stage-supplied ID, lifecycle, and answer-state fields; §15.9: Stage 8's `JobDescription.id`/`created_at` and `JDRequirement.id`). Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`SelfSignal`, `GapQuestion`), §15.6's input (a verified `SelfClaim`). Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string pointing at the named example. A behavior-bearing object — one whose concrete content the same example's output depends on — is never elided: §15.8 shows its fact and raw log in full. §11 remains the normative field source (§12 rule 1); placeholders are example notation only, and the service always passes the complete typed objects the surrounding prose requires.
 
 ## §15.2 Fact Extractor Contract
 
@@ -420,7 +420,34 @@ Input:
 ```json
 {
   "facts": [
-    "<fact_001: complete §11.4 ExperienceFact for the local prototype claim — canonical example in §15.2>"
+    {
+      "id": "fact_001",
+      "created_at": "2026-07-11T10:00:00+02:00",
+      "superseded_at": null,
+      "claim": "Designed a local prototype.",
+      "claim_kind": "observed_fact",
+      "project": "Exp2Res",
+      "role": null,
+      "company": null,
+      "context": "independent_project",
+      "ownership_level": "designed",
+      "action": "designed",
+      "object": "local prototype",
+      "outcome": null,
+      "skills": ["system design"],
+      "technologies": [],
+      "themes": ["prototyping"],
+      "occurred": {
+        "start": "2026-06-01T00:00:00+02:00",
+        "end": null,
+        "precision": "month",
+        "confidence": "medium"
+      },
+      "source_log_ids": ["log_001"],
+      "evidence_item_ids": ["evidence_001"],
+      "confidence": "medium",
+      "metadata": {}
+    }
   ],
   "evidence_context": [
     {
