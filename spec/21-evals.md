@@ -60,6 +60,10 @@ Test:
 Given source says participated
 When output says led/designed/owned
 Then verifier rejects it
+
+Given source ownership_level = unknown
+When output says observed
+Then verifier rejects it
 ```
 
 ## §21.7 Temporal Precision Preservation
@@ -69,6 +73,14 @@ Test:
 ```text
 Given source precision = month
 When output contains exact day
+Then verifier rejects it
+
+Given source precision = month
+When output contains a two-day date_range
+Then verifier rejects it
+
+Given source precision = approximate_range
+When output changes the same bounds to date_range
 Then verifier rejects it
 ```
 
@@ -102,4 +114,3 @@ Then assessment verification fails
 ```
 
 ---
-

@@ -58,14 +58,9 @@ unless stronger evidence exists.
 
 ## §5.6 Ownership Must Not Be Inflated
 
-Ownership levels are ordered roughly as:
+Ownership comparisons use the normative weak-to-strong `OwnershipLevel` order in §10. `unknown` is the weakest level and cannot authorize a stronger ownership claim.
 
-```text
-observed < studied < participated < experimented < contributed < implemented < built < designed < owned < led
-```
-
-The system may preserve or lower ownership confidence.
-It must not upgrade ownership without evidence.
+The system may preserve or lower `ownership_level`; it must not raise it without stronger evidence. General claim `confidence` is a separate axis and cannot compensate for unsupported ownership.
 
 ## §5.7 Experience Is Not Resume
 
@@ -130,4 +125,3 @@ Tick-like event ≠ self-assessment conclusion
 Every promotion must be explicit, reviewed, and traceable.
 
 ---
-
