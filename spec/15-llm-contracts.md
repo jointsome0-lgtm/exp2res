@@ -36,6 +36,8 @@ Every contract `warnings` field is `list[ContractWarning]`, where each item has 
 
 The one retry above applies only to an invalid model response. Failure in deterministic service enrichment after a valid response — such as allocating a collision-free service-owned ID — must be retried locally when safe or fail the processing run atomically; it must not invoke the LLM again.
 
+Example notation: an entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.3 (signal), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-set fields the producer's prose names (§15.2: Stage 3's `id`/`created_at`/`superseded_at`; §15.3 and §15.8: the stage-supplied ID, lifecycle, and answer-state fields; §15.9: Stage 8's `JobDescription.id`/`created_at` and `JDRequirement.id`). Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`SelfSignal`, `GapQuestion`), §15.6's input (a verified `SelfClaim`). Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string pointing at the named example. A behavior-bearing object — one whose concrete content the same example's output depends on — is never elided: §15.8 shows its fact and raw log in full. §11 remains the normative field source (§12 rule 1); placeholders are example notation only, and the service always passes the complete typed objects the surrounding prose requires.
+
 ## §15.2 Fact Extractor Contract
 
 Input:
@@ -192,62 +194,7 @@ Input:
     }
   ],
   "facts": [
-    {
-      "id": "fact_001",
-      "created_at": "2026-07-11T10:00:00+02:00",
-      "superseded_at": null,
-      "claim": "Designed provenance links for Exp2Res.",
-      "claim_kind": "observed_fact",
-      "project": "Exp2Res",
-      "role": null,
-      "company": null,
-      "context": "independent_project",
-      "ownership_level": "designed",
-      "action": "designed",
-      "object": "provenance links",
-      "outcome": null,
-      "skills": ["system design"],
-      "technologies": [],
-      "themes": ["provenance"],
-      "occurred": {
-        "start": "2026-06-01T00:00:00+02:00",
-        "end": null,
-        "precision": "month",
-        "confidence": "medium"
-      },
-      "source_log_ids": ["log_001"],
-      "evidence_item_ids": ["evidence_001"],
-      "confidence": "medium",
-      "metadata": {}
-    },
-    {
-      "id": "fact_002",
-      "created_at": "2026-07-11T10:00:00+02:00",
-      "superseded_at": null,
-      "claim": "Designed provenance links for another local-first system.",
-      "claim_kind": "observed_fact",
-      "project": "StoryWorm",
-      "role": null,
-      "company": null,
-      "context": "independent_project",
-      "ownership_level": "designed",
-      "action": "designed",
-      "object": "provenance links",
-      "outcome": null,
-      "skills": ["system design"],
-      "technologies": [],
-      "themes": ["provenance"],
-      "occurred": {
-        "start": "2026-06-01T00:00:00+02:00",
-        "end": null,
-        "precision": "month",
-        "confidence": "medium"
-      },
-      "source_log_ids": ["log_002"],
-      "evidence_item_ids": ["evidence_002"],
-      "confidence": "medium",
-      "metadata": {}
-    }
+    "<fact_001, fact_002: complete §11.4 ExperienceFact objects — canonical example in §15.2>"
   ],
   "gaps": [
     {
@@ -359,81 +306,15 @@ Input:
     "id": "jd_001",
     "title": "Agent Engineer",
     "company": "Example Co",
-    "parsed": {
-      "requirements": [
-        {
-          "id": "jdreq_001",
-          "kind": "required_skill",
-          "text": "Design evidence-grounded LLM workflows.",
-          "keywords": ["LLM", "evidence"]
-        }
-      ],
-      "seniority_signals": [],
-      "domain_signals": ["LLM systems"],
-      "keywords": ["provenance"],
-      "red_flags": []
-    }
+    "parsed": "<complete §11.13 ParsedJD containing requirement jdreq_001 — canonical example in §15.9>"
   },
   "selected_facts": [
     {
-      "fact": {
-        "id": "fact_001",
-        "created_at": "2026-07-11T10:00:00+02:00",
-        "superseded_at": null,
-        "claim": "Designed provenance links for an LLM workflow.",
-        "claim_kind": "observed_fact",
-        "project": "Exp2Res",
-        "role": null,
-        "company": null,
-        "context": "independent_project",
-        "ownership_level": "designed",
-        "action": "designed",
-        "object": "provenance links for an LLM workflow",
-        "outcome": null,
-        "skills": ["provenance"],
-        "technologies": [],
-        "themes": ["grounding"],
-        "occurred": {
-          "start": "2026-06-01T00:00:00+02:00",
-          "end": null,
-          "precision": "month",
-          "confidence": "medium"
-        },
-        "source_log_ids": ["log_001"],
-        "evidence_item_ids": ["evidence_001"],
-        "confidence": "medium",
-        "metadata": {}
-      },
+      "fact": "<fact_001: complete §11.4 ExperienceFact — canonical example in §15.2>",
       "evidence": [
         {
-          "evidence_item": {
-            "id": "evidence_001",
-            "created_at": "2026-07-11T09:56:00+02:00",
-            "raw_log_id": "log_001",
-            "title": "Exp2Res design record",
-            "summary": "Design record for the provenance workflow.",
-            "uri": null,
-            "path": "docs/design.md",
-            "strength": "design_doc",
-            "metadata": {}
-          },
-          "raw_log": {
-            "id": "log_001",
-            "recorded_at": "2026-07-11T09:55:00+02:00",
-            "entry_type": "design_doc",
-            "source_type": "imported_artifact",
-            "occurred": {
-              "start": "2026-06-01T00:00:00+02:00",
-              "end": null,
-              "precision": "month",
-              "confidence": "medium"
-            },
-            "raw_text": "...",
-            "project": "Exp2Res",
-            "external_ref": "docs/design.md",
-            "corrects_log_id": null,
-            "metadata": {}
-          }
+          "evidence_item": "<evidence_001: complete §11.3 EvidenceItem — canonical example in §15.2>",
+          "raw_log": "<log_001: complete §11.2 RawLog — canonical example in §15.2>"
         }
       ]
     }
@@ -499,20 +380,7 @@ Input:
   "source_self_claims": [],
   "job_description": {
     "id": "jd_001",
-    "parsed": {
-      "requirements": [
-        {
-          "id": "jdreq_001",
-          "kind": "required_skill",
-          "text": "Design evidence-grounded LLM workflows.",
-          "keywords": ["LLM", "evidence"]
-        }
-      ],
-      "seniority_signals": [],
-      "domain_signals": [],
-      "keywords": [],
-      "red_flags": []
-    }
+    "parsed": "<complete §11.13 ParsedJD for the branch job description — canonical example in §15.9>"
   }
 }
 ```
@@ -583,17 +451,7 @@ Input:
   ],
   "evidence_context": [
     {
-      "evidence_item": {
-        "id": "evidence_001",
-        "created_at": "2026-07-11T09:56:00+02:00",
-        "raw_log_id": "log_001",
-        "title": null,
-        "summary": "The source describes a local prototype.",
-        "uri": null,
-        "path": null,
-        "strength": "manual_claim",
-        "metadata": {}
-      },
+      "evidence_item": "<evidence_001: complete §11.3 EvidenceItem for log_001 — canonical example in §15.2>",
       "raw_log": {
         "id": "log_001",
         "recorded_at": "2026-07-11T09:55:00+02:00",
