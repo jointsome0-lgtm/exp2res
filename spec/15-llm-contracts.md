@@ -643,7 +643,7 @@ Output:
 }
 ```
 
-The input arrays contain complete §11.4 `ExperienceFact`, §11.3 `EvidenceItem`, and §11.2 `RawLog` objects. `facts` is the complete current fact set; `evidence_context` covers every retained evidence item and its raw log, including retained evidence that produced no fact.
+The input arrays contain complete §11.4 `ExperienceFact`, §11.3 `EvidenceItem`, and §11.2 `RawLog` objects. `facts` is the complete current fact set; `evidence_context` covers the effective lineage evidence defined in §13.4 — every governing raw log and its linked evidence items under §13.3 rule 10 and §14.4, including effective records that produced no fact. Records displaced by a selected correction are not inputs: a correction is a supersession of raw interpretation, not a conflicting current position for the detector to rediscover.
 
 The output is the complete candidate generation for the complete input, not an incremental patch and not a verifier verdict. `target_type`, `left_ref_type`, and `right_ref_type` are restricted to `raw_log`, `evidence_item`, or `experience_fact`; every target must occur in the input and pass §12 rule 10. Gap `reason` and `priority` use `GapTrigger` and `GapPriority` (§10). The service supplies IDs, timestamps, supersession fields, empty `Contradiction.metadata`, and initial gap answer state; no detector output field or metadata channel can carry verification status, resolution, dismissal, or a resolution note.
 

@@ -312,11 +312,17 @@ Then §12 rule 10 fails the batch atomically
 Test:
 
 ```text
-Given all current facts and their complete retained evidence context
+Given all current facts and the complete effective-lineage evidence context
 When the Stage 4 detector returns a schema-valid complete candidate set
 Then that set replaces the current gap and contradiction generation atomically
 And its polymorphic targets are limited to supplied raw logs, evidence items, and current facts
 And it exposes no status, resolution, dismissal, or verdict channel
+
+Given a lineage whose raw record was corrected under §14.4
+When Stage 4 regenerates
+Then the displaced pre-correction content is neither detector input nor a detection target
+And no current detection re-derives the conflict the correction removed
+And the lineage's effective records and their factless evidence remain targetable
 
 Given the detector returns invalid structure, enum values, or references
 When §15.1 retries once

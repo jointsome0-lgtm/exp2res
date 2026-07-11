@@ -107,8 +107,12 @@ Inputs:
 
 ```text
 all current experience_facts
-all retained raw_logs and evidence_items
+effective lineage evidence: per retained correction lineage, the raw logs and evidence items
+that govern current extraction under §13.3 rule 10 and §14.4,
+including effective records whose evidence produced no fact
 ```
+
+Content displaced by a selected correction is not detector input. A §14.4 correction supersedes the raw interpretation it corrects; feeding the displaced text back to Stage 4 would regenerate current detections from exactly what the correction flow removed from the current fact generation. The displaced records stay retained for history, §16.12 source-segment validation, and owner deletion — they are simply not part of this input.
 
 Persisted outputs:
 
@@ -125,7 +129,7 @@ Stage 4 alone owns the complete current contradiction set. If its current inputs
 
 A changed Stage 4 generation atomically supersedes every current signal, claim, snapshot, resume branch, and resume bullet before those rows can be reused. Regenerating those higher layers requires their §14 triggers or the shared §14.12 flow.
 
-The V1 Stage 4 producer may persist only gaps and contradictions whose polymorphic targets are retained Stage 1 evidence present in this complete input or current Stage 3 facts. Retained evidence that produced no fact remains visible and may receive a gap target. Stage 4 rejects targets owned by Stage 5 or later, because the same replacement invalidates those upper generations.
+The V1 Stage 4 producer may persist only gaps and contradictions whose polymorphic targets are effective-lineage Stage 1 evidence present in this input or current Stage 3 facts. Effective evidence that produced no fact remains visible and may receive a gap target; a displaced pre-correction record can be neither input nor target. Stage 4 rejects targets owned by Stage 5 or later, because the same replacement invalidates those upper generations.
 
 The validated §15.8 result is the complete replacement candidate set, never a patch over prior detections. The service assigns entity IDs and lifecycle fields and initializes each new gap with `answered = false` and `answer_log_id = None`. Detector output has no verification status, resolution, dismissal, or resolution-note field. A schema-valid semantic detection set is not a verdict: §15.1 retries only schema or reference invalidity and never retries merely because a conflict or gap was included or omitted.
 
