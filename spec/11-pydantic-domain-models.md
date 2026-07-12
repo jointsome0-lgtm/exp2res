@@ -151,7 +151,7 @@ class AssessmentSnapshot(BaseModel):
 
 `contradiction_ids` is the complete duplicate-free set of current Stage 4 contradictions at this snapshot's synthesis boundary. Stage 6 does not scope-filter that set. There is no contradiction-status filter; §12 rule 10 rejects duplicate, missing, or superseded IDs.
 
-For `scope = "project"`, `scope_target` is required, non-blank, and is the exact `--project` value supplied under §14.9; the assessment writer cannot author or normalize it. For the currently defined non-project command forms it is `None`. It is a user-supplied scope label, not an entity reference and not a second snapshot-generation key: the existing one-current-snapshot-per-`AssessmentScope` replacement rule remains in force.
+For `scope = "project"`, `scope_target` is required, non-blank, and is the exact `--project` value supplied under §14.9; the assessment writer cannot author or normalize it. For every non-project scope it is `None`. It is a user-supplied scope label, not an entity reference and not a second snapshot-generation key: the existing one-current-snapshot-per-`AssessmentScope` replacement rule remains in force.
 
 `gap_question_ids` is the duplicate-free complete set of current unanswered (`answered = false`) Stage 4 gaps at the snapshot's synthesis boundary and must exactly match the validated §15.4 `unknowns` output. Stage 6 does not scope-filter or permit the writer to omit an open gap; an answered current row is deliberately excluded because it is no longer an unknown even before Stage 4 regeneration. The output carries references only: the stored unknown content remains the referenced current `GapQuestion.question`, `reason`, `priority`, and target. Known-gap assertions are status-bearing `SelfClaim` rows, not free prose on the snapshot. At the Stage 6 transaction boundary, missing, duplicate, superseded, answered, omitted, or output-inconsistent gap references fail under §12 rule 10 and the Stage 6 transaction checks.
 
@@ -195,15 +195,15 @@ class Contradiction(BaseModel):
     title: str
     description: str
 
-    left_ref_type: EntityRefType
+    left_ref_type: DetectionRefType
     left_ref_id: str
-    right_ref_type: EntityRefType
+    right_ref_type: DetectionRefType
     right_ref_id: str
 
     metadata: dict = Field(default_factory=dict)
 ```
 
-A current `Contradiction` is an immutable conflict detection owned by Stage 4, not a workflow item with an in-place verdict. On regeneration, Stage 4 emits a new complete current contradiction set: a continuing conflict receives a replacement row, while a conflict absent from current evidence is omitted. Prior rows become superseded inspect-only history; owner deletion may purge them under §13.13.
+A current `Contradiction` is an immutable conflict detection owned by Stage 4, not a workflow item with an in-place verdict. Stage 4 owns the current set under §13.4's retain-or-replace rule: a content-equivalent rerun that qualifies for retention under that rule retains the current rows, while on a replacing regeneration a continuing conflict receives a replacement row and a conflict absent from current evidence is omitted. Prior rows become superseded inspect-only history; owner deletion may purge them under §13.13.
 
 ## §11.10 GapQuestion
 
@@ -213,7 +213,7 @@ class GapQuestion(BaseModel):
     created_at: datetime
     superseded_at: Optional[datetime] = None
 
-    target_type: EntityRefType
+    target_type: DetectionRefType
     target_id: str
 
     question: str
@@ -243,8 +243,8 @@ class JobDescription(BaseModel):
 class ResumeBranch(BaseModel):
     id: str
     name: str
-    job_description_id: Optional[str] = None
     assessment_snapshot_id: str
+    job_description_id: str
 
     created_at: datetime
     superseded_at: Optional[datetime] = None
@@ -253,7 +253,7 @@ class ResumeBranch(BaseModel):
 
 `assessment_snapshot_id` is the required exact anchor selected under the canonical resume rule in §18. It has no implicit-latest or absent state.
 
-Without changing the field's optional type, every branch produced by Stage 10 copies the exact §14.10 `--jd` record into `job_description_id`; verification and export recover the typed requirements through that persisted ID. The separate question of whether every possible `ResumeBranch` must require a job description is outside this decision.
+`job_description_id` is the required exact §14.10 `--jd` selection copied by Stage 10; verification and export recover the typed requirements through that persisted ID. It has no implicit or absent state.
 
 ## §11.13 Parsed Job Description
 

@@ -47,6 +47,7 @@ Mitigation:
 imported data enters only as a RawLog plus linked EvidenceItem
 no automatic semantic promotion
 per-source evidence strength
+deterministic §9.4 strength-to-confidence ceilings
 Stage 7 assessment and Stage 11 resume verifier gates before external projection
 ```
 

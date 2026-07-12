@@ -53,7 +53,7 @@ bullet status is outside the §16.11 resume-export allowlist
 bullet contains unsupported ownership, metric, production, or employment framing
 ```
 
-Every Stage 10 branch persists its exact §14.10 job-description selection in `ResumeBranch.job_description_id`, without changing the field's optional model declaration. Every `matched_jd_requirements` entry resolves through that branch association to a stable `JDRequirement.id` in the exact `ParsedJD` selected for Stage 10. A missing association fails verification/export; a display label may be rendered by dereferencing the requirement, but it may not replace the typed ID in stored or exported evidence maps.
+Every Stage 10 branch persists its exact §14.10 job-description selection in `ResumeBranch.job_description_id`. Every `matched_jd_requirements` entry resolves through that branch association to a stable `JDRequirement.id` in the exact `ParsedJD` selected for Stage 10. A missing association fails verification/export; a display label may be rendered by dereferencing the requirement, but it may not replace the typed ID in stored or exported evidence maps.
 
 Resume bullet and system-authored export prose are generated voice under §16.12 and receive full §16.2–§16.10 checks. An evidence-map excerpt remains source voice only with a typed source ID and byte-for-byte value/substring validation; otherwise it is generated voice. Source wording cannot cause the generated resume export to rewrite or reject the source record.
 

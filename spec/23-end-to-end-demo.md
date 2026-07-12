@@ -87,12 +87,12 @@ The retrospective capture operation persists this text as a `RawLog` with `occur
 
 ```json
 {
-  "claim": "Current evidence suggests a recurring interest in local-first systems that make hidden experience, knowledge, or claims inspectable and verifiable.",
+  "claim": "Current evidence suggests an interest in owner-controlled evidence, provenance, and verifier gates within the Exp2Res redesign.",
   "dimension": "domain_interest",
-  "claim_kind": "pattern_signal",
+  "claim_kind": "hypothesis",
   "source_fact_ids": ["fact_001", "fact_002"],
   "confidence": "medium",
-  "uncertainty": "Evidence is strongest in design documents and project framing; implementation depth must be assessed separately."
+  "uncertainty": "Support is one owner retrospective about Exp2Res project framing; implementation depth and outcome remain unestablished."
 }
 ```
 

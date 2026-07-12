@@ -45,7 +45,7 @@ Rules:
 5. Each accepted source record is persisted atomically as one `RawLog` plus its linked `EvidenceItem` records before the command returns; a batch import may persist multiple such pairs.
 6. A manual daily log, retrospective log, gap answer, or correction receives its linked `EvidenceItem(strength=manual_claim)` when the `RawLog` is persisted; there is no later normalization stage.
 7. Import commands create linked evidence items under §14.5; §19 defines the integration payload contracts.
-8. `commit_or_pr` is used for an imported VCS commit; `code_artifact` is reserved for source or build evidence not represented by a commit.
+8. `commit_or_pr` is used for an imported VCS commit. Source or build evidence not represented by a commit has no V1 importer; a future importer must reintroduce its strength value together with its producing flow.
 9. Capture and evidence recording do not create self-claims or interpret any input as a strong fact.
 10. Automation may not update or delete a retained `RawLog` or its linked `EvidenceItem`s. A correction is an appended, self-contained `RawLog` whose validated `corrects_log_id` identifies its target; §14.4 then invokes §13.13.
 
@@ -77,7 +77,7 @@ Rules:
 5. Do not infer production use unless explicitly present.
 6. Every fact selects at least one input `EvidenceItem`; only selected items receive §12.4 rows and every selected item belongs to the correction lineage being extracted. Stage 3 persists each selected item as `direct`. V1 has no separate corroboration producer, so it never infers a `corroborating` row silently.
 7. `ExperienceFact.evidence_item_ids` is exactly the duplicate-free selected-item set, and `source_log_ids` is exactly the duplicate-free set of `EvidenceItem.raw_log_id` values reached through it. Every listed raw log therefore contributes at least one selected evidence item. Multiple selected items from one raw log produce separate `fact_sources` rows.
-8. `ExperienceFact.confidence` must be calibrated from every distinct linked `EvidenceItem.strength`; confidence and evidence strength remain separate axes (§9.3).
+8. `ExperienceFact.confidence` must follow §9.4's evidential scopes, independence rules, and deterministic ceiling for the complete linked `EvidenceItem` set; confidence and evidence strength remain separate axes (§9.3).
 9. `ExperienceFact.claim_kind` follows the fact-extractor producer semantics in §15.2; §13 does not restate that contract.
 10. The extraction unit is one correction lineage: a root `RawLog` plus every correction that reaches it through `corrects_log_id`, ordered by `recorded_at` and then ID. For a fact affected by corrections, the latest selected correction's effective `OccurredAt` under §14.4 is the governing source placement; otherwise the root placement governs. The fact inherits that placement unless the evidence-backed narrowing permitted by rule 2 applies. If owner deletion nulls a correction's target, that correction becomes a new lineage root.
 11. Extraction computes the complete current fact generation for each selected lineage. A validated replacement and the `superseded_at` transition of the lineage's previous current facts commit atomically; it never appends a second current copy. Repeating extraction may add processing history or a superseded generation, but after success there is exactly one current fact generation for that lineage.
@@ -99,7 +99,7 @@ The user repeatedly worked with provenance-heavy local-first system ideas.
 
 ## §13.4 Stage 4 — Gap and Contradiction Detection
 
-Triggers: gap and contradiction generation in §14.7; lifecycle recomputation in §14.12.
+Triggers: detection generation in §14.7; lifecycle recomputation in §14.12.
 
 Stage 4 is LLM-backed because detecting semantic conflicts and missing support cannot be reduced to the structural rules below. Its complete structured boundary is §15.8.
 
@@ -123,7 +123,7 @@ contradictions
 
 Gap triggers are the `GapTrigger` values (§10); each generated gap question records its trigger as `GapQuestion.reason` (§11.10).
 
-Each successful run replaces the complete current gap/contradiction generation derived from all current facts. The prior current generation becomes superseded in the same transaction; inputs or output references to superseded rows are invalid.
+Each successful run validates one complete candidate for both output sets. Retention is legal only when that candidate is content-equivalent to the current generation — equal as sets over the detector-authored fields of both outputs (gap: `target_type`, `target_id`, `question`, `reason`, `priority`; contradiction: `title`, `description`, and its two `(ref_type, ref_id)` references compared as an unordered pair, because the detector has no canonical side ordering and a swapped left/right rerun is the same conflict) — and every gap in the current generation has `answered = false`. When both conditions hold, the prior current generation is retained, Stage 4 supersedes nothing, and the run records only telemetry; a direct §14.7 invocation then invalidates no upper layer or managed export, while inside the §14.12 flow the downstream stages still follow §13.13. `answered` and `answer_log_id` are service lifecycle state, not detector content, and never enter the comparison. A current generation containing any gap with `answered = true` is always replaced even when the detector-authored fields are equivalent: the detector derived its candidate from inputs that include the stored answer evidence, so a re-emitted gap is genuinely still open (§14.7); each replacement gap starts with `answered = false` and `answer_log_id = None`, and no question-to-answer link is re-created. Otherwise the run replaces both complete sets together, and the prior current generation becomes superseded in the same transaction; inputs or output references to superseded rows are invalid. One Stage 4 run creates one §13.4 `processing_runs` row whether it retains or replaces the generation.
 
 Stage 4 alone owns the complete current contradiction set. If its current inputs still conflict, the replacement generation must retain a contradiction for that conflict; if evidence-driven inputs no longer conflict, the replacement may omit it. V1 has no direct resolve/dismiss transition on a derived contradiction row.
 
@@ -131,7 +131,7 @@ A changed Stage 4 generation atomically supersedes every current signal, claim, 
 
 The V1 Stage 4 producer may persist only gaps and contradictions whose polymorphic targets are effective-lineage Stage 1 evidence present in this input or current Stage 3 facts. Effective evidence that produced no fact remains visible and may receive a gap target; a displaced pre-correction record can be neither input nor target. Stage 4 rejects targets owned by Stage 5 or later, because the same replacement invalidates those upper generations.
 
-The validated §15.8 result is the complete replacement candidate set, never a patch over prior detections. The service assigns entity IDs and lifecycle fields and initializes each new gap with `answered = false` and `answer_log_id = None`. Detector output has no verification status, resolution, dismissal, or resolution-note field. A schema-valid semantic detection set is not a verdict: §15.1 retries only schema or reference invalidity and never retries merely because a conflict or gap was included or omitted.
+The validated §15.8 result is the complete candidate set for both outputs, never a patch over prior detections. The service assigns entity IDs and lifecycle fields and initializes each new gap with `answered = false` and `answer_log_id = None`. Detector output has no verification status, resolution, dismissal, or resolution-note field. A schema-valid semantic detection set is not a verdict: §15.1 retries only schema or reference invalidity and never retries merely because a conflict or gap was included or omitted.
 
 Contradiction examples:
 
@@ -164,6 +164,8 @@ self_signals
 Signal categories are the `SignalType` values (§10), carried by `SelfSignal.signal_type` (§11.5). §13 must not restate them.
 
 Signal extraction consumes the complete current fact and contradiction sets plus exactly the evidence items linked from those facts, and atomically replaces the complete current signal generation. It must not mix generations. It receives neither prior `existing_signals` nor raw gap-answer text: a self-contained `gap_answer` `RawLog` and its `EvidenceItem` first reach Stage 3 through §15.2, and only any re-extracted current facts and their linked evidence reach Stage 5. A gap answer that produces no current fact cannot influence a signal directly.
+
+A candidate `SelfSignal.confidence` must satisfy §9.4's propagation caps; a candidate above its computed cap is invalid structured output.
 
 A changed signal generation atomically supersedes every current claim, snapshot, resume branch, and resume bullet before those rows can be reused.
 
@@ -205,6 +207,8 @@ Assessment dimensions are the `SelfClaimDimension` values (§10), carried by `Se
 
 `SelfClaim.claim_kind` follows the self-assessment-writer producer semantics in §15.4; §13 does not restate that contract.
 
+At the Stage 6 boundary, each candidate `SelfClaim.confidence` must satisfy §9.4's propagation caps; a candidate above its computed cap is invalid structured output.
+
 Synthesis atomically creates a complete current claim generation and a new current snapshot from one coherent current input generation, then supersedes the prior current snapshot for the same `AssessmentScope` and the claims owned by that snapshot. `scope_target` is persisted assessment context, not part of replacement identity; a new project-scoped snapshot therefore replaces the prior project-scoped snapshot even when the project target differs. The transaction validates the reverse cardinality in §12: after the swap, every current `SelfClaim` appears in exactly one current `AssessmentSnapshot.self_claim_ids`, current snapshots share no claim rows, and no current claim is unowned. Other scopes remain current. A superseded snapshot's payload and provenance remain inspectable history after correction but cannot become a processing input.
 
 Every new claim and snapshot starts with `verification_status = "unverified"`. Stage 6 may not pre-authorize its own output; Stage 7 alone assigns semantic claim verdicts and derives the current snapshot status under §16.11.
@@ -225,7 +229,7 @@ counterevidence
 next questions
 ```
 
-For a project-scoped run, Stage 6 copies the exact non-blank §14.9 `--project` value into `AssessmentSnapshot.scope_target`; the writer receives it as branch-free structural context but cannot rewrite it. Current non-project command forms persist `scope_target = None`.
+For a project-scoped run, Stage 6 copies the exact non-blank §14.9 `--project` value into `AssessmentSnapshot.scope_target`; the writer receives it as branch-free structural context but cannot rewrite it. For every non-project scope, Stage 6 persists `scope_target = None`.
 
 Known-gap assertions are emitted as ordinary `SelfClaim(dimension="gap")` rows and receive Stage 7 status. The §15.4 `unknowns` output contains references only and must enumerate every current unanswered Stage 4 `GapQuestion` exactly once; Stage 6 does not scope-filter that set and stores it unchanged in `AssessmentSnapshot.gap_question_ids`. Unknowns are uncertainty/question presentation, not claim-grade assertions: they do not receive an independent status, do not improve the §16.11 snapshot aggregate, and cannot guide Stage 10. Declarative prose about what is or is not true must be a snapshot-owned `SelfClaim` and pass the existing status gate.
 
@@ -247,7 +251,7 @@ assessment_snapshots verification_status
 Verifier checks:
 
 1. Every self-claim has sources.
-2. Each `SelfClaim.confidence` is justified by the strength and scope of its supporting facts' linked evidence; confidence and evidence strength remain separate axes (§9.3).
+2. Each `SelfClaim.confidence` is justified under §9.4's judgment frame by the strength and scope of its supporting facts' linked evidence; confidence and evidence strength remain separate axes (§9.3).
 3. Counterevidence is not hidden.
 4. Identity claims are not over-broad.
 5. Self-assessment does not become motivational fiction.
@@ -309,7 +313,7 @@ Generation selects and ranks relevant facts and `supported` self-claims for the 
 
 Every `matched_jd_requirements` entry is a duplicate-free stable ID from the exact `ParsedJD.requirements` supplied to this Stage 10 run. The writer cannot emit a free-form requirement label or an ID from another job description. §12 rule 10 and the Stage 10 transaction reject every missing, duplicate, or wrong-job reference before a branch or bullet becomes current.
 
-Without changing §11.12's optional field declaration, the Stage 10 producer must copy the exact §14.10 `--jd` ID into its candidate `ResumeBranch.job_description_id`. Stage 11 and Stage 12 recover the typed `ParsedJD` through that persisted association; a Stage 10 candidate with a missing or different job-description ID fails atomically.
+The Stage 10 producer must copy the exact §14.10 `--jd` ID into its candidate `ResumeBranch.job_description_id`. Stage 11 and Stage 12 recover the typed `ParsedJD` through that persisted association; a Stage 10 candidate with a missing or different job-description ID fails atomically.
 
 The exact assessment snapshot selected under §14.10 is mandatory, must be current, and must be eligible to anchor Stage 10 under §16.11. The new `ResumeBranch.assessment_snapshot_id` equals that selected ID. There is no implicit latest snapshot and no unanchored generation. The snapshot supplies structural anchor, scope, membership, and status context; its title and summary prose are not independent writer inputs. If the matching narrative summary guides selection or wording, Stage 10 passes its `supported` member claim and the bullet lists that claim ID. Only supported member claims may guide generation, and §12 validates every bullet's source-claim membership before commit.
 
@@ -402,9 +406,9 @@ This subsection orchestrates existing stages and is not a pipeline stage. Each i
 
 Rules:
 
-1. Selected-lineage recomputation under §14.12 replaces Stage 3 facts for that correction lineage, then regenerates the complete current Stage 4–7 graph from all current facts. Full recomputation under §14.12 replaces facts for every lineage before the same global Stage 4–7 rebuild.
+1. Selected-lineage recomputation under §14.12 replaces Stage 3 facts for that correction lineage, then regenerates the complete current Stage 4–7 graph from all current facts. Full recomputation under §14.12 replaces facts for every lineage before the same global Stage 4–7 rebuild. Stage 4 inside this flow follows its §13.4 retain-or-replace rule; a retained detection generation does not halt the flow's Stage 5–7 regeneration.
 2. A recompute validates every stage's complete candidate output, including §12 rule 10, before the business-state swap. A successful swap leaves at most one current generation per lineage/scope and marks the replaced generation `superseded_at`; payloads are never updated in place.
-3. Where an active stage explicitly requires replacement, that stage rule controls — including complete replacements in Stages 4–6 and replacement of an existing named branch in Stage 10. For other standalone reruns whose inputs have not changed, the stage may retain the prior current generation or replace it. No rerun may expose duplicate current facts, signals, claims, snapshots, gaps, or contradictions. If validation fails before a source change, the prior current generation remains current and no partial candidate output is inserted.
+3. Where an active stage explicitly requires replacement, that stage rule controls — including Stage 4's retain-or-replace equivalence rule and complete replacements in Stages 5–6 and replacement of an existing named branch in Stage 10. For other standalone reruns whose inputs have not changed, the stage may retain the prior current generation or replace it. No rerun may expose duplicate current facts, signals, claims, snapshots, gaps, or contradictions. If validation fails before a source change, the prior current generation remains current and no partial candidate output is inserted.
 4. Correction capture and invalidation are one atomic database visibility boundary before rebuilding starts: the transaction inserts the new raw/evidence records, supersedes current facts for that correction lineage, and supersedes every current gap, contradiction, signal, claim, snapshot, resume branch, and resume bullet. Managed exports are enumerated and removal is attempted as part of the same operation; residual paths are reported as an unsuccessful invalidation rather than silently retained. A crash or recompute failure can therefore leave the correction plus no replacement current graph, but can never leave the pre-correction graph current against the changed source set. The correction remains stored and §14.12 is the retry surface.
 5. Owner deletion is a privacy-first global reset. The service first enumerates and attempts to remove every managed `out/` artifact, then atomically purges every current and historical fact, fact source, gap, contradiction, signal, claim, snapshot, resume branch, and resume bullet while hard-deleting the selected `RawLog` and cascading its evidence items. It then attempts a full recompute from every surviving lineage. Job descriptions and `processing_runs` telemetry remain. Surviving `gap_answer` raw logs stay interpretable through their §14.7 self-containment; the rebuild never re-links them to regenerated questions.
 6. Database deletion commits even if managed-output removal or rebuilding fails. The command verifies the managed paths before reporting success: any residual path makes the result `deletion_incomplete`, is reported explicitly for manual removal, and is never treated as a retained evidence source. Rebuild failure reports a separate unsuccessful result with no derived database model. Neither failure restores the raw row or purged derived rows; the user may remove reported files and retry recomputation through §14.12. No FK, filesystem error, or failed processing run may restore or block database deletion.

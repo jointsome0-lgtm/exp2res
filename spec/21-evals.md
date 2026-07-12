@@ -182,7 +182,7 @@ Given one raw log has two selected EvidenceItems that support one fact
 When the fact is persisted
 Then fact_sources contains one row per EvidenceItem
 And source_log_ids contains the raw-log ID once
-And confidence calibration considers both distinct strengths
+And §9.4 confidence calibration retains both scoped items but counts their shared raw log as one source
 
 Given a Stage 6 candidate shares one current SelfClaim across snapshots or leaves a current SelfClaim unowned
 When the candidate transaction is validated
@@ -236,7 +236,7 @@ When an assessment or resume projection is exported
 Then Stage 7 or Stage 11 has completed for the projection
 And every status-bearing input passes the applicable §16.11 consumer allowlist
 And no intermediate row is represented as owner-confirmed
-And no owner confirm/dispute state or producerless SourceType is required
+And no owner confirm/dispute state or producerless SourceType or EvidenceStrength value is required
 ```
 
 ## §21.19 Contradictions Are Immutable Generation Outputs
@@ -245,9 +245,9 @@ Test:
 
 ```text
 Given current inputs still conflict
-When Stage 4 regenerates
-Then the replacement current generation retains a contradiction for that conflict
-And the prior row may become superseded but cannot be marked resolved or dismissed
+When Stage 4 runs under §13.4's retain-or-replace rule
+Then the current generation — retained or replacement — preserves a contradiction for that conflict
+And a prior row becomes superseded only through a replacing regeneration and cannot be marked resolved or dismissed
 And every current snapshot references and renders the complete current Stage 4 contradiction set
 
 Given corrected or additional current evidence removes the conflict
@@ -305,6 +305,10 @@ And source_log_ids is the exact raw-log set reachable through its selected sourc
 Given a missing, duplicate, free-form, or different-job requirement reference
 When Stage 10 attempts to persist the branch batch
 Then §12 rule 10 fails the batch atomically
+
+Given a Stage 10 candidate branch omits `job_description_id`
+When model validation and §12 rule 10 are applied
+Then the candidate fails both before any branch or bullet becomes current
 ```
 
 ## §21.23 Stage 4 Contract Is Complete and Schema-Only Retried
@@ -314,9 +318,35 @@ Test:
 ```text
 Given all current facts and the complete effective-lineage evidence context
 When the Stage 4 detector returns a schema-valid complete candidate set
-Then that set replaces the current gap and contradiction generation atomically
-And its polymorphic targets are limited to supplied raw logs, evidence items, and current facts
+Then that candidate is processed atomically under §13.4's content-equivalence rule
+And every polymorphic target type is a `DetectionRefType` (§10)
 And it exposes no status, resolution, dismissal, or verdict channel
+
+Given current gaps including one answered gap, current contradictions, a current snapshot, and a current branch
+When `detections generate` runs
+Then the resulting gap and contradiction sets come from one complete §15.8 call
+And the two complete sets are retained or replaced together
+And because one current gap is answered, the run replaces both sets even when the detector-authored fields are equivalent
+And each replacement gap starts with `answered = false` and no answer link is re-created
+And no run preserves one old half while replacing the other
+And no command form exists that regenerates only gaps or only contradictions
+
+Given a rerun whose validated candidate is content-equivalent over the detector-authored fields of both output sets
+And every gap in the current generation is unanswered
+When `detections generate` runs directly
+Then the prior current generation is retained
+And nothing is superseded
+And the snapshot and branch remain current
+
+Given a rerun whose validated candidate is changed over the detector-authored fields of either output set
+Then both complete sets are replaced
+And every current signal, claim, snapshot, branch, and bullet is superseded in the same transaction
+And the command reports both complete result sets and every invalidated artifact class
+
+Given a detector output names an upper-layer target type such as a self-claim or assessment snapshot
+When it is validated against the closed `DetectionRefType`
+Then it is invalid structured output and fails before persistence
+And every accepted target type resolves to an input object supplied in the same Stage 4 call
 
 Given a lineage whose raw record was corrected under §14.4
 When Stage 4 regenerates
@@ -462,6 +492,50 @@ And the writer's matched_jd_requirements contains exactly the service-assigned I
 And excludes the unrelated requirement and any representation of the instruction-like text
 And the text causes no additional LLM, network, tool, environment, or file access
 And any candidate that follows the injected instruction fails before persistence
+```
+
+## §21.31 Confidence Is Calibrated, Never Authorized
+
+Test:
+
+```text
+Given three manual_claim EvidenceItems from three raw logs repeat one owner assertion and support one fact
+When the extractor emits candidate confidence high
+Then §9.4 structured-output validation fails because the fact ceiling is medium
+And repeated owner assertion never supplies independent corroboration
+
+Given one raw log supplies two EvidenceItems for one fact
+When the extractor emits candidate confidence high
+Then §9.4 structured-output validation fails because the items count as one source and the fact ceiling is medium
+
+Given one correction lineage whose root is an imported commit with a commit_or_pr item and whose owner correction carries a manual_claim item
+When the fact selects both items and the extractor emits candidate confidence high
+Then the confidence passes §9.4 structured-output validation
+And high remains permitted by the ceiling, not required
+
+Given a fact backed by commit_or_pr establishes only a recorded change and attributed authorship
+And its linked sources establish no ownership depth, metric, or production use
+When generated candidates upgrade ownership, invent a metric, or claim production use
+Then §16.4, §16.5, and §16.6 fail closed regardless of evidence strength or confidence
+
+Given the maximum confidence of a signal's or claim's listed sources is medium
+When the candidate signal or claim emits confidence high
+Then §9.4 propagation-cap validation fails
+
+Given one narrow fact is the only support for a candidate signal with confidence high
+When §9.4 propagation-cap validation runs
+Then the signal fails the distinct-supporting-fact and distinct-raw-log requirement
+
+Given one narrow fact is the only support for a broader claim whose confidence does not exceed that fact's confidence
+When Stage 7 judges coverage under §9.4 and §13.7 rule 2
+Then insufficient breadth receives a non-passing §16.11 status
+And neither the claim nor its confidence is rewritten
+
+Given any candidate confidence exceeds a deterministic §9.4 ceiling or propagation cap
+When structured-output validation runs under §15.1
+Then the model receives one retry with the validation errors
+And a second invalid candidate fails the processing run
+And the service never silently lowers the candidate confidence
 ```
 
 ---

@@ -11,6 +11,7 @@ Every current self-claim belongs to exactly one current assessment snapshot (§1
 Every current resume bullet has current source facts and retained source logs.
 Every current resume branch names one exact current assessment snapshot, and each bullet lists exactly the supported member claims it used (§12 rule 10, §13.10, §18).
 Every fact source is a non-null EvidenceItem link; raw-log provenance is derived through that item (§12.4).
+Confidence never exceeds its §9.4 calibration ceiling or propagation cap, and evidence strength never authorizes content (§9.4, §16.4–§16.8).
 Every typed JSON or polymorphic reference resolves to its current target when written (§12 rule 10).
 Every matched JD requirement resolves in the exact typed ParsedJD supplied to Stage 10 (§12 rule 10, §13.10).
 At most one derived generation per lineage/scope is current; superseded history is inspect-only (§11, §13.13).
