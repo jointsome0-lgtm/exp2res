@@ -318,9 +318,26 @@ Test:
 ```text
 Given all current facts and the complete effective-lineage evidence context
 When the Stage 4 detector returns a schema-valid complete candidate set
-Then that set replaces the current gap and contradiction generation atomically
+Then that candidate is processed atomically under §13.4's content-equivalence rule
 And every polymorphic target type is a `DetectionRefType` (§10)
 And it exposes no status, resolution, dismissal, or verdict channel
+
+Given current gaps including one answered gap, current contradictions, a current snapshot, and a current branch
+When `detections generate` runs
+Then the resulting gap and contradiction sets come from one complete §15.8 call
+And the two complete sets are retained or replaced together
+And no run preserves one old half while replacing the other
+And no command form exists that regenerates only gaps or only contradictions
+
+Given a rerun whose validated candidate is content-equivalent over the detector-authored fields of both output sets
+Then the prior current generation is retained including its answered-gap state
+And nothing is superseded
+And the snapshot and branch remain current
+
+Given a rerun whose validated candidate is changed over the detector-authored fields of either output set
+Then both complete sets are replaced
+And every current signal, claim, snapshot, branch, and bullet is superseded in the same transaction
+And the command reports both complete result sets and every invalidated artifact class
 
 Given a detector output names an upper-layer target type such as a self-claim or assessment snapshot
 When it is validated against the closed `DetectionRefType`
