@@ -649,4 +649,42 @@ Given resume generation is invoked with --branch assessment, --branch Assessment
 Then command parsing fails because a branch is a single plain path segment and out/assessment/ is the reserved assessment namespace
 ```
 
+## §21.35 Entity Identity Is Unique, Immutable, and Never Reused
+
+Test:
+
+```text
+Given one entity row is already persisted with an ID
+When another row with that ID is inserted into the same entity table
+Then the TEXT PRIMARY KEY rejects the insert atomically
+And a current, superseded, or historical row reserves its ID equally
+
+Given an entity row is already persisted
+When a write attempts to change its ID
+Then the write fails and the original ID remains unchanged
+
+Given deterministic service enrichment allocates an ID that collides with any retained row
+When the model response is otherwise valid
+Then the service retries allocation locally with a fresh ID when safe or fails the producing run atomically with no candidate outputs
+And it never invokes the LLM again
+
+Given a typed reference declares one target type but its ID exists only in another entity table
+When rule 10 validates the candidate
+Then the reference fails as wrong-table even though that value is valid in the other table
+And cross-table fallback never occurs
+
+Given an entity ID has been superseded or its owning row was removed by §13.13 while opaque processing_runs telemetry remains
+When a later entity is allocated in that table
+Then that ID is never reassigned
+And the allocator uses a collision-resistant ID with a random component rather than row count, MAX + 1, or any other surviving-row-derived state
+
+Given two identical valid import payload submissions both proceed as record-creating imports
+Then each receives distinct local RawLog and EvidenceItem IDs without collision failure
+And whether the second submission is accepted, deduplicated, or rejected outside this case remains deferred to issues #33 and #52
+
+Given Tick-like event_id, Atlas artifact_id, or GitHub commit_sha and repo values are imported
+Then each upstream identifier appears only in RawLog.external_ref or RawLog.metadata as provenance
+And none is used as any local entity ID
+```
+
 ---
