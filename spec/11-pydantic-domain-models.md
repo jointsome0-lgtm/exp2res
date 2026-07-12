@@ -1,14 +1,16 @@
 ## §11. Pydantic Domain Models
 
-§11 defines the persisted domain entities: every §9.1 ontology entity except VerificationFinding, which is not persisted as its own entity — its transport shape is fixed by the verifier contracts (§15.5, §15.7) and its results are stored denormalized on the verified targets (verification_status fields, SelfClaim.counterevidence, ResumeBullet.unsupported_phrases / verifier_reason). Storage-only artifacts (join tables, telemetry) have no models here; their DDL is normative in §12.
+§11 defines every persisted §9.1 ontology entity. `VerificationFinding` (§11.14) is append-only verifier-attempt history; denormalized verification fields on its targets remain the operational state. Storage-only artifacts (join tables, telemetry, and recomputable-row production provenance) have no models here; their DDL and derivation are normative in §12.
 
 Every top-level entity `id` is a service-assigned, opaque, non-empty value that is immutable for the lifetime of the workspace, unique within its entity table, and never reused in that table, including after supersession or owner deletion (§12 rule 11). No producer contract may let a model author an entity ID; for an LLM-backed producer, the service assigns it only after a valid model response as deterministic enrichment under §15.1. This per-table contract does not weaken the stronger global uniqueness of embedded `JDRequirement.id` (§11.13).
 
-Every persisted entity model below other than `RawLog` carries a system-assigned `created_at: datetime`, set when the entity is first persisted. `RawLog.recorded_at` retains its §5.4 meaning as the time the raw record entered Exp2Res. `processing_runs` records execution telemetry, not entity creation provenance.
+Every persisted entity model below other than `RawLog` carries a system-assigned `created_at: datetime`, set when the entity is first persisted. `RawLog.recorded_at` retains its §5.4 meaning as the time the raw record entered Exp2Res. A creation timestamp does not substitute for the production provenance defined below.
 
 Every recomputable entity — `ExperienceFact`, `SelfSignal`, `SelfClaim`, `AssessmentSnapshot`, `ResumeBullet`, `Contradiction`, `GapQuestion`, and `ResumeBranch` — also carries `superseded_at: Optional[datetime] = None`. `None` means the row belongs to the one current generation for its replacement identity — the correction lineage for facts, the global Stage 4 generation for gaps and contradictions, the global Stage 5 generation for signals, the assessment view (§11.7) for claims and snapshots, and the branch name for branches and bullets; a timestamp makes it historical. A normal rerun or correction sets this field once instead of rewriting payload or provenance. New stages, verification, generation, and export use only current rows. `JobDescription` is retained context, not a recomputed interpretation. Owner deletion is the privacy exception: §13.13 purges current and historical recomputable rows rather than retaining superseded copies.
 
-An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule. `VerificationStatus` is carried only by `SelfClaim`, `AssessmentSnapshot`, and `ResumeBullet`; §16.11 defines its meanings and consumer gates.
+Production provenance for those eight recomputable entities is storage-level under §12 rule 13: `produced_by_run_id` and `generation_id` have no §11 model counterpart and are hydrated only by inspection surfaces. §15 LLM contracts receive complete persisted §11 shapes and never see or set either storage-only value.
+
+An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule. `SelfClaim`, `AssessmentSnapshot`, and `ResumeBullet` are the only entities whose denormalized `VerificationStatus` is operational state; `VerificationFinding.status` is inspect-only history, and §16.11 defines the meanings and consumer gates.
 
 ## §11.1 OccurredAt
 
@@ -286,5 +288,27 @@ JobDescription.model_rebuild()
 `JDRequirement.id` is a service-assigned opaque ID, globally unique and immutable after its containing `JobDescription` is persisted; it is never an array index or model-authored prose. Requirement IDs are duplicate-free within `ParsedJD`. Required skills, preferred skills, and responsibilities are represented only as `requirements` with the canonical `JDRequirementKind` (§10); signals, keywords, and red flags are typed context but are not matchable requirement targets.
 
 `ParsedJD` is an embedded Pydantic model, not an independently persisted ontology entity. `JobDescription.parsed` is quoted because this appended subsection defines the type later in the module; `model_rebuild()` resolves that forward reference after both classes exist. Stage 8 validates the parser candidate, assigns requirement IDs, validates the final `ParsedJD`, and persists it atomically with its `JobDescription` under §12 and §15.9.
+
+## §11.14 VerificationFinding
+
+```python
+class VerificationFinding(BaseModel):
+    id: str
+    created_at: datetime
+    produced_by_run_id: str
+    target_type: VerificationTargetRefType
+    target_id: str
+    status: VerificationStatus
+    reason: str
+    unsupported_phrases: list[str] = Field(default_factory=list)
+    suggested_rewrite: Optional[str] = None
+    counterevidence: list[CounterevidenceItem] = Field(default_factory=list)
+```
+
+Verification findings are append-only history with no `superseded_at`; their payload is immutable after persistence until the §13.13 owner-deletion purge. Each completed Stage 7 or Stage 11 verifier attempt writes exactly one finding per verified target in the same transaction as that target's denormalized status update. Stage 7 findings target `SelfClaim`, Stage 11 findings target `ResumeBullet`, and the derived §16.11 snapshot aggregate receives no finding row. A failed attempt writes no finding (§13.7, §13.11).
+
+`produced_by_run_id` is an explicit model field here, unlike production provenance on the eight recomputable entities: the persisted finding shape never crosses the LLM boundary, and the owning verifier run is part of the finding's semantics. The verifier contract returns only its declared payload; the service assigns the finding ID, creation time, owning run, and typed target.
+
+The denormalized fields on `SelfClaim`, `ResumeBullet`, and `AssessmentSnapshot` remain the sole operational state consumed by §16.11 gates. Findings are inspect-only: they are never a writer input, never a §15.4 or §15.6 input, never any later prompt input, and never §17 or §18 export content. `suggested_rewrite` is persisted only in this history; it remains advisory and is never applied.
 
 ---

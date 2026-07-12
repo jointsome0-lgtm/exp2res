@@ -7,7 +7,7 @@ All LLM calls must:
 1. Use structured outputs.
 2. Be validated with Pydantic.
 3. Fail closed on invalid output.
-4. Store processing run metadata.
+4. Store the processing-run execution identity and metadata defined in §12.13.
 5. Never create, mutate, or delete raw logs; automation's raw-layer authority is append-only and capture/import services own those appends (§5.3).
 6. Preserve provenance links.
 7. Preserve the generated-voice/source-voice boundary in §16.12: structured source text may be evidence input, but voice rules evaluate only Exp2Res-authored candidate language and never rewrite or reject source material.
@@ -23,7 +23,7 @@ do not insert partial invalid objects
 
 This retry handles only invalid structured output, including reference-validation errors. A schema-valid negative semantic verdict is successful verifier output: it does not trigger another verifier call, invoke a writer, or begin an automatic repair loop.
 
-Structured-output validation includes §12 rule 10. If any typed reference is missing, wrong-type, superseded, or duplicated, no candidate business output is committed; §12.13 defines the failed `processing_runs` result and diagnostic metadata.
+Structured-output validation includes §12 rule 10. If any typed reference is missing, wrong-type, superseded, or duplicated, no candidate business output or verification finding is committed; §12.13 defines the failed `processing_runs` result, stable `failure_code`, and diagnostic metadata.
 
 Every contract `warnings` field is `list[ContractWarning]`, where each item has exactly two non-empty string fields and no extras:
 
@@ -36,7 +36,7 @@ Every contract `warnings` field is `list[ContractWarning]`, where each item has 
 
 The one retry above applies only to an invalid model response. Failure in deterministic service enrichment after a valid response — such as allocating a collision-free service-owned ID — must be retried locally when safe or fail the processing run atomically; it must not invoke the LLM again.
 
-Example notation: an entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.3 (signal), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-set fields the producer's prose names (§15.2: Stage 3's `id`/`created_at`/`superseded_at`; §15.3 and §15.8: the stage-supplied ID, lifecycle, and answer-state fields; §15.9: Stage 8's `JobDescription.id`/`created_at` and `JDRequirement.id`). Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`SelfSignal`, `GapQuestion`), §15.6's input (a verified `SelfClaim`). Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string pointing at the named example. A behavior-bearing object — one whose concrete content the same example's output depends on — is never elided: §15.8 shows its fact and raw log in full. §11 remains the normative field source (§12 rule 1); placeholders are example notation only, and the service always passes the complete typed objects the surrounding prose requires.
+Example notation: an entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.3 (signal), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-set fields the producer's prose names (§15.2: Stage 3's `id`/`created_at`/`superseded_at`; §15.3 and §15.8: the stage-supplied ID, lifecycle, and answer-state fields; §15.9: Stage 8's `JobDescription.id`/`created_at` and `JDRequirement.id`). Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`SelfSignal`, `GapQuestion`), §15.6's input (a verified `SelfClaim`). Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string pointing at the named example. A behavior-bearing object — one whose concrete content the same example's output depends on — is never elided: §15.8 shows its fact and raw log in full. §11 remains the normative field source (§12 rule 1); placeholders are example notation only, and the service always passes the complete typed objects the surrounding prose requires. The storage-only §12 rule 13 production columns are absent from §11 shapes and never appear in these examples or calls.
 
 ## §15.2 Fact Extractor Contract
 
@@ -311,11 +311,11 @@ Output:
 
 `scope` and `scope_target` are the snapshot's §11.7 values, supplied as structural context so the verifier can judge scope fit under §13.7 check 11; the verifier returns neither field. `source_signals` is exactly the claim's duplicate-free `source_signal_ids` set. `scope_signals` and `scope_facts` are the complete deterministic §13.6 selection for the snapshot's view, re-derived from current rows: every signal, and the union of the view's §15.4 `facts` and `context_facts`, including the cited members. They exist so check 3 can see a contrary signal or fact the writer's account omits; the closure alone deepens into evidence items and raw logs, so uncited view facts arrive as fact rows without extra raw text. An omitted contrary bundle member grounds a non-passing status and may persist as a typed counterevidence reference to that `scope_facts` or `scope_signals` member, keeping a navigable contrary source in the exported mirror. `source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows — carrying each item's `strength` and `raw_log_id` — and `source_logs` is exactly the duplicate-free retained `RawLog` set those items reference. Every input array is ID-ordered (ascending byte order), so conforming implementations assemble one identical bundle. This is the context for the §9.4 strength/scope judgment required by §13.7 rule 2: a signal-only claim still supplies its underlying evidence, the same-log source rule stays applicable through `raw_log_id`, and the verifier never judges calibration from hidden state. The bundle is exact — §13.7 forbids narrowing it and §29.3 forbids widening it.
 
-`counterevidence` is a list of typed `CounterevidenceItem` entries (§11.6), empty when none: each carries a contrary-evidence `statement` and a (`source_ref_type`, `source_ref_id`) grounding reference that must resolve to a member of this call's supplied bundle — a fact in `source_facts` or `scope_facts`, an item in `source_evidence_items`, a log in `source_logs`, or a signal in `scope_signals`. A reference outside that bundle, a wrong-type or missing target, or a duplicate (`source_ref_type`, `source_ref_id`) pair is invalid structured output under §15.1 and §12 rule 10. Stage 7 persists the validated list to `SelfClaim.counterevidence` (§11.6, §13.7).
+`counterevidence` is a list of typed `CounterevidenceItem` entries (§11.6), empty when none: each carries a contrary-evidence `statement` and a (`source_ref_type`, `source_ref_id`) grounding reference that must resolve to a member of this call's supplied bundle — a fact in `source_facts` or `scope_facts`, an item in `source_evidence_items`, a log in `source_logs`, or a signal in `scope_signals`. A reference outside that bundle, a wrong-type or missing target, or a duplicate (`source_ref_type`, `source_ref_id`) pair is invalid structured output under §15.1 and §12 rule 10. Stage 7 persists the validated list to `SelfClaim.counterevidence` and inside the complete §11.14 `VerificationFinding` for that claim (§11.6, §13.7).
 
 Every `status` uses the canonical meaning in §16.11. Stage 7 validates one finding for every claim in the snapshot and derives the snapshot's own status from those claim results; the writer or verifier may not assign a more permissive snapshot label independently.
 
-`suggested_rewrite` is owner-facing advisory output of the one command class that invokes Stage 7 (§14.9). It is not persisted, is not an input to §15.4, and is never applied by Stage 7. If the owner requests revised wording, the assessment writer must emit a new claim in a later Stage 6 replacement generation.
+`suggested_rewrite` is owner-facing advisory output of the one command class that invokes Stage 7 (§14.9). It is persisted only as verification-finding history (§11.14), never applied by Stage 7, never passed to §15.4, §15.6, or any later prompt, and never rendered by §17 or §18 exports. If the owner requests revised wording, the assessment writer must emit a new claim in a later Stage 6 replacement generation.
 
 ## §15.6 Resume Writer Contract
 
@@ -424,7 +424,7 @@ Output:
 }
 ```
 
-`status` uses §16.11. Stage 11 validates one finding for every current bullet and persists `status`, `unsupported_phrases`, and `reason` to `ResumeBullet.verification_status`, `unsupported_phrases`, and `verifier_reason` (§11.8, §13.11). `suggested_rewrite` is owner-facing advisory output: it is presented by §14.10 but is neither persisted nor applied.
+`status` uses §16.11. Stage 11 validates one finding for every current bullet and persists `status`, `unsupported_phrases`, and `reason` both to the denormalized `ResumeBullet.verification_status`, `unsupported_phrases`, and `verifier_reason` fields and inside the complete §11.14 `VerificationFinding` (§11.8, §13.11). `suggested_rewrite` is owner-facing advisory output: it is presented by §14.10, persisted only as verification-finding history, never applied, never passed to any later prompt, and never rendered by §17 or §18 exports.
 
 The resume verifier must check:
 

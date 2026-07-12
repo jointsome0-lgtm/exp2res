@@ -14,7 +14,7 @@ AssessmentSnapshot  = versioned self-assessment at a time
 JobDescription      = external context for export
 ResumeBranch        = job-targeted resume candidate branch anchored to one assessment snapshot
 ResumeBullet        = generated resume phrase with evidence links
-VerificationFinding = verifier output over claim/bullet/snapshot
+VerificationFinding = persisted append-only verifier-attempt result over a self-claim or resume bullet
 ```
 
 Facts, gaps, contradictions, signals, claims, snapshots, branches, and bullets form replaceable derived generations. `superseded_at IS NULL` means current; a set timestamp means historical and unavailable to new verification, generation, or export. Correction preserves superseded history. Owner deletion purges every derived generation as the privacy-first exception (§5.3, §13.13).

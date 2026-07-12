@@ -149,7 +149,7 @@ exp2res export assessment --snapshot snapshot_001
 
 V1 defines no claim-confirm, dispute, or override command. `assess verify` is the system verifier gate defined by §5.10, not an owner verdict stored on a regenerated claim.
 
-`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion is advisory: it is neither persisted nor applied, and verification never invokes `assess generate`. The owner may add or correct raw evidence and request a new assessment generation; any changed claim wording belongs to that new Stage 6 generation.
+`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion is advisory: it is persisted only as append-only verification-finding history (§11.14), never applied, never fed into a later prompt or export, and verification never invokes `assess generate`. The owner may add or correct raw evidence and request a new assessment generation; any changed claim wording belongs to that new Stage 6 generation.
 
 ## §14.10 Resume Export Flow
 
@@ -166,7 +166,7 @@ exp2res export resume --branch agent-engineer
 
 `--branch` is a single plain path segment: it may not contain `/` or `\`, may not begin or end with whitespace or `.` (which also excludes `.` and `..`), and may not equal `assessment` compared case-folded — `out/assessment/` is the reserved per-view assessment namespace (§13.12), and no branch directory may fall under, collide with, or alias it on a path-normalizing filesystem such as Windows, where trailing dots and spaces are stripped.
 
-`verify --branch` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values; it never applies a suggestion or invokes `resume generate`. Changed bullet wording requires a later explicit `resume generate` command and a replacement branch generation.
+`verify --branch` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values. A suggestion is persisted only as append-only verification-finding history (§11.14), never applied or fed into a later prompt or export, and verification never invokes `resume generate`. Changed bullet wording requires a later explicit `resume generate` command and a replacement branch generation.
 
 ## §14.11 Manage Raw Logs
 
@@ -185,8 +185,17 @@ exp2res recompute
 exp2res recompute --log-id log_001
 ```
 
-The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global Stage 4–5 regeneration. This command orchestrates the existing Stage 3–5 triggers under §13.13; it is not a new pipeline stage and does not create a synthetic stage identifier.
+The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global Stage 4–5 regeneration. This command orchestrates the existing Stage 3–5 triggers under §13.13 and creates the one legal `processing_runs(stage = "13.13")` orchestration row for that flow; it remains not a pipeline stage.
 
 Lifecycle recomputation ends at Stage 5 and performs no Stage 6 or Stage 7 call, so it presents no verifier findings. `recompute`, and the correction and deletion commands that invoke the same flow, report every invalidated assessment view and branch with the regeneration guidance of §13.13 rule 9; a retry that finds no current view reports that state instead of inferring a desired view set.
+
+## §14.13 Inspect Processing Runs and Verification History
+
+```bash
+exp2res runs list
+exp2res runs show --run-id run_001
+```
+
+`runs list` reports processing-run rows with stage, status, timing, and parent linkage. `runs show` reports the selected run's complete §12.13 execution identity and its §11.14 verification findings when present. Both commands are read-only telemetry inspection, never a pipeline stage or stage trigger. Exit-code and JSON-output details are deferred to issue #55.
 
 ---

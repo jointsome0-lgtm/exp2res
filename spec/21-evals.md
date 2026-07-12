@@ -802,4 +802,53 @@ Then its public result is the one-line workspace_busy diagnostic class
 And it exposes no Python or SQLite stack trace
 ```
 
+## §21.38 Every Derived Row Resolves to Its Producing Run and Generation
+
+Test (enforces §11.14, §12 rule 13, §12.13, §13.7, §13.11, §13.13, and §14.13):
+
+```text
+Given a completed stage run produces any experience fact, self-signal, self-claim, assessment snapshot, resume bullet, contradiction, gap question, or resume branch
+Then every produced row has one produced_by_run_id that resolves to that stage's processing_runs row
+And every row has one non-empty generation_id governed by its atomic replacement batch
+
+Given one full Stage 3 extraction run replaces facts for two correction lineages
+Then all facts in either lineage resolve to that one Stage 3 run
+And facts swapped within one lineage share one generation_id
+And the two lineages carry two different generation IDs
+
+Given one Stage 4 run replaces both the gap and contradiction sets
+Then every row in both sets shares one generation_id and one produced_by_run_id
+When a later content-equivalent Stage 4 run retains those sets
+Then it produces no business row, changes neither provenance column, and allocates no generation_id
+
+Given Stage 5 replaces signals, Stage 6 replaces one view's claims plus snapshot, or Stage 10 replaces one branch plus its bullets
+Then every row in that individual swap shares exactly one fresh generation_id
+And no later verification or supersession rewrites its produced_by_run_id or generation_id
+
+Given correction add, logs delete, or recompute invokes the §13.13 lifecycle flow
+Then exactly one processing_runs row has stage 13.13 for that flow
+And every Stage 3–5 run it invokes names that row through parent_run_id
+And a directly invoked single-stage command has parent_run_id NULL
+
+Given any processing run fails under §15.1 or its producing operation
+Then the failed processing_runs row remains durably inspectable with status failed and a stable failure_code
+And it owns no business row or verification finding
+And if that failed run is Stage 7 or Stage 11, no target verification field changes and every prior finding remains
+
+Given the same current claim or bullet receives two completed verifier invocations
+Then each invocation persists one immutable finding for that target, so both attempt sets remain inspectable
+And the target carries only the latest denormalized operational status, phrases, reason, or counterevidence applicable to its type
+And the candidate claim or bullet prose remains byte-for-byte unchanged
+And any suggested_rewrite is retained only in finding history and never enters a writer prompt or §17/§18 export
+
+Given two provider invocations return byte-identical validated outputs
+Then their processing_runs IDs remain distinct even when their output_hash values match
+And matching input_hash and prompt_policy_hash identify exact recomputation without collapsing either invocation
+
+Given owner deletion commits for any raw log
+Then every verification finding and every current or historical recomputable row is purged with the derived graph
+And processing_runs rows survive with identifiers, hashes, counts, and accounting values only
+And surviving opaque IDs may stop resolving and no retained hash can reproduce the purged content
+```
+
 ---

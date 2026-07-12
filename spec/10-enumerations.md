@@ -10,7 +10,7 @@ No generator, linter, generated documentation, separate machine-readable registr
 
 `OwnershipLevel` is a normative total order. Members in its assignment are listed from weakest to strongest; `unknown` is the weakest value.
 
-`DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target.
+`DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry; `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target.
 
 ```python
 from typing import Literal
@@ -100,6 +100,11 @@ VerificationStatus = Literal[
     "contradicted",
     "unsupported",
     "rejected",
+]
+
+VerificationTargetRefType = Literal[
+    "self_claim",
+    "resume_bullet",
 ]
 
 SignalType = Literal[
