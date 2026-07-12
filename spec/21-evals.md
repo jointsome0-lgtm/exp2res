@@ -417,7 +417,11 @@ Then scope_target equals the exact §14.9 project selector
 And gap_question_ids exactly equals the duplicate-free writer unknown set
 And Unknowns and Questions Worth Answering dereference those rows without adding declarative snapshot prose
 And every non-empty claim counterevidence list renders with its claim ID and visible status
+And each counterevidence entry renders its statement with a typed reference resolving inside that claim's §15.5 closure
 And neither channel improves §16.11 aggregation or independently guides Stage 10
+
+Given a counterevidence entry references a row outside the supplied §15.5 closure, an unresolvable ID, or duplicates another entry's reference
+Then the Stage 7 finding is invalid structured output and no verification state commits
 
 Given a missing, duplicate, superseded, or free-form unknown value
 Then Stage 6 fails atomically instead of storing it in metadata or another prose field

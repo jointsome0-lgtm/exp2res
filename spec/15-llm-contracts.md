@@ -281,7 +281,11 @@ Output:
   "status": "partially_supported",
   "unsupported_phrases": ["strong production experience"],
   "counterevidence": [
-    "fact_007: the only deployment fact describes a local demo, not a production environment"
+    {
+      "statement": "The only deployment fact describes a local demo, not a production environment.",
+      "source_ref_type": "experience_fact",
+      "source_ref_id": "fact_007"
+    }
   ],
   "suggested_rewrite": "Evidence supports repeated design work around local-first provenance systems, but not production experience.",
   "reason": "No source facts support production deployment or production ownership."
@@ -290,7 +294,7 @@ Output:
 
 `source_signals` is exactly the claim's duplicate-free `source_signal_ids` set. `source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows — carrying each item's `strength` and `raw_log_id` — and `source_logs` is exactly the duplicate-free retained `RawLog` set those items reference. Every input array is ID-ordered (ascending byte order), so conforming implementations assemble one identical bundle. This is the context for the §9.4 strength/scope judgment required by §13.7 rule 2: a signal-only claim still supplies its underlying evidence, the same-log source rule stays applicable through `raw_log_id`, and the verifier never judges calibration from hidden state. The bundle is exact — §13.7 forbids narrowing it and §29.3 forbids widening it.
 
-`counterevidence` lists contrary-evidence statements grounded in the supplied sources (empty when none); Stage 7 persists it to `SelfClaim.counterevidence` (§11.6, §13.7).
+`counterevidence` is a list of typed `CounterevidenceItem` entries (§11.6), empty when none: each carries a contrary-evidence `statement` and a (`source_ref_type`, `source_ref_id`) grounding reference that must resolve to a member of this call's supplied closure — a fact in `source_facts`, an item in `source_evidence_items`, or a log in `source_logs`. A reference outside that closure, a wrong-type or missing target, or a duplicate (`source_ref_type`, `source_ref_id`) pair is invalid structured output under §15.1 and §12 rule 10. Stage 7 persists the validated list to `SelfClaim.counterevidence` (§11.6, §13.7).
 
 Every `status` uses the canonical meaning in §16.11. Stage 7 validates one finding for every claim in the snapshot and derives the snapshot's own status from those claim results; the writer or verifier may not assign a more permissive snapshot label independently.
 
