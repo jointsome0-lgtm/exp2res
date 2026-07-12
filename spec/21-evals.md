@@ -305,6 +305,10 @@ And source_log_ids is the exact raw-log set reachable through its selected sourc
 Given a missing, duplicate, free-form, or different-job requirement reference
 When Stage 10 attempts to persist the branch batch
 Then §12 rule 10 fails the batch atomically
+
+Given a Stage 10 candidate branch omits `job_description_id`
+When model validation and §12 rule 10 are applied
+Then the candidate fails both before any branch or bullet becomes current
 ```
 
 ## §21.23 Stage 4 Contract Is Complete and Schema-Only Retried

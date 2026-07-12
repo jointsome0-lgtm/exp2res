@@ -313,7 +313,7 @@ Generation selects and ranks relevant facts and `supported` self-claims for the 
 
 Every `matched_jd_requirements` entry is a duplicate-free stable ID from the exact `ParsedJD.requirements` supplied to this Stage 10 run. The writer cannot emit a free-form requirement label or an ID from another job description. §12 rule 10 and the Stage 10 transaction reject every missing, duplicate, or wrong-job reference before a branch or bullet becomes current.
 
-Without changing §11.12's optional field declaration, the Stage 10 producer must copy the exact §14.10 `--jd` ID into its candidate `ResumeBranch.job_description_id`. Stage 11 and Stage 12 recover the typed `ParsedJD` through that persisted association; a Stage 10 candidate with a missing or different job-description ID fails atomically.
+The Stage 10 producer must copy the exact §14.10 `--jd` ID into its candidate `ResumeBranch.job_description_id`. Stage 11 and Stage 12 recover the typed `ParsedJD` through that persisted association; a Stage 10 candidate with a missing or different job-description ID fails atomically.
 
 The exact assessment snapshot selected under §14.10 is mandatory, must be current, and must be eligible to anchor Stage 10 under §16.11. The new `ResumeBranch.assessment_snapshot_id` equals that selected ID. There is no implicit latest snapshot and no unanchored generation. The snapshot supplies structural anchor, scope, membership, and status context; its title and summary prose are not independent writer inputs. If the matching narrative summary guides selection or wording, Stage 10 passes its `supported` member claim and the bullet lists that claim ID. Only supported member claims may guide generation, and §12 validates every bullet's source-claim membership before commit.
 

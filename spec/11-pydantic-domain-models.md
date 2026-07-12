@@ -243,8 +243,8 @@ class JobDescription(BaseModel):
 class ResumeBranch(BaseModel):
     id: str
     name: str
-    job_description_id: Optional[str] = None
     assessment_snapshot_id: str
+    job_description_id: str
 
     created_at: datetime
     superseded_at: Optional[datetime] = None
@@ -253,7 +253,7 @@ class ResumeBranch(BaseModel):
 
 `assessment_snapshot_id` is the required exact anchor selected under the canonical resume rule in §18. It has no implicit-latest or absent state.
 
-Without changing the field's optional type, every branch produced by Stage 10 copies the exact §14.10 `--jd` record into `job_description_id`; verification and export recover the typed requirements through that persisted ID. The separate question of whether every possible `ResumeBranch` must require a job description is outside this decision.
+`job_description_id` is the required exact §14.10 `--jd` selection copied by Stage 10; verification and export recover the typed requirements through that persisted ID. It has no implicit or absent state.
 
 ## §11.13 Parsed Job Description
 

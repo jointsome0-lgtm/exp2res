@@ -144,7 +144,7 @@ exp2res export resume --branch agent-engineer
 
 `--snapshot` is a required stored-record selector for the exact assessment anchor governed by §18. It has no latest-snapshot default. A missing, superseded, `unverified`, or otherwise Stage-10-ineligible snapshot fails before a branch or bullet is inserted; the persisted branch records exactly the selected ID.
 
-`--jd` must resolve to a persisted typed `JobDescription`; Stage 10 copies that exact ID into the candidate `ResumeBranch.job_description_id` so verification and export can resolve every matched requirement. This producer rule does not change §11.12's optional field declaration; a Stage 10 candidate that omits or changes the selected ID fails atomically.
+`--jd` must resolve to a persisted typed `JobDescription`; Stage 10 copies that exact ID into the candidate `ResumeBranch.job_description_id` so verification and export can resolve every matched requirement. A Stage 10 candidate that omits or changes the selected ID fails atomically.
 
 `verify --branch` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values; it never applies a suggestion or invokes `resume generate`. Changed bullet wording requires a later explicit `resume generate` command and a replacement branch generation.
 

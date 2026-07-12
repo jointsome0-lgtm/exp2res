@@ -7,7 +7,7 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 3. datetime fields are stored as ISO 8601 TEXT.
 4. bool fields are stored as INTEGER 0/1, NOT NULL; a model default becomes the column DEFAULT (GapQuestion.answered → answered INTEGER NOT NULL DEFAULT 0).
 5. An embedded OccurredAt is flattened into occurred_start, occurred_end, temporal_precision, temporal_confidence columns; `temporal_precision` is the sole shape discriminator under §11.1.
-6. Scalar references to other entities become FOREIGN KEY columns. `evidence_items.raw_log_id` references `raw_logs.id ON DELETE CASCADE`; `raw_logs.corrects_log_id` is a self-reference with `ON DELETE SET NULL`; and `gap_questions.answer_log_id` references `raw_logs.id ON DELETE SET NULL`. The required `ResumeBranch.assessment_snapshot_id` derives as `TEXT NOT NULL REFERENCES assessment_snapshots(id)`; its stronger current-anchor check is rule 10. Other scalar references use the default restrictive action. No foreign key may block the owner-deletion operation in §13.13.
+6. Scalar references to other entities become FOREIGN KEY columns. `evidence_items.raw_log_id` references `raw_logs.id ON DELETE CASCADE`; `raw_logs.corrects_log_id` is a self-reference with `ON DELETE SET NULL`; and `gap_questions.answer_log_id` references `raw_logs.id ON DELETE SET NULL`. The required `ResumeBranch.assessment_snapshot_id` derives as `TEXT NOT NULL REFERENCES assessment_snapshots(id)`; its stronger current-anchor check is rule 10. The required `ResumeBranch.job_description_id` derives as `TEXT NOT NULL REFERENCES job_descriptions(id)`; its stronger exact-selection check is rule 10. Job descriptions are retained context, not lifecycle-managed data, and §13.13 owner deletion does not delete them, so this foreign key cannot block owner deletion. Other scalar references use the default restrictive action. No foreign key may block the owner-deletion operation in §13.13.
 7. A polymorphic reference — an (`*_type: DetectionRefType`, `*_id`) field pair such as Contradiction.left_ref_* / right_ref_* or GapQuestion.target_* — becomes two plain TEXT NOT NULL columns with no FOREIGN KEY because the target table varies per row; rule 10 supplies its write-time integrity check.
 8. Exception: `ExperienceFact.source_log_ids` and `evidence_item_ids` are not stored as columns. They are non-empty, duplicate-free views hydrated from the `fact_sources → evidence_items` relation in §12.4.
 9. Queries that feed processing, verification, generation, or export must filter every recomputable table to `superseded_at IS NULL`. Historical inspection is the only normal read path that may include superseded rows.
@@ -22,6 +22,7 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 | `AssessmentSnapshot.gap_question_ids` | `gap_questions` |
 | `AssessmentSnapshot.contradiction_ids` | `contradictions` |
 | `ResumeBranch.assessment_snapshot_id` | `assessment_snapshots` |
+| `ResumeBranch.job_description_id` | retained `job_descriptions` row |
 | `ResumeBullet.branch_id` | `resume_branches` |
 | `ResumeBullet.source_fact_ids` | `experience_facts` |
 | `ResumeBullet.source_log_ids` | retained `raw_logs` |
