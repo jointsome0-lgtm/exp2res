@@ -195,9 +195,9 @@ class Contradiction(BaseModel):
     title: str
     description: str
 
-    left_ref_type: EntityRefType
+    left_ref_type: DetectionRefType
     left_ref_id: str
-    right_ref_type: EntityRefType
+    right_ref_type: DetectionRefType
     right_ref_id: str
 
     metadata: dict = Field(default_factory=dict)
@@ -213,7 +213,7 @@ class GapQuestion(BaseModel):
     created_at: datetime
     superseded_at: Optional[datetime] = None
 
-    target_type: EntityRefType
+    target_type: DetectionRefType
     target_id: str
 
     question: str

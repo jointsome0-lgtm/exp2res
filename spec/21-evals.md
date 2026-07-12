@@ -315,8 +315,13 @@ Test:
 Given all current facts and the complete effective-lineage evidence context
 When the Stage 4 detector returns a schema-valid complete candidate set
 Then that set replaces the current gap and contradiction generation atomically
-And its polymorphic targets are limited to supplied raw logs, evidence items, and current facts
+And every polymorphic target type is a `DetectionRefType` (§10)
 And it exposes no status, resolution, dismissal, or verdict channel
+
+Given a detector output names an upper-layer target type such as a self-claim or assessment snapshot
+When it is validated against the closed `DetectionRefType`
+Then it is invalid structured output and fails before persistence
+And every accepted target type resolves to an input object supplied in the same Stage 4 call
 
 Given a lineage whose raw record was corrected under §14.4
 When Stage 4 regenerates

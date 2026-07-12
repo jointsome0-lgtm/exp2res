@@ -151,14 +151,10 @@ GapPriority = Literal[
     "high",
 ]
 
-EntityRefType = Literal[
+DetectionRefType = Literal[
     "raw_log",
     "evidence_item",
     "experience_fact",
-    "self_signal",
-    "self_claim",
-    "assessment_snapshot",
-    "resume_bullet",
 ]
 
 GapTrigger = Literal[
