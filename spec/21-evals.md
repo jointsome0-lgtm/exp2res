@@ -565,9 +565,9 @@ Test:
 Given a current claim cites one signal whose counter_fact_ids name a stronger counter fact not listed on the claim
 When Stage 7 assembles the §15.5 input for that claim
 Then source_facts contains the claim's cited facts plus the signal's supporting and counter facts exactly once each
-And source_evidence_items is every EvidenceItem reached through those facts' fact_sources rows, with strength and raw_log_id visible
-And source_logs is exactly the duplicate-free retained raw-log set those items reference
-And every array is ID-ordered and contains no row outside the declared bundle, with raw logs and evidence items reached only through the closure
+And source_evidence_items is every EvidenceItem reached through those facts' fact_sources rows, serialized under §13.3 rule 10 with strength and raw_log_id visible
+And source_logs is exactly the duplicate-free retained RawLog object set referenced by non-displaced members, with displaced logs omitted
+And every array is ID-ordered and contains no row outside the displacement-aware bundle, with raw logs and evidence items reached only through the closure
 
 Given a claim whose only closure evidence is one manual_claim item
 When the verifier judges confidence under §13.7 rule 2 and §9.4
@@ -900,7 +900,7 @@ And no candidate business row is committed
 
 ## §21.40 Correction Displacement Is Computable and Lossless
 
-Test (enforces §9.4, §12.4, §13.3–§13.4, §14.4, §15.2, and §15.8):
+Test (enforces §9.4, §12.4, §13.3–§13.4, §13.7, §13.10, §14.4, §15.2, §15.5–§15.8, and §29.3):
 
 ```text
 Given one correction lineage's retained rows
@@ -954,6 +954,19 @@ And the §9.4 high ceiling remains reachable but is not required
 When Stage 4 receives that current fact
 Then the fact is an ordinary supplied detector input object
 And E_commit is not thereby a detector target because its descriptor is not a supplied Stage 4 object
+
+Given displaced root R owns non-manual item E_support and its raw_text contains unique string D
+And correction C displaces R, current fact F selects E_support as displaced-record support, and current claim K cites F
+When Stage 7 serializes K's §15.5 provenance bundle
+Then source_evidence_items contains E_support only as the §13.3 rule 10 displaced-record support descriptor
+And source_logs omits R as a RawLog object
+And §9.4 judgment still receives E_support.strength and E_support.raw_log_id, so scoped strength and same-log independence remain visible
+When Stage 10 serializes the §15.6 writer input for a resume bullet grounded through F
+Then F's evidence pair carries E_support as the same descriptor and raw_log = null
+When Stage 11 serializes that bullet's §15.7 verifier input
+Then source_facts retains F's displaced-support provenance IDs, source_logs omits R as a RawLog object, and no EvidenceItem object is hydrated
+And D is absent from every serialized §15.5, §15.6, and §15.7 payload
+And neither the resume writer nor the resume verifier receives displaced prose
 
 Given displaced root R owns manual_claim item E_old
 When a Stage 3 candidate selects E_old and attempts to commit
