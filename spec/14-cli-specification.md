@@ -125,7 +125,7 @@ exp2res assess verify --snapshot snapshot_001
 exp2res export assessment --snapshot snapshot_001
 ```
 
-`--scope project` requires a non-blank `--project` value. Stage 6 stores that exact parsed option value as `AssessmentSnapshot.scope_target`; the LLM receives it as structural context but cannot author or normalize it. The currently defined non-project forms store `scope_target = None`. No scope value list is duplicated here; `AssessmentScope` in §10 is canonical.
+`--scope` selects one canonical §10 `AssessmentScope` value and defaults to `global` when omitted. `--scope project` requires a non-blank `--project` value. Stage 6 stores that exact parsed option value as `AssessmentSnapshot.scope_target`; the LLM receives it as structural context but cannot author or normalize it. Every non-project scope takes no target and persists `scope_target = None`. No scope value list is duplicated here; `AssessmentScope` in §10 is canonical.
 
 `assess verify` is required before assessment export. `export assessment` rejects `unverified` and every other snapshot status outside the assessment-export allowlist in §16.11.
 

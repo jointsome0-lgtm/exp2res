@@ -128,7 +128,6 @@ AssessmentScope = Literal[
     "project",
     "career",
     "learning",
-    "custom",
 ]
 
 ResumeTargetSection = Literal[

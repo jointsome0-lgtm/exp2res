@@ -229,7 +229,7 @@ counterevidence
 next questions
 ```
 
-For a project-scoped run, Stage 6 copies the exact non-blank §14.9 `--project` value into `AssessmentSnapshot.scope_target`; the writer receives it as branch-free structural context but cannot rewrite it. Current non-project command forms persist `scope_target = None`.
+For a project-scoped run, Stage 6 copies the exact non-blank §14.9 `--project` value into `AssessmentSnapshot.scope_target`; the writer receives it as branch-free structural context but cannot rewrite it. For every non-project scope, Stage 6 persists `scope_target = None`.
 
 Known-gap assertions are emitted as ordinary `SelfClaim(dimension="gap")` rows and receive Stage 7 status. The §15.4 `unknowns` output contains references only and must enumerate every current unanswered Stage 4 `GapQuestion` exactly once; Stage 6 does not scope-filter that set and stores it unchanged in `AssessmentSnapshot.gap_question_ids`. Unknowns are uncertainty/question presentation, not claim-grade assertions: they do not receive an independent status, do not improve the §16.11 snapshot aggregate, and cannot guide Stage 10. Declarative prose about what is or is not true must be a snapshot-owned `SelfClaim` and pass the existing status gate.
 
