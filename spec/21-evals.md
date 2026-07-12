@@ -182,7 +182,7 @@ Given one raw log has two selected EvidenceItems that support one fact
 When the fact is persisted
 Then fact_sources contains one row per EvidenceItem
 And source_log_ids contains the raw-log ID once
-And confidence calibration considers both distinct strengths
+And §9.4 confidence calibration retains both scoped items but counts their shared raw log as one source
 
 Given a Stage 6 candidate shares one current SelfClaim across snapshots or leaves a current SelfClaim unowned
 When the candidate transaction is validated
@@ -462,6 +462,50 @@ And the writer's matched_jd_requirements contains exactly the service-assigned I
 And excludes the unrelated requirement and any representation of the instruction-like text
 And the text causes no additional LLM, network, tool, environment, or file access
 And any candidate that follows the injected instruction fails before persistence
+```
+
+## §21.31 Confidence Is Calibrated, Never Authorized
+
+Test:
+
+```text
+Given three manual_claim EvidenceItems from three raw logs repeat one owner assertion and support one fact
+When the extractor emits candidate confidence high
+Then §9.4 structured-output validation fails because the fact ceiling is medium
+And repeated owner assertion never supplies independent corroboration
+
+Given one raw log supplies two EvidenceItems for one fact
+When the extractor emits candidate confidence high
+Then §9.4 structured-output validation fails because the items count as one source and the fact ceiling is medium
+
+Given one fact links a manual_claim item from one raw log and a commit_or_pr item from another
+When the extractor emits candidate confidence high
+Then the confidence passes §9.4 structured-output validation
+And high remains permitted by the ceiling, not required
+
+Given a fact backed by commit_or_pr establishes only a recorded change and attributed authorship
+And its linked sources establish no ownership depth, metric, or production use
+When generated candidates upgrade ownership, invent a metric, or claim production use
+Then §16.4, §16.5, and §16.6 fail closed regardless of evidence strength or confidence
+
+Given the maximum confidence of a signal's or claim's listed sources is medium
+When the candidate signal or claim emits confidence high
+Then §9.4 propagation-cap validation fails
+
+Given one narrow fact is the only support for a candidate signal with confidence high
+When §9.4 propagation-cap validation runs
+Then the signal fails the distinct-supporting-fact and distinct-raw-log requirement
+
+Given one narrow fact is the only support for a broader claim whose confidence does not exceed that fact's confidence
+When Stage 7 judges coverage under §9.4 and §13.7 rule 2
+Then insufficient breadth receives a non-passing §16.11 status
+And neither the claim nor its confidence is rewritten
+
+Given any candidate confidence exceeds a deterministic §9.4 ceiling or propagation cap
+When structured-output validation runs under §15.1
+Then the model receives one retry with the validation errors
+And a second invalid candidate fails the processing run
+And the service never silently lowers the candidate confidence
 ```
 
 ---

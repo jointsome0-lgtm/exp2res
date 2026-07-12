@@ -6,7 +6,7 @@ Other sections must reference the alias name and the field that carries it; they
 
 No generator, linter, generated documentation, separate machine-readable registry, or runtime schema tooling is required for MVP. If introduced after MVP, it must derive from §10 rather than creating a second enum source.
 
-`TemporalConfidence` types only confidence in an `OccurredAt` placement; `Confidence` types general confidence in derived facts, signals, and claims. The aliases intentionally remain separate even while their member sets are identical. For temporal-provenance comparison, `TemporalConfidence` has the normative weak-to-strong order `unknown < low < medium < high`; the assignment order below is not a ranking.
+`TemporalConfidence` types only confidence in an `OccurredAt` placement; `Confidence` types general confidence in derived facts, signals, and claims. The aliases intentionally remain separate even while their member sets are identical. For temporal-provenance comparison, `TemporalConfidence` has the normative weak-to-strong order `unknown < low < medium < high`; for calibration comparison under §9.4, `Confidence` has the same normative weak-to-strong order `unknown < low < medium < high`. These two explicit orders are normative for their aliases; the assignment order below is not itself a ranking.
 
 `OwnershipLevel` is a normative total order. Members in its assignment are listed from weakest to strongest; `unknown` is the weakest value.
 

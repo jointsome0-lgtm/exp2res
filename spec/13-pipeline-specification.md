@@ -77,7 +77,7 @@ Rules:
 5. Do not infer production use unless explicitly present.
 6. Every fact selects at least one input `EvidenceItem`; only selected items receive §12.4 rows and every selected item belongs to the correction lineage being extracted. Stage 3 persists each selected item as `direct`. V1 has no separate corroboration producer, so it never infers a `corroborating` row silently.
 7. `ExperienceFact.evidence_item_ids` is exactly the duplicate-free selected-item set, and `source_log_ids` is exactly the duplicate-free set of `EvidenceItem.raw_log_id` values reached through it. Every listed raw log therefore contributes at least one selected evidence item. Multiple selected items from one raw log produce separate `fact_sources` rows.
-8. `ExperienceFact.confidence` must be calibrated from every distinct linked `EvidenceItem.strength`; confidence and evidence strength remain separate axes (§9.3).
+8. `ExperienceFact.confidence` must follow §9.4's evidential scopes, independence rules, and deterministic ceiling for the complete linked `EvidenceItem` set; confidence and evidence strength remain separate axes (§9.3).
 9. `ExperienceFact.claim_kind` follows the fact-extractor producer semantics in §15.2; §13 does not restate that contract.
 10. The extraction unit is one correction lineage: a root `RawLog` plus every correction that reaches it through `corrects_log_id`, ordered by `recorded_at` and then ID. For a fact affected by corrections, the latest selected correction's effective `OccurredAt` under §14.4 is the governing source placement; otherwise the root placement governs. The fact inherits that placement unless the evidence-backed narrowing permitted by rule 2 applies. If owner deletion nulls a correction's target, that correction becomes a new lineage root.
 11. Extraction computes the complete current fact generation for each selected lineage. A validated replacement and the `superseded_at` transition of the lineage's previous current facts commit atomically; it never appends a second current copy. Repeating extraction may add processing history or a superseded generation, but after success there is exactly one current fact generation for that lineage.
@@ -165,6 +165,8 @@ Signal categories are the `SignalType` values (§10), carried by `SelfSignal.sig
 
 Signal extraction consumes the complete current fact and contradiction sets plus exactly the evidence items linked from those facts, and atomically replaces the complete current signal generation. It must not mix generations. It receives neither prior `existing_signals` nor raw gap-answer text: a self-contained `gap_answer` `RawLog` and its `EvidenceItem` first reach Stage 3 through §15.2, and only any re-extracted current facts and their linked evidence reach Stage 5. A gap answer that produces no current fact cannot influence a signal directly.
 
+A candidate `SelfSignal.confidence` must satisfy §9.4's propagation caps; a candidate above its computed cap is invalid structured output.
+
 A changed signal generation atomically supersedes every current claim, snapshot, resume branch, and resume bullet before those rows can be reused.
 
 Example signal:
@@ -204,6 +206,8 @@ assessment_snapshots
 Assessment dimensions are the `SelfClaimDimension` values (§10), carried by `SelfClaim.dimension` (§11.6). §13 must not restate them.
 
 `SelfClaim.claim_kind` follows the self-assessment-writer producer semantics in §15.4; §13 does not restate that contract.
+
+At the Stage 6 boundary, each candidate `SelfClaim.confidence` must satisfy §9.4's propagation caps; a candidate above its computed cap is invalid structured output.
 
 Synthesis atomically creates a complete current claim generation and a new current snapshot from one coherent current input generation, then supersedes the prior current snapshot for the same `AssessmentScope` and the claims owned by that snapshot. `scope_target` is persisted assessment context, not part of replacement identity; a new project-scoped snapshot therefore replaces the prior project-scoped snapshot even when the project target differs. The transaction validates the reverse cardinality in §12: after the swap, every current `SelfClaim` appears in exactly one current `AssessmentSnapshot.self_claim_ids`, current snapshots share no claim rows, and no current claim is unowned. Other scopes remain current. A superseded snapshot's payload and provenance remain inspectable history after correction but cannot become a processing input.
 
@@ -247,7 +251,7 @@ assessment_snapshots verification_status
 Verifier checks:
 
 1. Every self-claim has sources.
-2. Each `SelfClaim.confidence` is justified by the strength and scope of its supporting facts' linked evidence; confidence and evidence strength remain separate axes (§9.3).
+2. Each `SelfClaim.confidence` is justified under §9.4's judgment frame by the strength and scope of its supporting facts' linked evidence; confidence and evidence strength remain separate axes (§9.3).
 3. Counterevidence is not hidden.
 4. Identity claims are not over-broad.
 5. Self-assessment does not become motivational fiction.

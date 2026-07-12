@@ -125,13 +125,15 @@ Extractor must be conservative.
 
 Each raw log passes its `metadata` through this contract unmodified. For `gap_answer` logs it carries the §14.7 question context (`question_text`, `question_reason`); the extractor must interpret the answer text against that question — a contextual answer such as a bare quantity is meaningless without it — while still attributing extracted facts to the answer log itself.
 
-Each fact output selects its supporting evidence explicitly through `evidence_item_ids`. Persistence verifies that those items exist and that `source_log_ids` is exactly their distinct raw-log set before writing one `direct` §12.4 row per item; all linked strengths participate in confidence calibration.
+Each fact output selects its supporting evidence explicitly through `evidence_item_ids`. Persistence verifies that those items exist and that `source_log_ids` is exactly their distinct raw-log set before writing one `direct` §12.4 row per item; every linked item participates in §9.4 confidence calibration within its evidential scope.
+
+The extractor's emitted `confidence` must be at or below the §9.4 ceiling for its selected evidence, may be conservatively lower, and must be at most `low` when that context contains materially conflicting statements bearing on the fact.
 
 Every fact output carries every writer-settable §11.4 field shown above; Stage 3 supplies only `id`, `created_at`, and `superseded_at`. Optional/default fields are explicit in the contract so a model change cannot silently fall outside the structured boundary.
 
 Every fact output also carries `occurred`. For corrected facts the governing source placement is the latest selected correction's effective `OccurredAt` from §14.4; for uncorrected facts it is the root log's placement. The extractor copies that `OccurredAt` by default. It may emit a contained narrower placement only when the selected raw/evidence context explicitly states the narrower time; this is the additional linked support required by §16.7, not a model inference. It may never widen beyond the governing source window, set `occurred.precision` / persisted `temporal_precision` stronger than the strongest explicit in-context temporal support, or set `occurred.confidence` / persisted `temporal_confidence` above the governing source confidence under §10's order. When support conflicts or containment cannot be established, preserve the governing placement and lower temporal confidence if necessary rather than change its window or choose a stronger one.
 
-For `ExperienceFact.claim_kind`, `observed_fact` means the linked sources directly state or demonstrate the narrow claim; `inferred_fact` means the claim is a conservative derivation whose source links and calibrated confidence remain explicit. Other `ClaimKind` values are invalid fact-extractor outputs.
+For `ExperienceFact.claim_kind`, `observed_fact` means the linked sources directly state or demonstrate the narrow claim; `inferred_fact` means the claim is a conservative derivation whose source links and `confidence` assigned under §9.4 remain explicit. Other `ClaimKind` values are invalid fact-extractor outputs.
 
 ## §15.3 Self-Signal Extractor Contract
 
@@ -170,7 +172,7 @@ Do not infer identity from one artifact.
 Do not hide counterevidence.
 ```
 
-`evidence_items` is exactly the duplicate-free set reached through the supplied current facts and is context for evidence-strength calibration; signal provenance remains the fact IDs in §11.5. Prior signals are never inputs because Stage 5 produces a complete replacement generation. Raw gap answers are not inputs either: §13.5 requires them to pass through Stage 3 first, so only re-extracted current facts and their linked evidence can influence this contract.
+`evidence_items` is exactly the duplicate-free set reached through the supplied current facts and is context for §9.4 confidence calibration; signal provenance remains the fact IDs in §11.5. Candidate `SelfSignal.confidence` obeys §9.4's propagation caps: it cannot exceed the supporting-fact maximum, `high` requires at least two supporting facts reached through at least two distinct raw logs, and non-empty `counter_fact_ids` cap it at `medium`. Prior signals are never inputs because Stage 5 produces a complete replacement generation. Raw gap answers are not inputs either: §13.5 requires them to pass through Stage 3 first, so only re-extracted current facts and their linked evidence can influence this contract.
 
 ## §15.4 Self-Assessment Writer Contract
 
@@ -249,6 +251,8 @@ Output:
 ```
 
 For `SelfClaim.claim_kind`, `pattern_signal` summarizes a recurring supported pattern, `hypothesis` marks a tentative interpretation, and `narrative_summary` synthesizes already supported claims without adding a new fact. Other `ClaimKind` values are invalid self-assessment-writer outputs.
+
+Candidate `SelfClaim.confidence` obeys §9.4's source-maximum cap at the Stage 6 boundary; Stage 7 judges whether the listed sources actually cover the claim's breadth.
 
 The writer emits exactly one `narrative_summary` self-claim whose `claim` equals the top-level `summary`. Stage 6 assigns its ID and includes it in the snapshot's `self_claim_ids`; there is no separate unverified summary channel.
 
