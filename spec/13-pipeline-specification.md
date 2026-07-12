@@ -127,7 +127,7 @@ Each successful run validates one complete candidate for both output sets. Reten
 
 Stage 4 alone owns the complete current contradiction set. If its current inputs still conflict, the replacement generation must retain a contradiction for that conflict; if evidence-driven inputs no longer conflict, the replacement may omit it. V1 has no direct resolve/dismiss transition on a derived contradiction row.
 
-A changed Stage 4 generation atomically supersedes every current signal, claim, snapshot, resume branch, and resume bullet before those rows can be reused. Regenerating those higher layers requires their §14 triggers or the shared §14.12 flow.
+A changed Stage 4 generation atomically supersedes every current signal, claim, snapshot, resume branch, and resume bullet before those rows can be reused. Regenerating those higher layers requires their §14 triggers; the shared §14.12 flow regenerates Stage 5, while assessment views and resume branches require §14.9/§14.10 (§13.13).
 
 The V1 Stage 4 producer may persist only gaps and contradictions whose polymorphic targets are effective-lineage Stage 1 evidence present in this input or current Stage 3 facts. Effective evidence that produced no fact remains visible and may receive a gap target; a displaced pre-correction record can be neither input nor target. Stage 4 rejects targets owned by Stage 5 or later, because the same replacement invalidates those upper generations.
 

@@ -90,7 +90,7 @@ exp2res facts list
 exp2res facts show --fact-id fact_001
 ```
 
-Extraction follows the correction-lineage replacement and current-generation rules in §13.3. Re-running it never appends a second current fact generation; if facts change, higher current generations are invalidated and must be rebuilt with §14.12 or their owning generation commands.
+Extraction follows the correction-lineage replacement and current-generation rules in §13.3. Re-running it never appends a second current fact generation; if facts change, higher current generations are invalidated — §14.12 rebuilds Stages 4–5, while assessment views and resume branches require their owning §14.9/§14.10 generation commands (§13.13).
 
 ## §14.7 Generate Detections; Inspect and Answer Gaps and Contradictions
 
