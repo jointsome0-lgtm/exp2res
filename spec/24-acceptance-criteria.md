@@ -36,5 +36,6 @@ V1 is acceptable when:
 32. Stage 7 rejects a writer-generated permanent-identity claim such as "You are fundamentally..." without applying a rewrite or permitting assessment export.
 33. Stage 7 can mark an uncomfortable, non-flattering, evidence-grounded writer-generated assessment claim `supported` while preserving its prose byte-for-byte and invoking no writer or repair pass.
 34. Two conforming implementations, given the same evidence graph, compute the same §9.4 ceilings and caps; candidates above a cap fail as invalid structured output without silent rewriting; and no evidence strength authorizes ownership, metric, production, temporal, or employment content.
+35. For any current self-claim, Stage 7 assembles exactly the §15.5 provenance closure — the claim's source signals, closure facts, their linked evidence items, and the retained raw logs they reference, duplicate-free and ID-ordered; a missing, superseded, duplicate, or extra member fails verification closed before any provider call, and §29.3's §15.5 row names that closure.
 
 ---

@@ -538,4 +538,30 @@ And a second invalid candidate fails the processing run
 And the service never silently lowers the candidate confidence
 ```
 
+## §21.32 Assessment Verifier Receives the Exact Provenance Closure
+
+Test:
+
+```text
+Given a current claim cites one signal whose counter_fact_ids name a stronger counter fact not listed on the claim
+When Stage 7 assembles the §15.5 input for that claim
+Then source_facts contains the claim's cited facts plus the signal's supporting and counter facts exactly once each
+And source_evidence_items is every EvidenceItem reached through those facts' fact_sources rows, with strength and raw_log_id visible
+And source_logs is exactly the duplicate-free retained raw-log set those items reference
+And every array is ID-ordered and contains no unrelated fact, evidence item, raw log, or other database row
+
+Given a claim whose only closure evidence is one manual_claim item
+When the verifier judges confidence under §13.7 rule 2 and §9.4
+Then the judgment uses the supplied strength and scope, never hidden state
+And an unjustified confidence receives a non-passing §16.11 status without a rewrite
+
+Given two evidence items from one raw log and independent items from two raw logs inside one closure
+Then raw_log_id linkage preserves §9.4's same-source rule for the verifier's judgment
+
+Given assembly finds a closure member missing, superseded, or duplicated, or an implementation supplies a narrower or wider bundle
+When Stage 7 validates the bundle against the §15.5 closure
+Then the run fails closed before any provider call
+And the prior complete verifier state is retained
+```
+
 ---

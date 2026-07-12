@@ -36,10 +36,10 @@ Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file
 - §18 Resume Export Rules — required assessment anchoring, typed JD requirement references, voice-scoped prose, status allowlists, and export-fail conditions
 - §19 Integration Contracts — Tick-like / Atlas / GitHub import behavior with structure-only validation of system-of-record prose
 - §20 Suggested Repository Structure — placement principles + normative skeleton
-- §21 Evals — 31 behavioral tests including temporal provenance, typed JD references, Stage 4/8 contract discipline, voice scoping, typed assessment uncertainty, generated employment/identity/mirror behavior, and instruction-like JD isolation
+- §21 Evals — 32 behavioral tests including temporal provenance, typed JD references, Stage 4/8 contract discipline, voice scoping, typed assessment uncertainty, verifier input closure, generated employment/identity/mirror behavior, and instruction-like JD isolation
 - §22 Implementation Plan — Phase 0–5 with definitions of done
 - §23 End-to-End Demo — approximate-range retro log → complete typed facts → signal → claim → verified bullet
-- §24 Acceptance Criteria — 34 V1 checks
+- §24 Acceptance Criteria — 35 V1 checks
 - §25 Risks and Mitigations — resume-drift, flattery, punitive tone, overclaim, single-pass verifier gates, provenance corruption, verifier-gated integration projections, diagnosis, retained private/stale derivations
 - §26 README Positioning — intro and taglines
 - §27 Key Invariants — reference-only index including typed JD/unknown references, occurred provenance, generated/source voice boundaries, and the local privacy/egress boundary

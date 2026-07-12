@@ -288,7 +288,7 @@ Output:
 }
 ```
 
-`source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows, and `source_logs` are their retained raw logs; this is the context for the §9.4 strength/scope judgment required by §13.7 rule 2, so a signal-only claim still supplies its underlying evidence and the verifier never judges calibration from hidden state.
+`source_signals` is exactly the claim's duplicate-free `source_signal_ids` set. `source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows — carrying each item's `strength` and `raw_log_id` — and `source_logs` is exactly the duplicate-free retained `RawLog` set those items reference. Every input array is ID-ordered (ascending byte order), so conforming implementations assemble one identical bundle. This is the context for the §9.4 strength/scope judgment required by §13.7 rule 2: a signal-only claim still supplies its underlying evidence, the same-log source rule stays applicable through `raw_log_id`, and the verifier never judges calibration from hidden state. The bundle is exact — §13.7 forbids narrowing it and §29.3 forbids widening it.
 
 `counterevidence` lists contrary-evidence statements grounded in the supplied sources (empty when none); Stage 7 persists it to `SelfClaim.counterevidence` (§11.6, §13.7).
 
