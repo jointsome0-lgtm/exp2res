@@ -174,7 +174,7 @@ Then log_001 and its evidence are absent
 And all current and historical derived rows are purged before rebuild
 And managed-export removal is attempted and verified
 And surviving raw lineages are recomputed through Stage 5
-And the purged assessment views and branches are reported with their regeneration commands as command output only, never as persisted state
+And the purged assessment views are reported with executable §14.9 regeneration commands, and purged branches with name, retained job-description ID, and former view per §13.13 rule 9, as command output only, never as persisted state
 And a rebuild failure does not restore log_001 or any purged derived content
 And a managed output that cannot be removed is reported as a residual path while database deletion remains committed
 
