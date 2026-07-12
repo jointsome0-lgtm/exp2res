@@ -876,9 +876,14 @@ Then hydration rejects it under the identical policy
 Given a string is supplied where an integer or boolean is declared, or an integer or boolean is supplied where a string is declared
 When the object is validated at transport or hydration
 Then validation fails without truthiness or cross-type coercion
-Given an ISO 8601 string arrives in JSON-boundary mode for a declared datetime field
+Given an ISO 8601 string with an explicit UTC offset arrives in JSON-boundary mode for a declared datetime field
 Then it is parsed successfully
 And no other string-to-declared-type conversion is accepted
+Given an ISO 8601 datetime string without an offset, or a directly constructed naive datetime value
+When it is validated at transport, at hydration, or at construction
+Then validation fails rather than assuming any timezone
+Given one instant arrives in two accepted representations under different UTC offsets
+Then their §11 canonical hash bytes are identical
 
 Given any §15 model response includes a metadata field
 Then it is invalid structured output and no candidate business row is committed
@@ -888,6 +893,9 @@ And it changes no authority, control, selection, or lifecycle behavior
 Given §14.7 instead copies question_text and question_reason onto a gap-answer RawLog
 Then §15.2 receives that named pair as question context
 And the same key names from any other producer remain inert
+And a maximal 1,024-byte question with worst-case escaping still fits the copied pair within the 4 KiB metadata limit
+Given a Stage 4 candidate question exceeds 1,024 UTF-8 bytes
+Then it is invalid structured output and never persists, so every persisted gap remains answerable
 
 Given a candidate provider input exceeds the raw_text limit, another string limit, a list or object-count limit, the warnings or findings cap, or the JSON nesting-depth limit
 When the service serializes the complete payload
