@@ -196,6 +196,6 @@ exp2res runs list
 exp2res runs show --run-id run_001
 ```
 
-`runs list` reports processing-run rows with stage, status, timing, and parent linkage. `runs show` reports the selected run's complete §12.13 execution identity and its §11.14 verification findings when present. Both commands are read-only telemetry inspection, never a pipeline stage or stage trigger. Exit-code and JSON-output details are deferred to issue #55.
+`runs list` reports processing-run rows with stage, status, timing, and parent linkage. `runs show` reports the selected run's §12.13 run row, its §12.15 per-call telemetry rows, and its §11.14 verification findings when present. Both commands are read-only telemetry inspection, never a pipeline stage or stage trigger. Exit-code and JSON-output details are deferred to issue #55.
 
 ---

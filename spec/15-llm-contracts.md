@@ -7,7 +7,7 @@ All LLM calls must:
 1. Use structured outputs.
 2. Be validated with Pydantic.
 3. Fail closed on invalid output.
-4. Store the processing-run execution identity and metadata defined in §12.13.
+4. Store the processing-run execution identity and metadata defined in §12.13 and §12.15.
 5. Never create, mutate, or delete raw logs; automation's raw-layer authority is append-only and capture/import services own those appends (§5.3).
 6. Preserve provenance links.
 7. Preserve the generated-voice/source-voice boundary in §16.12: structured source text may be evidence input, but voice rules evaluate only Exp2Res-authored candidate language and never rewrite or reject source material.

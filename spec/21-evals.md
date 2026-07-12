@@ -804,7 +804,7 @@ And it exposes no Python or SQLite stack trace
 
 ## §21.38 Every Derived Row Resolves to Its Producing Run and Generation
 
-Test (enforces §11.14, §12 rule 13, §12.13, §13.7, §13.11, §13.13, and §14.13):
+Test (enforces §11.14, §12 rule 13, §12.13, §12.15, §13.7, §13.11, §13.13, and §14.13):
 
 ```text
 Given a completed stage run produces any experience fact, self-signal, self-claim, assessment snapshot, resume bullet, contradiction, gap question, or resume branch
@@ -830,6 +830,13 @@ Then exactly one processing_runs row has stage 13.13 for that flow
 And every Stage 3–5 run it invokes names that row through parent_run_id
 And a directly invoked single-stage command has parent_run_id NULL
 
+Given one Stage 10 run plans three bullets, or one Stage 7 run verifies N current claims
+Then that run owns exactly one llm_calls row per planned invocation with call_index contiguous from 1
+And each row carries that invocation's own input_hash, output_hash, provider_request_id, token counts, and retry counts
+And a single-invocation LLM stage run owns exactly one llm_calls row
+And a non-LLM run and a 13.13 orchestration row own none
+And transport or schema retries update the same row's counters without creating another row
+
 Given any processing run fails under §15.1 or its producing operation
 Then the failed processing_runs row remains durably inspectable with status failed and a stable failure_code
 And it owns no business row or verification finding
@@ -841,14 +848,17 @@ And the target carries only the latest denormalized operational status, phrases,
 And the candidate claim or bullet prose remains byte-for-byte unchanged
 And any suggested_rewrite is retained only in finding history and never enters a writer prompt or §17/§18 export
 
-Given two provider invocations return byte-identical validated outputs
-Then their processing_runs IDs remain distinct even when their output_hash values match
-And matching input_hash and prompt_policy_hash identify exact recomputation without collapsing either invocation
+Given two provider invocations in different runs return byte-identical validated outputs
+Then their llm_calls rows remain distinct under (run_id, call_index)
+And their processing_runs IDs remain distinct even when their output_hash values match
+And matching call input_hash plus run prompt_policy_hash identify exact recomputation without collapsing either invocation
 
 Given owner deletion commits for any raw log
 Then every verification finding and every current or historical recomputable row is purged with the derived graph
-And processing_runs rows survive with identifiers, hashes, counts, and accounting values only
-And surviving opaque IDs may stop resolving and no retained hash can reproduce the purged content
+And every retained llm_calls row has input_hash and output_hash NULL after the purge transaction, including rows of runs over surviving lineages
+And retained processing_runs and llm_calls rows keep identifiers, timing, statuses, counts, accounting values, retry counts, stable failure codes, and run prompt_policy_hash
+And surviving opaque IDs may stop resolving, while hashing candidate content can no longer confirm purged or deleted content
+And the rebuild's fresh Stage 3–5 runs record fresh hashes over surviving content only
 ```
 
 ## §21.39 Boundaries Are Strict, Typed, and Bounded
