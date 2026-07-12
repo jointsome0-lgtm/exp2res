@@ -131,6 +131,8 @@ The extractor's emitted `confidence` must be at or below the §9.4 ceiling for i
 
 Every fact output carries every writer-settable §11.4 field shown above; Stage 3 supplies only `id`, `created_at`, and `superseded_at`. Optional/default fields are explicit in the contract so a model change cannot silently fall outside the structured boundary.
 
+Every fact output copies `project` exactly from the governing source record under §13.3 rule 13 — `None` when that record carries none; an authored, renamed, or re-cased project value is invalid structured output, because §13.6 project views select subjects through this field.
+
 Every fact output also carries `occurred`. For corrected facts the governing source placement is the latest selected correction's effective `OccurredAt` from §14.4; for uncorrected facts it is the root log's placement. The extractor copies that `OccurredAt` by default. It may emit a contained narrower placement only when the selected raw/evidence context explicitly states the narrower time; this is the additional linked support required by §16.7, not a model inference. It may never widen beyond the governing source window, set `occurred.precision` / persisted `temporal_precision` stronger than the strongest explicit in-context temporal support, or set `occurred.confidence` / persisted `temporal_confidence` above the governing source confidence under §10's order. When support conflicts or containment cannot be established, preserve the governing placement and lower temporal confidence if necessary rather than change its window or choose a stronger one.
 
 For `ExperienceFact.claim_kind`, `observed_fact` means the linked sources directly state or demonstrate the narrow claim; `inferred_fact` means the claim is a conservative derivation whose source links and `confidence` assigned under §9.4 remain explicit. Other `ClaimKind` values are invalid fact-extractor outputs.
@@ -198,6 +200,7 @@ Input:
   "facts": [
     "<fact_001, fact_002: complete §11.4 ExperienceFact objects — canonical example in §15.2>"
   ],
+  "context_facts": [],
   "gaps": [
     {
       "id": "gap_001",
@@ -256,7 +259,7 @@ Candidate `SelfClaim.confidence` obeys §9.4's source-maximum cap at the Stage 6
 
 The writer emits exactly one `narrative_summary` self-claim whose `claim` equals the top-level `summary`. Stage 6 assigns its ID and includes it in the snapshot's `self_claim_ids`; there is no separate unverified summary channel.
 
-`scope` is a canonical `AssessmentScope` and `scope_target` is service-supplied structural context from §14.9. The writer must return neither field and cannot rewrite the target. `gaps` is the complete current unanswered set; answered current rows are not passed. Each `unknowns` entry has exactly one `gap_question_id` and no prose field. The IDs must be the duplicate-free exact set of all supplied `gaps`; an empty `unknowns` array is valid only when that input is empty. Stage 6 stores the set unchanged as `AssessmentSnapshot.gap_question_ids`. Known-gap assertions belong in status-bearing `SelfClaim(dimension="gap")` output. An unknown reference can render only the referenced question/uncertainty under §17; it is not an independent claim or a §16.11 bypass.
+`scope` is a canonical `AssessmentScope` and `scope_target` is service-supplied structural context from §14.9. The writer must return neither field and cannot rewrite the target. `facts` is the scope's subject set selected under §13.6 and `context_facts` is exactly the duplicate-free out-of-subject fact set referenced by the supplied signals; both carry complete §11.4 objects, and for `global` the context set is empty. Claims are authored about the subject; a context fact grounds cross-target support or counterevidence and may be cited only where actually used. Every `source_fact_ids` / `source_signal_ids` value must name a supplied object; out-of-context provenance is invalid structured output. `gaps` is the complete current unanswered set; answered current rows are not passed. Each `unknowns` entry has exactly one `gap_question_id` and no prose field. The IDs must be the duplicate-free exact set of all supplied `gaps`; an empty `unknowns` array is valid only when that input is empty. Stage 6 stores the set unchanged as `AssessmentSnapshot.gap_question_ids`. Known-gap assertions belong in status-bearing `SelfClaim(dimension="gap")` output. An unknown reference can render only the referenced question/uncertainty under §17; it is not an independent claim or a §16.11 bypass.
 
 Hard instructions: apply §16.2 (mirror, no motivational rewriting), §16.3 (anti-flattery), §16.9 (identity), §16.10 (diagnostic); preserve uncertainty and mention weak evidence where relevant.
 
@@ -267,10 +270,24 @@ Input:
 ```json
 {
   "self_claim": {},
+  "scope": "project",
+  "scope_target": "Exp2Res",
   "source_signals": [],
-  "source_facts": [],
-  "source_evidence_items": [],
-  "source_logs": []
+  "scope_signals": [
+    "<signal_001: complete §11.5 SelfSignal — canonical example in §15.4>"
+  ],
+  "scope_facts": [
+    "<fact_007 and every other supplied view fact: complete §11.4 ExperienceFact objects — canonical example in §15.2>"
+  ],
+  "source_facts": [
+    "<fact_007: complete §11.4 ExperienceFact — canonical example in §15.2>"
+  ],
+  "source_evidence_items": [
+    "<evidence_007: complete §11.3 EvidenceItem for fact_007 — canonical example in §15.2>"
+  ],
+  "source_logs": [
+    "<log_007: complete §11.2 RawLog reached through evidence_007 — canonical example in §15.2>"
+  ]
 }
 ```
 
@@ -281,20 +298,24 @@ Output:
   "status": "partially_supported",
   "unsupported_phrases": ["strong production experience"],
   "counterevidence": [
-    "fact_007: the only deployment fact describes a local demo, not a production environment"
+    {
+      "statement": "The only deployment fact describes a local demo, not a production environment.",
+      "source_ref_type": "experience_fact",
+      "source_ref_id": "fact_007"
+    }
   ],
   "suggested_rewrite": "Evidence supports repeated design work around local-first provenance systems, but not production experience.",
   "reason": "No source facts support production deployment or production ownership."
 }
 ```
 
-`source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows, and `source_logs` are their retained raw logs; this is the context for the §9.4 strength/scope judgment required by §13.7 rule 2, so a signal-only claim still supplies its underlying evidence and the verifier never judges calibration from hidden state.
+`scope` and `scope_target` are the snapshot's §11.7 values, supplied as structural context so the verifier can judge scope fit under §13.7 check 11; the verifier returns neither field. `source_signals` is exactly the claim's duplicate-free `source_signal_ids` set. `scope_signals` and `scope_facts` are the complete deterministic §13.6 selection for the snapshot's view, re-derived from current rows: every signal, and the union of the view's §15.4 `facts` and `context_facts`, including the cited members. They exist so check 3 can see a contrary signal or fact the writer's account omits; the closure alone deepens into evidence items and raw logs, so uncited view facts arrive as fact rows without extra raw text. An omitted contrary bundle member grounds a non-passing status and may persist as a typed counterevidence reference to that `scope_facts` or `scope_signals` member, keeping a navigable contrary source in the exported mirror. `source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows — carrying each item's `strength` and `raw_log_id` — and `source_logs` is exactly the duplicate-free retained `RawLog` set those items reference. Every input array is ID-ordered (ascending byte order), so conforming implementations assemble one identical bundle. This is the context for the §9.4 strength/scope judgment required by §13.7 rule 2: a signal-only claim still supplies its underlying evidence, the same-log source rule stays applicable through `raw_log_id`, and the verifier never judges calibration from hidden state. The bundle is exact — §13.7 forbids narrowing it and §29.3 forbids widening it.
 
-`counterevidence` lists contrary-evidence statements grounded in the supplied sources (empty when none); Stage 7 persists it to `SelfClaim.counterevidence` (§11.6, §13.7).
+`counterevidence` is a list of typed `CounterevidenceItem` entries (§11.6), empty when none: each carries a contrary-evidence `statement` and a (`source_ref_type`, `source_ref_id`) grounding reference that must resolve to a member of this call's supplied bundle — a fact in `source_facts` or `scope_facts`, an item in `source_evidence_items`, a log in `source_logs`, or a signal in `scope_signals`. A reference outside that bundle, a wrong-type or missing target, or a duplicate (`source_ref_type`, `source_ref_id`) pair is invalid structured output under §15.1 and §12 rule 10. Stage 7 persists the validated list to `SelfClaim.counterevidence` (§11.6, §13.7).
 
 Every `status` uses the canonical meaning in §16.11. Stage 7 validates one finding for every claim in the snapshot and derives the snapshot's own status from those claim results; the writer or verifier may not assign a more permissive snapshot label independently.
 
-`suggested_rewrite` is owner-facing advisory output from any CLI command that invokes Stage 7 (§14.9, §14.12). It is not persisted, is not an input to §15.4, and is never applied by Stage 7. If the owner requests revised wording, the assessment writer must emit a new claim in a later Stage 6 replacement generation.
+`suggested_rewrite` is owner-facing advisory output of the one command class that invokes Stage 7 (§14.9). It is not persisted, is not an input to §15.4, and is never applied by Stage 7. If the owner requests revised wording, the assessment writer must emit a new claim in a later Stage 6 replacement generation.
 
 ## §15.6 Resume Writer Contract
 

@@ -148,9 +148,19 @@ Given a current fact, signal, claim, snapshot, and resume branch derive from log
 When the owner appends a self-contained correction targeting log_001
 Then log_001 remains unchanged
 And correction capture plus invalidation become visible atomically before rebuild
-And the lineage facts plus the complete current gap, contradiction, signal, claim, and snapshot generations are replaced
+And the lineage facts plus the complete current gap, contradiction, and signal generations are replaced
+And every current claim, snapshot, branch, and bullet is superseded without a Stage 6 or Stage 7 call
 And the old snapshot remains inspectable but cannot verify, generate, or export
 And the old resume branch and managed exports are unavailable until regenerated
+
+Given one current global snapshot plus one current project snapshot when the correction lands
+Then both views are superseded
+And the command reports each invalidated view — scope, scope target, snapshot ID — with its executable §14.9 regeneration command
+And each invalidated branch with its name, retained job-description ID, and former view, whose §14.10 regeneration follows only after its view is regenerated
+
+Given the rebuild crashes after invalidation and the owner retries with bare or selected-lineage recompute
+Then Stages 3–5 are rebuilt
+And the command reports that no current assessment view exists instead of inferring a desired view set
 ```
 
 ## §21.14 Owner Deletion Is a Privacy Reset
@@ -163,9 +173,14 @@ When the owner deletes log_001
 Then log_001 and its evidence are absent
 And all current and historical derived rows are purged before rebuild
 And managed-export removal is attempted and verified
-And surviving raw lineages are recomputed
+And surviving raw lineages are recomputed through Stage 5
+And the purged assessment views are reported with executable §14.9 regeneration commands, and purged branches with name, retained job-description ID, and former view per §13.13 rule 9, as command output only, never as persisted state
 And a rebuild failure does not restore log_001 or any purged derived content
 And a managed output that cannot be removed is reported as a residual path while database deletion remains committed
+
+Given a purged project view whose subject facts all derived from the deleted log
+When the owner re-runs assess generate for that view
+Then the run fails before any provider call under §13.6's empty-subject rule
 ```
 
 ## §21.15 Provenance References Resolve at Write Time
@@ -413,11 +428,15 @@ Test:
 ```text
 Given a project assessment writer emits typed current unanswered GapQuestion references as unknowns and Stage 7 records claim counterevidence
 When Stage 6 persists and §17 renders the snapshot
-Then scope_target equals the exact §14.9 project selector
+Then scope_target equals the canonical §14.9 project selector
 And gap_question_ids exactly equals the duplicate-free writer unknown set
 And Unknowns and Questions Worth Answering dereference those rows without adding declarative snapshot prose
 And every non-empty claim counterevidence list renders with its claim ID and visible status
+And each counterevidence entry renders its statement with a typed reference resolving inside that claim's §15.5 bundle
 And neither channel improves §16.11 aggregation or independently guides Stage 10
+
+Given a counterevidence entry references a row outside the supplied §15.5 bundle, an unresolvable ID, or duplicates another entry's reference
+Then the Stage 7 finding is invalid structured output and no verification state commits
 
 Given a missing, duplicate, superseded, or free-form unknown value
 Then Stage 6 fails atomically instead of storing it in metadata or another prose field
@@ -536,6 +555,98 @@ When structured-output validation runs under §15.1
 Then the model receives one retry with the validation errors
 And a second invalid candidate fails the processing run
 And the service never silently lowers the candidate confidence
+```
+
+## §21.32 Assessment Verifier Receives the Exact Provenance Closure
+
+Test:
+
+```text
+Given a current claim cites one signal whose counter_fact_ids name a stronger counter fact not listed on the claim
+When Stage 7 assembles the §15.5 input for that claim
+Then source_facts contains the claim's cited facts plus the signal's supporting and counter facts exactly once each
+And source_evidence_items is every EvidenceItem reached through those facts' fact_sources rows, with strength and raw_log_id visible
+And source_logs is exactly the duplicate-free retained raw-log set those items reference
+And every array is ID-ordered and contains no row outside the declared bundle, with raw logs and evidence items reached only through the closure
+
+Given a claim whose only closure evidence is one manual_claim item
+When the verifier judges confidence under §13.7 rule 2 and §9.4
+Then the judgment uses the supplied strength and scope, never hidden state
+And an unjustified confidence receives a non-passing §16.11 status without a rewrite
+
+Given two evidence items from one raw log and independent items from two raw logs inside one closure
+Then raw_log_id linkage preserves §9.4's same-source rule for the verifier's judgment
+
+Given the writer cites only favorable sources while a contrary signal or contrary fact exists in the same view's §13.6 selection
+When Stage 7 assembles the bundle
+Then scope_signals and scope_facts contain the complete view selection including the uncited contrary members as rows without extra raw logs
+And the verifier grounds a non-passing status on that omission and may persist a typed counterevidence reference to the omitted member
+And every counterevidence reference stays inside the claim's supplied bundle
+
+Given assembly finds a closure member missing, superseded, or duplicated, or an implementation supplies a narrower or wider bundle
+When Stage 7 validates the bundle against the §15.5 closure
+Then the run fails closed before any provider call
+And the prior complete verifier state is retained
+```
+
+## §21.33 Assessment Scope Selects Deterministically and Views Replace by Identity
+
+Test:
+
+```text
+Given current facts for projects "Exp2Res" and "Atlas" plus one fact with project = None
+When Stage 6 runs with --scope project --project Exp2Res
+Then the subject fact set is exactly the current facts whose case-folded canonical project equals the case-folded canonical target
+And the None-project and Atlas facts are not subject facts
+And every current signal referencing at least one subject fact is supplied, including signals whose counter_fact_ids cross projects
+And the out-of-subject facts referenced by those signals are supplied as context_facts
+And the complete current unanswered gap set and complete current contradiction set are supplied unfiltered
+And a writer claim citing an unsupplied fact or signal is invalid structured output
+
+Given a raw log captured with --project Exp2Res governs a correction lineage
+When facts extract from that lineage
+Then each fact's project equals the governing record's project exactly under §13.3 rule 13
+And an extractor-authored, renamed, or re-cased project value is invalid structured output
+
+Given a text-only §14.4 correction to that project-tagged log with no explicit project replacement
+Then the correction stores the target's project exactly
+And the re-extracted facts remain selectable by the same project view
+
+Given a current global snapshot and a current project snapshot for "Atlas"
+When a new project view for "Exp2Res" is generated
+Then it becomes a third current snapshot and supersedes nothing
+And regenerating with --project " Exp2Res " or "exp2res" supersedes exactly the Exp2Res view under the case-folded canonical identity
+And the persisted scope_target is the canonical pre-fold selector
+And the global and Atlas snapshots remain current
+
+Given --scope receives a value outside the canonical §10 AssessmentScope list, such as career or learning
+Then command parsing fails before any Stage 6 run
+
+Given a project target whose subject set matches no current fact
+When Stage 6 runs for that view
+Then the run fails before any provider call and no snapshot is persisted
+```
+
+## §21.34 Assessment Exports Are Namespaced Per View
+
+Test:
+
+```text
+Given a current global snapshot and a current project snapshot for target "Exp2Res"
+When each is exported under §13.12
+Then the global files land in out/assessment/global/
+And the project files land in out/assessment/project--exp2res/ using the case-folded canonical percent-encoded target
+And the second export does not overwrite or remove the first view's files
+
+Given re-verification changes the project snapshot's status
+Then removal targets exactly that snapshot's view directory and its dependent branch exports
+And the global view directory is untouched
+
+Given two project targets that differ only in case or surrounding whitespace
+Then they canonicalize to one view and one directory, and the later generation replaces the earlier
+
+Given resume generation is invoked with --branch assessment, --branch Assessment, a path-normalizing alias such as "assessment." or "assessment ", or a branch name containing a path separator such as assessment/global
+Then command parsing fails because a branch is a single plain path segment and out/assessment/ is the reserved assessment namespace
 ```
 
 ---

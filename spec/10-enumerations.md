@@ -10,6 +10,8 @@ No generator, linter, generated documentation, separate machine-readable registr
 
 `OwnershipLevel` is a normative total order. Members in its assignment are listed from weakest to strongest; `unknown` is the weakest value.
 
+`DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target.
+
 ```python
 from typing import Literal
 
@@ -126,8 +128,6 @@ SelfClaimDimension = Literal[
 AssessmentScope = Literal[
     "global",
     "project",
-    "career",
-    "learning",
 ]
 
 ResumeTargetSection = Literal[
@@ -155,6 +155,13 @@ DetectionRefType = Literal[
     "raw_log",
     "evidence_item",
     "experience_fact",
+]
+
+CounterevidenceRefType = Literal[
+    "raw_log",
+    "evidence_item",
+    "experience_fact",
+    "self_signal",
 ]
 
 GapTrigger = Literal[
