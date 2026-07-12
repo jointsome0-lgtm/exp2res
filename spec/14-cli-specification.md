@@ -57,7 +57,7 @@ exp2res correction add --log-id log_001
 
 `--log-id` must resolve to an existing raw record. The command requires self-contained correction text. Its temporal prompt starts from the target's `OccurredAt`; unless the owner explicitly replaces that placement, the correction copies it exactly, so every correction stores an effective temporal value without silently increasing precision.
 
-In one database transaction, the command stores `RawLog(entry_type=correction, source_type=manual_entry, corrects_log_id=log_001)` plus its linked `EvidenceItem(strength=manual_claim)` while invalidating the exact current layers listed in §13.13. It attempts to remove managed exports before invoking the selected-lineage recompute in §14.12. The target raw record is unchanged. If invalidation cleanup or recomputation fails, the correction remains stored, stale derivations stay unavailable, residual managed paths are reported, and the command exits unsuccessfully with `exp2res recompute --log-id log_001` as the retry.
+In one database transaction, the command stores `RawLog(entry_type=correction, source_type=manual_entry, corrects_log_id=log_001)` plus its linked `EvidenceItem(strength=manual_claim)` while invalidating the exact current layers listed in §13.13. It attempts to remove managed exports before invoking the selected-lineage recompute in §14.12, which rebuilds through Stage 5; the command reports every invalidated assessment view and branch with its §14.9/§14.10 regeneration command (§13.13 rule 9). The target raw record is unchanged. If invalidation cleanup or recomputation fails, the correction remains stored, stale derivations stay unavailable, residual managed paths are reported, and the command exits unsuccessfully with `exp2res recompute --log-id log_001` as the retry.
 
 ## §14.5 Import Evidence
 
@@ -161,7 +161,7 @@ exp2res logs delete --log-id log_001
 exp2res logs delete --log-id log_001 --yes
 ```
 
-`logs delete` is the owner's destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13. It deletes only Exp2Res-managed database records and `out/`; it does not delete a supplied source file or export copied elsewhere. Raw database deletion remains committed if output removal or rebuilding fails; residual managed paths are reported as `deletion_incomplete`, never as success.
+`logs delete` is the owner's destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 5; the purged assessment views and branches are reported with their §14.9/§14.10 regeneration commands as command output only (§13.13 rule 9). It deletes only Exp2Res-managed database records and `out/`; it does not delete a supplied source file or export copied elsewhere. Raw database deletion remains committed if output removal or rebuilding fails; residual managed paths are reported as `deletion_incomplete`, never as success.
 
 ## §14.12 Recompute Derived State
 
@@ -170,8 +170,8 @@ exp2res recompute
 exp2res recompute --log-id log_001
 ```
 
-The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global higher-layer regeneration. This command orchestrates the existing Stage 3–7 triggers under §13.13; it is not a new pipeline stage and does not create a synthetic stage identifier.
+The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global Stage 4–5 regeneration. This command orchestrates the existing Stage 3–5 triggers under §13.13; it is not a new pipeline stage and does not create a synthetic stage identifier.
 
-`recompute`, and correction or deletion commands that invoke the same flow, present every Stage 7 finding to the owner, including advisory `suggested_rewrite` values. They do not apply those suggestions or invoke another Stage 6 generation.
+Lifecycle recomputation ends at Stage 5 and performs no Stage 6 or Stage 7 call, so it presents no verifier findings. `recompute`, and the correction and deletion commands that invoke the same flow, report every invalidated assessment view and branch with its explicit §14.9/§14.10 regeneration command; a retry that finds no current view reports that state instead of inferring a desired view set (§13.13 rule 9).
 
 ---

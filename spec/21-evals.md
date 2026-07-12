@@ -148,9 +148,18 @@ Given a current fact, signal, claim, snapshot, and resume branch derive from log
 When the owner appends a self-contained correction targeting log_001
 Then log_001 remains unchanged
 And correction capture plus invalidation become visible atomically before rebuild
-And the lineage facts plus the complete current gap, contradiction, signal, claim, and snapshot generations are replaced
+And the lineage facts plus the complete current gap, contradiction, and signal generations are replaced
+And every current claim, snapshot, branch, and bullet is superseded without a Stage 6 or Stage 7 call
 And the old snapshot remains inspectable but cannot verify, generate, or export
 And the old resume branch and managed exports are unavailable until regenerated
+
+Given one current global snapshot plus one current project snapshot when the correction lands
+Then both views are superseded
+And the command reports each invalidated view — scope, scope target, snapshot ID — and each branch with its explicit §14.9/§14.10 regeneration command
+
+Given the rebuild crashes after invalidation and the owner retries with bare or selected-lineage recompute
+Then Stages 3–5 are rebuilt
+And the command reports that no current assessment view exists instead of inferring a desired view set
 ```
 
 ## §21.14 Owner Deletion Is a Privacy Reset
@@ -163,9 +172,14 @@ When the owner deletes log_001
 Then log_001 and its evidence are absent
 And all current and historical derived rows are purged before rebuild
 And managed-export removal is attempted and verified
-And surviving raw lineages are recomputed
+And surviving raw lineages are recomputed through Stage 5
+And the purged assessment views and branches are reported with their regeneration commands as command output only, never as persisted state
 And a rebuild failure does not restore log_001 or any purged derived content
 And a managed output that cannot be removed is reported as a residual path while database deletion remains committed
+
+Given a purged project view whose subject facts all derived from the deleted log
+When the owner re-runs assess generate for that view
+Then the run fails before any provider call under §13.6's empty-subject rule
 ```
 
 ## §21.15 Provenance References Resolve at Write Time

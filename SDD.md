@@ -28,7 +28,7 @@ Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file
 - §10 Enumerations — canonical Literal aliases plus temporal and general confidence orders and typed JD requirement kinds
 - §11 Pydantic Domain Models — lifecycle-managed entities, typed assessment scope/unknown/counterevidence storage, exact resume provenance, and ParsedJD requirements with stable IDs
 - §12 SQLite Schema — derived typed JSON storage, normalized fact provenance, and transactional validation of snapshot, JD-requirement, and resume references; normative DDL only for fact_sources and processing_runs
-- §13 Pipeline Specification — 10 active stable-number stages with conservative occurred provenance, LLM-backed Stage 4/8 contracts, fact-mediated gap answers, typed assessment content, and snapshot-anchored resume generation
+- §13 Pipeline Specification — 10 active stable-number stages with conservative occurred provenance, LLM-backed Stage 4/8 contracts, fact-mediated gap answers, typed assessment content, snapshot-anchored resume generation, and Stage 3–5 lifecycle recompute with explicit view regeneration
 - §14 CLI Specification — sole command-form authority; init, capture/local-payload import, owner deletion, extract/recompute, generation with explicit selectors and persisted project scope targets, verifier findings, export
 - §15 LLM Contracts — full structured extractor/writer/verifier plus Stage 4 detector and Stage 8 parser I/O; schema retry is distinct from semantic results
 - §16 Verification Rules — evidence/status gates and generated-voice-scoped mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, and diagnostic rules
