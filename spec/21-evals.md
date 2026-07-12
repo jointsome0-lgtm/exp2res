@@ -851,7 +851,8 @@ And any suggested_rewrite is retained only in finding history and never enters a
 Given two provider invocations in different runs return byte-identical validated outputs
 Then their llm_calls rows remain distinct under (run_id, call_index)
 And their processing_runs IDs remain distinct even when their output_hash values match
-And matching call input_hash plus run prompt_policy_hash identify exact recomputation without collapsing either invocation
+And exact recomputation requires matching run provider, model, and prompt_policy_hash plus matching call input_hash without collapsing either invocation
+And the same payload and prompt policy under a different provider or model is not classified as exact recomputation
 
 Given owner deletion commits for any raw log
 Then every verification finding and every current or historical recomputable row is purged with the derived graph
