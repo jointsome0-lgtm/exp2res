@@ -577,6 +577,11 @@ And an unjustified confidence receives a non-passing §16.11 status without a re
 Given two evidence items from one raw log and independent items from two raw logs inside one closure
 Then raw_log_id linkage preserves §9.4's same-source rule for the verifier's judgment
 
+Given the writer cites only favorable sources while a contrary signal exists in the same view's §13.6 selection
+When Stage 7 assembles the bundle
+Then scope_signals contains the complete view signal set including the uncited contrary signal
+And the verifier may ground a non-passing status on that omission via its reason, while counterevidence references stay inside the claim's closure
+
 Given assembly finds a closure member missing, superseded, or duplicated, or an implementation supplies a narrower or wider bundle
 When Stage 7 validates the bundle against the §15.5 closure
 Then the run fails closed before any provider call
@@ -596,6 +601,11 @@ And every current signal referencing at least one subject fact is supplied, incl
 And the out-of-subject facts referenced by those signals are supplied as context_facts
 And the complete current unanswered gap set and complete current contradiction set are supplied unfiltered
 And a writer claim citing an unsupplied fact or signal is invalid structured output
+
+Given a raw log captured with --project Exp2Res governs a correction lineage
+When facts extract from that lineage
+Then each fact's project equals the governing record's project exactly under §13.3 rule 13
+And an extractor-authored, renamed, or re-cased project value is invalid structured output
 
 Given a current global snapshot and a current project snapshot for "Atlas"
 When a new project view for "Exp2Res" is generated
