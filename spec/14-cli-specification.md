@@ -90,7 +90,7 @@ exp2res facts list
 exp2res facts show --fact-id fact_001
 ```
 
-Extraction follows the correction-lineage replacement and current-generation rules in §13.3. Re-running it never appends a second current fact generation; if facts change, higher current generations are invalidated — §14.12 rebuilds Stages 4–5, while assessment views and resume branches require their owning §14.9/§14.10 generation commands (§13.13).
+Extraction follows the correction-lineage replacement and current-generation rules in §13.3. Re-running it never appends a second current fact generation; if facts change, higher current generations are invalidated and reported with the §13.13 rule 9 view/branch regeneration guidance — §14.12 rebuilds Stages 4–5, while assessment views and resume branches require their owning §14.9/§14.10 generation commands (§13.13).
 
 ## §14.7 Generate Detections; Inspect and Answer Gaps and Contradictions
 
@@ -102,7 +102,7 @@ exp2res contradictions list
 exp2res contradictions show --contradiction-id contradiction_001
 ```
 
-`detections generate` is the sole direct detection-generation command; Stage 4 also runs inside the §14.12 lifecycle flow (§13.4). Either path performs one complete §15.8 call whose result atomically retains or replaces the complete gap and contradiction generations together under §13.4's content-equivalence rule — never one half. Its help and command output must make the both-sets replacement side effect unmistakable and report both complete result sets plus every invalidated artifact class, or state that the generation was retained unchanged.
+`detections generate` is the sole direct detection-generation command; Stage 4 also runs inside the §14.12 lifecycle flow (§13.4). Either path performs one complete §15.8 call whose result atomically retains or replaces the complete gap and contradiction generations together under §13.4's content-equivalence rule — never one half. Its help and command output must make the both-sets replacement side effect unmistakable and report both complete result sets, every invalidated artifact class, and the §13.13 rule 9 view/branch regeneration guidance, or state that the generation was retained unchanged.
 
 `gaps answer` persists `RawLog(entry_type=gap_answer, source_type=manual_entry)` plus a linked `EvidenceItem(strength=manual_claim)`, then assigns the new raw-log ID to `GapQuestion.answer_log_id` and sets `GapQuestion.answered = true` in the same transaction; `answered` is true iff `answer_log_id` is set. That transaction supersedes no current `AssessmentSnapshot`, branch, or bullet referencing the question: the answer is new raw evidence that reaches derived state only through extraction and regeneration (§13.5 via Stage 3, §13.6), while §17 renders the question's answered state on the still-current snapshot and §13.12 keeps that snapshot exportable. It does apply §13's managed-output invalidation semantics to the exports the answer makes stale: while any current snapshot references the answered question, it enumerates the managed `out/assessment/<view>/` directory of every current snapshot referencing that question — with complete unfiltered gap sets, that is every current view — and the managed `out/<branch>/` set of every current branch anchored to such a snapshot, attempts removal, and reports every residual path as an unsuccessful invalidation. Database state remains committed regardless; the snapshot and branches stay immediately re-exportable with the answered-since-synthesis rendering.
 
@@ -116,6 +116,8 @@ V1 gap and contradiction subcommands only inspect immutable Stage 4 detections o
 exp2res signals generate
 exp2res signals list
 ```
+
+A changed signal generation supersedes every current claim, snapshot, branch, and bullet (§13.5); `signals generate` reports the invalidated classes and the §13.13 rule 9 view/branch regeneration guidance.
 
 ## §14.9 Generate Self-Assessment
 
