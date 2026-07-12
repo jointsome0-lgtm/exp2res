@@ -245,9 +245,9 @@ Test:
 
 ```text
 Given current inputs still conflict
-When Stage 4 regenerates
-Then the replacement current generation retains a contradiction for that conflict
-And the prior row may become superseded but cannot be marked resolved or dismissed
+When Stage 4 runs under §13.4's retain-or-replace rule
+Then the current generation — retained or replacement — preserves a contradiction for that conflict
+And a prior row becomes superseded only through a replacing regeneration and cannot be marked resolved or dismissed
 And every current snapshot references and renders the complete current Stage 4 contradiction set
 
 Given corrected or additional current evidence removes the conflict
@@ -333,6 +333,7 @@ And no command form exists that regenerates only gaps or only contradictions
 
 Given a rerun whose validated candidate is content-equivalent over the detector-authored fields of both output sets
 And every gap in the current generation is unanswered
+When `detections generate` runs directly
 Then the prior current generation is retained
 And nothing is superseded
 And the snapshot and branch remain current
