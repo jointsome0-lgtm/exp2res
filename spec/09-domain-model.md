@@ -59,6 +59,8 @@ A ceiling is a cap, never an entitlement. The extractor assigns the lowest defen
 
 `SelfClaim.confidence` must not exceed the maximum confidence of its listed source signals and facts. Whether those sources actually cover the breadth of a broad statement is the semantic half, judged by Stage 7 under §13.7 rule 2; a narrow strong fact never entitles a broad claim to its confidence.
 
+The maximum over an empty source list is `unknown`: a signal with no supporting facts or a claim with no listed sources is capped at `unknown`. The cap is therefore total and structural validation never diverges on empty lists; §13.7 rule 1 still fails a sourceless claim at verification.
+
 **Authorization boundary.** Calibration bounds only confidence and only within the linked items' evidential scopes. No strength or ceiling authorizes ownership, metric, production, temporal, or employment content. Sections §16.4–§16.8 evaluate their explicit-support requirements independently of confidence and fail closed even when every linked item supports the highest confidence permitted within its scope.
 
 **Enforcement.** The deterministic ceiling and propagation caps are structured-output validation. A candidate whose `confidence` exceeds its computed cap is invalid output under §15.1: retry once with the validation errors, then mark the run failed. The service never silently lowers a value. Stage 7 judges the semantic half; insufficient scope or breadth produces a non-passing §16.11 status, never a rewrite.
