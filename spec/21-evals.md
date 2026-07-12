@@ -155,7 +155,8 @@ And the old resume branch and managed exports are unavailable until regenerated
 
 Given one current global snapshot plus one current project snapshot when the correction lands
 Then both views are superseded
-And the command reports each invalidated view — scope, scope target, snapshot ID — and each branch with its explicit §14.9/§14.10 regeneration command
+And the command reports each invalidated view — scope, scope target, snapshot ID — with its executable §14.9 regeneration command
+And each invalidated branch with its name, retained job-description ID, and former view, whose §14.10 regeneration follows only after its view is regenerated
 
 Given the rebuild crashes after invalidation and the owner retries with bare or selected-lineage recompute
 Then Stages 3–5 are rebuilt
