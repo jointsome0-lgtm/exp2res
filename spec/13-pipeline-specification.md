@@ -391,7 +391,7 @@ out/assessment/<view>/gap_questions.md
 out/assessment/<view>/contradictions.md
 ```
 
-`<view>` is the deterministic slug of the exported snapshot's assessment view (§11.7): `global` for the global scope, and `project--<target>` for a project view, where `<target>` is the case-folded canonical `scope_target` with every UTF-8 byte outside `a-z 0-9 . _ -` percent-encoded as `%XX` with uppercase hex digits. Case folding matches view identity, so two views never collide on a case-insensitive filesystem, and the encoding is injective, so distinct targets never share a directory. Each snapshot's exports live only in its view directory; exporting one view never touches another's files.
+`<view>` is the deterministic slug of the exported snapshot's assessment view (§11.7): `global` for the global scope, and `project--<target>` for a project view, where `<target>` is the case-folded canonical `scope_target` with every UTF-8 byte outside `a-z 0-9 . _ -` percent-encoded as `%XX` with uppercase hex digits, and a leading or trailing `.` of the resulting segment additionally encoded as `%2E` — no view directory is a dot segment, hidden name, or Windows-invalid trailing-dot name, and targets such as `Exp2Res` and `Exp2Res.` keep distinct directories. Case folding matches view identity, so two views never collide on a case-insensitive filesystem, and the encoding is injective, so distinct targets never share a directory. Each snapshot's exports live only in its view directory; exporting one view never touches another's files.
 
 Persisted resume outputs:
 
