@@ -270,7 +270,7 @@ Stage 7 obtains a validated §15.5 verdict for every claim in the current snapsh
 
 One Stage 7 invocation performs one semantic verifier pass per current claim and then terminates after aggregation. A valid non-passing verdict completes verification but closes every consumer gate that disallows its status. Stage 7 returns the complete §15.5 findings to the invoking CLI command and persists only its declared verification fields; it never invokes Stage 6, applies `suggested_rewrite`, edits or drops claim prose, or creates a gap question. Revised claim wording can appear only in a later explicit Stage 6 replacement generation.
 
-If verification or re-verification changes a current claim's status or counterevidence or the current snapshot status, all V1 managed assessment outputs under the fixed `out/assessment/` path are removed or reported as a residual-path failure. Every branch and bullet based on that snapshot is also superseded and dependent managed-resume removal is attempted under the global rule above; a verifier result may not leave a resume current against a changed verifier state.
+If verification or re-verification changes a current claim's status or counterevidence or the current snapshot status, the snapshot's managed view directory under `out/assessment/` (§13.12) is removed or reported as a residual-path failure. Every branch and bullet based on that snapshot is also superseded and dependent managed-resume removal is attempted under the global rule above; a verifier result may not leave a resume current against a changed verifier state.
 
 ## §13.8 Stage 8 — Job Description Parsing
 
@@ -383,12 +383,14 @@ Triggers: assessment export in §14.9 and resume export in §14.10.
 Persisted assessment outputs:
 
 ```text
-out/assessment/self_assessment.md
-out/assessment/self_claims.json
-out/assessment/evidence_map.json
-out/assessment/gap_questions.md
-out/assessment/contradictions.md
+out/assessment/<view>/self_assessment.md
+out/assessment/<view>/self_claims.json
+out/assessment/<view>/evidence_map.json
+out/assessment/<view>/gap_questions.md
+out/assessment/<view>/contradictions.md
 ```
+
+`<view>` is the deterministic slug of the exported snapshot's assessment view (§11.7): `global` for the global scope, and `project--<target>` for a project view, where `<target>` is the case-folded canonical `scope_target` with every UTF-8 byte outside `a-z 0-9 . _ -` percent-encoded. Case folding matches view identity, so two views never collide on a case-insensitive filesystem, and the encoding is injective, so distinct targets never share a directory. Each snapshot's exports live only in its view directory; exporting one view never touches another's files.
 
 Persisted resume outputs:
 

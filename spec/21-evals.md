@@ -611,4 +611,26 @@ When Stage 6 runs for that view
 Then the run fails before any provider call and no snapshot is persisted
 ```
 
+## §21.34 Assessment Exports Are Namespaced Per View
+
+Test:
+
+```text
+Given a current global snapshot and a current project snapshot for target "Exp2Res"
+When each is exported under §13.12
+Then the global files land in out/assessment/global/
+And the project files land in out/assessment/project--exp2res/ using the case-folded canonical percent-encoded target
+And the second export does not overwrite or remove the first view's files
+
+Given re-verification changes the project snapshot's status
+Then removal targets exactly that snapshot's view directory and its dependent branch exports
+And the global view directory is untouched
+
+Given two project targets that differ only in case or surrounding whitespace
+Then they canonicalize to one view and one directory, and the later generation replaces the earlier
+
+Given resume generation is invoked with --branch assessment
+Then command parsing fails because out/assessment/ is the reserved assessment namespace
+```
+
 ---
