@@ -898,4 +898,68 @@ Then the service-owned-field injection is invalid structured output
 And no candidate business row is committed
 ```
 
+## §21.40 Correction Displacement Is Computable and Lossless
+
+Test (enforces §9.4, §12.4, §13.3–§13.4, §14.4, §15.2, and §15.8):
+
+```text
+Given one correction lineage's retained rows
+When the service constructs a Stage 3 or Stage 4 input
+Then it computes displaced records, effective records, and the governing record from corrects_log_id, recorded_at, and ID before any provider call
+And it invokes no resolution LLM, reads or writes no persisted resolution artifact, and exposes no ambiguity state
+
+Given root R has raw_text "The system was production-deployed and I led it" and owns manual_claim item E_R
+When retained correction C targets R and has raw_text "This was a local prototype; I designed it and did not lead a deployment"
+Then displaced(R) is true and the effective-record set is {C}
+And Stage 3 raw_logs contains C but not R, and evidence_items contains C's items but not E_R
+And R.raw_text, any copied question context, and E_R are absent from both Stage 3 and Stage 4 inputs
+And no current fact asserts production deployment or leadership
+And no current contradiction uses R, E_R, or the displaced wording as a current position
+
+Given R's raw_text establishes facts A and B with OccurredAt P1 and project X
+When C targets R only to correct the time, stores OccurredAt P2 and copied project X, and its self-contained raw_text restates A but not B
+Then C is the only effective and governing record
+And A re-extracts from C with OccurredAt P2 and project X
+And B does not survive merely because R remains retained
+
+Given retained C1 has corrects_log_id = R.id, corrects assertion A, and restates surviving assertion B
+And retained C2 has corrects_log_id = C1.id, corrects assertion B, and restates the surviving correction to A
+When the service resolves the lineage
+Then displaced(R) and displaced(C1) are true
+And the effective-record set and Stage 3 raw_logs are exactly {C2}
+
+Given retained sibling corrections C1 and C2 both have corrects_log_id = R.id
+When the service resolves the lineage
+Then displaced(R) is true and the effective-record set is {C1, C2}
+And C1 and C2 are ordered by recorded_at ascending and then ID ascending by byte order
+And the latest member in that order governs OccurredAt placement and project provenance
+And equal recorded_at values are ordered and governed deterministically by ID
+And a conflict between C1 and C2 is a legitimate Stage 4 detection because both effective records are supplied current targets
+
+Given the only retained correction C targets root R
+When the owner deletes R and C.corrects_log_id becomes NULL under §11.2
+Then C roots its own lineage and is effective
+And Stage 3 supplies C and its evidence as ordinary effective-lineage input
+
+Given imported root R owns commit_or_pr item E_commit and its raw_text contains commit message M
+And correction C targets R, owns manual_claim item E_C, and its effective raw_text supplies fact content S
+When the service constructs the Stage 3 input
+Then raw_logs contains C but not R
+And evidence_items contains E_C
+And displaced_support_items contains E_commit as exactly id, raw_log_id, strength, title, uri, and path
+And that descriptor contains no summary, R.raw_text, or commit message M
+When a fact whose content traces to C.raw_text selects E_commit plus E_C with confidence high
+Then the selection passes the lineage selectability check
+And the §9.4 high ceiling remains reachable but is not required
+When Stage 4 receives that current fact
+Then the fact is an ordinary supplied detector input object
+And E_commit is not thereby a detector target because its descriptor is not a supplied Stage 4 object
+
+Given displaced root R owns manual_claim item E_old
+When a Stage 3 candidate selects E_old and attempts to commit
+Then §12.4 rejects the lineage fact batch atomically
+And the prior current fact generation remains unchanged
+And the same check rejects any item that is neither owned by an effective record nor a non-manual displaced-record support item of that fact's lineage
+```
+
 ---

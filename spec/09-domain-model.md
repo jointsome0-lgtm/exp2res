@@ -53,7 +53,7 @@ These values are qualitatively different and deliberately not totally ordered. N
 
 **Fact ceiling.** The service computes the ceiling on `ExperienceFact.confidence` from the fact's complete linked item set without LLM judgment. The ceiling is `high` if and only if that set spans at least two distinct raw logs and includes at least one non-`manual_claim` item; otherwise it is `medium`.
 
-Under §13.3's single-lineage extraction, a fact's linked items span multiple raw logs only within its correction lineage — the root plus its corrections. In V1 the `high` ceiling is therefore reachable exactly when a non-`manual_claim` lineage root (an imported record) is corrected by the owner and the fact selects items from both records; cross-lineage corroboration has no V1 producer (§12.4) and cannot create the spanning set.
+Under §13.3's single-lineage extraction, a fact's linked items span multiple raw logs only within its correction lineage. In V1 the `high` ceiling is therefore reachable exactly when an imported root is corrected by the owner and the fact selects a non-`manual_claim` item of that displaced root as displaced-record support plus an item of an effective correction record; cross-lineage corroboration has no V1 producer (§12.4) and cannot create the spanning set.
 
 A ceiling is a cap, never an entitlement. The extractor assigns the lowest defensible `Confidence` at or below it. When the selected extraction context contains materially conflicting statements bearing on the fact, the extractor must assign at most `low`; the conflict itself remains Stage 4 output and is not a calibration artifact.
 

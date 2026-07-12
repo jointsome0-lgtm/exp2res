@@ -64,7 +64,7 @@ Triggers: fact extraction in §14.6; lifecycle recomputation in §14.12.
 Input:
 
 ```text
-raw_logs + evidence_items
+raw_logs + evidence_items + displaced_support_items
 ```
 
 Persisted outputs:
@@ -77,18 +77,24 @@ fact_sources
 Rules:
 
 1. Extract atomic claims.
-2. Preserve temporal provenance under §15.2 and §16.7. A fact copies the governing source log's `OccurredAt` by default. A narrower contained placement is legal only when selected evidence present in the extraction context explicitly supports it; extraction may never extend the source window, raise temporal precision above that explicit support, or raise `TemporalConfidence` above the governing source placement.
+2. Preserve temporal provenance under §15.2 and §16.7. A fact copies the governing record's `OccurredAt` by default. A narrower contained placement is legal only when selected evidence present in the extraction context explicitly supports it; extraction may never extend the governing record's source window, raise temporal precision above that explicit support, or raise `TemporalConfidence` above the governing record's placement.
 3. Preserve ownership level under §16.4.
 4. Do not infer metrics unless evidence explicitly contains metrics.
 5. Do not infer production use unless explicitly present.
-6. Every fact selects at least one input `EvidenceItem`; only selected items receive §12.4 rows and every selected item belongs to the correction lineage being extracted. Stage 3 persists each selected item as `direct`. V1 has no separate corroboration producer, so it never infers a `corroborating` row silently.
+6. Every fact selects at least one supplied evidence item. Every selected item belongs to the correction lineage being extracted and is selectable under rule 10: it is either linked to an effective record and supplied in `evidence_items`, or a non-`manual_claim` item linked to a displaced record and supplied in `displaced_support_items`. Only selected items receive §12.4 rows. Stage 3 persists each selected item as `direct`. V1 has no separate corroboration producer, so it never infers a `corroborating` row silently.
 7. `ExperienceFact.evidence_item_ids` is exactly the duplicate-free selected-item set, and `source_log_ids` is exactly the duplicate-free set of `EvidenceItem.raw_log_id` values reached through it. Every listed raw log therefore contributes at least one selected evidence item. Multiple selected items from one raw log produce separate `fact_sources` rows.
 8. `ExperienceFact.confidence` must follow §9.4's evidential scopes, independence rules, and deterministic ceiling for the complete linked `EvidenceItem` set; confidence and evidence strength remain separate axes (§9.3).
 9. `ExperienceFact.claim_kind` follows the fact-extractor producer semantics in §15.2; §13 does not restate that contract.
-10. The extraction unit is one correction lineage: a root `RawLog` plus every correction that reaches it through `corrects_log_id`, ordered by `recorded_at` and then ID. For a fact affected by corrections, the latest selected correction's effective `OccurredAt` under §14.4 is the governing source placement; otherwise the root placement governs. The fact inherits that placement unless the evidence-backed narrowing permitted by rule 2 applies. If owner deletion nulls a correction's target, that correction becomes a new lineage root.
+10. The extraction unit is one retained correction lineage: a root `RawLog` plus every retained correction that reaches it through `corrects_log_id`. The root appears first; corrections follow in ascending `recorded_at` order, then ID ascending by byte order. A correction is recorded after its target, which §14.4 requires to exist at capture, so this order is consistent with correction edges. If owner deletion nulls a correction's target, that correction becomes a new lineage root and the same rules apply.
+
+    A retained correction displaces exactly the record named by its non-`NULL` `corrects_log_id`, as a whole record, and no other record. Formally, for a retained lineage member `x`, `displaced(x)` holds if and only if some retained lineage member `y` has `y.corrects_log_id = x.id`. The effective records are exactly the non-displaced lineage members. Thus `C2 → C1 → R` leaves only `C2` effective, while sibling corrections `C1 → R` and `C2 → R` leave both `C1` and `C2` effective in lineage order. An owner-deletion orphan roots its own lineage and, unless another retained correction targets it, is effective.
+
+    Whole-record displacement removes the target's interpretation from current content. A displaced record's `raw_text` and, for a gap answer, its copied `question_text` / `question_reason` context are never Stage 3 or Stage 4 input and may never source a current fact or detection target. A displaced record's linked `manual_claim` items are displaced with it: their §9.4 evidential scope is exactly the owner statement whose interpretation the correction replaced, so they are not extractor input and no current fact may select them. Its linked non-`manual_claim` items remain selectable only as **displaced-record support**: their §9.4 scopes may still establish existence, recorded activity, attribution, or artifact content, but §15.2 supplies them only as prose-free descriptors and they are never a current-content channel. **Effective lineage evidence** means the effective records and every `EvidenceItem` linked to those records.
+
+    The **governing record** for rule 2 source placement, rule 13 project provenance, and §15.2 is the last effective record in that order — equivalently, the latest by (`recorded_at`, then ID); when the root is the only effective record, it governs. Governing selects placement and project only; it does not displace another effective sibling. The fact inherits the governing record's placement unless the evidence-backed narrowing permitted by rule 2 applies. Before any Stage 3 or Stage 4 call, the service computes displacement, effective records, displaced-record support, and the governing record directly from retained rows. Resolution uses no LLM call, persisted resolution artifact, or ambiguity state: a retained `corrects_log_id` resolves or is `NULL`, cycles are rejected at capture (§11.2), and owner deletion re-roots through §11.2.
 11. Extraction computes the complete current fact generation for each selected lineage. A validated replacement and the `superseded_at` transition of the lineage's previous current facts commit atomically; it never appends a second current copy. Repeating extraction may add processing history or a superseded generation, but after success there is exactly one current fact generation for that lineage.
 12. If a replacement changes current facts, every current gap, contradiction, signal, claim, snapshot, resume branch, and bullet is invalidated before it can be reused. §14.12 regenerates Stages 4–5; assessment views and resume branches are explicitly parameterized projections regenerated only through §14.9/§14.10 against the new current state, with every invalidated view reported under §13.13.
-13. `ExperienceFact.project` is copied provenance, exactly like the default `occurred` placement: it equals the governing source record's `project` value under rule 10 — including `None` — and the extractor may not author, rename, re-case, or drop it. §13.6 canonicalizes only at comparison time.
+13. `ExperienceFact.project` is copied provenance, exactly like the default `occurred` placement: it equals the governing record's `project` value under rule 10 — including `None` — and the extractor may not author, rename, re-case, or drop it. §13.6 canonicalizes only at comparison time.
 
 Bad fact:
 
@@ -114,12 +120,12 @@ Inputs:
 
 ```text
 all current experience_facts
-effective lineage evidence: per retained correction lineage, the raw logs and evidence items
-that govern current extraction under §13.3 rule 10 and §14.4,
+effective lineage evidence under §13.3 rule 10: per retained correction lineage,
+every effective raw log and every EvidenceItem linked to one,
 including effective records whose evidence produced no fact
 ```
 
-Content displaced by a selected correction is not detector input. A §14.4 correction supersedes the raw interpretation it corrects; feeding the displaced text back to Stage 4 would regenerate current detections from exactly what the correction flow removed from the current fact generation. The displaced records stay retained for history, §16.12 source-segment validation, and owner deletion — they are simply not part of this input.
+The service computes this effective lineage evidence under §13.3 rule 10 before the detector call. A displaced record, its linked evidence items, and its displaced content are neither detector input nor detector targets; Stage 3 `displaced_support_items` descriptors are not supplied to Stage 4. Feeding them back would regenerate current detections from exactly what correction displacement removed from the current fact generation. The displaced records stay retained for history, §16.12 source-segment validation, and owner deletion — they are simply not part of this input.
 
 Persisted outputs:
 
@@ -136,7 +142,7 @@ Stage 4 alone owns the complete current contradiction set. If its current inputs
 
 A changed Stage 4 generation atomically supersedes every current signal, claim, snapshot, resume branch, and resume bullet before those rows can be reused. Regenerating those higher layers requires their §14 triggers; the shared §14.12 flow regenerates Stage 5, while assessment views and resume branches require §14.9/§14.10 (§13.13).
 
-The V1 Stage 4 producer may persist only gaps and contradictions whose polymorphic targets are effective-lineage Stage 1 evidence present in this input or current Stage 3 facts. Effective evidence that produced no fact remains visible and may receive a gap target; a displaced pre-correction record can be neither input nor target. Stage 4 rejects targets owned by Stage 5 or later, because the same replacement invalidates those upper generations.
+The V1 Stage 4 producer may persist only gaps and contradictions whose polymorphic targets are effective-lineage Stage 1 evidence present in this input or current Stage 3 facts. Effective evidence that produced no fact remains visible and may receive a gap target; a displaced record or any item linked to it can be neither input nor target. Stage 4 rejects targets owned by Stage 5 or later, because the same replacement invalidates those upper generations.
 
 The validated §15.8 result is the complete candidate set for both outputs, never a patch over prior detections. The service assigns entity IDs and lifecycle fields and initializes each new gap with `answered = false` and `answer_log_id = None`. Detector output has no verification status, resolution, dismissal, or resolution-note field. A schema-valid semantic detection set is not a verdict: §15.1 retries only schema or reference invalidity and never retries merely because a conflict or gap was included or omitted.
 
