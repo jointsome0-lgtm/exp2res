@@ -1,6 +1,6 @@
 ## §12. SQLite Schema
 
-The SQLite schema is derived from the Pydantic models in §11; §11 is the normative source for all mirrored entities and fields. Every database connection must execute `PRAGMA foreign_keys = ON` and verify that it took effect before reading or writing lifecycle-managed data. Derivation rules:
+The SQLite schema is derived from the Pydantic models in §11; §11 is the normative source for all mirrored entities and fields. Every database connection must execute `PRAGMA foreign_keys = ON` and verify that it took effect before reading or writing lifecycle-managed data. The §12.14 migration connection is the sole exception: it may disable enforcement before its transaction for a registered table-rebuild migration, but it must pass `PRAGMA foreign_key_check` before commit. Derivation rules:
 
 1. Tables mirror the Pydantic models 1:1: RawLog → raw_logs, EvidenceItem → evidence_items, ExperienceFact → experience_facts, SelfSignal → self_signals, SelfClaim → self_claims, Contradiction → contradictions, GapQuestion → gap_questions, AssessmentSnapshot → assessment_snapshots, JobDescription → job_descriptions, ResumeBranch → resume_branches, ResumeBullet → resume_bullets. Column names match field names; required fields are NOT NULL.
 2. List/dict fields are stored as JSON TEXT columns named `<field>_json`, NOT NULL with DEFAULT '[]' / '{}'. Embedded Pydantic fields use the same convention: `JobDescription.parsed` derives to a required `parsed_json` JSON TEXT column whose decoded value must validate as `ParsedJD` (§11.13). JSON storage does not waive typed-model or typed-reference validation in rule 10.
@@ -37,7 +37,7 @@ Stage 10 adds one branch-anchor consistency check at that boundary: the candidat
 
 `processing_runs.input_ids_json` and `output_ids_json` are the explicit exception: they are opaque historical telemetry, not typed domain references, and are not subject to rule 10.
 
-Only two tables have no Pydantic counterpart; both are storage artifacts rather than §9.1 ontology entities, and their DDL is normative here: fact_sources (§12.4) — the relational representation of fact provenance — and processing_runs (§12.13) — pipeline execution telemetry, not entity creation provenance. Retired subsection numbers (§12.1–§12.3, §12.5–§12.12) are never reused; the dated registry lives in the map's § Index.
+Only three tables have no Pydantic counterpart; all three are storage artifacts rather than §9.1 ontology entities, and their DDL is normative here: fact_sources (§12.4) — the relational representation of fact provenance; processing_runs (§12.13) — pipeline execution telemetry, not entity creation provenance; and schema_meta (§12.14) — schema-version history and compatibility metadata. Retired subsection numbers (§12.1–§12.3, §12.5–§12.12) are never reused; the dated registry lives in the map's § Index.
 
 ## §12.4 fact_sources
 
@@ -76,5 +76,35 @@ CREATE TABLE IF NOT EXISTS processing_runs (
 `stage` records the stable subsection identifier of an active §13 stage, such as `13.3`. Retired identifiers may remain in historical rows, but no new processing run may use them. Processing telemetry alone does not make an operation a pipeline stage. `input_ids_json` and `output_ids_json` are historical telemetry rather than live provenance: owner deletion retains these rows, and their opaque IDs may therefore stop resolving after a privacy reset. `metadata_json` may contain stage/config identifiers, statuses, and diagnostic codes, but must not duplicate raw text, evidence summaries, derived prose, or export content that owner deletion is required to purge.
 
 Rule 10 validation occurs before candidate business outputs commit. On failure, the candidate transaction is rolled back, the run finishes with `status = "failed"` and `output_ids_json = []`, and `metadata_json` records the offending field, ID, and expected target type without copying source or derived content. §13.13 determines whether an earlier current generation remains available after a source-changing lifecycle operation.
+
+## §12.14 schema_meta
+
+```sql
+CREATE TABLE IF NOT EXISTS schema_meta (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL,
+    app_version TEXT NOT NULL
+);
+```
+
+`schema_meta` is append-only schema history. A fresh §14.1 initialization inserts the row for the schema version it creates, and every applied migration appends one row for its target version with the application time and running application version; neither path updates or deletes a prior row. The authoritative current workspace schema version is `MAX(schema_meta.version)`. `PRAGMA user_version` is not read or written as a version authority and may not become a second source. Each application build declares one supported current schema version and an ordered registry of migrations between versions.
+
+Every command's first connection to an existing workspace must establish compatibility from `schema_meta` before any business-table read or any database write. The minimal metadata read needed to classify the workspace is not business I/O. Let `S` be the authoritative stored version and `C` the build's supported current version:
+
+| Workspace state | Required behavior |
+|---|---|
+| `schema_meta` is missing, empty, malformed, or unreadable | Fail closed as an unrecognized workspace. No business table is read and no write occurs. |
+| `S = C` | The compatibility gate passes; the command may proceed under its own contract. |
+| `S < C` and the registry contains a complete ordered path from `S` to `C` | Every business command fails closed before business I/O and points at the §14.1 migration command. Only the §14.1 status and migration surfaces may open the older workspace; status reports without writing. |
+| `S < C` and no complete registered path exists | Status may report the stored version and missing path without writing; every other operation fails closed before business I/O with guidance to use an application build that supplies the path or restore a recognized backup. No migration statement runs. |
+| `S > C` | Every command fails closed as a workspace from a newer Exp2Res and directs the owner to upgrade the application. Beyond the compatibility metadata read, no business table is read and no write occurs. |
+
+Migration is explicit and runs only through the §14.1 migration command. No other command may apply a migration or rewrite the workspace as an on-open side effect. Before the first migration statement, the migration command creates a local managed backup inside the workspace, for example `.exp2res/backup/exp2res-v<from>-<UTC timestamp>.sqlite`, using the SQLite backup API or an equivalent procedure that incorporates committed WAL content, checkpointing the WAL before copying when the equivalent requires it. It then verifies that `PRAGMA integrity_check` on the backup passes and that the backup's authoritative `schema_meta` version equals the pre-migration version. Creation or verification failure aborts before any migration statement and leaves the pre-migration workspace unchanged. Once verified, the backup remains managed workspace state after success or failure and is governed by §13.13 owner deletion.
+
+One migration-command invocation applies every pending registered migration, appends every corresponding `schema_meta` row, and performs final validation inside one transaction. After the last migration and still inside that transaction, it validates every retained model-backed row against the target §11 models and §10 enum aliases, runs `PRAGMA foreign_key_check`, and re-verifies every one-current-generation invariant defined by §11, this section, and the producing-stage and lifecycle rules in §13. Any migration or final-validation failure rolls back the whole transaction, so no partial business schema or version history becomes visible.
+
+Every migration must transform retained rows so that they validate under the target §11 models and the canonical §10 enum aliases. A row that cannot be transformed deterministically fails the migration; it is never dropped or silently defaulted. An enum rename is a deterministic value rewrite; an enum member may be removed only when no retained row carries it or a deterministic rewrite is defined. A new required field is legal only with a deterministic backfill. A migration may change storage representation but must never change the owner-visible content of a raw record: `raw_text` remains byte-for-byte identical, and metadata, timestamps, and every other hydrated `RawLog` value are value-preserved. §5.3's automation-immutability rule applies to migrations. Migrations preserve all provenance links, current and superseded state, and the one-current-generation invariants.
+
+On failure, `schema_meta` and the database remain at the original version, the original database remains usable through the compatibility and recovery surfaces, and the verified backup is retained. The diagnostic names the failing migration or final validation and the backup path. Business reads and writes remain blocked until a later migration succeeds. Recovery is an explicit retry after upgrading the application or a manual restore of the reported backup.
 
 ---

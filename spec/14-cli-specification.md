@@ -4,7 +4,7 @@
 
 A noun-led generation group always uses an explicit `generate` subcommand; no bare noun invokes generation. Required source paths are positional; stored-record selectors and named generation/export context use options.
 
-## §14.1 Initialize Project
+## §14.1 Initialize Project and Manage Database
 
 ```bash
 exp2res init
@@ -20,6 +20,15 @@ out/
 ```
 
 SQLite is the only managed store for raw logs and evidence items. Source files remain at their supplied paths as provenance references (§14.2, §14.5); `out/` is reserved for Stage 12 exports (§13.12).
+
+A fresh initialization creates the build's current §12.14 schema and inserts its version row. If the workspace already exists at that current version, `init` succeeds as an idempotent no-op, reports the version, and changes no database row or managed path. At any other recognized version it fails closed, reports the mismatch, and points at `db status` plus the `db migrate` or application-upgrade recovery required by §12.14. An unrecognized existing database fails closed. `init` never re-creates, overwrites, or deletes existing workspace data.
+
+```bash
+exp2res db status
+exp2res db migrate
+```
+
+Every command's first workspace connection applies the §12.14 compatibility gate before business I/O. `db status` reports compatibility and registered-path availability without writing; `db migrate` is the sole migration trigger. No other command migrates or rewrites the workspace as an on-open side effect.
 
 ## §14.2 Add Daily Log
 
@@ -165,7 +174,7 @@ exp2res logs delete --log-id log_001
 exp2res logs delete --log-id log_001 --yes
 ```
 
-`logs delete` is the owner's destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 5; the purged assessment views and branches are reported with the regeneration guidance of §13.13 rule 9 as command output only. It deletes only Exp2Res-managed database records and `out/`; it does not delete a supplied source file or export copied elsewhere. Raw database deletion remains committed if output removal or rebuilding fails; residual managed paths are reported as `deletion_incomplete`, never as success.
+`logs delete` is the owner's destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 5; the purged assessment views and branches are reported with the regeneration guidance of §13.13 rule 9 as command output only. It deletes only Exp2Res-managed database records, `out/`, and the managed migration backups covered by §13.13; it does not delete a supplied source file or export copied elsewhere. Raw database deletion remains committed if managed-path removal or rebuilding fails; residual managed paths are reported as `deletion_incomplete`, never as success.
 
 ## §14.12 Recompute Derived State
 

@@ -687,4 +687,64 @@ Then each upstream identifier appears only in RawLog.external_ref or RawLog.meta
 And none is used as any local entity ID
 ```
 
+## §21.36 Schema Compatibility and Migration Are Fail-Closed
+
+Test (enforces §12.14, §13.13, and §14.1):
+
+```text
+Given no existing workspace and a build whose supported schema version is N
+When exp2res init creates the workspace
+Then schema_meta contains exactly one row for version N with applied_at and app_version populated
+And MAX(schema_meta.version) is N
+
+Given that workspace already exists at version N
+When exp2res init runs again
+Then it succeeds as an idempotent no-op and reports version N
+And no database row or existing managed path changes
+
+Given an N-1 workspace with a complete registered migration path to N
+When any business command makes its first workspace connection
+Then compatibility fails closed before any business read or write
+And the diagnostic points at exp2res db migrate
+When exp2res db status opens the same workspace
+Then it reports the stored and supported versions and path availability without writing
+
+Given an older workspace with no complete registered migration path to N
+When exp2res db status opens it
+Then status reports the stored version and missing path without writing
+When a business command or exp2res db migrate opens it
+Then it fails closed before business I/O or any migration statement
+And the diagnostic gives recovery guidance
+
+Given an existing database whose schema_meta is missing or unreadable
+When any command makes its first workspace connection
+Then it is rejected as an unrecognized workspace
+And no business table is read and no workspace state is written
+
+Given a workspace whose authoritative schema version is newer than the build supports
+When any command makes its first workspace connection
+Then it is rejected as a workspace from a newer Exp2Res and the diagnostic requires an application upgrade
+And no business table is read and no workspace state is written
+
+Given an N-1 fixture with retained raw records, provenance links, current and superseded generations, and a complete migration path
+When exp2res db migrate succeeds
+Then the verified pre-migration backup includes the committed WAL content
+And each raw_text remains byte-for-byte identical and every other hydrated RawLog content value is preserved
+And provenance links and both current and superseded state are preserved
+And every one-current-generation invariant holds
+And schema_meta appends the migration row with N as its authoritative maximum
+
+Given multiple pending migrations and an injected failure after an earlier migration has run inside the invocation
+When exp2res db migrate executes
+Then the invocation rolls back to the original schema and schema_meta version with no partial business schema
+And the verified backup remains intact
+And the database remains usable at its original version through db status and migration recovery
+And business commands remain fail-closed until a later successful migration
+And the diagnostic names the failing migration and backup path
+
+Given managed migration backups exist for an owner workspace
+When §13.13 owner deletion runs
+Then every backup is removed or every residual backup path is reported as deletion_incomplete
+```
+
 ---
