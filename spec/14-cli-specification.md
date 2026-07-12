@@ -151,7 +151,7 @@ exp2res export resume --branch agent-engineer
 
 `--jd` must resolve to a persisted typed `JobDescription`; Stage 10 copies that exact ID into the candidate `ResumeBranch.job_description_id` so verification and export can resolve every matched requirement. A Stage 10 candidate that omits or changes the selected ID fails atomically.
 
-`--branch` may not be `assessment`: `out/assessment/` is the reserved per-view assessment namespace (§13.12), and a branch directory may not collide with it.
+`--branch` is a single path segment: it may not contain `/` or `\`, may not be `.` or `..`, and may not equal `assessment` compared case-folded — `out/assessment/` is the reserved per-view assessment namespace (§13.12), and no branch directory may fall under or collide with it.
 
 `verify --branch` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values; it never applies a suggestion or invokes `resume generate`. Changed bullet wording requires a later explicit `resume generate` command and a replacement branch generation.
 

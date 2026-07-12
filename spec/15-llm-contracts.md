@@ -301,7 +301,7 @@ Output:
 
 Every `status` uses the canonical meaning in §16.11. Stage 7 validates one finding for every claim in the snapshot and derives the snapshot's own status from those claim results; the writer or verifier may not assign a more permissive snapshot label independently.
 
-`suggested_rewrite` is owner-facing advisory output from any CLI command that invokes Stage 7 (§14.9, §14.12). It is not persisted, is not an input to §15.4, and is never applied by Stage 7. If the owner requests revised wording, the assessment writer must emit a new claim in a later Stage 6 replacement generation.
+`suggested_rewrite` is owner-facing advisory output of the one command class that invokes Stage 7 (§14.9). It is not persisted, is not an input to §15.4, and is never applied by Stage 7. If the owner requests revised wording, the assessment writer must emit a new claim in a later Stage 6 replacement generation.
 
 ## §15.6 Resume Writer Contract
 
