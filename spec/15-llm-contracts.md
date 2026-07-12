@@ -271,9 +271,15 @@ Input:
   "scope": "project",
   "scope_target": "Exp2Res",
   "source_signals": [],
-  "source_facts": [],
-  "source_evidence_items": [],
-  "source_logs": []
+  "source_facts": [
+    "<fact_007: complete §11.4 ExperienceFact — canonical example in §15.2>"
+  ],
+  "source_evidence_items": [
+    "<evidence_007: complete §11.3 EvidenceItem for fact_007 — canonical example in §15.2>"
+  ],
+  "source_logs": [
+    "<log_007: complete §11.2 RawLog reached through evidence_007 — canonical example in §15.2>"
+  ]
 }
 ```
 
