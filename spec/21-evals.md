@@ -607,6 +607,10 @@ When facts extract from that lineage
 Then each fact's project equals the governing record's project exactly under §13.3 rule 13
 And an extractor-authored, renamed, or re-cased project value is invalid structured output
 
+Given a text-only §14.4 correction to that project-tagged log with no explicit project replacement
+Then the correction stores the target's project exactly
+And the re-extracted facts remain selectable by the same project view
+
 Given a current global snapshot and a current project snapshot for "Atlas"
 When a new project view for "Exp2Res" is generated
 Then it becomes a third current snapshot and supersedes nothing
