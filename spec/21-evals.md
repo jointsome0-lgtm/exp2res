@@ -432,10 +432,10 @@ Then scope_target equals the canonical §14.9 project selector
 And gap_question_ids exactly equals the duplicate-free writer unknown set
 And Unknowns and Questions Worth Answering dereference those rows without adding declarative snapshot prose
 And every non-empty claim counterevidence list renders with its claim ID and visible status
-And each counterevidence entry renders its statement with a typed reference resolving inside that claim's §15.5 closure
+And each counterevidence entry renders its statement with a typed reference resolving inside that claim's §15.5 bundle
 And neither channel improves §16.11 aggregation or independently guides Stage 10
 
-Given a counterevidence entry references a row outside the supplied §15.5 closure, an unresolvable ID, or duplicates another entry's reference
+Given a counterevidence entry references a row outside the supplied §15.5 bundle, an unresolvable ID, or duplicates another entry's reference
 Then the Stage 7 finding is invalid structured output and no verification state commits
 
 Given a missing, duplicate, superseded, or free-form unknown value
@@ -567,7 +567,7 @@ When Stage 7 assembles the §15.5 input for that claim
 Then source_facts contains the claim's cited facts plus the signal's supporting and counter facts exactly once each
 And source_evidence_items is every EvidenceItem reached through those facts' fact_sources rows, with strength and raw_log_id visible
 And source_logs is exactly the duplicate-free retained raw-log set those items reference
-And every array is ID-ordered and contains no unrelated fact, evidence item, raw log, or other database row
+And every array is ID-ordered and contains no row outside the declared bundle, with raw logs and evidence items reached only through the closure
 
 Given a claim whose only closure evidence is one manual_claim item
 When the verifier judges confidence under §13.7 rule 2 and §9.4
@@ -577,10 +577,11 @@ And an unjustified confidence receives a non-passing §16.11 status without a re
 Given two evidence items from one raw log and independent items from two raw logs inside one closure
 Then raw_log_id linkage preserves §9.4's same-source rule for the verifier's judgment
 
-Given the writer cites only favorable sources while a contrary signal exists in the same view's §13.6 selection
+Given the writer cites only favorable sources while a contrary signal or contrary fact exists in the same view's §13.6 selection
 When Stage 7 assembles the bundle
-Then scope_signals contains the complete view signal set including the uncited contrary signal
-And the verifier may ground a non-passing status on that omission via its reason, while counterevidence references stay inside the claim's closure
+Then scope_signals and scope_facts contain the complete view selection including the uncited contrary members as rows without extra raw logs
+And the verifier grounds a non-passing status on that omission and may persist a typed counterevidence reference to the omitted member
+And every counterevidence reference stays inside the claim's supplied bundle
 
 Given assembly finds a closure member missing, superseded, or duplicated, or an implementation supplies a narrower or wider bundle
 When Stage 7 validates the bundle against the §15.5 closure

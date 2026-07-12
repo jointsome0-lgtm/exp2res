@@ -255,7 +255,7 @@ Verifier checks:
 
 1. Every self-claim has sources.
 2. Each `SelfClaim.confidence` is justified under §9.4's judgment frame by the strength and scope of its supporting facts' linked evidence; confidence and evidence strength remain separate axes (§9.3).
-3. Counterevidence is not hidden — inside the closure or by omission: a contrary `scope_signals` member absent from the claim's account grounds a non-passing status.
+3. Counterevidence is not hidden — inside the closure or by omission: a contrary `scope_signals` or `scope_facts` member absent from the claim's account grounds a non-passing status and may persist as a typed counterevidence reference to that member.
 4. Identity claims are not over-broad.
 5. Self-assessment does not become motivational fiction.
 6. No clinical/diagnostic claims are generated.
@@ -265,7 +265,7 @@ Verifier checks:
 10. Exactly one member claim has `claim_kind = "narrative_summary"`, and its claim text equals `AssessmentSnapshot.summary`.
 11. Each claim stays within the snapshot's scope and scope target supplied as §15.5 structural context; a scoped claim that generalizes beyond its subject receives a non-passing status.
 
-For each claim, Stage 7 assembles exactly the §15.5 input closure from current rows, plus `scope_signals` — the snapshot view's complete deterministic §13.6 signal selection, re-derived from current rows — so writer omission of a contrary signal stays visible to check 3. A bundle member that is missing, wrong-type, superseded, duplicated, or otherwise unresolvable fails the Stage 7 run closed before any provider call, and the prior complete verifier state is retained. The closure is also the only legal bundle: omitting a member — such as a cited signal's counter fact or a linked `EvidenceItem` — would obtain a more permissive verdict from a narrower graph, and appending any row outside it would widen the declared §29.3 transmission surface; both are non-conforming.
+For each claim, Stage 7 assembles exactly the §15.5 input closure from current rows, plus the view context — `scope_signals` and `scope_facts`, the snapshot view's complete deterministic §13.6 selection re-derived from current rows — so writer omission of a contrary signal or fact stays visible to check 3 while only the closure deepens into evidence items and raw logs. A bundle member that is missing, wrong-type, superseded, duplicated, or otherwise unresolvable fails the Stage 7 run closed before any provider call, and the prior complete verifier state is retained. The closure is also the only legal bundle: omitting a member — such as a cited signal's counter fact or a linked `EvidenceItem` — would obtain a more permissive verdict from a narrower graph, and appending any row outside it would widen the declared §29.3 transmission surface; both are non-conforming.
 
 Stage 7 obtains a validated §15.5 verdict for every claim in the current snapshot. It commits all claim statuses and counterevidence together with the snapshot status computed by §16.11. If any finding remains invalid or missing after §15.1, no claim or snapshot verification update commits; an initially generated snapshot therefore remains `unverified`, while a failed re-verification against unchanged inputs retains the prior complete verifier state. The snapshot status is never an independent optimistic label.
 

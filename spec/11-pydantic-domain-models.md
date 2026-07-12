@@ -136,7 +136,7 @@ class SelfClaim(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-`CounterevidenceItem` is an embedded typed annotation, not an ontology entity. `statement` is the verifier-authored contrary-evidence prose and remains generated voice under §16.12; (`source_ref_type`, `source_ref_id`) is its polymorphic grounding reference. Stage 7 persists the validated §15.5 list: each reference must resolve under §12 rule 10 to the table its type selects and must be a member of that claim's supplied §15.5 closure — the verifier cannot ground contrary evidence outside the bundle it received. Entries are duplicate-free by (`source_ref_type`, `source_ref_id`); one grounding source carries one consolidated statement.
+`CounterevidenceItem` is an embedded typed annotation, not an ontology entity. `statement` is the verifier-authored contrary-evidence prose and remains generated voice under §16.12; (`source_ref_type`, `source_ref_id`) is its polymorphic grounding reference. Stage 7 persists the validated §15.5 list: each reference must resolve under §12 rule 10 to the table its type selects and must be a member of that claim's supplied §15.5 bundle — closure, `scope_facts`, or `scope_signals` — so the verifier cannot ground contrary evidence outside what it received, while an omitted contrary view member stays navigably citable. Entries are duplicate-free by (`source_ref_type`, `source_ref_id`); one grounding source carries one consolidated statement.
 
 ## §11.7 AssessmentSnapshot
 
