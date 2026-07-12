@@ -288,7 +288,7 @@ Output:
 }
 ```
 
-`source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through the supplied `source_facts`' §12.4 rows, and `source_logs` are their retained raw logs; it is the context for the §9.4 strength/scope judgment required by §13.7 rule 2, so the verifier never judges calibration from hidden state.
+`source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows, and `source_logs` are their retained raw logs; this is the context for the §9.4 strength/scope judgment required by §13.7 rule 2, so a signal-only claim still supplies its underlying evidence and the verifier never judges calibration from hidden state.
 
 `counterevidence` lists contrary-evidence statements grounded in the supplied sources (empty when none); Stage 7 persists it to `SelfClaim.counterevidence` (§11.6, §13.7).
 
