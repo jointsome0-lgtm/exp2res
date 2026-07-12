@@ -605,7 +605,7 @@ And a writer claim citing an unsupplied fact or signal is invalid structured out
 
 Given a raw log captured with --project Exp2Res governs a correction lineage
 When facts extract from that lineage
-Then each fact's project equals the governing record's project exactly under §13.3 rule 13
+Then each fact's project equals its governing record's project exactly under §13.3 rule 13
 And an extractor-authored, renamed, or re-cased project value is invalid structured output
 
 Given a text-only §14.4 correction to that project-tagged log with no explicit project replacement
@@ -929,7 +929,8 @@ Test (enforces §9.4, §12.4, §13.3–§13.4, §13.7, §13.10, §14.4, §15.2, 
 ```text
 Given one correction lineage's retained rows
 When the service constructs a Stage 3 or Stage 4 input
-Then it computes displaced records, effective records, and the governing record from corrects_log_id, recorded_at, and ID before any provider call
+Then it computes displaced records, effective records, and displaced-record support from corrects_log_id before any provider call
+And each candidate fact's governing record follows from its selected effective records by recorded_at and ID at commit
 And it invokes no resolution LLM, reads or writes no persisted resolution artifact, and exposes no ambiguity state
 
 Given root R has raw_text "The system was production-deployed and I led it" and owns manual_claim item E_R
@@ -942,7 +943,7 @@ And no current contradiction uses R, E_R, or the displaced wording as a current 
 
 Given R's raw_text establishes facts A and B with OccurredAt P1 and project X
 When C targets R only to correct the time, stores OccurredAt P2 and copied project X, and its self-contained raw_text restates A but not B
-Then C is the only effective and governing record
+Then C is the only effective record and every fact's governing record
 And A re-extracts from C with OccurredAt P2 and project X
 And B does not survive merely because R remains retained
 
@@ -956,8 +957,9 @@ Given retained sibling corrections C1 and C2 both have corrects_log_id = R.id
 When the service resolves the lineage
 Then displaced(R) is true and the effective-record set is {C1, C2}
 And C1 and C2 are ordered by recorded_at ascending and then ID ascending by byte order
-And the latest member in that order governs OccurredAt placement and project provenance
-And equal recorded_at values are ordered and governed deterministically by ID
+And a fact selecting only C1's evidence copies C1's OccurredAt and project while a fact selecting only C2's copies C2's
+And a fact selecting evidence of both siblings copies the later by (recorded_at, ID), equal recorded_at resolved by ID byte order
+And a fact selecting only R's displaced-support descriptor and no effective-record item fails Stage 3 commit atomically
 And a conflict between C1 and C2 is a legitimate Stage 4 detection because both effective records are supplied current targets
 
 Given the only retained correction C targets root R
