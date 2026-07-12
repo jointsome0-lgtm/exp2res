@@ -122,12 +122,15 @@ exp2res signals list
 ```bash
 exp2res assess generate
 exp2res assess generate --scope project --project Exp2Res
+exp2res assess list
 exp2res assess show --snapshot snapshot_001
 exp2res assess verify --snapshot snapshot_001
 exp2res export assessment --snapshot snapshot_001
 ```
 
-`--scope` selects one canonical §10 `AssessmentScope` value and defaults to `global` when omitted. `--scope project` requires a non-blank `--project` value. Stage 6 stores that exact parsed option value as `AssessmentSnapshot.scope_target`; the LLM receives it as structural context but cannot author or normalize it. Every non-project scope takes no target and persists `scope_target = None`. No scope value list is duplicated here; `AssessmentScope` in §10 is canonical.
+`--scope` selects one canonical §10 `AssessmentScope` value and defaults to `global` when omitted. `--scope project` requires a `--project` value that is non-blank after canonicalization — Unicode NFC normalization plus leading/trailing whitespace trim. Stage 6 stores that canonical value as `AssessmentSnapshot.scope_target`; the LLM receives it as structural context but cannot author or normalize it further. Replacement identity and subject matching use its locale-independent case-folded form (§11.7, §13.6). `global` takes no target and persists `scope_target = None`. No scope value list is duplicated here; `AssessmentScope` in §10 is canonical, and a retired scope value returns only with its deterministic selection semantics.
+
+`assess list` reports every current snapshot — ID, scope, scope target, verification status, creation time — as the discovery surface for explicit `--snapshot` selectors across simultaneously current views; it generates nothing.
 
 `assess verify` is required before assessment export. `export assessment` rejects `unverified` and every other snapshot status outside the assessment-export allowlist in §16.11.
 

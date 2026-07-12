@@ -128,8 +128,6 @@ SelfClaimDimension = Literal[
 AssessmentScope = Literal[
     "global",
     "project",
-    "career",
-    "learning",
 ]
 
 ResumeTargetSection = Literal[

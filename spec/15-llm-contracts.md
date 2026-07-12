@@ -198,6 +198,7 @@ Input:
   "facts": [
     "<fact_001, fact_002: complete §11.4 ExperienceFact objects — canonical example in §15.2>"
   ],
+  "context_facts": [],
   "gaps": [
     {
       "id": "gap_001",
@@ -256,7 +257,7 @@ Candidate `SelfClaim.confidence` obeys §9.4's source-maximum cap at the Stage 6
 
 The writer emits exactly one `narrative_summary` self-claim whose `claim` equals the top-level `summary`. Stage 6 assigns its ID and includes it in the snapshot's `self_claim_ids`; there is no separate unverified summary channel.
 
-`scope` is a canonical `AssessmentScope` and `scope_target` is service-supplied structural context from §14.9. The writer must return neither field and cannot rewrite the target. `gaps` is the complete current unanswered set; answered current rows are not passed. Each `unknowns` entry has exactly one `gap_question_id` and no prose field. The IDs must be the duplicate-free exact set of all supplied `gaps`; an empty `unknowns` array is valid only when that input is empty. Stage 6 stores the set unchanged as `AssessmentSnapshot.gap_question_ids`. Known-gap assertions belong in status-bearing `SelfClaim(dimension="gap")` output. An unknown reference can render only the referenced question/uncertainty under §17; it is not an independent claim or a §16.11 bypass.
+`scope` is a canonical `AssessmentScope` and `scope_target` is service-supplied structural context from §14.9. The writer must return neither field and cannot rewrite the target. `facts` is the scope's subject set selected under §13.6 and `context_facts` is exactly the duplicate-free out-of-subject fact set referenced by the supplied signals; both carry complete §11.4 objects, and for `global` the context set is empty. Claims are authored about the subject; a context fact grounds cross-target support or counterevidence and may be cited only where actually used. Every `source_fact_ids` / `source_signal_ids` value must name a supplied object; out-of-context provenance is invalid structured output. `gaps` is the complete current unanswered set; answered current rows are not passed. Each `unknowns` entry has exactly one `gap_question_id` and no prose field. The IDs must be the duplicate-free exact set of all supplied `gaps`; an empty `unknowns` array is valid only when that input is empty. Stage 6 stores the set unchanged as `AssessmentSnapshot.gap_question_ids`. Known-gap assertions belong in status-bearing `SelfClaim(dimension="gap")` output. An unknown reference can render only the referenced question/uncertainty under §17; it is not an independent claim or a §16.11 bypass.
 
 Hard instructions: apply §16.2 (mirror, no motivational rewriting), §16.3 (anti-flattery), §16.9 (identity), §16.10 (diagnostic); preserve uncertainty and mention weak evidence where relevant.
 
@@ -267,6 +268,8 @@ Input:
 ```json
 {
   "self_claim": {},
+  "scope": "project",
+  "scope_target": "Exp2Res",
   "source_signals": [],
   "source_facts": [],
   "source_evidence_items": [],
@@ -292,7 +295,7 @@ Output:
 }
 ```
 
-`source_signals` is exactly the claim's duplicate-free `source_signal_ids` set. `source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows — carrying each item's `strength` and `raw_log_id` — and `source_logs` is exactly the duplicate-free retained `RawLog` set those items reference. Every input array is ID-ordered (ascending byte order), so conforming implementations assemble one identical bundle. This is the context for the §9.4 strength/scope judgment required by §13.7 rule 2: a signal-only claim still supplies its underlying evidence, the same-log source rule stays applicable through `raw_log_id`, and the verifier never judges calibration from hidden state. The bundle is exact — §13.7 forbids narrowing it and §29.3 forbids widening it.
+`scope` and `scope_target` are the snapshot's §11.7 values, supplied as structural context so the verifier can judge scope fit under §13.7 check 11; the verifier returns neither field. `source_signals` is exactly the claim's duplicate-free `source_signal_ids` set. `source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows — carrying each item's `strength` and `raw_log_id` — and `source_logs` is exactly the duplicate-free retained `RawLog` set those items reference. Every input array is ID-ordered (ascending byte order), so conforming implementations assemble one identical bundle. This is the context for the §9.4 strength/scope judgment required by §13.7 rule 2: a signal-only claim still supplies its underlying evidence, the same-log source rule stays applicable through `raw_log_id`, and the verifier never judges calibration from hidden state. The bundle is exact — §13.7 forbids narrowing it and §29.3 forbids widening it.
 
 `counterevidence` is a list of typed `CounterevidenceItem` entries (§11.6), empty when none: each carries a contrary-evidence `statement` and a (`source_ref_type`, `source_ref_id`) grounding reference that must resolve to a member of this call's supplied closure — a fact in `source_facts`, an item in `source_evidence_items`, or a log in `source_logs`. A reference outside that closure, a wrong-type or missing target, or a duplicate (`source_ref_type`, `source_ref_id`) pair is invalid structured output under §15.1 and §12 rule 10. Stage 7 persists the validated list to `SelfClaim.counterevidence` (§11.6, §13.7).
 

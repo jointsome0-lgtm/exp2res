@@ -194,6 +194,8 @@ contradictions
 gap questions
 ```
 
+Input selection is structural and service-owned; the writer can neither broaden nor narrow it. `global` selects every current fact as subject and every current signal. `project` selects as subject exactly the current facts whose `project`, canonicalized and case-folded like the target (§14.9's NFC + trim, locale-independent case fold), equals the case-folded canonical `scope_target`; a fact with `project = None` is never a subject fact. It then selects every current signal whose `supporting_fact_ids` or `counter_fact_ids` reference at least one subject fact, and supplies the out-of-subject facts those signals reference as §15.4 `context_facts`, so cross-target support and counterevidence stay visible without widening the subject. A project view whose subject set is empty fails the Stage 6 run before any provider call; there is no empty mirror. The complete current unanswered gap set and the complete current contradiction set are never scope-filtered. Every claim's `source_fact_ids` and `source_signal_ids` must name only objects supplied to this §15.4 call; out-of-context provenance is invalid structured output.
+
 The Stage 6 gap input is the complete current unanswered (`answered = false`) set. Answered current rows remain valid §14.7 state until regeneration but are not unknowns and are not writer inputs.
 
 Persisted outputs:
@@ -209,11 +211,11 @@ Assessment dimensions are the `SelfClaimDimension` values (§10), carried by `Se
 
 At the Stage 6 boundary, each candidate `SelfClaim.confidence` must satisfy §9.4's propagation caps; a candidate above its computed cap is invalid structured output.
 
-Synthesis atomically creates a complete current claim generation and a new current snapshot from one coherent current input generation, then supersedes the prior current snapshot for the same `AssessmentScope` and the claims owned by that snapshot. `scope_target` is persisted assessment context, not part of replacement identity; a new project-scoped snapshot therefore replaces the prior project-scoped snapshot even when the project target differs. The transaction validates the reverse cardinality in §12: after the swap, every current `SelfClaim` appears in exactly one current `AssessmentSnapshot.self_claim_ids`, current snapshots share no claim rows, and no current claim is unowned. Other scopes remain current. A superseded snapshot's payload and provenance remain inspectable history after correction but cannot become a processing input.
+Synthesis atomically creates a complete current claim generation and a new current snapshot from one coherent current input generation, then supersedes the prior current snapshot for the same assessment view — (`scope`) for `global`, (`scope`, case-folded canonical `scope_target`) for `project` (§11.7) — and the claims owned by that snapshot. The transaction validates the reverse cardinality in §12: after the swap, every current `SelfClaim` appears in exactly one current `AssessmentSnapshot.self_claim_ids`, current snapshots share no claim rows, and no current claim is unowned. Every other view — the other scope and other project targets — remains current. A superseded snapshot's payload and provenance remain inspectable history after correction but cannot become a processing input.
 
 Every new claim and snapshot starts with `verification_status = "unverified"`. Stage 6 may not pre-authorize its own output; Stage 7 alone assigns semantic claim verdicts and derives the current snapshot status under §16.11.
 
-Replacing an assessment scope also supersedes every current resume branch and bullet based on that scope's prior snapshot before they can be reused.
+Replacing an assessment view also supersedes every current resume branch and bullet based on that view's prior snapshot before they can be reused.
 
 The assessment must include:
 
@@ -229,7 +231,7 @@ counterevidence
 next questions
 ```
 
-For a project-scoped run, Stage 6 copies the exact non-blank §14.9 `--project` value into `AssessmentSnapshot.scope_target`; the writer receives it as branch-free structural context but cannot rewrite it. For every non-project scope, Stage 6 persists `scope_target = None`.
+For a project-scoped run, Stage 6 copies the canonical non-blank §14.9 `--project` value into `AssessmentSnapshot.scope_target`; the writer receives it as branch-free structural context but cannot rewrite it. For `global`, Stage 6 persists `scope_target = None`.
 
 Known-gap assertions are emitted as ordinary `SelfClaim(dimension="gap")` rows and receive Stage 7 status. The §15.4 `unknowns` output contains references only and must enumerate every current unanswered Stage 4 `GapQuestion` exactly once; Stage 6 does not scope-filter that set and stores it unchanged in `AssessmentSnapshot.gap_question_ids`. Unknowns are uncertainty/question presentation, not claim-grade assertions: they do not receive an independent status, do not improve the §16.11 snapshot aggregate, and cannot guide Stage 10. Declarative prose about what is or is not true must be a snapshot-owned `SelfClaim` and pass the existing status gate.
 
@@ -260,6 +262,7 @@ Verifier checks:
 8. Every verified claim and snapshot is current and all of its referenced current entities resolve; superseded historical snapshots are inspect-only.
 9. The snapshot preserves the complete current Stage 4 contradiction set; verification cannot hide one by scope filtering, relabeling, or omission.
 10. Exactly one member claim has `claim_kind = "narrative_summary"`, and its claim text equals `AssessmentSnapshot.summary`.
+11. Each claim stays within the snapshot's scope and scope target supplied as §15.5 structural context; a scoped claim that generalizes beyond its subject receives a non-passing status.
 
 For each claim, Stage 7 assembles exactly the §15.5 input closure from current rows. A closure member that is missing, wrong-type, superseded, duplicated, or otherwise unresolvable fails the Stage 7 run closed before any provider call, and the prior complete verifier state is retained. The closure is also the only legal bundle: omitting a member — such as a cited signal's counter fact or a linked `EvidenceItem` — would obtain a more permissive verdict from a narrower graph, and appending any row outside it would widen the declared §29.3 transmission surface; both are non-conforming.
 
@@ -409,7 +412,7 @@ This subsection orchestrates existing stages and is not a pipeline stage. Each i
 Rules:
 
 1. Selected-lineage recomputation under §14.12 replaces Stage 3 facts for that correction lineage, then regenerates the complete current Stage 4–7 graph from all current facts. Full recomputation under §14.12 replaces facts for every lineage before the same global Stage 4–7 rebuild. Stage 4 inside this flow follows its §13.4 retain-or-replace rule; a retained detection generation does not halt the flow's Stage 5–7 regeneration.
-2. A recompute validates every stage's complete candidate output, including §12 rule 10, before the business-state swap. A successful swap leaves at most one current generation per lineage/scope and marks the replaced generation `superseded_at`; payloads are never updated in place.
+2. A recompute validates every stage's complete candidate output, including §12 rule 10, before the business-state swap. A successful swap leaves at most one current generation per lineage, assessment view, or named branch and marks the replaced generation `superseded_at`; payloads are never updated in place.
 3. Where an active stage explicitly requires replacement, that stage rule controls — including Stage 4's retain-or-replace equivalence rule and complete replacements in Stages 5–6 and replacement of an existing named branch in Stage 10. For other standalone reruns whose inputs have not changed, the stage may retain the prior current generation or replace it. No rerun may expose duplicate current facts, signals, claims, snapshots, gaps, or contradictions. If validation fails before a source change, the prior current generation remains current and no partial candidate output is inserted.
 4. Correction capture and invalidation are one atomic database visibility boundary before rebuilding starts: the transaction inserts the new raw/evidence records, supersedes current facts for that correction lineage, and supersedes every current gap, contradiction, signal, claim, snapshot, resume branch, and resume bullet. Managed exports are enumerated and removal is attempted as part of the same operation; residual paths are reported as an unsuccessful invalidation rather than silently retained. A crash or recompute failure can therefore leave the correction plus no replacement current graph, but can never leave the pre-correction graph current against the changed source set. The correction remains stored and §14.12 is the retry surface.
 5. Owner deletion is a privacy-first global reset. The service first enumerates and attempts to remove every managed `out/` artifact, then atomically purges every current and historical fact, fact source, gap, contradiction, signal, claim, snapshot, resume branch, and resume bullet while hard-deleting the selected `RawLog` and cascading its evidence items. It then attempts a full recompute from every surviving lineage. Job descriptions and `processing_runs` telemetry remain. Surviving `gap_answer` raw logs stay interpretable through their §14.7 self-containment; the rebuild never re-links them to regenerated questions.

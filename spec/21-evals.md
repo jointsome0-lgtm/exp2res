@@ -413,7 +413,7 @@ Test:
 ```text
 Given a project assessment writer emits typed current unanswered GapQuestion references as unknowns and Stage 7 records claim counterevidence
 When Stage 6 persists and §17 renders the snapshot
-Then scope_target equals the exact §14.9 project selector
+Then scope_target equals the canonical §14.9 project selector
 And gap_question_ids exactly equals the duplicate-free writer unknown set
 And Unknowns and Questions Worth Answering dereference those rows without adding declarative snapshot prose
 And every non-empty claim counterevidence list renders with its claim ID and visible status
@@ -566,6 +566,35 @@ Given assembly finds a closure member missing, superseded, or duplicated, or an 
 When Stage 7 validates the bundle against the §15.5 closure
 Then the run fails closed before any provider call
 And the prior complete verifier state is retained
+```
+
+## §21.33 Assessment Scope Selects Deterministically and Views Replace by Identity
+
+Test:
+
+```text
+Given current facts for projects "Exp2Res" and "Atlas" plus one fact with project = None
+When Stage 6 runs with --scope project --project Exp2Res
+Then the subject fact set is exactly the current facts whose case-folded canonical project equals the case-folded canonical target
+And the None-project and Atlas facts are not subject facts
+And every current signal referencing at least one subject fact is supplied, including signals whose counter_fact_ids cross projects
+And the out-of-subject facts referenced by those signals are supplied as context_facts
+And the complete current unanswered gap set and complete current contradiction set are supplied unfiltered
+And a writer claim citing an unsupplied fact or signal is invalid structured output
+
+Given a current global snapshot and a current project snapshot for "Atlas"
+When a new project view for "Exp2Res" is generated
+Then it becomes a third current snapshot and supersedes nothing
+And regenerating with --project " Exp2Res " or "exp2res" supersedes exactly the Exp2Res view under the case-folded canonical identity
+And the persisted scope_target is the canonical pre-fold selector
+And the global and Atlas snapshots remain current
+
+Given --scope receives a value outside the canonical §10 AssessmentScope list, such as career or learning
+Then command parsing fails before any Stage 6 run
+
+Given a project target whose subject set matches no current fact
+When Stage 6 runs for that view
+Then the run fails before any provider call and no snapshot is persisted
 ```
 
 ---
