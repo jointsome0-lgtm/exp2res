@@ -645,8 +645,8 @@ And the global view directory is untouched
 Given two project targets that differ only in case or surrounding whitespace
 Then they canonicalize to one view and one directory, and the later generation replaces the earlier
 
-Given resume generation is invoked with --branch assessment, --branch Assessment, or a branch name containing a path separator such as assessment/global
-Then command parsing fails because a branch is a single path segment and out/assessment/ is the reserved assessment namespace
+Given resume generation is invoked with --branch assessment, --branch Assessment, a path-normalizing alias such as "assessment." or "assessment ", or a branch name containing a path separator such as assessment/global
+Then command parsing fails because a branch is a single plain path segment and out/assessment/ is the reserved assessment namespace
 ```
 
 ---
