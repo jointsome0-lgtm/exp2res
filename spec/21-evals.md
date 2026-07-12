@@ -647,6 +647,11 @@ Then they canonicalize to one view and one directory, and the later generation r
 
 Given resume generation is invoked with --branch assessment, --branch Assessment, a path-normalizing alias such as "assessment." or "assessment ", or a branch name containing a path separator such as assessment/global
 Then command parsing fails because a branch is a single plain path segment and out/assessment/ is the reserved assessment namespace
+
+Given a current branch named Agent exists
+When resume generation runs with --branch agent
+Then the NFC case-folded identities match and the Agent branch is superseded rather than joined by a second current row
+And no two current branches fold equal, so branch directories never collide or alias on a case-insensitive or normalization-insensitive filesystem
 ```
 
 ## §21.35 Entity Identity Is Unique, Immutable, and Never Reused

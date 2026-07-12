@@ -6,7 +6,7 @@ Every top-level entity `id` is a service-assigned, opaque, non-empty value that 
 
 Every persisted entity model below other than `RawLog` carries a system-assigned `created_at: datetime`, set when the entity is first persisted. `RawLog.recorded_at` retains its §5.4 meaning as the time the raw record entered Exp2Res. A creation timestamp does not substitute for the production provenance defined below.
 
-Every recomputable entity — `ExperienceFact`, `SelfSignal`, `SelfClaim`, `AssessmentSnapshot`, `ResumeBullet`, `Contradiction`, `GapQuestion`, and `ResumeBranch` — also carries `superseded_at: Optional[datetime] = None`. `None` means the row belongs to the one current generation for its replacement identity — the correction lineage for facts, the global Stage 4 generation for gaps and contradictions, the global Stage 5 generation for signals, the assessment view (§11.7) for claims and snapshots, and the branch name for branches and bullets; a timestamp makes it historical. A normal rerun or correction sets this field once instead of rewriting payload or provenance. New stages, verification, generation, and export use only current rows. `JobDescription` is retained context, not a recomputed interpretation. Owner deletion is the privacy exception: §13.13 purges current and historical recomputable rows rather than retaining superseded copies.
+Every recomputable entity — `ExperienceFact`, `SelfSignal`, `SelfClaim`, `AssessmentSnapshot`, `ResumeBullet`, `Contradiction`, `GapQuestion`, and `ResumeBranch` — also carries `superseded_at: Optional[datetime] = None`. `None` means the row belongs to the one current generation for its replacement identity — the correction lineage for facts, the global Stage 4 generation for gaps and contradictions, the global Stage 5 generation for signals, the assessment view (§11.7) for claims and snapshots, and the case-folded branch name (§14.10) for branches and bullets; a timestamp makes it historical. A normal rerun or correction sets this field once instead of rewriting payload or provenance. New stages, verification, generation, and export use only current rows. `JobDescription` is retained context, not a recomputed interpretation. Owner deletion is the privacy exception: §13.13 purges current and historical recomputable rows rather than retaining superseded copies.
 
 Production provenance for those eight recomputable entities is storage-level under §12 rule 13: `produced_by_run_id` and `generation_id` have no §11 model counterpart and are hydrated only by inspection surfaces. §15 LLM contracts receive complete persisted §11 shapes and never see or set either storage-only value.
 
@@ -42,7 +42,7 @@ each string-list member: non-empty
 
 Exceeding a limit is a deterministic local failure: an input fails preflight before any provider call; a model response is invalid structured output; an import or owner-supplied file fails at acquisition; and a stored row fails closed at hydration. Stored JSON is not grandfathered around validation or limits (§12 rule 2).
 
-Every string rejects NUL. Structural strings — IDs, enum values, metadata keys, names, paths, and selectors — also reject every C0/C1 control character. Free-text strings — including `raw_text`, claims, statements, summaries, and questions — permit tabs and newlines but reject every other control character. An inert metadata string follows free-text hygiene unless a named-key contract types it as structural. Accepted source text is never normalized or rewritten and retains the byte-for-byte preservation required by §16.12 and §19. Identifier and selector normalization remains only where §14.9 and §13.12 already define NFC, trimming, and case folding for scope targets and view slugs. Deeper Unicode, locale, and cross-platform semantics are deferred to issue #56.
+Every string rejects NUL. Structural strings — IDs, enum values, metadata keys, names, paths, and selectors — also reject every C0/C1 control character. Free-text strings — including `raw_text`, claims, statements, summaries, and questions — permit tabs and newlines but reject every other control character. An inert metadata string follows free-text hygiene unless a named-key contract types it as structural. Accepted source text is never normalized or rewritten and retains the byte-for-byte preservation required by §16.12 and §19. Identifier and selector normalization remains only where §14.9, §13.12, and §14.10 already define NFC, trimming, and case folding for scope targets, view slugs, and branch replacement identity. Deeper Unicode, locale, and cross-platform semantics are deferred to issue #56.
 
 ## §11.1 OccurredAt
 
@@ -58,7 +58,7 @@ class OccurredAt(BaseModel):
     confidence: TemporalConfidence
 ```
 
-`OccurredAt.precision` is the sole discriminator for temporal shape; there is no separate `kind`. For `exact_datetime`, `exact_day`, `week`, `month`, `quarter`, and `year`, `start` is required and `end` must be `None`. For `date_range` and `approximate_range`, both bounds are required and `end` must be strictly after `start` — a zero-width period is not a range and must be expressed as `exact_datetime` or `exact_day`, so range widths under §16.7 are always positive. For `unknown`, both bounds must be `None`. `OccurredAt.confidence` expresses confidence only in temporal placement; it is independent of general claim `Confidence`.
+`OccurredAt.precision` is the sole discriminator for temporal shape; there is no separate `kind`. For `exact_datetime`, `exact_day`, `week`, `month`, `quarter`, and `year`, `start` is required and `end` must be `None`. For `date_range` and `approximate_range`, both bounds are required and `end` must be strictly after `start` — a zero-width period is not a range and must be expressed as `exact_datetime` or `exact_day`, so range widths under §16.7 are always positive. For `unknown`, both bounds must be `None`. `OccurredAt.confidence` expresses confidence only in temporal placement; it is independent of general claim `Confidence`. Bounds follow the validation policy's offset-aware requirement at every precision: a coarse-precision bound is stored as an offset-aware instant whose time-of-day is representational, and `precision` alone carries the temporal meaning, so a midnight bound under `exact_day` or a range precision states nothing narrower than the labeled precision (§16.7, §21.7).
 
 For provenance containment, a non-range `start` is the anchor of the normative uncertainty interval defined in §16.7; it is not silently re-aligned by an extractor.
 
@@ -297,6 +297,8 @@ class ResumeBranch(BaseModel):
 `assessment_snapshot_id` is the required exact anchor selected under the canonical resume rule in §18. It has no implicit-latest or absent state.
 
 `job_description_id` is the required exact §14.10 `--jd` selection copied by Stage 10; verification and export recover the typed requirements through that persisted ID. It has no implicit or absent state.
+
+`name` keeps the owner's spelling; replacement identity and `--branch` selection use its NFC case-folded form (§14.10), and no two current branches fold equal.
 
 ## §11.13 Parsed Job Description
 
