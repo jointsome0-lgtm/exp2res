@@ -326,11 +326,14 @@ Given current gaps including one answered gap, current contradictions, a current
 When `detections generate` runs
 Then the resulting gap and contradiction sets come from one complete §15.8 call
 And the two complete sets are retained or replaced together
+And because one current gap is answered, the run replaces both sets even when the detector-authored fields are equivalent
+And each replacement gap starts with `answered = false` and no answer link is re-created
 And no run preserves one old half while replacing the other
 And no command form exists that regenerates only gaps or only contradictions
 
 Given a rerun whose validated candidate is content-equivalent over the detector-authored fields of both output sets
-Then the prior current generation is retained including its answered-gap state
+And every gap in the current generation is unanswered
+Then the prior current generation is retained
 And nothing is superseded
 And the snapshot and branch remain current
 
