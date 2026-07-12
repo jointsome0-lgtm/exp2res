@@ -269,6 +269,7 @@ Input:
   "self_claim": {},
   "source_signals": [],
   "source_facts": [],
+  "source_evidence_items": [],
   "source_logs": []
 }
 ```
@@ -286,6 +287,8 @@ Output:
   "reason": "No source facts support production deployment or production ownership."
 }
 ```
+
+`source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through the supplied `source_facts`' §12.4 rows, and `source_logs` are their retained raw logs; it is the context for the §9.4 strength/scope judgment required by §13.7 rule 2, so the verifier never judges calibration from hidden state.
 
 `counterevidence` lists contrary-evidence statements grounded in the supplied sources (empty when none); Stage 7 persists it to `SelfClaim.counterevidence` (§11.6, §13.7).
 

@@ -508,8 +508,8 @@ Given one raw log supplies two EvidenceItems for one fact
 When the extractor emits candidate confidence high
 Then §9.4 structured-output validation fails because the items count as one source and the fact ceiling is medium
 
-Given one fact links a manual_claim item from one raw log and a commit_or_pr item from another
-When the extractor emits candidate confidence high
+Given one correction lineage whose root is an imported commit with a commit_or_pr item and whose owner correction carries a manual_claim item
+When the fact selects both items and the extractor emits candidate confidence high
 Then the confidence passes §9.4 structured-output validation
 And high remains permitted by the ceiling, not required
 
