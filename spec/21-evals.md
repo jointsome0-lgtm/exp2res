@@ -747,4 +747,59 @@ When §13.13 owner deletion runs
 Then every backup is removed or every residual backup path is reported as deletion_incomplete
 ```
 
+## §21.37 Concurrent Processes Cannot Corrupt the Workspace
+
+Test (enforces §8.1, §12 rule 12, §13, and §14):
+
+```text
+Given two assess generate commands target the same assessment view
+And the first command holds the workspace writer lock beyond the bounded contention timeout
+When the second command attempts to generate
+Then the first command commits exactly one complete replacement
+And the second fails after the bounded wait with the one-line workspace_busy diagnostic class and no stack trace
+And the database never contains two current snapshots for that view
+
+Given recompute and logs delete start concurrently in one workspace
+And the first lock holder commits and releases the lock within the waiter's bounded timeout
+When the waiting command acquires the lock
+Then it begins its business snapshot from the first command's post-commit state
+And the two operations complete in lock order rather than interleaving
+And once deletion commits, no pre-deletion fact, detection, signal, assessment, or resume graph remains current
+
+Given recompute races with correction add under the same within-timeout ordering
+Then the waiting command sees the committed correction or recompute result before acting
+And once correction invalidation commits, the pre-correction graph can never remain current
+
+Given either verify command races with a generation that replaces its target
+When verification acquires the lock first
+Then its complete status update commits before replacement and the replacement subsequently supersedes that target
+When replacement acquires the lock first and assess verify uses the superseded snapshot ID
+Then assessment verification rejects that selector and commits no status to it
+When replacement acquires the lock first and verify --branch resolves the branch name
+Then resume verification uses only the new post-commit current branch or fails if no current branch exists
+And neither ordering can commit verifier state to a target that is superseded at that commit boundary
+
+Given either export command races with supersession of its selected generation
+When export acquires the lock first
+Then it writes one complete generation and the later supersession removes it or reports every residual path under §13
+When supersession acquires the lock first
+Then export reads only the post-commit state and rejects the superseded selector or exports one complete current generation
+And neither ordering publishes a mixed-generation or removed set as current output
+
+Given a read-only or historical-inspection command begins while one generation-replacement transaction is in progress
+When it performs its business reads in one read transaction
+Then WAL snapshot isolation returns either the complete old committed generation or the complete new committed generation
+And it never mixes rows from both generations
+
+Given a process is killed while it holds the workspace writer lock with an in-flight transaction
+When the next writer command opens the workspace
+Then it acquires the OS-released lock without PID cleanup, stale-lock recovery, manual repair, or an fsck pass
+And WAL recovery exposes a consistent committed database while §13 governs any stale or residual managed output
+
+Given OS-lock acquisition or SQLite access remains contended beyond the bounded timeout
+When the command fails, including when SQLite would report database is locked
+Then its public result is the one-line workspace_busy diagnostic class
+And it exposes no Python or SQLite stack trace
+```
+
 ---

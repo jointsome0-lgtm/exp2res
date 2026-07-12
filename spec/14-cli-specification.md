@@ -4,6 +4,8 @@
 
 A noun-led generation group always uses an explicit `generate` subcommand; no bare noun invokes generation. Required source paths are positional; stored-record selectors and named generation/export context use options.
 
+The exhaustive workspace business-writer/read-only command classification and its locking behavior are specified in §8.1 and apply to every non-bootstrap form below.
+
 ## §14.1 Initialize Project and Manage Database
 
 ```bash
