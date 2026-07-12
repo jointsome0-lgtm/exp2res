@@ -12,6 +12,37 @@ Production provenance for those eight recomputable entities is storage-level und
 
 An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule. `SelfClaim`, `AssessmentSnapshot`, and `ResumeBullet` are the only entities whose denormalized `VerificationStatus` is operational state; `VerificationFinding.status` is inspect-only history, and §16.11 defines the meanings and consumer gates.
 
+### Model validation policy
+
+Every top-level and embedded §11 model and every outer or nested §15/§19 transport shape uses one common validation policy. Each `BaseModel` declaration shown below is shorthand for that configured base rather than Pydantic's defaults, and every shown `metadata: dict` field is shorthand for the bounded entity-metadata shape defined here. Undeclared fields are rejected (`extra = forbid`). Validation is strict: a value must already have its declared type, with exactly one boundary coercion. When values arrive as JSON — an LLM response, an import payload, or SQLite JSON/ISO-TEXT hydration — an ISO 8601 string may be parsed into a declared `datetime` field. No other cross-type coercion is permitted: strings, integers, booleans, and floats do not bridge in either direction, and truthiness never substitutes for a boolean. SQLite first performs §12's normative storage-representation decoding — for example, an `INTEGER` 0/1 boolean column becomes a JSON boolean — and then validates the reconstructed shape through this same JSON-boundary mode; representation decoding is not model coercion, and storage and transport use one rule set.
+
+Assignment validation is enabled. A constructed model instance is immutable to ordinary assignment. Only the lifecycle-owned field on an entity for which §11/§13 already defines the owning transition may change: `superseded_at`; `SelfClaim.verification_status` and `counterevidence`; `AssessmentSnapshot.verification_status`; `ResumeBullet.verification_status`, `unsupported_phrases`, and `verifier_reason`; and `GapQuestion.answered` and `answer_log_id`. Those changes occur only through their owning stage transition. Same-named fields on another model gain no mutation right; in particular, a `VerificationFinding` remains immutable. This is a model-instance assignment policy: a storage referential action already defined by §12 rehydrates a newly validated state rather than mutating an existing instance.
+
+Canonical serialization uses UTF-8 JSON and declared field names only. For the §12.13 `input_hash` and `output_hash`, keys are sorted and insignificant whitespace is omitted; two conforming implementations therefore hash identical validated inputs and outputs identically.
+
+For each producing or transition operation, every persisted field has exactly one authorship class. Model-authored values are exactly the fields declared by the applicable §15 output shape. Importer-authored values are exactly the mappings declared by the applicable §19 contract. Owner-authored values include `raw_text`, correction and answer text, and configuration. Service-owned persisted fields include IDs, timestamps, lifecycle fields, production provenance, paths, and entity `metadata`. A declared verifier `status`, `counterevidence`, `unsupported_phrases`, or `reason` is a model-authored transition result, not direct assignment to the same-named or mapped persisted lifecycle field; the owning service alone validates and applies that result. Authorship follows the declared shape and operation, not matching key spelling. A model response that sets a service-owned persisted field outside its declared transition result or sets any undeclared field is invalid structured output.
+
+Entity `metadata` is a bounded, inert service/importer channel; §12.13 `processing_runs.metadata_json` is separate execution telemetry governed only by that subsection. Only deterministic service code authors entity metadata. Capture/import commands (§14.2–§14.5 and §14.7), including §19 importers, may supply a validated copied value; every LLM-backed producer service supplies the persisted empty value. No §15 output shape contains `metadata`, and an LLM response that supplies it is invalid structured output. A §19 importer may pass through a source payload's metadata object only when its source contract declares that field and the value passes this policy; the result remains inert provenance.
+
+A metadata key can never carry authority, control, selection, or lifecycle state unless one specification section names both its producer and its consumer, applying to keys the same producer-closure principle reflected in §10's enum domains. The only V1 named keys are `question_text` and `question_reason` on a gap-answer `RawLog`: §14.7 produces them and §15.2 consumes them. The same key names from any other producer remain inert. Every object within entity metadata has at most 16 keys. A key is non-empty lowercase ASCII snake case matching `^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$` and is at most 64 characters. A value is a JSON scalar, an array of scalars, or one nested object whose values are scalars or arrays of scalars; arrays and objects cannot nest further. The canonical serialized metadata is at most 4 KiB (4,096 UTF-8 bytes) per entity.
+
+The following limits apply at every external boundary: LLM inputs and responses, import payloads, owner-supplied files, and SQLite hydration.
+
+```text
+raw_text: at most 1 MiB (1,048,576 UTF-8 bytes) for one source document or payload read into the field
+every other string field: at most 16 KiB (16,384 UTF-8 bytes)
+each list field: at most 1,000 items
+each payload: at most 10,000 total objects
+JSON nesting: at most 32 levels
+each warnings list and each findings list: at most 100 entries
+typed ID lists: duplicate-free under their existing rules
+each string-list member: non-empty
+```
+
+Exceeding a limit is a deterministic local failure: an input fails preflight before any provider call; a model response is invalid structured output; an import or owner-supplied file fails at acquisition; and a stored row fails closed at hydration. Stored JSON is not grandfathered around validation or limits (§12 rule 2).
+
+Every string rejects NUL. Structural strings — IDs, enum values, metadata keys, names, paths, and selectors — also reject every C0/C1 control character. Free-text strings — including `raw_text`, claims, statements, summaries, and questions — permit tabs and newlines but reject every other control character. An inert metadata string follows free-text hygiene unless a named-key contract types it as structural. Accepted source text is never normalized or rewritten and retains the byte-for-byte preservation required by §16.12 and §19. Identifier and selector normalization remains only where §14.9 and §13.12 already define NFC, trimming, and case folding for scope targets and view slugs. Deeper Unicode, locale, and cross-platform semantics are deferred to issue #56.
+
 ## §11.1 OccurredAt
 
 ```python

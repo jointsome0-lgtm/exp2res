@@ -851,4 +851,51 @@ And processing_runs rows survive with identifiers, hashes, counts, and accountin
 And surviving opaque IDs may stop resolving and no retained hash can reproduce the purged content
 ```
 
+## §21.39 Boundaries Are Strict, Typed, and Bounded
+
+Test (enforces §11's Model validation policy, §12 rule 2, §15.1, §19, and §29.4):
+
+```text
+Given an otherwise valid object contains one undeclared field at any nesting level
+When it arrives through a §15 or §19 transport shape
+Then extra = forbid rejects it instead of ignoring it
+When the same undeclared field is reconstructed from a stored row
+Then hydration rejects it under the identical policy
+
+Given a string is supplied where an integer or boolean is declared, or an integer or boolean is supplied where a string is declared
+When the object is validated at transport or hydration
+Then validation fails without truthiness or cross-type coercion
+Given an ISO 8601 string arrives in JSON-boundary mode for a declared datetime field
+Then it is parsed successfully
+And no other string-to-declared-type conversion is accepted
+
+Given any §15 model response includes a metadata field
+Then it is invalid structured output and no candidate business row is committed
+Given a §19 contract that declares metadata receives a syntactically valid, bounded key not named by any producer-and-consumer rule
+Then the importer may preserve it only as inert provenance
+And it changes no authority, control, selection, or lifecycle behavior
+Given §14.7 instead copies question_text and question_reason onto a gap-answer RawLog
+Then §15.2 receives that named pair as question context
+And the same key names from any other producer remain inert
+
+Given a candidate provider input exceeds the raw_text limit, another string limit, a list or object-count limit, the warnings or findings cap, or the JSON nesting-depth limit
+When the service serializes the complete payload
+Then deterministic local preflight fails before any provider call with a non-secret diagnostic
+Given an import payload or owner-supplied file exceeds one of those limits
+Then acquisition fails before persistence
+Given a model response exceeds one of those limits
+Then it is invalid structured output
+Given stored JSON exceeds one of those limits
+Then hydration fails closed rather than grandfathering the row
+
+Given NUL occurs in any string, another forbidden control occurs in free text, or a C0/C1 control occurs in an ID, enum value, key, name, path, or selector
+Then structural validation rejects the object
+Given raw_text instead contains tabs and newlines but no other control character and is within its size limit
+Then it is accepted and survives persistence and hydration byte-for-byte
+
+Given a model response sets id, verification_status, or created_at even though the applicable §15 output shape does not declare it
+Then the service-owned-field injection is invalid structured output
+And no candidate business row is committed
+```
+
 ---

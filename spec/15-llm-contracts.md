@@ -11,7 +11,10 @@ All LLM calls must:
 5. Never create, mutate, or delete raw logs; automation's raw-layer authority is append-only and capture/import services own those appends (§5.3).
 6. Preserve provenance links.
 7. Preserve the generated-voice/source-voice boundary in §16.12: structured source text may be evidence input, but voice rules evaluate only Exp2Res-authored candidate language and never rewrite or reject source material.
-8. Forbid undeclared output fields; an extra key is invalid structured output rather than ignored data.
+8. Apply §11's Model validation policy, including its `extra = forbid` rule for every output shape.
+9. Before any provider call, deterministically preflight the fully serialized payload against §11's boundary limits alongside §29.4's credential preflight; a failure is local and fail-closed and reports only a non-secret diagnostic.
+
+Under §11's field-authorship policy, a model response that sets a service-owned persisted field instead of its declared model-authored transition result, or sets any undeclared field, is invalid structured output.
 
 If validation fails:
 
@@ -36,7 +39,7 @@ Every contract `warnings` field is `list[ContractWarning]`, where each item has 
 
 The one retry above applies only to an invalid model response. Failure in deterministic service enrichment after a valid response — such as allocating a collision-free service-owned ID — must be retried locally when safe or fail the processing run atomically; it must not invoke the LLM again.
 
-Example notation: an entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.3 (signal), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-set fields the producer's prose names (§15.2: Stage 3's `id`/`created_at`/`superseded_at`; §15.3 and §15.8: the stage-supplied ID, lifecycle, and answer-state fields; §15.9: Stage 8's `JobDescription.id`/`created_at` and `JDRequirement.id`). Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`SelfSignal`, `GapQuestion`), §15.6's input (a verified `SelfClaim`). Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string pointing at the named example. A behavior-bearing object — one whose concrete content the same example's output depends on — is never elided: §15.8 shows its fact and raw log in full. §11 remains the normative field source (§12 rule 1); placeholders are example notation only, and the service always passes the complete typed objects the surrounding prose requires. The storage-only §12 rule 13 production columns are absent from §11 shapes and never appear in these examples or calls.
+Example notation: an entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.3 (signal), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-set fields the producer's prose names (§15.2: Stage 3's `id`/`created_at`/`superseded_at`/`metadata`; §15.3 and §15.8: the stage-supplied ID, lifecycle, and answer-state fields; §15.9: Stage 8's `JobDescription.id`/`created_at` and `JDRequirement.id`; and, for every other persisted entity that declares it, the service-supplied `metadata` value under §11). Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`SelfSignal`, `GapQuestion`), §15.6's input (a verified `SelfClaim`). Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string pointing at the named example. The literal `{}` candidates in §15.5 and §15.7 are schema-envelope notation for the complete typed candidate, never empty transport objects; those examples demonstrate response shape rather than a reproducible verdict from hidden candidate content. A behavior-bearing object whose concrete content the same example's output depends on is never elided: §15.8 shows its fact and raw log in full. §11 remains the normative field source (§12 rule 1); placeholders are example notation only, and the service always passes the complete typed objects the surrounding prose requires. The storage-only §12 rule 13 production columns are absent from §11 shapes and never appear in these examples or calls.
 
 ## §15.2 Fact Extractor Contract
 
@@ -106,8 +109,7 @@ Output:
       },
       "source_log_ids": ["log_001"],
       "evidence_item_ids": ["evidence_001"],
-      "confidence": "medium",
-      "metadata": {}
+      "confidence": "medium"
     }
   ],
   "warnings": [
@@ -129,7 +131,7 @@ Each fact output selects its supporting evidence explicitly through `evidence_it
 
 The extractor's emitted `confidence` must be at or below the §9.4 ceiling for its selected evidence, may be conservatively lower, and must be at most `low` when that context contains materially conflicting statements bearing on the fact.
 
-Every fact output carries every writer-settable §11.4 field shown above; Stage 3 supplies only `id`, `created_at`, and `superseded_at`. Optional/default fields are explicit in the contract so a model change cannot silently fall outside the structured boundary.
+Every fact output carries every model-authored §11.4 field shown above; Stage 3 supplies `id`, `created_at`, `superseded_at`, and `metadata`. Optional/default model-authored fields are explicit in the contract so a model change cannot silently fall outside the structured boundary.
 
 Every fact output copies `project` exactly from the governing source record under §13.3 rule 13 — `None` when that record carries none; an authored, renamed, or re-cased project value is invalid structured output, because §13.6 project views select subjects through this field.
 
