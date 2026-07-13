@@ -1,12 +1,48 @@
 ## §11. Pydantic Domain Models
 
-§11 defines the persisted domain entities: every §9.1 ontology entity except VerificationFinding, which is not persisted as its own entity — its transport shape is fixed by the verifier contracts (§15.5, §15.7) and its results are stored denormalized on the verified targets (verification_status fields, SelfClaim.counterevidence, ResumeBullet.unsupported_phrases / verifier_reason). Storage-only artifacts (join tables, telemetry) have no models here; their DDL is normative in §12.
+§11 defines every persisted §9.1 ontology entity. `VerificationFinding` (§11.14) is append-only verifier-attempt history; denormalized verification fields on its targets remain the operational state. Storage-only artifacts (join tables, telemetry, and recomputable-row production provenance) have no models here; their DDL and derivation are normative in §12.
 
-Every persisted entity model below other than `RawLog` carries a system-assigned `created_at: datetime`, set when the entity is first persisted. `RawLog.recorded_at` retains its §5.4 meaning as the time the raw record entered Exp2Res. `processing_runs` records execution telemetry, not entity creation provenance.
+Every top-level entity `id` is a service-assigned, opaque, non-empty value that is immutable for the lifetime of the workspace, unique within its entity table, and never reused in that table, including after supersession or owner deletion (§12 rule 11). No producer contract may let a model author an entity ID; for an LLM-backed producer, the service assigns it only after a valid model response as deterministic enrichment under §15.1. This per-table contract does not weaken the stronger global uniqueness of embedded `JDRequirement.id` (§11.13).
 
-Every recomputable entity — `ExperienceFact`, `SelfSignal`, `SelfClaim`, `AssessmentSnapshot`, `ResumeBullet`, `Contradiction`, `GapQuestion`, and `ResumeBranch` — also carries `superseded_at: Optional[datetime] = None`. `None` means the row belongs to the one current generation for its replacement identity — the correction lineage for facts, the global Stage 4 generation for gaps and contradictions, the global Stage 5 generation for signals, the assessment view (§11.7) for claims and snapshots, and the branch name for branches and bullets; a timestamp makes it historical. A normal rerun or correction sets this field once instead of rewriting payload or provenance. New stages, verification, generation, and export use only current rows. `JobDescription` is retained context, not a recomputed interpretation. Owner deletion is the privacy exception: §13.13 purges current and historical recomputable rows rather than retaining superseded copies.
+Every persisted entity model below other than `RawLog` carries a system-assigned `created_at: datetime`, set when the entity is first persisted. `RawLog.recorded_at` retains its §5.4 meaning as the time the raw record entered Exp2Res. A creation timestamp does not substitute for the production provenance defined below.
 
-An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule. `VerificationStatus` is carried only by `SelfClaim`, `AssessmentSnapshot`, and `ResumeBullet`; §16.11 defines its meanings and consumer gates.
+Every recomputable entity — `ExperienceFact`, `SelfSignal`, `SelfClaim`, `AssessmentSnapshot`, `ResumeBullet`, `Contradiction`, `GapQuestion`, and `ResumeBranch` — also carries `superseded_at: Optional[datetime] = None`. `None` means the row belongs to the one current generation for its replacement identity — the correction lineage for facts, the global Stage 4 generation for gaps and contradictions, the global Stage 5 generation for signals, the assessment view (§11.7) for claims and snapshots, and the case-folded branch name (§14.10) for branches and bullets; a timestamp makes it historical. A normal rerun or correction sets this field once instead of rewriting payload or provenance. New stages, verification, generation, and export use only current rows. `JobDescription` is retained context, not a recomputed interpretation. Owner deletion is the privacy exception: §13.13 purges current and historical recomputable rows rather than retaining superseded copies.
+
+Production provenance for those eight recomputable entities is storage-level under §12 rule 13: `produced_by_run_id` and `generation_id` have no §11 model counterpart and are hydrated only by inspection surfaces. Every §15 LLM-contract input is drawn from §11 shapes exactly as the receiving contract declares it — a complete persisted shape, or a declared narrower projection such as the §15.6/§15.7 parsed job-description view (never `JobDescription.raw_text`) or a §13.3 rule 10 displaced-record support descriptor. A declared projection may not be widened toward the complete entity, and because every transmitted shape is a §11 shape or a projection of one, no §15 contract ever sees or sets either storage-only value.
+
+An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule. `SelfClaim`, `AssessmentSnapshot`, and `ResumeBullet` are the only entities whose denormalized `VerificationStatus` is operational state; `VerificationFinding.status` is inspect-only history, and §16.11 defines the meanings and consumer gates.
+
+### Model validation policy
+
+Every top-level and embedded §11 model and every outer or nested §15/§19 transport shape uses one common validation policy. Each `BaseModel` declaration shown below is shorthand for that configured base rather than Pydantic's defaults, and every shown `metadata: dict` field is shorthand for the bounded entity-metadata shape defined here. Undeclared fields are rejected (`extra = forbid`). Validation is strict: a value must already have its declared type, with exactly one boundary coercion. When values arrive as JSON — an LLM response, an import payload, or SQLite JSON/ISO-TEXT hydration — an ISO 8601 string may be parsed into a declared `datetime` field. That string must carry an explicit UTC offset — `Z` or numeric `±hh:mm` — and the requirement is value-level: every accepted `datetime` is offset-aware however it arrives, and a naive value fails validation at transport, at hydration, and at direct construction alike, so no workspace or platform timezone is ever consulted. No other cross-type coercion is permitted: strings, integers, booleans, and floats do not bridge in either direction, and truthiness never substitutes for a boolean. SQLite first performs §12's normative storage-representation decoding — for example, an `INTEGER` 0/1 boolean column becomes a JSON boolean — and then validates the reconstructed shape through this same JSON-boundary mode; representation decoding is not model coercion, and storage and transport use one rule set.
+
+Assignment validation is enabled. A constructed model instance is immutable to ordinary assignment. Only the lifecycle-owned field on an entity for which §11/§13 already defines the owning transition may change: `superseded_at`; `SelfClaim.verification_status` and `counterevidence`; `AssessmentSnapshot.verification_status`; `ResumeBullet.verification_status`, `unsupported_phrases`, and `verifier_reason`; and `GapQuestion.answered` and `answer_log_id`. Those changes occur only through their owning stage transition. Same-named fields on another model gain no mutation right; in particular, a `VerificationFinding` remains immutable. This is a model-instance assignment policy: a storage referential action already defined by §12 rehydrates a newly validated state rather than mutating an existing instance.
+
+Canonical serialization uses UTF-8 JSON and declared field names only. For the §12.15 `input_hash` and `output_hash`, the exact byte form is pinned: object keys are sorted by code point and insignificant whitespace is omitted; every `datetime` value is normalized to UTC and rendered as `YYYY-MM-DDThh:mm:ss.ffffffZ` with exactly six zero-padded fractional digits, including all-zero digits, so equal instants recorded under different offsets serialize to identical bytes, and this normalization is total because validation admits only offset-aware `datetime` values — a naive value can never reach hash serialization; strings serialize their validated code points with no case, normalization, or other transformation, non-ASCII code points are emitted as raw UTF-8 rather than `\uXXXX` escapes, and only mandatory JSON escapes are used — `\"`, `\\`, the defined two-character forms (`\b`, `\f`, `\n`, `\r`, `\t`), and lowercase `\u00xx` for any remaining control character; numbers are integers in minimal decimal form, while `true`, `false`, and `null` use their JSON literals. No §11 model declares a float-typed field, and introducing one requires first pinning its canonical rendering here. The hash function is SHA-256 over those bytes, stored as lowercase hexadecimal. The datetime rule governs hash bytes only and does not change any stored or displayed value. Two conforming implementations therefore hash identical validated inputs and outputs identically. This paragraph governs hash-input bytes only; offset retention in storage, workspace timezone semantics, and deeper Unicode normalization remain deferred to issue #56.
+
+For each producing or transition operation, every persisted field has exactly one authorship class. Model-authored values are exactly the fields declared by the applicable §15 output shape. Importer-authored values are exactly the mappings declared by the applicable §19 contract. Owner-authored values include `raw_text`, correction and answer text, and configuration. Service-owned persisted fields include IDs, timestamps, lifecycle fields, production provenance, paths, and entity `metadata`. A declared verifier `status`, `counterevidence`, `unsupported_phrases`, or `reason` is a model-authored transition result, not direct assignment to the same-named or mapped persisted lifecycle field; the owning service alone validates and applies that result. Authorship follows the declared shape and operation, not matching key spelling. A model response that sets a service-owned persisted field outside its declared transition result or sets any undeclared field is invalid structured output.
+
+Entity `metadata` is a bounded, inert service/importer channel; §12.13 `processing_runs.metadata_json` is separate execution telemetry governed only by that subsection. Only deterministic service code authors entity metadata. Capture/import commands (§14.2–§14.5 and §14.7), including §19 importers, may supply a validated copied value; every LLM-backed producer service supplies the persisted empty value. No §15 output shape contains `metadata`, and an LLM response that supplies it is invalid structured output. A §19 importer may pass through a source payload's metadata object only when its source contract declares that field and the value passes this policy; the result remains inert provenance.
+
+A metadata key can never carry authority, control, selection, or lifecycle state unless one specification section names both its producer and its consumer, applying to keys the same producer-closure principle reflected in §10's enum domains. The only V1 named keys are `question_text` and `question_reason` on a gap-answer `RawLog`: §14.7 produces them and §15.2 consumes them. The same key names from any other producer remain inert. Every object within entity metadata has at most 16 keys. A key is non-empty lowercase ASCII snake case matching `^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$` and is at most 64 characters. A value is a JSON scalar, an array of scalars, or one nested object whose values are scalars or arrays of scalars; arrays and objects cannot nest further. The canonical serialized metadata is at most 4 KiB (4,096 UTF-8 bytes) per entity. The §14.7 copied pair fits that budget by construction: `question_text` copies a `GapQuestion.question` bounded at 1,024 UTF-8 bytes whose free-text hygiene admits no character that canonical serialization expands beyond two bytes, and `question_reason` copies a `GapTrigger` literal, so the copied metadata object stays under 2.2 KiB even at maximal escaping and a persisted gap can never be unanswerable under the metadata limit.
+
+The following limits apply at every external boundary: LLM inputs and responses, import payloads, owner-supplied files, and SQLite hydration.
+
+```text
+raw_text: at most 1 MiB (1,048,576 UTF-8 bytes) for one source document or payload read into the field
+GapQuestion.question: at most 1,024 UTF-8 bytes
+every other string field: at most 16 KiB (16,384 UTF-8 bytes)
+each list field: at most 1,000 items
+each payload: at most 10,000 total objects
+JSON nesting: at most 32 levels
+each warnings list and each findings list: at most 100 entries
+typed ID lists: duplicate-free under their existing rules
+each string-list member: non-empty
+```
+
+Exceeding a limit is a deterministic local failure: an input fails preflight before any provider call; a model response is invalid structured output; an import or owner-supplied file fails at acquisition; and a stored row fails closed at hydration. Stored JSON is not grandfathered around validation or limits (§12 rule 2).
+
+Every string rejects NUL. Structural strings — IDs, enum values, metadata keys, names, paths, and selectors — also reject every C0/C1 control character. Free-text strings — including `raw_text`, claims, statements, summaries, and questions — permit tabs and newlines but reject every other control character. An inert metadata string follows free-text hygiene unless a named-key contract types it as structural. Accepted source text is never normalized or rewritten and retains the byte-for-byte preservation required by §16.12 and §19. Identifier and selector normalization remains only where §14.9, §13.12, and §14.10 already define NFC, trimming, and case folding for scope targets, view slugs, and branch replacement identity. Deeper Unicode, locale, and cross-platform semantics are deferred to issue #56.
 
 ## §11.1 OccurredAt
 
@@ -22,7 +58,7 @@ class OccurredAt(BaseModel):
     confidence: TemporalConfidence
 ```
 
-`OccurredAt.precision` is the sole discriminator for temporal shape; there is no separate `kind`. For `exact_datetime`, `exact_day`, `week`, `month`, `quarter`, and `year`, `start` is required and `end` must be `None`. For `date_range` and `approximate_range`, both bounds are required and `end` must be strictly after `start` — a zero-width period is not a range and must be expressed as `exact_datetime` or `exact_day`, so range widths under §16.7 are always positive. For `unknown`, both bounds must be `None`. `OccurredAt.confidence` expresses confidence only in temporal placement; it is independent of general claim `Confidence`.
+`OccurredAt.precision` is the sole discriminator for temporal shape; there is no separate `kind`. For `exact_datetime`, `exact_day`, `week`, `month`, `quarter`, and `year`, `start` is required and `end` must be `None`. For `date_range` and `approximate_range`, both bounds are required and `end` must be strictly after `start` — a zero-width period is not a range and must be expressed as `exact_datetime` or `exact_day`, so range widths under §16.7 are always positive. For `unknown`, both bounds must be `None`. `OccurredAt.confidence` expresses confidence only in temporal placement; it is independent of general claim `Confidence`. Bounds follow the validation policy's offset-aware requirement at every precision: a coarse-precision bound is stored as an offset-aware instant whose time-of-day is representational, and `precision` alone carries the temporal meaning, so a midnight bound under `exact_day` or a range precision states nothing narrower than the labeled precision (§16.7, §21.7).
 
 For provenance containment, a non-range `start` is the anchor of the normative uncertainty interval defined in §16.7; it is not silently re-aligned by an extractor.
 
@@ -46,7 +82,7 @@ class RawLog(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-`corrects_log_id` is a capture-time requirement, not a standing invariant: §14.4 must set it when a correction is captured (`entry_type == "correction"`), it must then resolve to an existing `RawLog`, and it must not create a correction cycle. Correction text must be self-contained. A correction row with `corrects_log_id = None` is nevertheless a valid model state that hydration, §12 rule 10 validation, and the §13.13 rebuild accept: it arises only when owner deletion removes the target (§12 rule 6 `ON DELETE SET NULL`), and such an orphaned correction is the root of its own correction lineage (§13.3 rule 10). No flow other than owner deletion may null or rewrite the field.
+`corrects_log_id` is a capture-time requirement, not a standing invariant: §14.4 must set it when a correction is captured (`entry_type == "correction"`), it must then resolve to an existing `RawLog`, and it must not create a correction cycle. §13.3 rule 10 defines the field's whole-record displacement, effective-record, governing-record, and orphan re-rooting consequences. Correction text must be self-contained. A correction row with `corrects_log_id = None` is nevertheless a valid model state that hydration, §12 rule 10 validation, and the §13.13 rebuild accept: it arises only when owner deletion removes the target (§12 rule 6 `ON DELETE SET NULL`), and such an orphaned correction is the root of its own correction lineage (§13.3 rule 10). No flow other than owner deletion may null or rewrite the field.
 
 ## §11.3 EvidenceItem
 
@@ -262,6 +298,8 @@ class ResumeBranch(BaseModel):
 
 `job_description_id` is the required exact §14.10 `--jd` selection copied by Stage 10; verification and export recover the typed requirements through that persisted ID. It has no implicit or absent state.
 
+`name` keeps the owner's spelling; replacement identity and `--branch` selection use its NFC case-folded form (§14.10), and no two current branches fold equal.
+
 ## §11.13 Parsed Job Description
 
 ```python
@@ -284,5 +322,27 @@ JobDescription.model_rebuild()
 `JDRequirement.id` is a service-assigned opaque ID, globally unique and immutable after its containing `JobDescription` is persisted; it is never an array index or model-authored prose. Requirement IDs are duplicate-free within `ParsedJD`. Required skills, preferred skills, and responsibilities are represented only as `requirements` with the canonical `JDRequirementKind` (§10); signals, keywords, and red flags are typed context but are not matchable requirement targets.
 
 `ParsedJD` is an embedded Pydantic model, not an independently persisted ontology entity. `JobDescription.parsed` is quoted because this appended subsection defines the type later in the module; `model_rebuild()` resolves that forward reference after both classes exist. Stage 8 validates the parser candidate, assigns requirement IDs, validates the final `ParsedJD`, and persists it atomically with its `JobDescription` under §12 and §15.9.
+
+## §11.14 VerificationFinding
+
+```python
+class VerificationFinding(BaseModel):
+    id: str
+    created_at: datetime
+    produced_by_run_id: str
+    target_type: VerificationTargetRefType
+    target_id: str
+    status: VerificationStatus
+    reason: str
+    unsupported_phrases: list[str] = Field(default_factory=list)
+    suggested_rewrite: Optional[str] = None
+    counterevidence: list[CounterevidenceItem] = Field(default_factory=list)
+```
+
+Verification findings are append-only history with no `superseded_at`; their payload is immutable after persistence until the §13.13 owner-deletion purge. Each completed Stage 7 or Stage 11 verifier attempt writes exactly one finding per verified target in the same transaction as that target's denormalized status update. Stage 7 findings target `SelfClaim`, Stage 11 findings target `ResumeBullet`, and the derived §16.11 snapshot aggregate receives no finding row. A failed attempt writes no finding (§13.7, §13.11).
+
+`produced_by_run_id` is an explicit model field here, unlike production provenance on the eight recomputable entities: the persisted finding shape never crosses the LLM boundary, and the owning verifier run is part of the finding's semantics. The verifier contract returns only its declared payload; the service assigns the finding ID, creation time, owning run, and typed target.
+
+The denormalized fields on `SelfClaim`, `ResumeBullet`, and `AssessmentSnapshot` remain the sole operational state consumed by §16.11 gates. Findings are inspect-only: they are never a writer input, never a §15.4 or §15.6 input, never any later prompt input, and never §17 or §18 export content. `suggested_rewrite` is persisted only in this history; it remains advisory and is never applied.
 
 ---

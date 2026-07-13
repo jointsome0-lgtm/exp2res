@@ -1,6 +1,8 @@
 ## §19. Integration Contracts
 
-Every importer validates the payload's keys, types, closed-enum mappings, and required identifiers. Its natural-language values remain system-of-record source voice under §16.12: Tick-like `text`, Atlas `summary` and referenced artifact text, GitHub `message`, and local imported-document text are preserved and structure-only scanned at ingestion. A voice rule may constrain a later Exp2Res-authored fact, claim, report sentence, or resume bullet that uses this material, but may never reject, rewrite, or block the imported value itself because of its wording.
+Every importer validates the payload's keys, types, closed-enum mappings, and required identifiers. Importer validation includes the boundary limits and text-hygiene rules in §11's Model validation policy. Its natural-language values remain system-of-record source voice under §16.12: Tick-like `text`, Atlas `summary` and referenced artifact text, GitHub `message`, and local imported-document text are preserved and structure-only scanned at ingestion. A voice rule may constrain a later Exp2Res-authored fact, claim, report sentence, or resume bullet that uses this material, but may never reject, rewrite, or block the imported value itself because of its wording.
+
+Imported source identifiers — Tick-like `event_id`, Atlas `artifact_id`, and GitHub `commit_sha`/`repo` — remain provenance values in `RawLog.external_ref` or `RawLog.metadata` and must never become local entity `id` values; duplicate-import and idempotency-key semantics are deferred to issues #33 and #52.
 
 ## §19.1 Tick-like Event Contract
 

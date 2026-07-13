@@ -7,11 +7,14 @@ All LLM calls must:
 1. Use structured outputs.
 2. Be validated with Pydantic.
 3. Fail closed on invalid output.
-4. Store processing run metadata.
+4. Store the processing-run execution identity and metadata defined in §12.13 and §12.15.
 5. Never create, mutate, or delete raw logs; automation's raw-layer authority is append-only and capture/import services own those appends (§5.3).
 6. Preserve provenance links.
 7. Preserve the generated-voice/source-voice boundary in §16.12: structured source text may be evidence input, but voice rules evaluate only Exp2Res-authored candidate language and never rewrite or reject source material.
-8. Forbid undeclared output fields; an extra key is invalid structured output rather than ignored data.
+8. Apply §11's Model validation policy, including its `extra = forbid` rule for every output shape.
+9. Before any provider call, deterministically preflight the fully serialized payload against §11's boundary limits alongside §29.4's credential preflight; a failure is local and fail-closed and reports only a non-secret diagnostic.
+
+Under §11's field-authorship policy, a model response that sets a service-owned persisted field instead of its declared model-authored transition result, or sets any undeclared field, is invalid structured output.
 
 If validation fails:
 
@@ -23,7 +26,7 @@ do not insert partial invalid objects
 
 This retry handles only invalid structured output, including reference-validation errors. A schema-valid negative semantic verdict is successful verifier output: it does not trigger another verifier call, invoke a writer, or begin an automatic repair loop.
 
-Structured-output validation includes §12 rule 10. If any typed reference is missing, wrong-type, superseded, or duplicated, no candidate business output is committed; §12.13 defines the failed `processing_runs` result and diagnostic metadata.
+Structured-output validation includes §12 rule 10. If any typed reference is missing, wrong-type, superseded, or duplicated, no candidate business output or verification finding is committed; §12.13 defines the failed `processing_runs` result, stable `failure_code`, and diagnostic metadata.
 
 Every contract `warnings` field is `list[ContractWarning]`, where each item has exactly two non-empty string fields and no extras:
 
@@ -36,7 +39,7 @@ Every contract `warnings` field is `list[ContractWarning]`, where each item has 
 
 The one retry above applies only to an invalid model response. Failure in deterministic service enrichment after a valid response — such as allocating a collision-free service-owned ID — must be retried locally when safe or fail the processing run atomically; it must not invoke the LLM again.
 
-Example notation: an entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.3 (signal), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-set fields the producer's prose names (§15.2: Stage 3's `id`/`created_at`/`superseded_at`; §15.3 and §15.8: the stage-supplied ID, lifecycle, and answer-state fields; §15.9: Stage 8's `JobDescription.id`/`created_at` and `JDRequirement.id`). Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`SelfSignal`, `GapQuestion`), §15.6's input (a verified `SelfClaim`). Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string pointing at the named example. A behavior-bearing object — one whose concrete content the same example's output depends on — is never elided: §15.8 shows its fact and raw log in full. §11 remains the normative field source (§12 rule 1); placeholders are example notation only, and the service always passes the complete typed objects the surrounding prose requires.
+Example notation: an entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.3 (signal), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-set fields the producer's prose names (§15.2: Stage 3's `id`/`created_at`/`superseded_at`/`metadata`; §15.3 and §15.8: the stage-supplied ID, lifecycle, and answer-state fields; §15.9: Stage 8's `JobDescription.id`/`created_at` and `JDRequirement.id`; and, for every other persisted entity that declares it, the service-supplied `metadata` value under §11). Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`SelfSignal`, `GapQuestion`), §15.6's input (a verified `SelfClaim`). Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string pointing at the named example. The literal `{}` candidates in §15.5 and §15.7 are schema-envelope notation for the complete typed candidate, never empty transport objects; those examples demonstrate response shape rather than a reproducible verdict from hidden candidate content. A behavior-bearing object whose concrete content the same example's output depends on is never elided: §15.8 shows its fact and raw log in full. §11 remains the normative field source (§12 rule 1); placeholders are example notation only, and the service always passes the complete typed objects the surrounding prose requires except where a contract declares a narrower projection: §13.3 rule 10 requires a displaced-record support descriptor in place of a complete `EvidenceItem` and forbids the displaced `RawLog` object, and the §15.6/§15.7 job-description input is the parsed view — `id` plus complete `ParsedJD`, with `title` and `company` in §15.6 — never `raw_text` or `created_at`. The storage-only §12 rule 13 production columns are absent from §11 shapes and never appear in these examples or calls.
 
 ## §15.2 Fact Extractor Contract
 
@@ -75,7 +78,8 @@ Input:
       "strength": "manual_claim",
       "metadata": {}
     }
-  ]
+  ],
+  "displaced_support_items": []
 }
 ```
 
@@ -106,8 +110,7 @@ Output:
       },
       "source_log_ids": ["log_001"],
       "evidence_item_ids": ["evidence_001"],
-      "confidence": "medium",
-      "metadata": {}
+      "confidence": "medium"
     }
   ],
   "warnings": [
@@ -121,19 +124,23 @@ Output:
 
 Extractor must be conservative.
 
-`raw_logs` is one ordered correction lineage under §13.3. The root appears first and corrections follow by `recorded_at` then ID; the extractor produces one complete replacement fact set for the lineage rather than extracting mutually inconsistent generations independently.
+`raw_logs` contains exactly the ordered effective records of one correction lineage under §13.3 rule 10; filtering displaced members does not reorder the lineage. The root or owner-deletion orphan appears first when it is effective, and the remaining effective records retain §13.3's ascending `recorded_at` / ID byte order. `evidence_items` contains exactly the complete `EvidenceItem` objects linked to those effective records and is ID-ordered ascending by byte order. The extractor produces one complete replacement fact set for the lineage rather than extracting mutually inconsistent generations independently.
 
 Each raw log passes its `metadata` through this contract unmodified. For `gap_answer` logs it carries the §14.7 question context (`question_text`, `question_reason`); the extractor must interpret the answer text against that question — a contextual answer such as a bare quantity is meaningless without it — while still attributing extracted facts to the answer log itself.
 
-Each fact output selects its supporting evidence explicitly through `evidence_item_ids`. Persistence verifies that those items exist and that `source_log_ids` is exactly their distinct raw-log set before writing one `direct` §12.4 row per item; every linked item participates in §9.4 confidence calibration within its evidential scope.
+`displaced_support_items` contains exactly one §13.3 rule 10 displaced-record support descriptor for each non-`manual_claim` `EvidenceItem` linked to a displaced record of the lineage, ID-ordered ascending by byte order. §13.3 rule 10 is the sole definition of that call-time projection and its displaced-`RawLog` exclusion; this array is the Stage 3 instance. A displaced `manual_claim` item never appears in either evidence array. The example array is empty because its lineage has no correction.
+
+An extractor may select a displaced-support descriptor's `id`, and then includes its `raw_log_id` in `source_log_ids`, only as support within that item's §9.4 evidential scope. The descriptor is never a content source: every emitted fact and every content-bearing field must trace to content supplied by the effective `raw_logs` and `evidence_items`. Thus a correction may restate a corrected imported fact and select both the correction's item and the displaced root's non-manual descriptor, but no displaced raw text, summary, copied question context, or manual claim can be re-emitted. A descriptor is also never a fact's only selection: every fact selects at least one effective-record evidence item whose content states it (§13.3 rule 6), and a fact whose selections are all descriptors is invalid structured output.
+
+Each fact output selects its supporting evidence explicitly through `evidence_item_ids`. Persistence accepts only item IDs supplied in `evidence_items` or `displaced_support_items`, verifies §13.3 rule 10 and §12.4 selectability, and verifies that `source_log_ids` is exactly their distinct raw-log set before writing one `direct` §12.4 row per item. A selected descriptor's owner `RawLog` is intentionally absent from `raw_logs`, but its `raw_log_id` remains required in `source_log_ids`. Every linked item participates in §9.4 confidence calibration within its evidential scope.
 
 The extractor's emitted `confidence` must be at or below the §9.4 ceiling for its selected evidence, may be conservatively lower, and must be at most `low` when that context contains materially conflicting statements bearing on the fact.
 
-Every fact output carries every writer-settable §11.4 field shown above; Stage 3 supplies only `id`, `created_at`, and `superseded_at`. Optional/default fields are explicit in the contract so a model change cannot silently fall outside the structured boundary.
+Every fact output carries every model-authored §11.4 field shown above; Stage 3 supplies `id`, `created_at`, `superseded_at`, and `metadata`. Optional/default model-authored fields are explicit in the contract so a model change cannot silently fall outside the structured boundary.
 
-Every fact output copies `project` exactly from the governing source record under §13.3 rule 13 — `None` when that record carries none; an authored, renamed, or re-cased project value is invalid structured output, because §13.6 project views select subjects through this field.
+Every fact output copies `project` exactly from its governing record — per §13.3 rule 10, the latest by (`recorded_at`, then ID) of the effective records it selects — under rules 10 and 13, `None` when that record carries none; an authored, renamed, or re-cased project value is invalid structured output, because §13.6 project views select subjects through this field.
 
-Every fact output also carries `occurred`. For corrected facts the governing source placement is the latest selected correction's effective `OccurredAt` from §14.4; for uncorrected facts it is the root log's placement. The extractor copies that `OccurredAt` by default. It may emit a contained narrower placement only when the selected raw/evidence context explicitly states the narrower time; this is the additional linked support required by §16.7, not a model inference. It may never widen beyond the governing source window, set `occurred.precision` / persisted `temporal_precision` stronger than the strongest explicit in-context temporal support, or set `occurred.confidence` / persisted `temporal_confidence` above the governing source confidence under §10's order. When support conflicts or containment cannot be established, preserve the governing placement and lower temporal confidence if necessary rather than change its window or choose a stronger one.
+Every fact output also carries `occurred`. It copies its governing record's `OccurredAt` under §13.3 rule 10 by default — the governing record is per fact, the latest of the effective records it selects — and when the root is the fact's only selected effective record, the root governs. It may emit a contained narrower placement only when the selected effective-record context explicitly states the narrower time; this is the additional linked support required by §16.7, not a model inference. It may never widen beyond its governing record's source window, set `occurred.precision` / persisted `temporal_precision` stronger than the strongest explicit in-context temporal support, or set `occurred.confidence` / persisted `temporal_confidence` above its governing record's temporal confidence under §10's order. When support conflicts or containment cannot be established, preserve the governing placement and lower temporal confidence if necessary rather than change its window or choose a stronger one.
 
 For `ExperienceFact.claim_kind`, `observed_fact` means the linked sources directly state or demonstrate the narrow claim; `inferred_fact` means the claim is a conservative derivation whose source links and `confidence` assigned under §9.4 remain explicit. Other `ClaimKind` values are invalid fact-extractor outputs.
 
@@ -174,7 +181,7 @@ Do not infer identity from one artifact.
 Do not hide counterevidence.
 ```
 
-`evidence_items` is exactly the duplicate-free set reached through the supplied current facts and is context for §9.4 confidence calibration; signal provenance remains the fact IDs in §11.5. Candidate `SelfSignal.confidence` obeys §9.4's propagation caps: it cannot exceed the supporting-fact maximum, `high` requires at least two supporting facts reached through at least two distinct raw logs, and non-empty `counter_fact_ids` cap it at `medium`. Prior signals are never inputs because Stage 5 produces a complete replacement generation. Raw gap answers are not inputs either: §13.5 requires them to pass through Stage 3 first, so only re-extracted current facts and their linked evidence can influence this contract.
+`evidence_items` is exactly the duplicate-free set reached through the supplied current facts, serialized under §13.3 rule 10's universal displaced-record projection, and is context for §9.4 confidence calibration; signal provenance remains the fact IDs in §11.5. Candidate `SelfSignal.confidence` obeys §9.4's propagation caps: it cannot exceed the supporting-fact maximum, `high` requires at least two supporting facts reached through at least two distinct raw logs, and non-empty `counter_fact_ids` cap it at `medium`. Prior signals are never inputs because Stage 5 produces a complete replacement generation. Raw gap answers are not inputs either: §13.5 requires them to pass through Stage 3 first, so only re-extracted current facts and their linked evidence can influence this contract.
 
 ## §15.4 Self-Assessment Writer Contract
 
@@ -283,10 +290,10 @@ Input:
     "<fact_007: complete §11.4 ExperienceFact — canonical example in §15.2>"
   ],
   "source_evidence_items": [
-    "<evidence_007: complete §11.3 EvidenceItem for fact_007 — canonical example in §15.2>"
+    "<evidence_007: complete §11.3 EvidenceItem or §13.3 rule 10 displaced-record support descriptor for fact_007>"
   ],
   "source_logs": [
-    "<log_007: complete §11.2 RawLog reached through evidence_007 — canonical example in §15.2>"
+    "<log_007: complete non-displaced §11.2 RawLog reached through evidence_007 — canonical example in §15.2>"
   ]
 }
 ```
@@ -309,13 +316,13 @@ Output:
 }
 ```
 
-`scope` and `scope_target` are the snapshot's §11.7 values, supplied as structural context so the verifier can judge scope fit under §13.7 check 11; the verifier returns neither field. `source_signals` is exactly the claim's duplicate-free `source_signal_ids` set. `scope_signals` and `scope_facts` are the complete deterministic §13.6 selection for the snapshot's view, re-derived from current rows: every signal, and the union of the view's §15.4 `facts` and `context_facts`, including the cited members. They exist so check 3 can see a contrary signal or fact the writer's account omits; the closure alone deepens into evidence items and raw logs, so uncited view facts arrive as fact rows without extra raw text. An omitted contrary bundle member grounds a non-passing status and may persist as a typed counterevidence reference to that `scope_facts` or `scope_signals` member, keeping a navigable contrary source in the exported mirror. `source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows — carrying each item's `strength` and `raw_log_id` — and `source_logs` is exactly the duplicate-free retained `RawLog` set those items reference. Every input array is ID-ordered (ascending byte order), so conforming implementations assemble one identical bundle. This is the context for the §9.4 strength/scope judgment required by §13.7 rule 2: a signal-only claim still supplies its underlying evidence, the same-log source rule stays applicable through `raw_log_id`, and the verifier never judges calibration from hidden state. The bundle is exact — §13.7 forbids narrowing it and §29.3 forbids widening it.
+`scope` and `scope_target` are the snapshot's §11.7 values, supplied as structural context so the verifier can judge scope fit under §13.7 check 11; the verifier returns neither field. `source_signals` is exactly the claim's duplicate-free `source_signal_ids` set. `scope_signals` and `scope_facts` are the complete deterministic §13.6 selection for the snapshot's view, re-derived from current rows: every signal, and the union of the view's §15.4 `facts` and `context_facts`, including the cited members. They exist so check 3 can see a contrary signal or fact the writer's account omits; the closure alone deepens into evidence context, so uncited view facts arrive as fact rows without extra raw text. An omitted contrary bundle member grounds a non-passing status and may persist as a typed counterevidence reference to that `scope_facts` or `scope_signals` member, keeping a navigable contrary source in the exported mirror. `source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows, serialized under §13.3 rule 10: an item linked to a non-displaced record arrives as its complete object, while an item linked to a displaced record arrives as the displaced-record support descriptor. `source_logs` is exactly the duplicate-free retained `RawLog` object set referenced by the non-displaced members; a displaced log is supplied only through the descriptor's `raw_log_id` reference, never as an object. Every input array is ID-ordered (ascending byte order), so conforming implementations assemble one identical displacement-aware bundle. This remains complete context for the §9.4 strength/scope judgment required by §13.7 rule 2: descriptors carry `strength` and `raw_log_id`, so a signal-only claim still supplies its underlying evidence, scoped strength and the same-log independence rule remain visible, and the verifier never judges calibration from hidden state. The bundle is exact after projection — §13.7 forbids any other narrowing and §29.3 forbids widening it.
 
-`counterevidence` is a list of typed `CounterevidenceItem` entries (§11.6), empty when none: each carries a contrary-evidence `statement` and a (`source_ref_type`, `source_ref_id`) grounding reference that must resolve to a member of this call's supplied bundle — a fact in `source_facts` or `scope_facts`, an item in `source_evidence_items`, a log in `source_logs`, or a signal in `scope_signals`. A reference outside that bundle, a wrong-type or missing target, or a duplicate (`source_ref_type`, `source_ref_id`) pair is invalid structured output under §15.1 and §12 rule 10. Stage 7 persists the validated list to `SelfClaim.counterevidence` (§11.6, §13.7).
+`counterevidence` is a list of typed `CounterevidenceItem` entries (§11.6), empty when none: each carries a contrary-evidence `statement` and a (`source_ref_type`, `source_ref_id`) grounding reference that must resolve to a member of this call's supplied bundle — a fact in `source_facts` or `scope_facts`, an item in `source_evidence_items` (including a displaced-record support descriptor member), a log in `source_logs`, or a signal in `scope_signals`. A descriptor member remains a legal `evidence_item` grounding reference because it is a supplied bundle member. A reference outside that bundle, a wrong-type or missing target, or a duplicate (`source_ref_type`, `source_ref_id`) pair is invalid structured output under §15.1 and §12 rule 10. Stage 7 persists the validated list to `SelfClaim.counterevidence` and inside the complete §11.14 `VerificationFinding` for that claim (§11.6, §13.7).
 
 Every `status` uses the canonical meaning in §16.11. Stage 7 validates one finding for every claim in the snapshot and derives the snapshot's own status from those claim results; the writer or verifier may not assign a more permissive snapshot label independently.
 
-`suggested_rewrite` is owner-facing advisory output of the one command class that invokes Stage 7 (§14.9). It is not persisted, is not an input to §15.4, and is never applied by Stage 7. If the owner requests revised wording, the assessment writer must emit a new claim in a later Stage 6 replacement generation.
+`suggested_rewrite` is owner-facing advisory output of the one command class that invokes Stage 7 (§14.9). It is persisted only as verification-finding history (§11.14), never applied by Stage 7, never passed to §15.4, §15.6, or any later prompt, and never rendered by §17 or §18 exports. If the owner requests revised wording, the assessment writer must emit a new claim in a later Stage 6 replacement generation.
 
 ## §15.6 Resume Writer Contract
 
@@ -392,7 +399,9 @@ Self-claims can guide selection and wording, but resume bullets must still link 
 
 Stage 10 invokes this contract in an isolated model context once per planned bullet and passes only the `supported` self-claims selected for that bullet. No invocation can see another bullet's facts or claims. It does not pass `AssessmentSnapshot.title` or `.summary` as independent prose inputs. The bullet's `source_self_claim_ids` is the duplicate-free exact ID set of that writer input and is empty iff the writer received no self-claim. The writer may neither use an unlisted self-claim nor list one it did not receive.
 
-`source_fact_ids` is non-empty, duplicate-free, and names only supplied selected facts; `source_log_ids` is the exact duplicate-free raw-log set reachable through those facts; and `source_self_claim_ids` is the exact supported-self-claim input set. Every `matched_jd_requirements` value is duplicate-free and resolves to a `JDRequirement.id` in the supplied `ParsedJD`. Stage 10 rejects any out-of-context provenance, unsupported claim, free-form requirement label, missing requirement ID, or wrong-job ID under §12 rule 10.
+Each `selected_facts[].evidence` array contains one ID-ordered entry for every §12.4 row of that fact. Under §13.3 rule 10, an item linked to a non-displaced record is a complete `EvidenceItem` paired with its complete `RawLog`; an item linked to a displaced record is the displaced-record support descriptor paired with `raw_log = null`. No displaced `RawLog` object is supplied. The descriptor can support the fact only within its §9.4 scope and cannot source bullet content; content-bearing record evidence remains the effective-record context used at Stage 3.
+
+`source_fact_ids` is non-empty, duplicate-free, and names only supplied selected facts; `source_log_ids` is the exact duplicate-free raw-log ID set reachable through those facts, including each descriptor's `raw_log_id` even though its `raw_log` member is `null`; and `source_self_claim_ids` is the exact supported-self-claim input set. Every `matched_jd_requirements` value is duplicate-free and resolves to a `JDRequirement.id` in the supplied `ParsedJD`. Stage 10 rejects any out-of-context provenance, unsupported claim, free-form requirement label, missing requirement ID, or wrong-job ID under §12 rule 10.
 
 The writer sets only the seven output fields shown. Stage 10 supplies `id`, `created_at`, `superseded_at`, `branch_id`, and initial `verification_status = "unverified"`; Stage 11 alone supplies verifier fields. The writer receives snapshot ID/scope/target only as structural branch context, never as another prose source.
 
@@ -424,7 +433,9 @@ Output:
 }
 ```
 
-`status` uses §16.11. Stage 11 validates one finding for every current bullet and persists `status`, `unsupported_phrases`, and `reason` to `ResumeBullet.verification_status`, `unsupported_phrases`, and `verifier_reason` (§11.8, §13.11). `suggested_rewrite` is owner-facing advisory output: it is presented by §14.10 but is neither persisted nor applied.
+`status` uses §16.11. Stage 11 validates one finding for every current bullet and persists `status`, `unsupported_phrases`, and `reason` both to the denormalized `ResumeBullet.verification_status`, `unsupported_phrases`, and `verifier_reason` fields and inside the complete §11.14 `VerificationFinding` (§11.8, §13.11). `suggested_rewrite` is owner-facing advisory output: it is presented by §14.10, persisted only as verification-finding history, never applied, never passed to any later prompt, and never rendered by §17 or §18 exports.
+
+Stage 11 applies §13.3 rule 10 when assembling this provenance context. `source_facts` is exactly the duplicate-free fact set named by `resume_bullet.source_fact_ids`. `source_logs` contains exactly the duplicate-free retained `RawLog` objects reached through those facts' §12.4 rows whose owning records are not displaced; it never contains a displaced `RawLog` object. Both arrays are ID-ordered ascending by byte order. This contract serializes no `EvidenceItem` object. A fact may retain displaced-support identities in its `evidence_item_ids` and `source_log_ids`, but those remain opaque provenance references here: neither the displaced item nor its `RawLog` is hydrated. `resume_bullet.source_log_ids` remains the exact raw-log identity set reached through all source facts, including displaced identities whose objects are intentionally absent, so provenance stays visible without displaced prose.
 
 The resume verifier must check:
 
@@ -529,9 +540,9 @@ Output:
 }
 ```
 
-The input arrays contain complete §11.4 `ExperienceFact`, §11.3 `EvidenceItem`, and §11.2 `RawLog` objects. `facts` is the complete current fact set; `evidence_context` covers the effective lineage evidence defined in §13.4 — every governing raw log and its linked evidence items under §13.3 rule 10 and §14.4, including effective records that produced no fact. Records displaced by a selected correction are not inputs: a correction is a supersession of raw interpretation, not a conflicting current position for the detector to rediscover.
+The input arrays contain complete §11.4 `ExperienceFact`, §11.3 `EvidenceItem`, and §11.2 `RawLog` objects. `facts` is the complete current fact set. `evidence_context` is exactly the effective lineage evidence defined by §13.3 rule 10: every complete effective `RawLog` and every complete `EvidenceItem` linked to one, including effective records that produced no fact. A displaced record and its linked items are neither detector input nor detector targets, and Stage 3 `displaced_support_items` descriptors are not supplied to Stage 4. A current fact that cites displaced-record support remains an ordinary `facts` input row; its nested `evidence_item_ids` and `source_log_ids` do not make the unsupplied item or record an input object or a legal detector target.
 
-The output is the complete candidate generation for the complete input, not an incremental patch and not a verifier verdict. `target_type`, `left_ref_type`, and `right_ref_type` are typed `DetectionRefType` (§10); every target must occur in the input and pass §12 rule 10. Gap `reason` and `priority` use `GapTrigger` and `GapPriority` (§10). The service supplies IDs, timestamps, supersession fields, empty `Contradiction.metadata`, and initial gap answer state; no detector output field or metadata channel can carry verification status, resolution, dismissal, or a resolution note.
+The output is the complete candidate generation for the complete input, not an incremental patch and not a verifier verdict. `target_type`, `left_ref_type`, and `right_ref_type` are typed `DetectionRefType` (§10); every referenced target must resolve to a supplied input object and pass §12 rule 10. Gap `reason` and `priority` use `GapTrigger` and `GapPriority` (§10). The service supplies IDs, timestamps, supersession fields, empty `Contradiction.metadata`, and initial gap answer state; no detector output field or metadata channel can carry verification status, resolution, dismissal, or a resolution note.
 
 Schema, enum, reference, or completeness-shape invalidity follows the single §15.1 retry and atomic failure path. Before persistence, every detector-authored `question`, `title`, `description`, and warning message must also pass the generated-voice rules in §16.12; a voice violation fails the Stage 4 candidate atomically without an LLM retry, status, verdict, or repair call. A schema-valid and voice-valid semantic set completes the LLM call even when it reports a conflict or no conflict; it never triggers writer repair, mutates prior detections, or becomes an owner-verdict channel.
 
@@ -542,7 +553,6 @@ Input:
 ```json
 {
   "job_description": {
-    "id": "jd_001",
     "raw_text": "We require evidence-grounded LLM workflow design. Production operations experience is preferred."
   }
 }
@@ -576,7 +586,7 @@ Output:
 }
 ```
 
-The parser output contains every model-authored field of `JobDescription` and `ParsedJD`; as with entity IDs in sibling contracts, it omits service-set `JobDescription.id`, `created_at`, and `JDRequirement.id`. Stage 8 assigns a globally unique opaque ID to every validated requirement, constructs the final §11.13 `ParsedJD`, and validates that typed model plus ID uniqueness before atomically persisting the `JobDescription`. No untyped parsed payload may be stored.
+The parser input is the owner-supplied vacancy payload, not a persisted entity: §13.8 persists no `JobDescription` until the parse validates, so at call time no job-description entity or entity ID exists and none transits (§29.3). The parser output contains every model-authored field of `JobDescription` and `ParsedJD`; as with entity IDs in sibling contracts, it omits service-set `JobDescription.id`, `created_at`, and `JDRequirement.id`. After a valid model response, Stage 8 assigns those service-owned values under §11's post-response rule — the entity's own ID and a globally unique opaque ID for every validated requirement — constructs the final §11.13 `ParsedJD`, and validates that typed model plus ID uniqueness before atomically persisting the `JobDescription`. No untyped parsed payload may be stored.
 
 `kind` uses `JDRequirementKind` (§10). Requirement text must preserve the source's required/preferred modality and must not convert a keyword, signal, or red flag into a matchable requirement. Parsed requirement/signal/keyword/red-flag text is LLM output and therefore generated voice under §16.12 — structurally validated, bound by this contract's fidelity rules, never a quotation channel — while only the input `JobDescription.raw_text` is source voice. Under §16.12's owner-referential rule, faithfully preserved demand wording such as "expert" or "production" characterizes the vacancy, not the owner: it cannot make a faithful parse unpersistable, and no §16 rule may force rewriting the demand's meaning. Any Exp2Res-authored assertion that the owner satisfies a requirement remains fully bound wherever it appears. Invalid model-authored structure or enum values receive only the schema retry in §15.1. Failure to allocate valid service-owned IDs is handled locally or fails atomically without another parser call. A schema-valid parse is not a verdict and does not invoke another writer or mutate the source job-description text.
 

@@ -4,7 +4,9 @@
 
 A noun-led generation group always uses an explicit `generate` subcommand; no bare noun invokes generation. Required source paths are positional; stored-record selectors and named generation/export context use options.
 
-## §14.1 Initialize Project
+The exhaustive workspace business-writer/read-only command classification and its locking behavior are specified in §8.1 and apply to every non-bootstrap form below.
+
+## §14.1 Initialize Project and Manage Database
 
 ```bash
 exp2res init
@@ -20,6 +22,15 @@ out/
 ```
 
 SQLite is the only managed store for raw logs and evidence items. Source files remain at their supplied paths as provenance references (§14.2, §14.5); `out/` is reserved for Stage 12 exports (§13.12).
+
+A fresh initialization creates the build's current §12.14 schema and inserts its version row. If the workspace already exists at that current version, `init` succeeds as an idempotent no-op, reports the version, and changes no database row or managed path. At any other recognized version it fails closed, reports the mismatch, and points at `db status` plus the `db migrate` or application-upgrade recovery required by §12.14. An unrecognized existing database fails closed. `init` never re-creates, overwrites, or deletes existing workspace data.
+
+```bash
+exp2res db status
+exp2res db migrate
+```
+
+Every command's first workspace connection applies the §12.14 compatibility gate before business I/O. `db status` reports compatibility and registered-path availability without writing; `db migrate` is the sole migration trigger. No other command migrates or rewrites the workspace as an on-open side effect.
 
 ## §14.2 Add Daily Log
 
@@ -55,9 +66,9 @@ The command persists `RawLog(entry_type=manual_retro, source_type=user_memory)` 
 exp2res correction add --log-id log_001
 ```
 
-`--log-id` must resolve to an existing raw record. The command requires self-contained correction text. Its temporal prompt starts from the target's `OccurredAt`; unless the owner explicitly replaces that placement, the correction copies it exactly, so every correction stores an effective temporal value without silently increasing precision. `project` follows the same capture rule: the prompt starts from the target's `project`, and unless the owner explicitly replaces or clears it, the correction copies it exactly — a text-only correction can never silently strip or change the label the §13.6 project views select by (§13.3 rule 13).
+`--log-id` must resolve to an existing raw record. The command requires self-contained correction text. Under §13.3 rule 10, a correction displaces the target record's interpretation as a whole. Its text must therefore restate whatever from the target remains true, because displaced content it omits is not re-extracted; the copied `OccurredAt` and `project` mechanics below preserve placement and project provenance unless the owner explicitly changes them. Its temporal prompt starts from the target's `OccurredAt`; unless the owner explicitly replaces that placement, the correction copies it exactly, so every correction stores an effective temporal value without silently increasing precision. `project` follows the same capture rule: the prompt starts from the target's `project`, and unless the owner explicitly replaces or clears it, the correction copies it exactly — a text-only correction can never silently strip or change the label the §13.6 project views select by (§13.3 rule 13).
 
-In one database transaction, the command stores `RawLog(entry_type=correction, source_type=manual_entry, corrects_log_id=log_001)` plus its linked `EvidenceItem(strength=manual_claim)` while invalidating the exact current layers listed in §13.13. It attempts to remove managed exports before invoking the selected-lineage recompute in §14.12, which rebuilds through Stage 5; the command reports every invalidated assessment view and branch with the regeneration guidance of §13.13 rule 9. The target raw record is unchanged. If invalidation cleanup or recomputation fails, the correction remains stored, stale derivations stay unavailable, residual managed paths are reported, and the command exits unsuccessfully with `exp2res recompute --log-id log_001` as the retry.
+In one database transaction, the command stores `RawLog(entry_type=correction, source_type=manual_entry, corrects_log_id=log_001)` plus its linked `EvidenceItem(strength=manual_claim)` while invalidating the exact current layers listed in §13.13. It attempts to remove managed exports before invoking the selected-lineage recompute in §14.12, which rebuilds through Stage 5; the command reports every invalidated assessment view and branch with the regeneration guidance of §13.13 rule 9. The target raw record remains unchanged as stored. If invalidation cleanup or recomputation fails, the correction remains stored, stale derivations stay unavailable, residual managed paths are reported, and the command exits unsuccessfully with `exp2res recompute --log-id log_001` as the retry.
 
 ## §14.5 Import Evidence
 
@@ -138,7 +149,7 @@ exp2res export assessment --snapshot snapshot_001
 
 V1 defines no claim-confirm, dispute, or override command. `assess verify` is the system verifier gate defined by §5.10, not an owner verdict stored on a regenerated claim.
 
-`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion is advisory: it is neither persisted nor applied, and verification never invokes `assess generate`. The owner may add or correct raw evidence and request a new assessment generation; any changed claim wording belongs to that new Stage 6 generation.
+`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion is advisory: it is persisted only as append-only verification-finding history (§11.14), never applied, never fed into a later prompt or export, and verification never invokes `assess generate`. The owner may add or correct raw evidence and request a new assessment generation; any changed claim wording belongs to that new Stage 6 generation.
 
 ## §14.10 Resume Export Flow
 
@@ -153,9 +164,9 @@ exp2res export resume --branch agent-engineer
 
 `--jd` must resolve to a persisted typed `JobDescription`; Stage 10 copies that exact ID into the candidate `ResumeBranch.job_description_id` so verification and export can resolve every matched requirement. A Stage 10 candidate that omits or changes the selected ID fails atomically.
 
-`--branch` is a single plain path segment: it may not contain `/` or `\`, may not begin or end with whitespace or `.` (which also excludes `.` and `..`), and may not equal `assessment` compared case-folded — `out/assessment/` is the reserved per-view assessment namespace (§13.12), and no branch directory may fall under, collide with, or alias it on a path-normalizing filesystem such as Windows, where trailing dots and spaces are stripped.
+`--branch` is a single plain path segment: it may not contain `/` or `\`, may not begin or end with whitespace or `.` (which also excludes `.` and `..`), and may not equal `assessment` compared case-folded — `out/assessment/` is the reserved per-view assessment namespace (§13.12), and no branch directory may fall under, collide with, or alias it on a path-normalizing filesystem such as Windows, where trailing dots and spaces are stripped. Branch replacement identity is the name's locale-independent case fold after Unicode NFC normalization: `--branch` selectors resolve a current branch by that folded identity, generating a name that folds equal to a current branch's supersedes exactly that branch (§13.10), and two current branches can never fold equal, so `out/<branch>/` directories never collide or alias on a case-insensitive or normalization-insensitive filesystem while the stored `name` keeps the owner's spelling.
 
-`verify --branch` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values; it never applies a suggestion or invokes `resume generate`. Changed bullet wording requires a later explicit `resume generate` command and a replacement branch generation.
+`verify --branch` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values. A suggestion is persisted only as append-only verification-finding history (§11.14), never applied or fed into a later prompt or export, and verification never invokes `resume generate`. Changed bullet wording requires a later explicit `resume generate` command and a replacement branch generation.
 
 ## §14.11 Manage Raw Logs
 
@@ -165,7 +176,7 @@ exp2res logs delete --log-id log_001
 exp2res logs delete --log-id log_001 --yes
 ```
 
-`logs delete` is the owner's destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 5; the purged assessment views and branches are reported with the regeneration guidance of §13.13 rule 9 as command output only. It deletes only Exp2Res-managed database records and `out/`; it does not delete a supplied source file or export copied elsewhere. Raw database deletion remains committed if output removal or rebuilding fails; residual managed paths are reported as `deletion_incomplete`, never as success.
+`logs delete` is the owner's destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 5; the purged assessment views and branches are reported with the regeneration guidance of §13.13 rule 9 as command output only. It deletes only Exp2Res-managed database records, `out/`, and the managed migration backups covered by §13.13; it does not delete a supplied source file or export copied elsewhere. Raw database deletion remains committed if managed-path removal or rebuilding fails; residual managed paths are reported as `deletion_incomplete`, never as success.
 
 ## §14.12 Recompute Derived State
 
@@ -174,8 +185,17 @@ exp2res recompute
 exp2res recompute --log-id log_001
 ```
 
-The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global Stage 4–5 regeneration. This command orchestrates the existing Stage 3–5 triggers under §13.13; it is not a new pipeline stage and does not create a synthetic stage identifier.
+The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global Stage 4–5 regeneration. This command orchestrates the existing Stage 3–5 triggers under §13.13 and creates the one legal `processing_runs(stage = "13.13")` orchestration row for that flow; it remains not a pipeline stage.
 
 Lifecycle recomputation ends at Stage 5 and performs no Stage 6 or Stage 7 call, so it presents no verifier findings. `recompute`, and the correction and deletion commands that invoke the same flow, report every invalidated assessment view and branch with the regeneration guidance of §13.13 rule 9; a retry that finds no current view reports that state instead of inferring a desired view set.
+
+## §14.13 Inspect Processing Runs and Verification History
+
+```bash
+exp2res runs list
+exp2res runs show --run-id run_001
+```
+
+`runs list` reports processing-run rows with stage, status, timing, and parent linkage. `runs show` reports the selected run's §12.13 run row, its §12.15 per-call telemetry rows, and its §11.14 verification findings when present. Both commands are read-only telemetry inspection, never a pipeline stage or stage trigger. Exit-code and JSON-output details are deferred to issue #55.
 
 ---

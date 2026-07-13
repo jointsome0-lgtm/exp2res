@@ -15,7 +15,7 @@ The core idea became: honest model of self from owner-controlled evidence protec
 I emphasized truth over comfort, provenance, verifier gates, and no automatic semantic promotion from activity to skill.
 ```
 
-The retrospective capture operation persists this text as a `RawLog` with `occurred = {start: 2026-06-01, end: 2026-08-01, precision: approximate_range, confidence: medium}` and creates its linked `EvidenceItem(strength=manual_claim)` before fact extraction starts (§13.1). The demo contains no narrower temporal evidence, so both facts inherit that placement unchanged.
+The retrospective capture operation persists this text as a `RawLog` with `occurred = {start: 2026-06-01T00:00:00+02:00, end: 2026-08-01T00:00:00+02:00, precision: approximate_range, confidence: medium}` — bounds are offset-aware `datetime` values at every precision (§11.1), and `precision`, not the representational midnight time-of-day, carries the temporal meaning — and creates its linked `EvidenceItem(strength=manual_claim)` before fact extraction starts (§13.1). The demo contains no narrower temporal evidence, so both facts inherit that placement unchanged.
 
 ## §23.2 Extracted Facts
 

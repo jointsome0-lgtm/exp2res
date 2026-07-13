@@ -565,9 +565,9 @@ Test:
 Given a current claim cites one signal whose counter_fact_ids name a stronger counter fact not listed on the claim
 When Stage 7 assembles the §15.5 input for that claim
 Then source_facts contains the claim's cited facts plus the signal's supporting and counter facts exactly once each
-And source_evidence_items is every EvidenceItem reached through those facts' fact_sources rows, with strength and raw_log_id visible
-And source_logs is exactly the duplicate-free retained raw-log set those items reference
-And every array is ID-ordered and contains no row outside the declared bundle, with raw logs and evidence items reached only through the closure
+And source_evidence_items is every EvidenceItem reached through those facts' fact_sources rows, serialized under §13.3 rule 10 with strength and raw_log_id visible
+And source_logs is exactly the duplicate-free retained RawLog object set referenced by non-displaced members, with displaced logs omitted
+And every array is ID-ordered and contains no row outside the displacement-aware bundle, with raw logs and evidence items reached only through the closure
 
 Given a claim whose only closure evidence is one manual_claim item
 When the verifier judges confidence under §13.7 rule 2 and §9.4
@@ -605,7 +605,7 @@ And a writer claim citing an unsupplied fact or signal is invalid structured out
 
 Given a raw log captured with --project Exp2Res governs a correction lineage
 When facts extract from that lineage
-Then each fact's project equals the governing record's project exactly under §13.3 rule 13
+Then each fact's project equals its governing record's project exactly under §13.3 rule 13
 And an extractor-authored, renamed, or re-cased project value is invalid structured output
 
 Given a text-only §14.4 correction to that project-tagged log with no explicit project replacement
@@ -647,6 +647,358 @@ Then they canonicalize to one view and one directory, and the later generation r
 
 Given resume generation is invoked with --branch assessment, --branch Assessment, a path-normalizing alias such as "assessment." or "assessment ", or a branch name containing a path separator such as assessment/global
 Then command parsing fails because a branch is a single plain path segment and out/assessment/ is the reserved assessment namespace
+
+Given a current branch named Agent exists
+When resume generation runs with --branch agent
+Then the NFC case-folded identities match and the Agent branch is superseded rather than joined by a second current row
+And no two current branches fold equal, so branch directories never collide or alias on a case-insensitive or normalization-insensitive filesystem
+```
+
+## §21.35 Entity Identity Is Unique, Immutable, and Never Reused
+
+Test:
+
+```text
+Given one entity row is already persisted with an ID
+When another row with that ID is inserted into the same entity table
+Then the TEXT PRIMARY KEY rejects the insert atomically
+And a current, superseded, or historical row reserves its ID equally
+
+Given an entity row is already persisted
+When a write attempts to change its ID
+Then the write fails and the original ID remains unchanged
+
+Given deterministic service enrichment allocates an ID that collides with any retained row
+When the model response is otherwise valid
+Then the service retries allocation locally with a fresh ID when safe or fails the producing run atomically with no candidate outputs
+And it never invokes the LLM again
+
+Given a typed reference declares one target type but its ID exists only in another entity table
+When rule 10 validates the candidate
+Then the reference fails as wrong-table even though that value is valid in the other table
+And cross-table fallback never occurs
+
+Given an entity ID has been superseded or its owning row was removed by §13.13 while opaque processing_runs telemetry remains
+When a later entity is allocated in that table
+Then that ID is never reassigned
+And the allocator uses a collision-resistant ID with a random component rather than row count, MAX + 1, or any other surviving-row-derived state
+
+Given two identical valid import payload submissions both proceed as record-creating imports
+Then each receives distinct local RawLog and EvidenceItem IDs without collision failure
+And whether the second submission is accepted, deduplicated, or rejected outside this case remains deferred to issues #33 and #52
+
+Given Tick-like event_id, Atlas artifact_id, or GitHub commit_sha and repo values are imported
+Then each upstream identifier appears only in RawLog.external_ref or RawLog.metadata as provenance
+And none is used as any local entity ID
+```
+
+## §21.36 Schema Compatibility and Migration Are Fail-Closed
+
+Test (enforces §12.14, §13.13, and §14.1):
+
+```text
+Given no existing workspace and a build whose supported schema version is N
+When exp2res init creates the workspace
+Then schema_meta contains exactly one row for version N with applied_at and app_version populated
+And MAX(schema_meta.version) is N
+
+Given that workspace already exists at version N
+When exp2res init runs again
+Then it succeeds as an idempotent no-op and reports version N
+And no database row or existing managed path changes
+
+Given an N-1 workspace with a complete registered migration path to N
+When any business command makes its first workspace connection
+Then compatibility fails closed before any business read or write
+And the diagnostic points at exp2res db migrate
+When exp2res db status opens the same workspace
+Then it reports the stored and supported versions and path availability without writing
+
+Given an older workspace with no complete registered migration path to N
+When exp2res db status opens it
+Then status reports the stored version and missing path without writing
+When a business command or exp2res db migrate opens it
+Then it fails closed before business I/O or any migration statement
+And the diagnostic gives recovery guidance
+
+Given an existing database whose schema_meta is missing or unreadable
+When any command makes its first workspace connection
+Then it is rejected as an unrecognized workspace
+And no business table is read and no workspace state is written
+
+Given a workspace whose authoritative schema version is newer than the build supports
+When any command makes its first workspace connection
+Then it is rejected as a workspace from a newer Exp2Res and the diagnostic requires an application upgrade
+And no business table is read and no workspace state is written
+
+Given an N-1 fixture with retained raw records, provenance links, current and superseded generations, and a complete migration path
+When exp2res db migrate succeeds
+Then the verified pre-migration backup includes the committed WAL content
+And each raw_text remains byte-for-byte identical and every other hydrated RawLog content value is preserved
+And provenance links and both current and superseded state are preserved
+And every one-current-generation invariant holds
+And schema_meta appends the migration row with N as its authoritative maximum
+
+Given multiple pending migrations and an injected failure after an earlier migration has run inside the invocation
+When exp2res db migrate executes
+Then the invocation rolls back to the original schema and schema_meta version with no partial business schema
+And the verified backup remains intact
+And the database remains usable at its original version through db status and migration recovery
+And business commands remain fail-closed until a later successful migration
+And the diagnostic names the failing migration and backup path
+
+Given managed migration backups exist for an owner workspace
+When §13.13 owner deletion runs
+Then every backup is removed or every residual backup path is reported as deletion_incomplete
+```
+
+## §21.37 Concurrent Processes Cannot Corrupt the Workspace
+
+Test (enforces §8.1, §12 rule 12, §13, and §14):
+
+```text
+Given two assess generate commands target the same assessment view
+And the first command holds the workspace writer lock beyond the bounded contention timeout
+When the second command attempts to generate
+Then the first command commits exactly one complete replacement
+And the second fails after the bounded wait with the one-line workspace_busy diagnostic class and no stack trace
+And the database never contains two current snapshots for that view
+
+Given recompute and logs delete start concurrently in one workspace
+And the first lock holder commits and releases the lock within the waiter's bounded timeout
+When the waiting command acquires the lock
+Then it begins its business snapshot from the first command's post-commit state
+And the two operations complete in lock order rather than interleaving
+And once deletion commits, no pre-deletion fact, detection, signal, assessment, or resume graph remains current
+
+Given recompute races with correction add under the same within-timeout ordering
+Then the waiting command sees the committed correction or recompute result before acting
+And once correction invalidation commits, the pre-correction graph can never remain current
+
+Given either verify command races with a generation that replaces its target
+When verification acquires the lock first
+Then its complete status update commits before replacement and the replacement subsequently supersedes that target
+When replacement acquires the lock first and assess verify uses the superseded snapshot ID
+Then assessment verification rejects that selector and commits no status to it
+When replacement acquires the lock first and verify --branch resolves the branch name
+Then resume verification uses only the new post-commit current branch or fails if no current branch exists
+And neither ordering can commit verifier state to a target that is superseded at that commit boundary
+
+Given either export command races with supersession of its selected generation
+When export acquires the lock first
+Then it writes one complete generation and the later supersession removes it or reports every residual path under §13
+When supersession acquires the lock first
+Then export reads only the post-commit state and rejects the superseded selector or exports one complete current generation
+And neither ordering publishes a mixed-generation or removed set as current output
+
+Given a read-only or historical-inspection command begins while one generation-replacement transaction is in progress
+When it performs its business reads in one read transaction
+Then WAL snapshot isolation returns either the complete old committed generation or the complete new committed generation
+And it never mixes rows from both generations
+
+Given a process is killed while it holds the workspace writer lock with an in-flight transaction
+When the next writer command opens the workspace
+Then it acquires the OS-released lock without PID cleanup, stale-lock recovery, manual repair, or an fsck pass
+And WAL recovery exposes a consistent committed database while §13 governs any stale or residual managed output
+
+Given OS-lock acquisition or SQLite access remains contended beyond the bounded timeout
+When the command fails, including when SQLite would report database is locked
+Then its public result is the one-line workspace_busy diagnostic class
+And it exposes no Python or SQLite stack trace
+```
+
+## §21.38 Every Derived Row Resolves to Its Producing Run and Generation
+
+Test (enforces §11.14, §12 rule 13, §12.13, §12.15, §13.7, §13.11, §13.13, and §14.13):
+
+```text
+Given a completed stage run produces any experience fact, self-signal, self-claim, assessment snapshot, resume bullet, contradiction, gap question, or resume branch
+Then every produced row has one produced_by_run_id that resolves to that stage's processing_runs row
+And every row has one non-empty generation_id governed by its atomic replacement batch
+
+Given one full Stage 3 extraction run replaces facts for two correction lineages
+Then all facts in either lineage resolve to that one Stage 3 run
+And facts swapped within one lineage share one generation_id
+And the two lineages carry two different generation IDs
+
+Given one Stage 4 run replaces both the gap and contradiction sets
+Then every row in both sets shares one generation_id and one produced_by_run_id
+When a later content-equivalent Stage 4 run retains those sets
+Then it produces no business row, changes neither provenance column, and allocates no generation_id
+
+Given Stage 5 replaces signals, Stage 6 replaces one view's claims plus snapshot, or Stage 10 replaces one branch plus its bullets
+Then every row in that individual swap shares exactly one fresh generation_id
+And no later verification or supersession rewrites its produced_by_run_id or generation_id
+
+Given correction add, logs delete, or recompute invokes the §13.13 lifecycle flow
+Then exactly one processing_runs row has stage 13.13 for that flow
+And every Stage 3–5 run it invokes names that row through parent_run_id
+And a directly invoked single-stage command has parent_run_id NULL
+
+Given one Stage 10 run plans three bullets, or one Stage 7 run verifies N current claims
+Then that run owns exactly one llm_calls row per planned invocation with call_index contiguous from 1
+And each row carries that invocation's own input_hash, output_hash, provider_request_id, token counts, and retry counts
+And a single-invocation LLM stage run owns exactly one llm_calls row
+And a non-LLM run and a 13.13 orchestration row own none
+And transport or schema retries update the same row's counters without creating another row
+
+Given any processing run fails under §15.1 or its producing operation
+Then the failed processing_runs row remains durably inspectable with status failed and a stable failure_code
+And it owns no business row or verification finding
+And if that failed run is Stage 7 or Stage 11, no target verification field changes and every prior finding remains
+
+Given the same current claim or bullet receives two completed verifier invocations
+Then each invocation persists one immutable finding for that target, so both attempt sets remain inspectable
+And the target carries only the latest denormalized operational status, phrases, reason, or counterevidence applicable to its type
+And the candidate claim or bullet prose remains byte-for-byte unchanged
+And any suggested_rewrite is retained only in finding history and never enters a writer prompt or §17/§18 export
+
+Given two provider invocations in different runs return byte-identical validated outputs
+Then their llm_calls rows remain distinct under (run_id, call_index)
+And their processing_runs IDs remain distinct even when their output_hash values match
+And exact recomputation requires matching run provider, model, and prompt_policy_hash plus matching call input_hash without collapsing either invocation
+And the same payload and prompt policy under a different provider or model is not classified as exact recomputation
+
+Given owner deletion commits for any raw log
+Then every verification finding and every current or historical recomputable row is purged with the derived graph
+And every retained llm_calls row has input_hash and output_hash NULL after the purge transaction, including rows of runs over surviving lineages
+And retained processing_runs and llm_calls rows keep identifiers, timing, statuses, counts, accounting values, retry counts, stable failure codes, and run prompt_policy_hash
+And surviving opaque IDs may stop resolving, while hashing candidate content can no longer confirm purged or deleted content
+And the rebuild's fresh Stage 3–5 runs record fresh hashes over surviving content only
+```
+
+## §21.39 Boundaries Are Strict, Typed, and Bounded
+
+Test (enforces §11's Model validation policy, §12 rule 2, §15.1, §19, and §29.4):
+
+```text
+Given an otherwise valid object contains one undeclared field at any nesting level
+When it arrives through a §15 or §19 transport shape
+Then extra = forbid rejects it instead of ignoring it
+When the same undeclared field is reconstructed from a stored row
+Then hydration rejects it under the identical policy
+
+Given a string is supplied where an integer or boolean is declared, or an integer or boolean is supplied where a string is declared
+When the object is validated at transport or hydration
+Then validation fails without truthiness or cross-type coercion
+Given an ISO 8601 string with an explicit UTC offset arrives in JSON-boundary mode for a declared datetime field
+Then it is parsed successfully
+And no other string-to-declared-type conversion is accepted
+Given an ISO 8601 datetime string without an offset, or a directly constructed naive datetime value
+When it is validated at transport, at hydration, or at construction
+Then validation fails rather than assuming any timezone
+Given one instant arrives in two accepted representations under different UTC offsets
+Then their §11 canonical hash bytes are identical
+
+Given any §15 model response includes a metadata field
+Then it is invalid structured output and no candidate business row is committed
+Given a §19 contract that declares metadata receives a syntactically valid, bounded key not named by any producer-and-consumer rule
+Then the importer may preserve it only as inert provenance
+And it changes no authority, control, selection, or lifecycle behavior
+Given §14.7 instead copies question_text and question_reason onto a gap-answer RawLog
+Then §15.2 receives that named pair as question context
+And the same key names from any other producer remain inert
+And a maximal 1,024-byte question with worst-case escaping still fits the copied pair within the 4 KiB metadata limit
+Given a Stage 4 candidate question exceeds 1,024 UTF-8 bytes
+Then it is invalid structured output and never persists, so every persisted gap remains answerable
+
+Given a candidate provider input exceeds the raw_text limit, another string limit, a list or object-count limit, the warnings or findings cap, or the JSON nesting-depth limit
+When the service serializes the complete payload
+Then deterministic local preflight fails before any provider call with a non-secret diagnostic
+Given an import payload or owner-supplied file exceeds one of those limits
+Then acquisition fails before persistence
+Given a model response exceeds one of those limits
+Then it is invalid structured output
+Given stored JSON exceeds one of those limits
+Then hydration fails closed rather than grandfathering the row
+
+Given NUL occurs in any string, another forbidden control occurs in free text, or a C0/C1 control occurs in an ID, enum value, key, name, path, or selector
+Then structural validation rejects the object
+Given raw_text instead contains tabs and newlines but no other control character and is within its size limit
+Then it is accepted and survives persistence and hydration byte-for-byte
+
+Given a model response sets id, verification_status, or created_at even though the applicable §15 output shape does not declare it
+Then the service-owned-field injection is invalid structured output
+And no candidate business row is committed
+```
+
+## §21.40 Correction Displacement Is Computable and Lossless
+
+Test (enforces §9.4, §12.4, §13.3–§13.4, §13.7, §13.10, §14.4, §15.2, §15.5–§15.8, and §29.3):
+
+```text
+Given one correction lineage's retained rows
+When the service constructs a Stage 3 or Stage 4 input
+Then it computes displaced records, effective records, and displaced-record support from corrects_log_id before any provider call
+And each candidate fact's governing record follows from its selected effective records by recorded_at and ID at commit
+And it invokes no resolution LLM, reads or writes no persisted resolution artifact, and exposes no ambiguity state
+
+Given root R has raw_text "The system was production-deployed and I led it" and owns manual_claim item E_R
+When retained correction C targets R and has raw_text "This was a local prototype; I designed it and did not lead a deployment"
+Then displaced(R) is true and the effective-record set is {C}
+And Stage 3 raw_logs contains C but not R, and evidence_items contains C's items but not E_R
+And R.raw_text, any copied question context, and E_R are absent from both Stage 3 and Stage 4 inputs
+And no current fact asserts production deployment or leadership
+And no current contradiction uses R, E_R, or the displaced wording as a current position
+
+Given R's raw_text establishes facts A and B with OccurredAt P1 and project X
+When C targets R only to correct the time, stores OccurredAt P2 and copied project X, and its self-contained raw_text restates A but not B
+Then C is the only effective record and every fact's governing record
+And A re-extracts from C with OccurredAt P2 and project X
+And B does not survive merely because R remains retained
+
+Given retained C1 has corrects_log_id = R.id, corrects assertion A, and restates surviving assertion B
+And retained C2 has corrects_log_id = C1.id, corrects assertion B, and restates the surviving correction to A
+When the service resolves the lineage
+Then displaced(R) and displaced(C1) are true
+And the effective-record set and Stage 3 raw_logs are exactly {C2}
+
+Given retained sibling corrections C1 and C2 both have corrects_log_id = R.id
+When the service resolves the lineage
+Then displaced(R) is true and the effective-record set is {C1, C2}
+And C1 and C2 are ordered by recorded_at ascending and then ID ascending by byte order
+And a fact selecting only C1's evidence copies C1's OccurredAt and project while a fact selecting only C2's copies C2's
+And a fact selecting evidence of both siblings copies the later by (recorded_at, ID), equal recorded_at resolved by ID byte order
+And a fact selecting only R's displaced-support descriptor and no effective-record item fails Stage 3 commit atomically
+And a conflict between C1 and C2 is a legitimate Stage 4 detection because both effective records are supplied current targets
+
+Given the only retained correction C targets root R
+When the owner deletes R and C.corrects_log_id becomes NULL under §11.2
+Then C roots its own lineage and is effective
+And Stage 3 supplies C and its evidence as ordinary effective-lineage input
+
+Given imported root R owns commit_or_pr item E_commit and its raw_text contains commit message M
+And correction C targets R, owns manual_claim item E_C, and its effective raw_text supplies fact content S
+When the service constructs the Stage 3 input
+Then raw_logs contains C but not R
+And evidence_items contains E_C
+And displaced_support_items contains E_commit as exactly id, raw_log_id, strength, uri, and path
+And that descriptor contains no title, summary, R.raw_text, or commit message M
+When a fact whose content traces to C.raw_text selects E_commit plus E_C with confidence high
+Then the selection passes the lineage selectability check
+And the §9.4 high ceiling remains reachable but is not required
+When Stage 4 receives that current fact
+Then the fact is an ordinary supplied detector input object
+And E_commit is not thereby a detector target because its descriptor is not a supplied Stage 4 object
+
+Given displaced root R owns non-manual item E_support and its raw_text contains unique string D
+And correction C displaces R, current fact F selects E_support as displaced-record support, and current claim K cites F
+When Stage 7 serializes K's §15.5 provenance bundle
+Then source_evidence_items contains E_support only as the §13.3 rule 10 displaced-record support descriptor
+And source_logs omits R as a RawLog object
+And §9.4 judgment still receives E_support.strength and E_support.raw_log_id, so scoped strength and same-log independence remain visible
+When Stage 10 serializes the §15.6 writer input for a resume bullet grounded through F
+Then F's evidence pair carries E_support as the same descriptor and raw_log = null
+When Stage 11 serializes that bullet's §15.7 verifier input
+Then source_facts retains F's displaced-support provenance IDs, source_logs omits R as a RawLog object, and no EvidenceItem object is hydrated
+And D is absent from every serialized §15.5, §15.6, and §15.7 payload
+And neither the resume writer nor the resume verifier receives displaced prose
+
+Given displaced root R owns manual_claim item E_old
+When a Stage 3 candidate selects E_old and attempts to commit
+Then §12.4 rejects the lineage fact batch atomically
+And the prior current fact generation remains unchanged
+And the same check rejects any item that is neither owned by an effective record nor a non-manual displaced-record support item of that fact's lineage
 ```
 
 ---
