@@ -972,8 +972,8 @@ And correction C targets R, owns manual_claim item E_C, and its effective raw_te
 When the service constructs the Stage 3 input
 Then raw_logs contains C but not R
 And evidence_items contains E_C
-And displaced_support_items contains E_commit as exactly id, raw_log_id, strength, title, uri, and path
-And that descriptor contains no summary, R.raw_text, or commit message M
+And displaced_support_items contains E_commit as exactly id, raw_log_id, strength, uri, and path
+And that descriptor contains no title, summary, R.raw_text, or commit message M
 When a fact whose content traces to C.raw_text selects E_commit plus E_C with confidence high
 Then the selection passes the lineage selectability check
 And the §9.4 high ceiling remains reachable but is not required
