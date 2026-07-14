@@ -24,6 +24,7 @@ Normative skeleton — the shape §20 commits to; deeper paths are content:
 ```text
 exp2res/
   pyproject.toml
+  LICENSE
   README.md
   CLAUDE.md
   AGENTS.md

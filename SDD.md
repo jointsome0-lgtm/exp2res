@@ -41,7 +41,7 @@ Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file
 - §23 End-to-End Demo — approximate-range retro log → complete typed facts → signal → claim → verified bullet
 - §24 Acceptance Criteria — 43 V1 checks including deterministic whole-record correction displacement, scoped-support survival, and prose-free downstream projection, one closed strict bounded interpretation per accepted object, producing-run/generation traceability, parent-linked lifecycle orchestration, durable verifier findings with telemetry-only failures, privacy-safe run identity, owner-deletion purge, one-writer/many-reader workspace locking, coherent snapshot reads, bounded contention and crash recovery, schema compatibility and verified atomic migration, and the per-table primary-key identity and no-reuse contract
 - §25 Risks and Mitigations — resume-drift, flattery, punitive tone, overclaim, single-pass verifier gates, provenance corruption, verifier-gated integration projections, diagnosis, retained private/stale derivations
-- §26 README Positioning — intro and taglines
+- §26 README Positioning — intro and taglines; MIT license and deferred security-policy positioning
 - §27 Key Invariants — reference-only index including typed JD/unknown references, occurred provenance, generated/source voice boundaries, and the local privacy/egress boundary
 - §28 Final Design Statement — three layers that must never collapse
 - §29 Security and Privacy — private local canonical state, exhaustive displacement-aware user-initiated LLM transit, provider trust, size/structure and secret preflight, ignore isolation including descriptor locators, prompt-injection bounds, and residual risks
