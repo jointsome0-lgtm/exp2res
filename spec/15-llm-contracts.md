@@ -13,6 +13,7 @@ All LLM calls must:
 7. Preserve the generated-voice/source-voice boundary in §16.12: structured source text may be evidence input, but voice rules evaluate only Exp2Res-authored candidate language and never rewrite or reject source material.
 8. Apply §11's Model validation policy, including its `extra = forbid` rule for every output shape.
 9. Before any provider call, deterministically preflight the fully serialized payload against §11's boundary limits alongside §29.4's credential preflight; a failure is local and fail-closed and reports only a non-secret diagnostic.
+10. Emit every generated natural-language output under the V1 language scope in §16.13.
 
 Under §11's field-authorship policy, a model response that sets a service-owned persisted field instead of its declared model-authored transition result, or sets any undeclared field, is invalid structured output.
 

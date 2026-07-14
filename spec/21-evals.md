@@ -1123,4 +1123,75 @@ Then the operable lifecycle inspection forms are exactly db status; logs list; f
 And evidence-item listing, branch/bullet listing, historical-generation browsing beyond runs show, and parsed-requirement dumps beyond jd show remain absent as explicitly deferred read-only additions
 ```
 
+## §21.42 Temporal, Language, Unicode, and Path Semantics Are Deterministic
+
+Test (enforces §11's Model validation policy and §11.1, §12 rule 3, §13.6 and §13.12, §14.9–§14.10 and §14.14 rule 8, §15.1–§15.2, §16.6 and §16.12–§16.13, §19, and §29.4; extends §21.39's canonical-hash coverage):
+
+```text
+Given a naive local timestamp T and a workspace whose configured IANA timezone has offset O at T
+And the ambient OS timezone and locale differ from that workspace configuration
+When T reaches a §15 or §19 transport boundary, SQLite hydration, or direct §11 construction
+Then each boundary rejects it as naive without consulting either workspace or ambient timezone
+When the same owner local time T instead enters a §14 local-time feature
+Then §14.14 resolves T carrying offset O before model construction
+And §12 stores ISO 8601 TEXT carrying O rather than an ambient or UTC-normalized replacement offset
+And changing the ambient OS timezone or locale changes neither the resolved instant nor the stored offset
+
+Given §21.39 already establishes equal canonical hash bytes for otherwise identical validated objects carrying 2026-07-14T09:00:00+03:00 and 2026-07-14T06:00:00Z
+When both values are persisted and used in datetime equality, ordering, or sorting
+Then each stored TEXT retains its supplied +03:00 or Z offset
+And both temporal sort keys and equality operands denote the same UTC instant rather than following TEXT byte order
+
+Given the configured workspace timezone's available tzdata marks one naive local timestamp as a daylight-saving gap and another as a fold
+When a §14 local-time feature attempts to resolve either timestamp
+Then each input fails closed without persistence or a silently selected fold
+And each diagnostic guides the owner to supply an explicit offset
+
+Given the named periods June 2026, Q1 2026, and 2026-W23 and workspace timezone Etc/UTC
+When two conforming implementations normalize them to OccurredAt
+Then June 2026 has precision month and starts at 2026-06-01 00:00:00 with offset +00:00
+And Q1 2026 has precision quarter, denotes January through March, and starts at 2026-01-01 00:00:00 with offset +00:00
+And 2026-W23 has precision week and starts at 2026-06-01 00:00:00 with offset +00:00, a Monday
+And all three resulting OccurredAt values are identical across the implementations
+
+Given a Russian-language RawLog whose raw_text is the UTF-8 bytes for "Создал локальный прототип для проверки идеи."
+When Stage 3 extracts a meaning-preserving ExperienceFact
+Then the fact's generated prose is English and passes every applicable §16 rule
+And the RawLog remains byte-for-byte unchanged
+And any rendered source quote remains source voice only when a typed reference verifies the exact Russian bytes or a contiguous substring
+And any English paraphrase remains generated voice rather than gaining a source exemption
+
+Given the same Russian source and an otherwise valid generated ExperienceFact claim written in Russian
+When the §16.12 segment-scoped voice validation runs
+Then the candidate fails §16.13 voice validation and no generated fact persists
+And it neither rejects nor rewrites the Russian source
+
+Given a Russian source says "Обсуждал production-развертывание, но сам его не выполнял." and no other evidence supports a production outcome
+When an English candidate claims that the owner deployed or operated the system in production
+Then §16.6 rejects the unsupported production claim exactly as it would for an English-language source
+And cross-language extraction grants no evidence or overclaim exception
+
+Given one label pair has code-point sequences "Caf\u00e9" and "Cafe\u0301" and another pair is "I" and "i"
+When either pair is used as a project scope target and copied project provenance, or as a branch name and selector
+Then NFC plus locale-independent Unicode Default Case Folding yields one project match and assessment-view identity and one branch replacement identity
+And view-slug derivation cannot create a second managed-output identity
+And "I" and "i" yield the same identities under both the C and Turkish process locales
+When either pair instead occurs as two EvidenceItem.title values whose owning rules name no normalization or fold
+Then its validated code points remain distinct and no title or duplicate comparison collapses them
+
+Given acquisition receives C:\work\log.md, C:/work/log.md, \\server\share\log.md, work\log.md, or file://server/share/log.md as a local locator
+When §29.4 validates the locator
+Then each Windows drive-letter, UNC, backslash-separated, or non-POSIX file URI form is rejected before a file read or persistence
+And no rejected form is reinterpreted as a POSIX path
+
+Given a stored-boundary fixture presents any same unsupported local form directly to the pre-serialization re-check
+When §29.4 validates the locator before prompt composition
+Then serialization fails before a provider call and the locator is never reinterpreted or transmitted
+
+Given two case variants beneath one selected root resolve to the same file on a case-folding filesystem
+When acquisition canonicalizes each locator before the mandatory-deny and user-ignore checks
+Then both yield the same canonical real-path bytes and the same deny/ignore decision
+And the byte-wise comparison introduces no path case folding of its own
+```
+
 ---
