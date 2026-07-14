@@ -6,6 +6,8 @@ A noun-led generation group always uses an explicit `generate` subcommand; no ba
 
 The exhaustive workspace business-writer/read-only command classification and its locking behavior are specified in §8.1 and apply to every non-bootstrap form below.
 
+§14.14 defines the global runtime contract — workspace discovery, configuration precedence, non-interactive behavior, exit codes, and the machine-readable result envelope — that binds every form in this section.
+
 ## §14.1 Initialize Project and Manage Database
 
 ```bash
@@ -23,7 +25,7 @@ out/
 
 SQLite is the only managed store for raw logs and evidence items. Source files remain at their supplied paths as provenance references (§14.2, §14.5); `out/` is reserved for Stage 12 exports (§13.12).
 
-A fresh initialization creates the build's current §12.14 schema and inserts its version row. If the workspace already exists at that current version, `init` succeeds as an idempotent no-op, reports the version, and changes no database row or managed path. At any other recognized version it fails closed, reports the mismatch, and points at `db status` plus the `db migrate` or application-upgrade recovery required by §12.14. An unrecognized existing database fails closed. `init` never re-creates, overwrites, or deletes existing workspace data.
+A fresh initialization creates the build's current §12.14 schema and inserts its version row. If the workspace already exists at that current version, `init` succeeds as an idempotent no-op, reports the version, and changes no database row or managed path. At any other recognized version it fails closed, reports the mismatch, and points at `db status` plus the `db migrate` or application-upgrade recovery required by §12.14. An unrecognized existing database fails closed. A partially initialized target — including an existing `.exp2res/` without `exp2res.sqlite` or a database without readable `schema_meta` — is unrecognized: `init` fails closed and never completes, overwrites, or repairs it implicitly. A pre-existing non-empty `out/` is inert; initialization neither reads, changes, nor removes its contents. `init` never re-creates, overwrites, or deletes existing workspace data.
 
 ```bash
 exp2res db status
@@ -196,6 +198,77 @@ exp2res runs list
 exp2res runs show --run-id run_001
 ```
 
-`runs list` reports processing-run rows with stage, status, timing, and parent linkage. `runs show` reports the selected run's §12.13 run row, its §12.15 per-call telemetry rows, and its §11.14 verification findings when present. Both commands are read-only telemetry inspection, never a pipeline stage or stage trigger. Exit-code and JSON-output details are deferred to issue #55.
+`runs list` reports processing-run rows with stage, status, timing, and parent linkage. `runs show` reports the selected run's §12.13 run row, its §12.15 per-call telemetry rows, and its §11.14 verification findings when present. Both commands are read-only telemetry inspection, never a pipeline stage or stage trigger. §14.14 owns their exit-code and JSON-output details.
+
+## §14.14 Global CLI Runtime Contract
+
+This contract binds every command-specific form above and every later §14 addition.
+
+1. **Workspace discovery.** Every non-`init` command resolves its workspace before loading workspace configuration or performing compatibility or business I/O. Starting at the current directory's canonical real path, with symlinks resolved, it examines that directory and each physical parent through the filesystem root; the first ancestor containing a `.exp2res/` directory is the workspace root. The nearest marker wins, including when that marker is partial or its database is unrecognized: compatibility then fails under §12.14 rather than skipping the marker and binding an enclosing workspace. The global `--workspace <path>` option replaces this walk; a relative value resolves from the current directory, its canonical real path alone is examined, and it must name a directory containing `.exp2res/`. An invalid override never falls back to discovery. Failure to establish a workspace uses a stable diagnostic class in exit class 3. `init` neither walks ancestry nor redirects through `--workspace`: it always targets the canonical current directory, and supplying the override is invalid usage. Creating `.exp2res/` there while an enclosing workspace exists is legal; later discovery from that tree selects the new nested workspace by the nearest-wins rule.
+2. **Configuration precedence.** Workspace resolution precedes configuration loading. For each setting that declares more than one representation, the value is selected in this order: an explicitly supplied CLI flag, its documented `EXP2RES_*` environment variable, the corresponding key in the selected workspace's `.exp2res/config.toml`, then a built-in default when that setting declares one. A representation, including a default, need not exist at every level; a required setting still unresolved after this chain fails closed. An undocumented environment variable or ambient user, repository, provider, shell, or platform setting has no effect. `--workspace`, `--json`, `--yes`, and `--no-input` are invocation controls rather than configuration values and are accepted only as explicit flags. Provider credentials are outside this precedence chain and remain transport-only adapter values resolved at the §29.2/§29.4 boundary.
+3. **Non-interactive behavior.** Every command accepts the global `--json`, `--yes`, `--no-input`, `--workspace`, `--verbose`, and `--quiet` controls subject to the `init` exception above. `--no-input` forces non-interactive behavior regardless of the terminal; non-TTY stdin is non-interactive even without that flag. In either case, a command that would prompt must receive every required value through its declared flags or fail closed with exit class 2 before blocking or performing the prompt-dependent operation. This applies to §14.3 capture, destructive confirmations, migration, and every foreground action that may invoke a cost-bearing LLM call. A destructive or cost-bearing action additionally requires explicit `--yes` in non-interactive mode; on TTY stdin it requires either `--yes` or an interactive confirmation before the destructive step or provider call. The confirmation set is `logs delete`, `jd delete` (§14.15), `workspace purge` (§14.16), `db migrate`, and every command that can make a cost-bearing §15 call, including verification, parsing, extraction, detection, lifecycle, and generation commands. `--yes` supplies consent only; it never supplies missing capture or selector input. Verbosity controls affect secret-safe diagnostics and progress only, never the result, exit class, or JSON shape.
+4. **Exit-code taxonomy.** The process exit status and the envelope's `exit_code` are the same stable small integer, and `CLIResultStatus` (§10) is a deterministic projection of it:
+
+   | Code | `CLIResultStatus` | Required meaning |
+   |---:|---|---|
+   | 0 | `ok` | Success, including a retained generation, another no-op result, or idempotent `init`. |
+   | 1 | `failed` | Unexpected internal failure. This is the only class for an otherwise unclassified error and its diagnostic is secret-safe. |
+   | 2 | `failed` | Invalid command, usage, selector, or input, including a naive-datetime or other boundary-validation rejection. |
+   | 3 | `failed` | Missing, invalid, or undiscoverable required workspace. |
+   | 4 | `failed` | Incompatible or unrecognized schema under §12.14, including a partial initialization or `init` version mismatch. |
+   | 5 | `failed` | Concurrency conflict in the §8.1 `workspace_busy` class. |
+   | 6 | `failed` | Provider or transport failure under §15.10, including capability mismatch or budget/context-overflow preflight refusal. |
+   | 7 | `failed` | Validation or integrity failure, including §15.1 invalid-after-retry, §12 rule 10, hydration, or migration validation failure. |
+   | 8 | `failed` | Incomplete managed-output cleanup or privacy deletion at non-cancelled completion, including `deletion_incomplete` and any reported residual path. |
+   | 9 | `cancelled` | User interruption under §15.10/§13.13. |
+   | 10 | `blocked` | A completed semantic result whose verifier or consumer gate does not pass: non-passing `assess verify` or `verify --branch` findings, or export refused by a §16.11 allowlist. |
+
+   Code 10 is a successful semantic computation, not an operational-failure class: its complete findings are retained and its completed verifier `processing_runs` row is not marked failed. A handled user interrupt takes code 9 precedence over every simultaneously observed class, including incomplete cleanup after an already committed deletion; committed effects and every known `residual_path` remain reported in the cancelled envelope. Code 8 applies when the command reaches a non-cancelled completion with required cleanup incomplete. Exit codes are configuration-independent; a recognized class never collapses into code 1. Existing codes never change meaning or number, and a new class appends a new code.
+5. **Machine-readable result envelope and output channels.** With `--json`, stdout contains the UTF-8 serialization of exactly one versioned result-envelope object, optionally followed by one final newline, and no banner, progress line, diagnostic, prompt, or other byte. The outer object and every nested object apply §11's strict validation, string-hygiene, and `extra = forbid` policy. Every field below is present; inapplicable scalar values are `null` and inapplicable collections are empty. Version 1 is closed: adding, removing, retyping, or changing the meaning of a field requires a new `envelope_version`, and an implementation fails closed on an unsupported version.
+
+   | Field | Version-1 type and meaning |
+   |---|---|
+   | `envelope_version` | Integer `1`. |
+   | `command` | Canonical §14 command path without arguments, or `null` when parsing did not resolve a command. |
+   | `status` | Canonical `CLIResultStatus`, constrained by the exit-code table above. |
+   | `exit_code` | Integer process exit status from the table above. |
+   | `diagnostic_class` | Stable non-empty machine code, or `null` if and only if `exit_code = 0`; code 10 uses a gate-specific blocking class. These codes are open for append-only extension like §12.13 `failure_code`, not a §10 enum. |
+   | `workspace` | Canonical real discovered or overridden workspace-root path, the canonical `init` target, or `null` when no root was established. |
+   | `affected_ids` | Closed object with exactly `created`, `superseded`, and `deleted`; each is a list of closed `{entity_type: str, ids: list[str]}` groups so per-table IDs remain typed by class. |
+   | `generation_ids` | Duplicate-free produced or invalidated §12 rule 13 generation IDs. |
+   | `run_ids` | Duplicate-free §12.13 processing-run IDs created or directly inspected by the command. |
+   | `invalidated_views` | Complete list of closed `{scope: AssessmentScope, scope_target: str | null, snapshot_id: str, regeneration_command: str}` §13.13 rule 9 reports; the command is executable and POSIX-shell-quoted. |
+   | `invalidated_branches` | Complete list of closed `{name: str, job_description_id: str, former_view: {scope: AssessmentScope, scope_target: str | null, snapshot_id: str}, regeneration_command_shape: str}` §13.13 rule 9 reports. |
+   | `findings` | Complete §11.14 `VerificationFinding` values produced or directly inspected by the command; otherwise empty. |
+   | `residual_paths` | Complete canonical managed paths whose required cleanup or deletion did not complete. |
+   | `warnings` | Values using §15.1's closed `ContractWarning` shape; each message is a secret-safe owner-facing explanation surfaced by the command and contains no source quotation. |
+   | `retry` | Closed `{command: str}` containing the documented, POSIX-shell-quoted executable retry command from §13.13/§14.12 when one exists; otherwise `null`. |
+   | `result` | Closed primary-result object discriminated by `command` under the table below, or `null` when the standard envelope fields carry the complete result. A free-form object is invalid. |
+
+   The `command` value selects exactly one result schema; every object and projection below is closed and uses the referenced §10/§11/§12 field types:
+
+   | Command | Exact `result` payload |
+   |---|---|
+   | `init`, `db status`, `db migrate` | `{schema: {stored_version: int | null, supported_version: int, recognized: bool, compatible: bool, migration_path_available: bool | null, managed_backup_path: str | null}}`. |
+   | `logs list` | `{logs: list[{id, recorded_at, entry_type, source_type, occurred, project, corrects_log_id}]}`, the `raw_text`-free §11.2 inspection projection; `raw_text`, `metadata`, and `external_ref` are absent. |
+   | `logs delete` | `{selected_log: {id, recorded_at, entry_type, source_type, occurred, project, external_ref, corrects_log_id}}`, the captured pre-deletion §11.2 report required by §14.11; `raw_text` and `metadata` are absent. |
+   | `facts list`, `facts show` | `{facts: list[ExperienceFact]}` using complete §11.4 values; a successful `show` result contains exactly one. |
+   | `detections generate` | `{gaps: list[GapQuestion], contradictions: list[Contradiction]}` containing both complete retained or replacement §14.7 result sets. |
+   | `gaps list` | `{gaps: list[GapQuestion]}` using complete §11.10 values. |
+   | `contradictions list`, `contradictions show` | `{contradictions: list[Contradiction]}` using complete §11.9 values; a successful `show` result contains exactly one. |
+   | `signals list` | `{signals: list[SelfSignal]}` using complete §11.5 values. |
+   | `assess list` | `{snapshots: list[{id, scope, scope_target, verification_status, created_at}]}`, exactly the §14.9 discovery projection. |
+   | `assess show` | `{snapshot: AssessmentSnapshot, claims: list[SelfClaim], gaps: list[GapQuestion], contradictions: list[Contradiction]}` using the complete §11 values reached by that snapshot's typed references. |
+   | `jd list` (§14.15) | `{job_descriptions: list[{id, created_at, title, company}]}`. |
+   | `jd show` (§14.15) | `{job_description: {id, created_at, title, company, parsed}}`, the §11.11 `raw_text`-free inspection projection; `raw_text` is absent and `parsed` is the complete §11.13 value. |
+   | `runs list` | `{runs: list[{id, stage, parent_run_id, started_at, finished_at, status}]}`, exactly the §14.13 list projection from §12.13. |
+   | `runs show` | `{run: <complete §12.13 row>, calls: list[<complete §12.15 row>]}`; its §11.14 rows use the top-level `findings` field. |
+   | `export assessment`, `export resume` | `{managed_paths: list[str]}` containing the complete successfully written managed-output set. |
+
+   A command in the table uses `result = null` only when it fails or is cancelled before a complete primary result exists; it never emits a partial result object. A nonzero completed report such as incompatible `db status` still carries its complete typed result. Every other V1 command uses `result = null`: its primary result is already complete in `affected_ids`, `generation_ids`, `run_ids`, invalidation reports, `findings`, `residual_paths`, `warnings`, and `retry`. Adding a command or widening one of these result projections requires declaring its closed `command`-discriminated schema in §14 and incrementing `envelope_version` when version 1 is already implemented.
+
+   IDs, entity groups, paths, findings, views, branches, and result records are duplicate-free and deterministically ordered by their stable class and identity. Completeness-required §13.13 reports and residual paths are never truncated; they are local result output rather than one of §11's bounded provider, acquisition, response, or hydration inputs. The envelope never contains a secret, credential, prompt, `raw_text`, or undeclared source content. Content-bearing values are IDs and machine codes except for the closed command result projections, warnings, verifier findings, managed paths, and view/branch regeneration reports already surfaced by their owning §13/§14 contracts. Human mode may format the primary result as text on stdout. In both modes every diagnostic and progress event goes to stderr; `--quiet` may suppress progress but not the result or a diagnostic required to explain a nonzero exit. The §8.1 public-diagnostic rule applies, and internal logs and exception reports are secret-safe and contain no private source text. Writing the envelope to local stdout is not egress under §29.
+6. **Interruption and confirmation semantics.** On a user interrupt every command exits with code 9 and `status = cancelled`. §15.10 owns in-flight LLM-call cancellation, §13.13 owns lifecycle atomicity, and §8.1 owns lock and transaction release: the in-flight transaction rolls back and no partial current generation becomes visible, while a correction, deletion, cleanup result, or other lifecycle boundary already committed under §13.13 remains committed and is reported rather than restored. The confirmation requirements are exactly those in rule 3; neither configuration nor an environment variable can imply consent.
+7. **Inspection-surface completeness.** The operable V1 lifecycle-inspection surface is `db status`; `logs list`; `facts list` and `facts show`; `gaps list`; `contradictions list` and `contradictions show`; `signals list`; `assess list` and `assess show`; `jd list` and `jd show` (§14.15); and `runs list` and `runs show`. Evidence-item listing, resume-branch or bullet listing, historical-generation browsing beyond `runs show`, and parsed-requirement dumps beyond `jd show` are explicitly deferred read-only additions. They add no V1 mutation or decision surface.
 
 ---

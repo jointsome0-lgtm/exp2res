@@ -33,7 +33,7 @@ A fresh §14.1 initialization and every §12.14 migration must persist `PRAGMA j
 
 Every read-only command performs its §12.14 compatibility read and all of its business reads inside one explicit read transaction. Under WAL snapshot isolation, it sees one coherent committed snapshot and cannot mix rows from generations committed before and after its read boundary; historical-inspection reads follow the same rule. A writer performs the business reads for each mutation or export inside the corresponding `BEGIN IMMEDIATE` transaction, so that transaction has the same coherent-snapshot property. Read-only commands take no workspace writer lock and may run concurrently with a writer.
 
-If the workspace writer lock or SQLite remains contended beyond the bounded timeout, the command fails with the stable machine-readable diagnostic class `workspace_busy`, emitted on one line. No public command contract exposes a Python or SQLite stack trace; exit-code and JSON-envelope details belong to the #55 CLI result contract.
+If the workspace writer lock or SQLite remains contended beyond the bounded timeout, the command fails with the stable machine-readable diagnostic class `workspace_busy`, emitted on one line. No public command contract exposes a Python or SQLite stack trace; §14.14 defines the binding exit-code and JSON-envelope details.
 
 If a process dies while holding the writer lock, the OS releases the advisory lock and SQLite restores a consistent database by rolling back any in-flight transaction through WAL recovery. Managed outputs may remain stale or residual; the next operation applies the §13 preamble and §13.13 rules 4–6 rather than trusting them as current. No lock repair or `fsck` pass is required.
 

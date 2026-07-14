@@ -1001,4 +1001,126 @@ And the prior current fact generation remains unchanged
 And the same check rejects any item that is neither owned by an effective record nor a non-manual displaced-record support item of that fact's lineage
 ```
 
+## §21.41 CLI Runtime Contract Is Deterministic and Machine-Readable
+
+Test (enforces §8.1, §12.14, §13.13, §14.1, §14.14, §15.10, §16.11, and §29):
+
+```text
+Given one valid workspace and a current directory several levels beneath its root
+When any non-init command runs without --workspace
+Then discovery walks physical canonical parents and selects that workspace
+
+Given a valid nested workspace inside a valid enclosing workspace
+When a command runs below the nested root
+Then the nested workspace wins
+Given the nearest .exp2res/ marker is partial or has an unrecognized database while the enclosing workspace is valid
+Then discovery stops at the nearest marker and exits 4 under §12.14
+And it never skips to or reads business state from the enclosing workspace
+
+Given a valid second workspace named by --workspace from any current directory
+Then only that canonical root is selected and no parent walk occurs
+Given the override is invalid
+Then the command exits 3 without falling back to discovery
+Given no ancestor workspace and no override
+When a non-init command runs
+Then it exits 3 with workspace = null and performs no business I/O
+
+Given the current directory is inside an enclosing workspace but has no local .exp2res/
+When exp2res init runs
+Then it creates a legal nested workspace in the canonical current directory without walking upward
+And later discovery below it selects the nested workspace
+Given --workspace is supplied to init
+Then command validation exits 2 instead of redirecting initialization
+
+Given no .exp2res/ and a pre-existing non-empty out/ tree
+When exp2res init creates the workspace
+Then initialization succeeds and every pre-existing out/ byte and path remains unchanged
+Given that current-version workspace and its non-empty out/ tree
+When exp2res init runs again
+Then it exits 0 as an idempotent no-op
+And every pre-existing out/ byte and path remains unchanged
+Given .exp2res/ exists without exp2res.sqlite or its database lacks readable schema_meta
+When exp2res init runs
+Then it exits 4 as unrecognized and creates, completes, repairs, overwrites, and deletes nothing
+
+Given one declared setting has distinct values in an explicit flag, its documented EXP2RES_* variable, .exp2res/config.toml, and the built-in default
+When each higher-precedence representation is removed in turn
+Then selection follows flag, environment, workspace config, default in that order
+And an undocumented environment variable or ambient repository, user, shell, provider, or platform setting never changes the result
+And workspace resolution happens before config is read
+And provider credentials remain outside the chain under §29.2/§29.4
+Given a required setting declares no built-in default and no higher representation supplies it
+Then the command fails closed rather than inventing or discovering a value
+Given --yes, --no-input, --json, or --workspace appears only in environment or config
+Then it has no invocation-control effect
+
+Given stdin is piped or --no-input is present and a §14.3 capture lacks prompt-supplied values
+When the command runs
+Then it exits 2 before blocking and emits no prompt
+Given any destructive or cost-bearing command has non-TTY stdin and lacks --yes
+Then it exits 2 before a destructive step or provider call
+Given all required declared inputs plus --yes are present
+Then the same command may proceed without reading stdin
+Given TTY stdin and no --yes
+Then only the §14.14 confirmation set may prompt before destruction or provider cost
+
+Given table-driven command fixtures for exit 0, every operational failure class 1 through 8, cancellation 9, and semantic blocking 10
+When each runs with --json
+Then stdout is exactly one parseable version-1 envelope plus at most its final newline
+And every required field is present with no undeclared outer or nested field
+And exit_code equals the process exit status
+And status is ok for 0, failed for 1 through 8, cancelled for 9, and blocked for 10
+And diagnostic_class is null exactly for 0 and is a stable class for every other code
+And command and workspace are null only when their respective parse or discovery boundary could not establish them
+And diagnostics and progress appear only on stderr
+And --verbose or --quiet changes neither stdout, status, nor exit_code
+
+Given db status, every operable list/show form, and each export runs with --json
+Then result validates against exactly the closed projection selected by command
+And a show result has the required single selected record while list results preserve every reported record
+And runs show places its complete run and call rows in result and its VerificationFinding rows in findings
+And no result contains RawLog.raw_text, JobDescription.raw_text, a free-form object, or a field outside its projection
+Given a mutation whose standard envelope fields carry its complete result
+Then result is null rather than an untyped duplicate
+Given detections generate retains or replaces its complete generation
+Then result contains both complete gap and contradiction sets even when retention creates no affected or generation ID
+Given logs delete reports its selected record and known external source path
+Then result contains the closed captured pre-deletion projection including external_ref
+And it contains neither raw_text nor metadata
+
+Given assess verify or verify --branch completes with non-passing findings
+When its result is emitted
+Then it exits 10 with status blocked and the complete VerificationFinding values
+And its verifier processing run remains completed rather than failed
+Given a §16.11 allowlist refuses export without an operational error
+Then the result also exits 10 with a gate-specific diagnostic and no invented finding
+
+Given a mutating command creates, supersedes, or deletes typed rows and records producing runs or generations
+When its JSON result is emitted
+Then affected_ids groups every surfaced ID under its entity type and operation
+And generation_ids and run_ids contain the available duplicate-free IDs in deterministic order
+Given the same command invalidates assessment views or branches or surfaces contract warnings
+Then every §13.13 report is present in its closed structured shape and every warning uses the closed secret-safe warning shape
+
+Given a cleanup or privacy deletion commits but leaves multiple managed residual paths
+Then the command exits 8
+And every residual path appears once in deterministic order in the envelope
+And retry carries the documented executable retry command when §13.13/§14.12 defines one
+
+Given a user interrupt arrives during a write or provider call
+Then the in-flight transaction rolls back, the lock is released, no partial current generation appears, and the command exits 9
+And any correction, deletion, or cleanup boundary already committed under §13.13 remains committed and is reported rather than restored
+Given deletion has committed and the interrupt arrives while managed cleanup is incomplete
+Then code 9 takes precedence over code 8
+And status is cancelled while every known residual path and committed effect remains in the envelope
+
+Given a forced internal, provider, validation, cleanup, or cancellation failure whose inputs contain a credential, prompt text, and a unique raw source string
+Then stdout, stderr, and retained internal diagnostics contain none of those values
+And the envelope contains only its declared IDs, codes, allowed findings, managed paths, warnings, lifecycle reports, and allowed closed command-result projections
+
+Given the V1 command registry
+Then the operable lifecycle inspection forms are exactly db status; logs list; facts list/show; gaps list; contradictions list/show; signals list; assess list/show; jd list/show; and runs list/show
+And evidence-item listing, branch/bullet listing, historical-generation browsing beyond runs show, and parsed-requirement dumps beyond jd show remain absent as explicitly deferred read-only additions
+```
+
 ---

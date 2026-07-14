@@ -1,6 +1,6 @@
 ## §10. Enumerations
 
-§10 is the canonical home for every named `Literal` value list used by persisted §11 models and pipeline sections. Each enum-like list must have a stable alias name and be written as a plain Python `Literal[...]` assignment so a future post-MVP docs/schema/lint generator can mechanically extract it.
+§10 is the canonical home for every named `Literal` value list used by the SDD's typed contracts. Each enum-like list must have a stable alias name and be written as a plain Python `Literal[...]` assignment so a future post-MVP docs/schema/lint generator can mechanically extract it.
 
 Other sections must reference the alias name and the field that carries it; they must not restate the value list as a second source of truth. Prose mirrors must not become second normative homes. A change to a §10 value list requires updating all direct references and examples in the same commit, without creating another normative list.
 
@@ -10,7 +10,7 @@ No generator, linter, generated documentation, separate machine-readable registr
 
 `OwnershipLevel` is a normative total order. Members in its assignment are listed from weakest to strongest; `unknown` is the weakest value.
 
-`DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry; `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target.
+`DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry; `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target. `CLIResultStatus` types the §14.14 result envelope independently of processing-run status or semantic verification status.
 
 ```python
 from typing import Literal
@@ -102,6 +102,13 @@ VerificationStatus = Literal[
     "rejected",
 ]
 
+CLIResultStatus = Literal[
+    "ok",
+    "blocked",
+    "failed",
+    "cancelled",
+]
+
 VerificationTargetRefType = Literal[
     "self_claim",
     "resume_bullet",
@@ -188,6 +195,6 @@ JDRequirementKind = Literal[
 ]
 ```
 
-`VerificationStatus` members are canonical here; their operational meanings, aggregation, and consumer allowlists live only in §16.11.
+`VerificationStatus` members are canonical here; their operational meanings, aggregation, and consumer allowlists live only in §16.11. `CLIResultStatus` members are canonical here; their exit-code mapping and envelope semantics live only in §14.14.
 
 ---
