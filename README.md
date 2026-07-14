@@ -30,7 +30,7 @@ Exp2Res is the experience layer of [selfos](https://github.com/jointsome0-lgtm/s
 
 ## Security
 
-There is no runnable code to report vulnerabilities against yet; the security and privacy design lives in spec §29. Security policy defers to the selfos umbrella policy until code lands.
+There is no runnable code to report vulnerabilities against yet; the security and privacy design lives in [spec §29](spec/29-security-and-privacy.md). Until code lands, security policy defers to the [selfos umbrella repository](https://github.com/jointsome0-lgtm/selfos) — report design-level security concerns as issues there or in this repository.
 
 ## License
 
