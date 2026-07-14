@@ -1304,4 +1304,67 @@ And the report appears only on stderr with data limited to stage, call index and
 And stderr progress and retained call telemetry contain none of the prompt, response, credential, or sentinel values
 ```
 
+## §21.44 JD Deletion and Workspace Purge Are Complete Privacy Operations
+
+Test (enforces §8.1, §13.13 rules 5–6 and 10, §14.14–§14.16, and §29.2 and §29.6):
+
+```text
+Given a retained job description has raw source text and a complete parsed value
+When jd list and jd show inspect it
+Then neither command acquires the workspace writer lock, changes a database row or managed path, invokes a provider, or serializes content into a prompt
+And list returns only ID, creation time, title, and company
+And show adds the complete parsed value but never JobDescription.raw_text
+
+Given job description J has current and historical branches, their bullets and bullet findings, corresponding managed branch outputs, and managed migration backups
+And unrelated current assessment views plus current and historical snapshots, claims, and assessment findings exist
+When the owner confirms jd delete for J
+Then the service first deduplicates, enumerates, and attempts removal of every dependent out/<branch>/ directory and every managed migration backup
+And one referentially ordered transaction deletes every bullet finding of those branches, every dependent bullet, every current and historical dependent branch, and J without FK blocking
+And the closed result reports the selected raw-text-free J projection, every purged branch by ID and name, and every successfully removed managed path
+And the unrelated current assessment views remain current, while every current or historical assessment snapshot, claim, and assessment finding remains unchanged
+And the deletion creates one content-free stage 13.13 orchestration run and no provider or recompute run, and every llm_calls row committed before the deletion transaction has input_hash and output_hash NULL
+And the committed point deletion finishes with wal_checkpoint(TRUNCATE) but never VACUUM
+
+Given one required managed-path removal fails and another managed path is a symlink, whether its target is inside or outside the workspace
+When jd delete reaches a non-cancelled completion
+Then deletion never follows the symlink and leaves its target byte-for-byte unchanged
+And the JD, branches, bullets, and bullet findings remain deleted despite the filesystem failure and their prior FK graph
+And every failed or untraversed path is reported once as a residual path with deletion_incomplete and exit code 8, never success
+And the post-deletion checkpoint is still attempted and VACUUM is not
+
+Given an initialized workspace contains rows in every managed source, derived, and execution class plus managed exports, backups, temporary outputs, and retained schema_meta history
+And known content sentinels occur in the live main database, WAL, and managed content-bearing files
+And config.toml contains only owner-authored, secret-free configuration
+When the owner confirms workspace purge and every required cleanup and erasure step succeeds
+Then managed paths are enumerated and removal is attempted before one referentially ordered transaction clears every business and telemetry row
+And schema_meta is replaced by exactly one fresh row for the running build's current schema version and application version
+And no processing_runs or llm_calls row records the purge itself
+And .exp2res/, its empty current-version database, config.toml, and empty managed directory roots remain initialized
+And no rebuild follows
+And every database connection has set and verified PRAGMA secure_delete = ON before business I/O
+And the committed purge executes wal_checkpoint(TRUNCATE), then VACUUM outside a transaction, then a final wal_checkpoint(TRUNCATE)
+And the live main database has no free pages and a byte scan of it and every extant WAL or SHM sidecar finds no managed-content sentinel
+And success does not require unsafe unlinking of an empty or SQLite-maintained sidecar in use by a reader
+
+Given workspace purge cannot remove a managed path, truncate a required checkpoint, complete VACUUM, or complete the final checkpoint
+When the command reaches a non-cancelled completion
+Then the database purge remains committed and no rebuild follows
+And every affected managed, database, or sidecar path is reported as residual with deletion_incomplete and exit code 8, never success
+And any managed symlink is reported without traversal and its target remains unchanged
+
+Given a value in .exp2res/config.toml is recognized as a literal credential by a supported adapter's registered credential or token classifier
+When workspace configuration loads
+Then loading fails closed before business I/O with a non-secret diagnostic
+And the literal is neither echoed nor copied into telemetry
+
+Given table-driven raw-log and job-description point deletions have pre-existing call telemetry containing known source and derived-content hashes
+When each deletion transaction commits and any raw-log Stage 3–5 rebuild finishes
+Then every llm_calls row committed before that deletion transaction has input_hash and output_hash NULL
+And JD deletion creates no post-deletion call row, while a raw-log rebuild may create fresh call hashes over surviving content only
+And column-level inspection of retained processing_runs and llm_calls values finds no source text, derived prose, source path, account or user identifier, email address, or other person-stable or content-derived identifier
+And opaque run, entity, and provider-request IDs plus the non-content-derived prompt_policy_hash may remain
+When workspace purge runs instead
+Then no processing_runs or llm_calls row remains
+```
+
 ---

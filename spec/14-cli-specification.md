@@ -121,7 +121,7 @@ exp2res contradictions show --contradiction-id contradiction_001
 
 Gap answers are self-contained at capture, like corrections: the command copies the answered question's text and `GapQuestion.reason` into the answer's `RawLog.metadata` (`question_text`, `question_reason`). The answer therefore remains interpretable evidence if its question row is later superseded by a Stage 4 regeneration or purged by the §13.13 reset. Question-to-answer links are never re-created after regeneration: an uncertainty a stored answer resolves simply no longer fires its gap trigger against the current facts, and a gap that regenerates anyway is genuinely still open. The copied question text becomes part of the owner's raw record — owner-deletable on its own, never system-edited.
 
-V1 gap and contradiction subcommands only inspect immutable Stage 4 detections or answer gaps; no `gaps` or `contradictions` form generates, and detection generation happens only through `detections generate` or the §14.12 lifecycle flow. There is no resolve, dismiss, or resolution-note command. Outside the §13.13 owner-deletion privacy reset, a conflict disappears from the current set only when the current Stage 4 inputs no longer conflict and a successful replacement generation omits it.
+V1 gap and contradiction subcommands only inspect immutable Stage 4 detections or answer gaps; no `gaps` or `contradictions` form generates, and detection generation happens only through `detections generate` or the §14.12 lifecycle flow. There is no resolve, dismiss, or resolution-note command. Outside the §13.13 raw-log owner-deletion privacy reset, a conflict disappears from the current set only when the current Stage 4 inputs no longer conflict and a successful replacement generation omits it.
 
 ## §14.8 Generate Self-Signals
 
@@ -162,6 +162,8 @@ exp2res verify --branch agent-engineer
 exp2res export resume --branch agent-engineer
 ```
 
+`jd add` remains the Stage 8 creation command owned by this resume flow; §14.15 owns job-description inspection and deletion.
+
 `--snapshot` is a required stored-record selector for the exact assessment anchor governed by §18. It has no latest-snapshot default. A missing, superseded, `unverified`, or otherwise Stage-10-ineligible snapshot fails before a branch or bullet is inserted; the persisted branch records exactly the selected ID.
 
 `--jd` must resolve to a persisted typed `JobDescription`; Stage 10 copies that exact ID into the candidate `ResumeBranch.job_description_id` so verification and export can resolve every matched requirement. A Stage 10 candidate that omits or changes the selected ID fails atomically.
@@ -178,7 +180,7 @@ exp2res logs delete --log-id log_001
 exp2res logs delete --log-id log_001 --yes
 ```
 
-`logs delete` is the owner's destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 5; the purged assessment views and branches are reported with the regeneration guidance of §13.13 rule 9 as command output only. It deletes only Exp2Res-managed database records, `out/`, and the managed migration backups covered by §13.13; it does not delete a supplied source file or export copied elsewhere. Raw database deletion remains committed if managed-path removal or rebuilding fails; residual managed paths are reported as `deletion_incomplete`, never as success.
+`logs delete` is the owner's per-raw-record destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 5; the purged assessment views and branches are reported with the regeneration guidance of §13.13 rule 9 as command output only. It deletes only Exp2Res-managed database records, `out/`, and the managed migration backups covered by §13.13; it does not delete a supplied source file or export copied elsewhere. Raw database deletion remains committed if managed-path removal or rebuilding fails; residual managed paths are reported as `deletion_incomplete`, never as success. Job-description deletion and whole-workspace purge are the distinct §14.15 and §14.16 privacy operations.
 
 ## §14.12 Recompute Derived State
 
@@ -261,6 +263,7 @@ This contract binds every command-specific form above and every later §14 addit
    | `assess show` | `{snapshot: AssessmentSnapshot, claims: list[SelfClaim], gaps: list[GapQuestion], contradictions: list[Contradiction]}` using the complete §11 values reached by that snapshot's typed references. |
    | `jd list` (§14.15) | `{job_descriptions: list[{id, created_at, title, company}]}`. |
    | `jd show` (§14.15) | `{job_description: {id, created_at, title, company, parsed}}`, the §11.11 `raw_text`-free inspection projection; `raw_text` is absent and `parsed` is the complete §11.13 value. |
+   | `jd delete` (§14.15) | `{selected_job_description: {id, created_at, title, company}, purged_branches: list[{id, name}], removed_managed_paths: list[str]}`; `purged_branches` contains every current and historical dependent branch captured before deletion, while residual paths use the envelope's top-level `residual_paths`. |
    | `runs list` | `{runs: list[{id, stage, parent_run_id, started_at, finished_at, status}]}`, exactly the §14.13 list projection from §12.13. |
    | `runs show` | `{run: <complete §12.13 row>, calls: list[<complete §12.15 row>]}`; its §11.14 rows use the top-level `findings` field. |
    | `export assessment`, `export resume` | `{managed_paths: list[str]}` containing the complete successfully written managed-output set. |
@@ -271,5 +274,30 @@ This contract binds every command-specific form above and every later §14 addit
 6. **Interruption and confirmation semantics.** On a user interrupt every command exits with code 9 and `status = cancelled`. §15.10 owns in-flight LLM-call cancellation, §13.13 owns lifecycle atomicity, and §8.1 owns lock and transaction release: the in-flight transaction rolls back and no partial current generation becomes visible, while a correction, deletion, cleanup result, or other lifecycle boundary already committed under §13.13 remains committed and is reported rather than restored. The confirmation requirements are exactly those in rule 3; neither configuration nor an environment variable can imply consent.
 7. **Inspection-surface completeness.** The operable V1 lifecycle-inspection surface is `db status`; `logs list`; `facts list` and `facts show`; `gaps list`; `contradictions list` and `contradictions show`; `signals list`; `assess list` and `assess show`; `jd list` and `jd show` (§14.15); and `runs list` and `runs show`. Evidence-item listing, resume-branch or bullet listing, historical-generation browsing beyond `runs show`, and parsed-requirement dumps beyond `jd show` are explicitly deferred read-only additions. They add no V1 mutation or decision surface.
 8. **Time input resolution.** The selected workspace's `[workspace].timezone` IANA name in `.exp2res/config.toml` (§29.2) is the sole authority for interpreting local time. This setting has no CLI flag, `EXP2RES_*` environment variable, or built-in default representation, and no command reads the ambient OS timezone or locale when producing a persisted value. A configured value is required at the first use of a local-time feature; a missing, empty, or unrecognized value fails that operation closed without a silent default. `log today` and retrospective capture resolve `today` and named period anchors in the workspace timezone, and persisted `OccurredAt` bounds carry the resulting offset. A naive datetime received by the CLI is resolved in the workspace timezone before §11 model construction; the §11 model boundary still rejects every naive value that reaches it. A naive local time in a daylight-saving gap or fold fails closed with guidance to supply an explicit offset, and Exp2Res never silently chooses a fold. The tzdata version is not pinned: resolution uses the rules available to the build at resolution time, while the persisted offset makes the stored instant independent of later tzdata changes.
+
+## §14.15 Manage Job Descriptions
+
+```bash
+exp2res jd list
+exp2res jd show --jd jd_001
+exp2res jd delete --jd jd_001
+```
+
+`jd list` and `jd show` are read-only local inspection. The list reports each retained job description's ID, title, company, and creation time. Show reports those fields plus the complete parsed §11.13 value, including its typed requirements, and never exposes `JobDescription.raw_text`; the exact machine-readable projections are §14.14 rule 5. Neither command invokes a provider or serializes content into a prompt.
+
+`jd delete` is the owner's per-job-description destructive privacy operation and uses §14.14 rule 3 confirmation semantics: `--yes` supplies consent, otherwise a TTY confirmation is required and non-interactive use fails closed. It invokes §13.13 rule 10, which hard-deletes the selected job description and every current or historical dependent branch, bullet, and bullet finding without FK blocking, removes their managed branch outputs and migration backups, globally redacts retained call-content hashes, leaves assessment views untouched, and performs no recompute. The command reports the selected deleted job description, every purged branch with its ID and name, and every removed managed path through the closed result in §14.14 rule 5. Any residual managed path is also reported in `residual_paths` with `deletion_incomplete`, never success; the database deletion remains committed under §13.13 rule 6.
+
+## §14.16 Purge Workspace
+
+```bash
+exp2res workspace purge
+exp2res workspace purge --yes
+```
+
+`workspace purge` is the whole-workspace destructive privacy operation and uses §14.14 rule 3 confirmation semantics. In one owner-initiated flow it removes every managed source, derived, and execution-content class: all raw logs and evidence; every current and historical derived generation, including fact sources and verification findings; all job descriptions and parsed requirements; all `processing_runs` and `llm_calls` telemetry; every managed `out/` artifact; every §12.14 migration backup; live content in SQLite WAL/SHM sidecars through the §8.1 checkpoint discipline; and every temporary output created by Exp2Res inside the managed workspace. `config.toml` is the sole retained data-bearing control-plane file: it is owner-authored configuration, contains neither source content nor provider credential values under §29.2, and remains with the initialized workspace.
+
+The flow first enumerates and attempts the managed-path removals under §13.13 rule 6, then clears all business and telemetry rows in one referentially ordered transaction and replaces the prior `schema_meta` history with exactly one fresh row for the running build's current schema version and application version. This is the sole whole-workspace lifecycle exception to §12.14's append-only history: purge establishes a fresh empty database history rather than migrating or editing retained history. The command itself leaves no `processing_runs` or `llm_calls` row. Purge resets no entity-ID counter and never authorizes intentional ID reuse: later allocation remains collision-resistant and independent of surviving row counts under §12 rule 11. On success, the `.exp2res/` directory, its empty current-version database, its retained `config.toml`, and empty managed directory roots remain initialized; the owner may remove the workspace directory manually when even configuration and infrastructure should disappear.
+
+After the database transaction commits, the flow applies §8.1's checkpoint, `VACUUM`, and final-checkpoint erasure sequence. Database erasure remains committed if managed-path removal or an erasure step fails; every residual path, including a managed symlink that was not followed, is reported as `deletion_incomplete`, never success. No rebuild follows because no source state remains. This differs from `logs delete`, which deletes one raw record, globally resets derived state, and rebuilds Stages 3–5, and from `jd delete`, which purges only one vacancy's dependent resume state. Manual recursive directory removal performs no application-controlled secure-delete, checkpoint, or `VACUUM` pass before unlinking; although path entries may disappear, bytes formerly held in database free pages or SQLite WAL/SHM sidecars may remain recoverable in filesystem or storage remnants. §29.6 defines the limits of either operation.
 
 ---

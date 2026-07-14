@@ -18,10 +18,15 @@ timezone = "<IANA name>"
 
 [llm]
 provider = "<user-selected-provider>"
+api_key_env = "ANTHROPIC_API_KEY"
 
 [privacy]
 ignore_paths = []
 ```
+
+Provider credential values are never stored in `config.toml` or anywhere else in the workspace. The `[llm]` section may contain provider and §15.10 budget configuration, but each credential slot may use only one reference form: an environment-variable name such as `api_key_env = "ANTHROPIC_API_KEY"` or a keyring entry name such as `api_key_keyring = "exp2res/anthropic"`. The adapter resolves that reference only at call time; the environment or keyring value remains a transport-only adapter value under §29.4 and never enters the §14.14 configuration-precedence chain. A missing or ambiguous reference fails the outward call closed.
+
+At configuration load, the service applies every supported adapter's registered §29.4 credential and token classifiers to every configured value. If a value is recognized as a literal credential rather than a reference name, loading fails closed before business I/O with a non-secret diagnostic; the value is neither echoed nor copied into telemetry. Under the POSIX-only V1 runtime, Exp2Res creates `.exp2res/` and each managed subdirectory with mode `0700` and each managed file with mode `0600`, without relying on a permissive process umask.
 
 At a §14.14 local-time feature boundary, `workspace.timezone` is validated against the IANA tzdata database available to the build. A missing, empty, or unrecognized name fails the operation closed; §14.14 owns all interpretation semantics and defines no silent default.
 
@@ -86,13 +91,29 @@ Any candidate that follows instruction-like data — for example by emitting an 
 
 ## §29.6 Lifecycle Guarantee and Residual Risks
 
-Owner deletion in §13.13 is the privacy floor and sole definition of the managed data-lifecycle guarantee; this section does not restate its purge, output-removal, and recompute algorithm.
+The point-deletion algorithms in §13.13 and whole-workspace operation in §14.16 own execution order. The following table is the normative inventory of managed data classes and deletion responsibility; it does not create another command or recompute algorithm.
+
+| Data class | Canonical store | Deletion trigger | Required behavior |
+|---|---|---|---|
+| Raw logs and linked evidence | SQLite | `logs delete` (§14.11); `workspace purge` (§14.16) | Point deletion removes the selected row and linked evidence under §13.13's global derived reset; purge removes all rows. |
+| Current and historical derived generations, including verification findings | SQLite | §13.13 invalidation or deletion flow; `workspace purge` | Recompute/correction supersedes replaced generations; raw-log deletion purges all; JD deletion purges dependent branches, bullets, and bullet findings; workspace purge removes all. |
+| Job descriptions and parsed requirements | SQLite | `jd delete` (§14.15); `workspace purge` (§14.16) | Point deletion hard-deletes the selected JD and its dependent resume state; purge removes all. |
+| Processing-run and LLM-call telemetry | SQLite | any §13.13 point deletion; `workspace purge` (§14.16) | Each point-deletion transaction retains content-free execution telemetry but globally sets every call hash committed before that transaction to `NULL`; a raw-log rebuild may then record fresh hashes over surviving content only, while JD deletion performs no rebuild; workspace purge removes every row. |
+| Configuration and provider selection | `.exp2res/config.toml` | owner edit; manual workspace-directory removal | Workspace purge retains this control-plane file; it contains no source content or literal credential value. |
+| Provider credentials | environment or OS keyring, outside the workspace | owner/platform/provider credential lifecycle | Exp2Res neither stores nor deletes the credential value. |
+| Managed exports | `out/` | invalidation, point deletion, or workspace purge | The owning flow removes each artifact or reports its canonical path as residual. |
+| Migration backups | `.exp2res/backup/` | §13.13 deletion flows; `workspace purge` (§14.16) | The owning deletion flow removes each backup or reports it as residual. |
+| SQLite WAL/SHM sidecars | adjacent to `.exp2res/exp2res.sqlite` | §8.1 after each destructive flow | Required checkpoints truncate live WAL content; purge additionally vacuums and checkpoints again. An empty or SQLite-maintained sidecar may remain while a reader is connected; incomplete truncation is residual. |
+| Managed temporary outputs | operation-owned temporary paths inside the workspace | owning operation; `workspace purge` (§14.16) | The owning operation removes them on completion; purge removes any remainder or reports it as residual. |
+
+Point-retained telemetry is not identifier-free: run IDs, opaque internal entity IDs, and the opaque `provider_request_id` transport correlation may remain. Under §12.13, §12.15, and §15.10, none is a stable identifier of a person or content-derived value; there is no telemetry field for an account ID, user ID, email address, source path, raw text, or derived prose. A provider adapter that encodes one of those values into its request correlation is non-conforming.
 
 The following risks remain explicit:
 
-1. The selected provider may retain or expose transmitted prompts and responses after §13.13 removes local managed data. Provider choice accepts that provider-controlled risk.
+1. The selected provider may retain or expose transmitted prompts and responses after §13.13 or §14.16 removes local managed data. Provider choice accepts that provider-controlled risk.
 2. A structurally valid imported artifact may be false or malicious, and an LLM may return a schema-valid semantic error. Provenance, evidence strength, replacement generations, and verifier gates limit unsupported promotion but do not authenticate every external assertion or make the model infallible.
-3. Owner-supplied source files and copies of exports outside managed `out/` remain outside §13.13's deletion authority.
+3. Owner-supplied source files and copies of exports or backups outside the managed workspace remain outside Exp2Res's deletion authority.
+4. `secure_delete` is a SQLite page-level logical overwrite, WAL checkpointing truncates the live sidecar, and `VACUUM` rewrites the live main database; even together they do not prove physical erasure from filesystem snapshots or journals, SSD wear-leveling cells, backup media, or OS swap.
 
 These residual risks do not authorize secret transmission, autonomous egress, instruction-following from source data, or a new network path; those remain fail-closed requirements.
 
