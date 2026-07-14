@@ -1318,7 +1318,7 @@ And show adds the complete parsed value but never JobDescription.raw_text
 Given job description J has current and historical branches, their bullets and bullet findings, corresponding managed branch outputs, and managed migration backups
 And unrelated current assessment views plus current and historical snapshots, claims, and assessment findings exist
 When the owner confirms jd delete for J
-Then the service first deduplicates, enumerates, and attempts removal of every dependent out/<branch>/ directory and every managed migration backup
+Then the service first deduplicates, enumerates, and attempts removal of every managed migration backup and every dependent-owned out/<branch>/ directory — a captured branch name whose fold-equal current branch survives outside the captured set, because a later resume generate reused the name against a different job description, keeps that other branch's current export untouched, while a captured name with no surviving current owner is removed as stale managed output
 And one referentially ordered transaction deletes every bullet finding of those branches, every dependent bullet, every current and historical dependent branch, and J without FK blocking
 And the closed result reports the selected raw-text-free J projection, every purged branch by ID and name, and every successfully removed managed path
 And the unrelated current assessment views remain current, while every current or historical assessment snapshot, claim, and assessment finding remains unchanged
