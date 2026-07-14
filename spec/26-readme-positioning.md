@@ -22,4 +22,8 @@ Portfolio tagline:
 Evidence-backed self-assessment and verifier-gated resume generation from owner-controlled experience logs.
 ```
 
+## §26.1 License and Policy Positioning
+
+The repository is licensed under MIT (see `LICENSE`), chosen for consistency across the selfos ecosystem and because code will land in this repository. The public README must state the design-specification stage plainly — no code has shipped — and must not promise more than the SDD specifies. Until code lands, the README defers the security policy to the selfos umbrella repository by link; the security and privacy design itself remains §29.
+
 ---
