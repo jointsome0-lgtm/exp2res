@@ -33,6 +33,7 @@ Mitigation:
 ```text
 structured outputs
 Pydantic validation
+deterministic fail-closed size, token, context, call-count, and applicable cost-budget preflight before transport, with no input truncation
 transactional typed-reference resolution before persistence
 fail-closed single-pass verifier gates whose non-passing findings never trigger automatic repair
 complete current provenance-chain requirements

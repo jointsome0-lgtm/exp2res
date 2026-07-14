@@ -1194,4 +1194,114 @@ Then both yield the same canonical real-path bytes and the same deny/ignore deci
 And the byte-wise comparison introduces no path case folding of its own
 ```
 
+## §21.43 LLM Transport Is Bounded, Foreground, and Fail-Closed
+
+Test (enforces §8.1, §12 rule 13, §12.13, §12.15, §13.3, §13.7, §13.10–§13.11, §13.13, §14.14, §15.1, §15.10, §29.2, and §29.4):
+
+```text
+Given table-driven retryable failures for connection or TLS failure, response timeout, HTTP 408, HTTP 429, HTTP 5xx, provider-reported overload, and ambiguous lost response in either the initial request round or §15.1's validation-retry request round
+And that request round has configured transport-attempt cap C greater than one, configured backoff bounds, controlled jitter, and enough invocation-deadline time for C attempts
+When each failure persists through the request round
+Then exactly C physical attempts execute synchronously inside the same foreground action and the same llm_calls row
+And transport_retries increases by C minus one during that round because the terminal failure is not a retry that occurs
+And every inter-attempt delay uses jitter within the configured bounds
+And the transport retries neither change schema_retries nor widen §15.1's one response-validation retry
+And no further attempt is queued, deferred, resumed, or adopted in the background
+And response timeout or HTTP 408 records transport_timeout, HTTP 429 records transport_rate_limited, ambiguous delivery records transport_lost_response, and the remaining fixtures record transport_provider_error on both the failed call and run
+And the command exits through provider or transport class 6 rather than cancelled class 9
+
+Given the request-round cap would permit another retry
+And the one per-invocation deadline expires during an attempt or its backoff
+When the foreground action reaches that deadline
+Then no later attempt starts
+And the same deadline has bounded every request round, physical attempt, and backoff of the invocation
+And the call and run fail with transport_timeout and exit class 6 rather than cancelled class 9
+
+Given table-driven non-retryable transport responses for HTTP 4xx other than 408 or 429, authentication or authorization failure, and provider-rejected request shape
+When the provider returns the response
+Then exactly one physical attempt occurs on the planned invocation's one llm_calls row
+And transport_retries does not increment, no backoff occurs, and the call fails immediately
+And authentication or authorization records transport_auth_failed while the other fixtures record transport_provider_error
+
+Given an adapter or model omits structured-output support, a declared model identifier, declared context or output bounds, timeout or cancellation support, or a required deterministic credential or token classifier
+When selection or configuration validation runs
+Then that adapter or model is not selectable
+When the same missing capability is encountered by the run's pre-transport recheck
+Then the run fails with capability_mismatch and exit class 6 before any provider request
+And the capability check uses adapter declarations or configuration rather than making a discovery request
+
+Given the first physical attempt of one planned invocation is an ambiguous lost response
+And its request-round cap permits a retry whose byte-identical request returns valid structured output
+When the invocation completes
+Then transport_retries increments on the existing llm_calls row and no second call row is created
+And the recovered call has no terminal failure code
+And local validation permits at most one business replacement or verifier update, never one per provider-side completion
+
+Given an ambiguous lost response exhausts its request-round cap and the call and run finish with transport_lost_response
+When the provider later delivers a response from any exhausted attempt
+Then the response is discarded
+And no business row, verifier update, second llm_calls row, background completion, or out-of-band adoption occurs
+
+Given table-driven complete inputs for Stage 4, Stage 6, a Stage 7 provenance closure, and a Stage 10 or Stage 11 per-bullet invocation
+And one fixture exceeds its configured input budget while another exceeds the declared combined context bound after planned maximum output is included
+When deterministic local preflight runs
+Then no provider attempt occurs
+And the configured-budget fixture fails with budget_exceeded while the model-bound fixture fails with context_overflow
+And each diagnostic names the stage, exceeded limit, and measured value without payload content
+And no fixture is truncated, sampled, elided, summarized, partitioned, merged, or otherwise narrowed to fit
+And a fitting control sends bytes identical to the complete declared serialization while an exceeded fixture sends no request bytes, so the complete-set input is bit-identical or absent
+
+Given a planned maximum output, planned stage call count, or conservative potentially billable cost exceeds its applicable configured hard ceiling
+When preflight evaluates the plan
+Then it fails with budget_exceeded before the affected provider transport
+And the cost estimate includes every potentially billable attempt through both request rounds' caps, including an ambiguous lost request
+And retry charges collapse only when the provider declares the applicable idempotent-billing guarantee
+
+Given the database exposes prior current generation G or an already-committed §13.13 invalidated state
+When a handled owner interrupt arrives before transport, during transport, or after local validation but before business commit
+Then the adapter sends nothing before transport, aborts or abandons an in-flight request during transport, and rolls back any uncommitted business transaction after validation
+And any response completed provider-side after the interrupt is never adopted
+And the run finishes with status = "failed" and failure_code = "cancelled", and any call row interrupted before terminal state does likewise
+And the database still exposes G or the invalidated state, never a partial new generation
+And the command exits with status cancelled through class 9
+
+Given a process crashes before or during provider transport or after local validation but before business commit
+When the OS releases the dead writer's workspace lock and WAL recovery runs
+Then the database exposes the prior current generation or already-committed invalidated state and no partial new generation
+And the dead process emits no exit envelope
+When the next compatible writer acquires the workspace lock before its business operation
+Then it marks the abandoned run and every nonterminal call status = "failed" with failure_code = "cancelled" and supplies missing finish times
+And already terminal call rows remain unchanged
+And no validated response from the crashed run is reused
+
+Given a table-driven Stage 3, Stage 7, Stage 10, or Stage 11 run plans five invocations
+And invocations 1 and 2 validate but invocation 3 fails terminally
+When the run ends
+Then no business row, verification finding, or verifier update from that run commits and its durable telemetry is not business output
+And the prior current generation or invalidated state remains visible
+When the owner reruns the stage as a new command
+Then the new processing run owns fresh llm_calls rows and invokes all five planned calls again
+And it does not reuse either validated response from the failed run
+And only a fully valid rerun may commit the stage's one atomic replacement or verifier update, with repeated provider cost accepted
+
+Given .exp2res/config.toml supplies no numeric [llm] overrides
+When an LLM-backed action resolves its runtime configuration
+Then the service supplies defaults for the request-round attempt cap, backoff bounds, invocation deadline, input and output token budgets, run call ceiling, and applicable invocation and run cost ceilings
+When only those numeric [llm] values change in the same build and schema
+Then the next action enforces the changed values without an SDD edit or database migration
+And the required budget structure and fail-before-call behavior remain unchanged
+
+Given a service-default retry count is proposed to change
+When the transport policy is tuned
+Then observed failure distributions justify the change
+And an unmeasured provider-SDK default is insufficient
+
+Given prompt content, response content, and provider credentials each contain a unique sentinel
+And the adapter reports token usage and cost
+When the action emits progress or cost reporting
+Then no progress or cost event appears on stdout
+And the report appears only on stderr with data limited to stage, call index and count, token counts, and reported cost
+And stderr progress and retained call telemetry contain none of the prompt, response, credential, or sentinel values
+```
+
 ---
