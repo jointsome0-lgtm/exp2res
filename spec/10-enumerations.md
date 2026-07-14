@@ -35,7 +35,7 @@ EntryType = Literal[
     "manual_retro",
     "gap_answer",
     "correction",
-    "tick_like_event",
+    "ephemeris_event",
     "atlas_artifact_ref",
     "github_commit",
     "design_doc",

@@ -8,7 +8,7 @@ Imported source identifiers — Tick-like `event_id`, Atlas `artifact_id`, and G
 
 ```json
 {
-  "source": "tick-like",
+  "source": "ephemeris",
   "event_id": "tick_001",
   "occurred_at": "2026-07-03T10:00:00+02:00",
   "event_type": "daily_note",
@@ -21,7 +21,7 @@ Imported source identifiers — Tick-like `event_id`, Atlas `artifact_id`, and G
 Import behavior:
 
 ```text
-create raw_log(entry_type=tick_like_event, source_type=imported_event)
+create raw_log(entry_type=ephemeris_event, source_type=imported_event)
 create evidence_item(strength=imported_activity_event)
 import creates no fact; Stage 3 may extract only narrow source-supported facts
 ```

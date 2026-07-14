@@ -73,7 +73,7 @@ In one database transaction, the command stores `RawLog(entry_type=correction, s
 ## §14.5 Import Evidence
 
 ```bash
-exp2res import tick-like path/to/export.jsonl
+exp2res import ephemeris path/to/export.jsonl
 exp2res import atlas path/to/atlas-export.json
 exp2res import github path/to/github-commit.json
 exp2res import file docs/design.md --project Exp2Res
@@ -83,7 +83,7 @@ V1 mappings:
 
 | Importer | Accepted payload | `RawLog.entry_type` | `RawLog.source_type` | `EvidenceItem.strength` |
 |----------|------------------|---------------------|----------------------|-------------------------|
-| `tick-like` | §19.1 event | `tick_like_event` | `imported_event` | `imported_activity_event` |
+| `ephemeris` | §19.1 event | `ephemeris_event` | `imported_event` | `imported_activity_event` |
 | `atlas` | §19.2 artifact reference | `atlas_artifact_ref` | `imported_artifact` | `artifact_reference` |
 | `github` | §19.3 commit | `github_commit` | `imported_artifact` | `commit_or_pr` |
 | `file` | local design document | `design_doc` | `imported_artifact` | `design_doc` |

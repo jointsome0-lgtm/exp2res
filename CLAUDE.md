@@ -10,7 +10,7 @@ body or the log; decisions live in [DECISION-LOG.md](DECISION-LOG.md).
 
 ## Security reviews go to Codex
 
-Claude-only rule — the reason is Fable-specific, and in AGENTS.md it would just tell Codex to delegate to itself. Ecosystem-wide; the full version lives in tick-like's CLAUDE.md.
+Claude-only rule — the reason is Fable-specific, and in AGENTS.md it would just tell Codex to delegate to itself. Ecosystem-wide; the full version lives in ephemeris's CLAUDE.md.
 
 Adversarial security / threat-model reviews — red-teaming a spec §, abuse-case analysis, attack-surface probing of any future code — are **delegated to Codex** (`codex:rescue` or the codex plugin), not run by Claude in the first person.
 
