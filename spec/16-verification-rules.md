@@ -94,9 +94,9 @@ The user has depression / ADHD / anxiety disorder.
 
 ## §16.11 Verification-Status Semantics and Consumer Gates
 
-`VerificationStatus` has one operational meaning per member and is enforced through role-aware allowlists. The Stage 10 column distinguishes a snapshot anchor from a self-claim input; resume export considers its snapshot anchor, source self-claims, and `ResumeBullet`; assessment export considers its `AssessmentSnapshot` and claim presentation.
+`VerificationStatus` has one operational meaning per member and is enforced through role-aware allowlists. The Stage 10 column distinguishes a snapshot anchor from a self-claim input; verified-bullet-pack export considers its snapshot anchor, source self-claims, and `ResumeBullet`; assessment export considers its `AssessmentSnapshot` and claim presentation.
 
-| Status | Meaning | May feed Stage 10 | May pass resume export | May pass assessment export |
+| Status | Meaning | May feed Stage 10 | May pass verified-bullet-pack export | May pass assessment export |
 |---|---|---|---|---|
 | `unverified` | No successful semantic verifier verdict exists for the current row. | No | No | No |
 | `supported` | Every material assertion is adequately grounded in current evidence. | Snapshot anchor and self-claim | Snapshot anchor, source self-claim, and bullet | Snapshot and claim presentation |
@@ -107,7 +107,7 @@ The user has depression / ADHD / anxiety disorder.
 | `unsupported` | Current evidence does not adequately support the assertion. | No | No | No |
 | `rejected` | The candidate violates a verification rule and requires replacement rather than qualification. | No | No | No |
 
-Thus the Stage 10 snapshot-anchor allowlist is exactly `supported`, `partially_supported`, and `inferred_but_acceptable`; only a `supported` self-claim may guide resume generation, and only a `supported` bullet may export. Assessment export permits `supported`, `partially_supported`, `inferred_but_acceptable`, `needs_clarification`, and `contradicted` snapshots because the mirror must preserve visibly labeled weakness and conflict. `unverified` blocks all three gated consumer classes in the table: validation or generation alone is not verification.
+Thus the Stage 10 snapshot-anchor allowlist is exactly `supported`, `partially_supported`, and `inferred_but_acceptable`; only a `supported` self-claim may guide bullet generation, and only a `supported` bullet may enter the verified bullet pack. Assessment export permits `supported`, `partially_supported`, `inferred_but_acceptable`, `needs_clarification`, and `contradicted` snapshots because the mirror must preserve visibly labeled weakness and conflict. `unverified` blocks all three gated consumer classes in the table: validation or generation alone is not verification.
 
 Stage 6 initializes every new claim and snapshot to `unverified`. Stage 7 verifies every claim, then computes the snapshot status atomically from the complete claim-status set. Any `unverified` claim leaves the snapshot `unverified`; an empty claim set is invalid under §11.7/§12 and cannot be aggregated; otherwise the first status present in this most-restrictive-first precedence is the aggregate:
 
@@ -121,14 +121,14 @@ inferred_but_acceptable
 supported
 ```
 
-Stage 7 is the only operation that may write this aggregate while the snapshot is current. Claim verification fields, the aggregate, and dependent branch/bullet supersession commit in one database transaction. Stage 7 and assessment export must reject a snapshot unless exactly one member claim is a `narrative_summary` whose claim text equals `AssessmentSnapshot.summary`; every gated consumer must also reject a stored aggregate that does not equal a fresh reduction of the current claims. Managed-file removal is attempted under §13's lifecycle rules, cannot roll back that database state, and reports residual paths on failure. Stage 10 initializes bullets to `unverified`, and Stage 11 alone assigns their semantic verdicts.
+Stage 7 is the only operation that may write this aggregate while the snapshot is current. Claim verification fields, the aggregate, and dependent branch/bullet supersession commit in one database transaction. Stage 7 and assessment export must reject a snapshot unless exactly one member claim is a `narrative_summary` whose claim text equals `AssessmentSnapshot.summary`; every gated consumer must also reject a stored aggregate that does not equal a fresh reduction of the current claims. Manifest-backed managed-set removal is attempted under §13.13 and §13.14, cannot roll back that database state, and reports residual paths on failure. Stage 10 initializes bullets to `unverified`, and Stage 11 alone assigns their semantic verdicts.
 
 ## §16.12 Generated-Voice Boundary
 
 Verification has two orthogonal scopes:
 
 1. Structural validation applies to every payload: required keys, field types, closed-enum values, typed-reference resolution, current/superseded constraints, §16.1 provenance chains, and §16.11 status semantics and allowlists. Natural-language origin never exempts malformed structure.
-2. The natural-language rules in §16.2–§16.10 bind only Exp2Res-authored voice. By default this includes generated fact, signal, claim, gap, contradiction, verifier, and resume language from §15; system-authored report prose in §17; and generated resume prose in §18. §16.3, §16.9, and §16.10 use this boundary explicitly. For §16.4–§16.8, source text may be an evidence operand, but only the generated candidate phrase can violate the rule.
+2. The natural-language rules in §16.2–§16.10 bind only Exp2Res-authored voice. By default this includes generated fact, signal, claim, gap, contradiction, verifier, and bullet language from §15; system-authored report prose in §17; and generated bullet-pack prose in §18. §16.3, §16.9, and §16.10 use this boundary explicitly. For §16.4–§16.8, source text may be an evidence operand, but only the generated candidate phrase can violate the rule.
 
 The §16.2–§16.10 prohibitions are owner-referential: they constrain generated language that characterizes the owner — skill, experience, identity, health, impact — wherever it appears. A generated description of an external demand, such as §15.9 `ParsedJD` requirement, signal, keyword, or red-flag text, remains generated voice for structural validation and §15.9's parse-fidelity rules, but faithfully preserved demand wording ("expert Python", "production operations") characterizes the vacancy, not the owner; §16.3–§16.10 neither reject it nor force its rewriting. The moment any Exp2Res-authored text asserts that the owner meets a demand — in a bullet, claim, or report line — that assertion is owner-referential generated voice and every applicable rule binds in full.
 
@@ -138,11 +138,11 @@ Every natural-language field emitted by an LLM is generated voice by default, in
 
 `GapQuestion.question` is generated voice and must pass §16 before Stage 4 persistence. At `gaps answer` capture, the service verifies that `RawLog.metadata.question_text` is an exact copy of that already validated question. Once copied into the owner-controlled raw record, the field is immutable source context for later extraction and is not rewritten or blocked by a later voice scan; this one-way handoff cannot admit unvalidated question text. In every case, a voice finding must never force a rewrite of owner memory or system-of-record material.
 
-This subsection does not change §16.1 or any §16.11 status meaning, aggregation rule, or consumer allowlist. Voice compliance is a phrase/content check on generated candidates; status gates remain the independent permission layer for assessment and resume consumers.
+This subsection does not change §16.1 or any §16.11 status meaning, aggregation rule, or consumer allowlist. Voice compliance is a phrase/content check on generated candidates; status gates remain the independent permission layer for assessment and verified-bullet-pack consumers.
 
 ## §16.13 Language Scope
 
-Except for the source-faithful mixed-language job-description fields below, V1 Exp2Res-authored natural-language output is English. This applies to every generated segment under §16.12, including facts, signals, claims, questions, contradictions, verifier prose and warnings, resume bullets, and §17–§18 report and export prose. A non-English generated segment is a §16 voice violation evaluated at §16.12's segment boundary; mixed source/generated content is never concatenated to evade that check. The §16.3 anti-flattery term list and the §16.9/§16.10 phrase rules are specified and verified for English, which is the honest generated-language coverage boundary of V1.
+Except for the source-faithful mixed-language job-description fields below, V1 Exp2Res-authored natural-language output is English. This applies to every generated segment under §16.12, including facts, signals, claims, questions, contradictions, verifier prose and warnings, generated bullets, and §17–§18 report and bullet-pack export prose. A non-English generated segment is a §16 voice violation evaluated at §16.12's segment boundary; mixed source/generated content is never concatenated to evade that check. The §16.3 anti-flattery term list and the §16.9/§16.10 phrase rules are specified and verified for English, which is the honest generated-language coverage boundary of V1.
 
 Source voice may be in any language and remains byte-for-byte preserved under §16.12; it is never rejected, translated, normalized, or rewritten because of language. Cross-language extraction is in scope: Russian-language or other-language source text may produce English facts, claims, and other generated prose. Meaning-preserving translation occurs only inside generated voice, and it never weakens the evidence and overclaim rules in §16. A quoted source segment remains source voice only through §16.12's typed-reference and byte-for-byte check; an English paraphrase of a Russian source is generated voice.
 

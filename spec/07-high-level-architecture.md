@@ -43,7 +43,7 @@
                               |                                                              |
                               v                                                              v
                   +------------------------+                                      +------------------------+
-                  | Self Reports / Mirror  |                                      | Resume Export Pipeline |
+                  | Self Reports / Mirror  |                                      | Verified Bullet Pack   |
                   +------------------------+                                      +------------------------+
 ```
 

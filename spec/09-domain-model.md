@@ -42,12 +42,15 @@ Calibration is capability-based. `EvidenceStrength` membership remains canonical
 | `EvidenceStrength` | Evidential scope |
 |---|---|
 | `manual_claim` | Owner self-report captured at entry. Establishes what the owner directly states, as self-report. |
-| `imported_activity_event` | System-recorded activity telemetry. Establishes that the named activity occurred at the recorded time; not outcome, ownership depth, or quality. |
+| `imported_activity_event` | Imported activity-domain evidence. Supports only activity the source explicitly reports as having occurred at the supplied `OccurredAt` placement; a diary note, verbal note, plan, or aggregate does not by itself establish completion, outcome, ownership depth, or quality beyond that source statement. |
+| `knowledge_state_snapshot` | Source-attributed Atlas knowledge state on the source's own scales. Establishes narrow studied/learning-grade support within the declared subjects, trail, and references; not implementation, built or production use, outcome, ownership depth, mastery, or a direct signal or claim. |
 | `artifact_reference` | Reference to an external artifact. Establishes the artifact's existence and topical content; not authorship depth, outcome, or use. |
-| `commit_or_pr` | Imported VCS commit. Establishes the recorded change and its attributed authorship at commit time; not outcome, production use, or mastery. |
+| `commit_or_pr` | Imported VCS commit explicitly attributed to the owner by its source contract. Establishes the recorded change and that source-asserted owner attribution; not independently verified identity, ownership depth, outcome, production use, or mastery. |
 | `design_doc` | Local design document. Establishes that the design content exists and what it contains; design-level work, not implementation or outcome. |
 
 These values are qualitatively different and deliberately not totally ordered. No rule may rank one `EvidenceStrength` above another.
+
+`knowledge_state_snapshot` participates in the fact ceiling below as one non-`manual_claim` item from its source `RawLog`. Its high authority within the row's knowledge-attribution scope does not grant `Confidence = "high"` or change the source-count rule.
 
 **Source independence.** Evidence items linked through one `RawLog` count as one source for calibration. A repeated owner assertion carried as `manual_claim` across multiple raw logs is repetition, never independent corroboration. Non-`manual_claim` items from distinct raw logs are independent sources. V1 creates only `direct` `fact_sources` rows (§12.4); before any `corroborating` row may exist, a future producer must define how those rows enter calibration.
 

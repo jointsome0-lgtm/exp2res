@@ -10,7 +10,9 @@ No generator, linter, generated documentation, separate machine-readable registr
 
 `OwnershipLevel` is a normative total order. Members in its assignment are listed from weakest to strongest; `unknown` is the weakest value.
 
-`DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry; `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target. `CLIResultStatus` types the §14.14 result envelope independently of processing-run status or semantic verification status.
+`DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry; `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target. `OwnerAttribution` types the §19.3 GitHub payload field asserted by the upstream adapter or owner; §19.3 owns its conservative default and importer strength mapping. `CLIResultStatus` types the §14.14 result envelope independently of processing-run status or semantic verification status. `ManagedOutputKind` types the §13.14 managed-output manifest discriminator independently of pipeline stages and CLI command names.
+
+`knowledge_state_snapshot` is produced only by the §14.5 `atlas` importer under §19.2; no other V1 flow may assign that strength.
 
 ```python
 from typing import Literal
@@ -36,7 +38,7 @@ EntryType = Literal[
     "gap_answer",
     "correction",
     "ephemeris_event",
-    "atlas_artifact_ref",
+    "atlas_snapshot",
     "github_commit",
     "design_doc",
 ]
@@ -51,10 +53,13 @@ SourceType = Literal[
 EvidenceStrength = Literal[
     "manual_claim",
     "imported_activity_event",
+    "knowledge_state_snapshot",
     "artifact_reference",
     "commit_or_pr",
     "design_doc",
 ]
+
+OwnerAttribution = Literal["owner", "not_owner", "unknown"]
 
 OwnershipLevel = Literal[
     "unknown",
@@ -107,6 +112,11 @@ CLIResultStatus = Literal[
     "blocked",
     "failed",
     "cancelled",
+]
+
+ManagedOutputKind = Literal[
+    "assessment",
+    "resume",
 ]
 
 VerificationTargetRefType = Literal[
@@ -195,6 +205,6 @@ JDRequirementKind = Literal[
 ]
 ```
 
-`VerificationStatus` members are canonical here; their operational meanings, aggregation, and consumer allowlists live only in §16.11. `CLIResultStatus` members are canonical here; their exit-code mapping and envelope semantics live only in §14.14.
+`VerificationStatus` members are canonical here; their operational meanings, aggregation, and consumer allowlists live only in §16.11. `CLIResultStatus` members are canonical here; their exit-code mapping and envelope semantics live only in §14.14. `ManagedOutputKind` members are canonical here; their path, manifest, and publication semantics live only in §13.14.
 
 ---

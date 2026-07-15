@@ -1,6 +1,6 @@
-## §18. Resume Export Rules
+## §18. Verified Bullet-Pack Export Rules
 
-Resume export remains useful, but secondary.
+The verified bullet pack remains useful, but secondary to the mirror. V1 exports selected, verified bullets plus the closed typed companions in §13.12; it does not claim a complete or styled resume document. A full resume document model is a named post-mirror iteration.
 
 The canonical snapshot-anchor rule is: every `ResumeBranch` is created from exactly one current assessment snapshot named by §14.10's required `--snapshot` selector, persists that exact ID in its required `assessment_snapshot_id`, and has no implicit-latest or absent-anchor state. The selected snapshot must be eligible to anchor Stage 10 under §16.11 before any branch or bullet is inserted. Facts may still supply every concrete bullet, but the snapshot fixes the internal assessment generation context; its prose can guide generation only through a `supported` member claim listed on the bullet.
 
@@ -10,14 +10,15 @@ Pipeline:
 assessment snapshot
   + job description with typed ParsedJD requirements
   + facts and supported self-claims
-  -> relevance-aware resume generation
+  -> isolated relevance-aware bullet generation
      (selection and matching occur inside generation;
       relevance is persisted on each resume bullet)
-  -> verifier
-  -> export
+  -> deterministic §13.10 planning and checks
+  -> §13.11 verifier
+  -> verified bullet-pack export
 ```
 
-The snapshot, branch, bullets, facts, and self-claims in this pipeline must all be current (`superseded_at IS NULL`). Correction invalidates dependent branches; owner deletion purges their database rows, attempts verified managed-export removal, and reports every residual path as incomplete. Neither path permits an old branch to survive as an apparently valid current export.
+The snapshot, branch, bullets, facts, and self-claims in this pipeline must all be current (`superseded_at IS NULL`). Correction invalidates dependent branches; owner deletion purges their database rows, attempts verified managed-export removal, and reports every residual path as incomplete. Neither path permits an old branch to survive as an apparently valid current bullet-pack export.
 
 Minimum bullet contract:
 
@@ -35,7 +36,7 @@ Minimum bullet contract:
 }
 ```
 
-Export must fail if:
+Bullet-pack export must fail if:
 
 ```text
 bullet has no source_fact_ids
@@ -49,12 +50,14 @@ bullet source_self_claim_ids is not the exact set of supported claims used by th
 bullet source_log_ids differs from the raw logs reached through source_fact_ids
 bullet matched_jd_requirements contains a duplicate, missing, free-form, or wrong-job requirement ID
 no source fact reaches a direct fact_sources row, EvidenceItem, and retained RawLog
-bullet status is outside the §16.11 resume-export allowlist
+bullet status is outside the applicable §16.11 allowlist
 bullet contains unsupported ownership, metric, production, or employment framing
 ```
 
 Every Stage 10 branch persists its exact §14.10 job-description selection in `ResumeBranch.job_description_id`. Every `matched_jd_requirements` entry resolves through that branch association to a stable `JDRequirement.id` in the exact `ParsedJD` selected for Stage 10. A missing association fails verification/export; a display label may be rendered by dereferencing the requirement, but it may not replace the typed ID in stored or exported evidence maps.
 
-Resume bullet and system-authored export prose are generated voice under §16.12 and receive full §16.2–§16.10 checks. An evidence-map excerpt remains source voice only with a typed source ID and byte-for-byte value/substring validation; otherwise it is generated voice. Source wording cannot cause the generated resume export to rewrite or reject the source record.
+`bullet_pack.md` renders every retained current branch bullet exactly once in §13.10 order. Its first logical line is exactly `# Verified Bullet Pack`, followed by one empty line; it then renders one `## ` heading for every §10 `ResumeTargetSection` member in declaration order, deriving heading text only by splitting the canonical snake-case value on `_`, capitalizing the first ASCII letter of each token, and joining the tokens with one space. A nonempty section has one empty line after its heading and then consecutive bullet lines, each exactly `- ` plus §17's escaped/continued bullet text; one empty line separates that section's final bullet from the next heading. An empty section contributes only its heading and, when another section follows, the one separator empty line. No empty logical line follows the final section, and §13.12 supplies the one final LF. Every heading renders even when its section is empty, and an empty section contains no filler. The only other renderer-authored text is §17's deterministic escaping/continuation syntax. Every factual sentence is inside the LF-newline- and NFC-normalized, escaped projection of one persisted `ResumeBullet.text`; the renderer adds no factual bridge, summary, transition, filler, or inferred coherence prose. The matching §13.12 `rendered_bullets` entry and complete typed evidence-map closure are mandatory for every bullet; that row grounds every sentence in its text through the same complete provenance sets. No second LLM pass may rewrite, order, deduplicate, or connect the bullets, and §15.6 input remains isolated to one bullet.
+
+`ResumeBullet.text` and all system-authored export prose are generated voice under §16.12 and receive the full §16.2–§16.10 checks. An evidence-map excerpt remains source voice only with a typed source ID and byte-for-byte value/substring validation; otherwise it is generated voice. Source wording cannot cause the generated bullet-pack export to rewrite or reject the source record. §13.12 owns every companion field set and JSON byte rule; §17 owns the shared Markdown, empty-section, and repeated-render determinism rules, which apply unchanged here.
 
 ---

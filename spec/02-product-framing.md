@@ -20,13 +20,13 @@ These framings distort the system toward performance and external approval.
 Exp2Res is:
 
 ```text
-A local-first, provenance-heavy self-assessment engine that can export grounded resumes from real experience.
+A local-first, provenance-heavy self-assessment engine that can export verified, job-targeted bullet packs from real experience.
 ```
 
 Portfolio phrasing:
 
 ```text
-Exp2Res builds an evidence-backed model of a person’s real experience and uses verifier-gated generation to prevent unsupported external claims.
+Exp2Res builds an evidence-backed model of a person’s real experience and uses verifier-gated generation to prevent unsupported claims in job-targeted bullet packs.
 ```
 
 Internal phrasing:
@@ -37,4 +37,3 @@ It shows what experience says about me, with evidence, uncertainty, gaps, and co
 ```
 
 ---
-
