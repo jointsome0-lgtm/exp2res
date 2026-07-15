@@ -20,3 +20,4 @@ plans/
 .claude/
 .codex/
 .agents/
+__pycache__/
