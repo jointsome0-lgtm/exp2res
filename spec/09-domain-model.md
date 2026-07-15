@@ -17,7 +17,7 @@ ResumeBullet        = generated resume phrase with evidence links
 VerificationFinding = persisted append-only verifier-attempt result over a self-claim or resume bullet
 ```
 
-Facts, gaps, contradictions, signals, claims, snapshots, branches, and bullets form replaceable derived generations. `superseded_at IS NULL` means current; a set timestamp means historical and unavailable to new verification, generation, or export. Correction preserves superseded history. Owner deletion purges every derived generation as the privacy-first exception (§5.3, §13.13).
+Facts, gaps, contradictions, signals, claims, snapshots, branches, and bullets form replaceable derived generations. `superseded_at IS NULL` means current; a set timestamp means historical and unavailable to new verification, generation, or export. Correction preserves superseded history. Raw-log owner deletion purges every derived generation as the privacy-first exception; job-description deletion purges only the dependent resume state, and workspace purge removes every managed class (§5.3, §13.13, §14.16).
 
 ## §9.2 Confidence Layers
 
