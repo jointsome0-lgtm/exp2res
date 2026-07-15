@@ -155,7 +155,7 @@ On success, `export assessment` publishes the selected snapshot only at its §13
 
 V1 defines no claim-confirm, dispute, or override command. `assess verify` is the system verifier gate defined by §5.10, not an owner verdict stored on a regenerated claim.
 
-`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion is advisory: it is persisted only as append-only verification-finding history (§11.14), never applied, never fed into a later prompt or export, and verification never invokes `assess generate`. The owner may add or correct raw evidence and request a new assessment generation; any changed claim wording belongs to that new Stage 6 generation.
+`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion follows §11.14's inspect-only advisory lifecycle, and verification never invokes `assess generate`. The owner may add or correct raw evidence and request a new assessment generation; any changed claim wording belongs to that new Stage 6 generation.
 
 ## §14.10 Verified Bullet-Pack Flow
 
@@ -176,7 +176,7 @@ exp2res bullets export --branch agent-engineer
 
 On success, `bullets export` publishes the selected current branch only at its §13.14 ID-keyed path and returns only the manifest-validated §14.14 export result.
 
-`bullets verify` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values. A suggestion is persisted only as append-only verification-finding history (§11.14), never applied or fed into a later prompt or export, and verification never invokes `bullets generate`. Changed bullet wording requires a later explicit `bullets generate` command and a replacement branch generation. Under `--json`, all three forms report their canonical `bullets generate`, `bullets verify`, or `bullets export` command path through §14.14; generation and verification use the standard envelope fields with `result = null`, while export uses the closed manifest-path result below.
+`bullets verify` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values. A suggestion follows §11.14's inspect-only advisory lifecycle, and verification never invokes `bullets generate`; changed bullet wording requires a later explicit `bullets generate` command and a replacement branch generation (§13.11). Under `--json`, all three forms report their canonical `bullets generate`, `bullets verify`, or `bullets export` command path through §14.14; generation and verification use the standard envelope fields with `result = null`, while export uses the closed manifest-path result below.
 
 ## §14.11 Manage Raw Logs
 
