@@ -339,13 +339,13 @@ RETRO_STRENGTH = {
     "answers": {
         "period": {
             "start": "2026-05-01T00:00:00+02:00",
-            "end": "2026-06-15T00:00:00+02:00",
+            "end": "2026-06-25T00:00:00+02:00",
             "precision": "approximate_range",
             "confidence": "low",
         },
         "project": P_STRENGTH,
         "text": (
-            "Strength Basics retro for May into mid-June, from memory "
+            "Strength Basics retro for May into late June, from memory "
             "(Vera Example). I trained consistently, about three sessions a "
             "week, and logged squat form notes with anatomy references."
         ),
@@ -440,7 +440,7 @@ def replay() -> dict:
          "expect": {"status": "success"}},
         {"step": 3, "kind": "log_daily", "file": "logs/daily-2026-06-20.md",
          "clock": "2026-06-20T20:00:00+02:00", "project": P_STRENGTH,
-         "note": "sensitive-content stand-in; deletion target of epilogue step P1",
+         "note": "sensitive-content stand-in; deletion target of epilogue step P2",
          "expect": {"status": "success"}},
         {"step": 4, "kind": "log_daily", "file": "logs/daily-2026-06-25.md",
          "clock": "2026-06-25T22:00:00+02:00", "project": P_K8S,
@@ -499,18 +499,30 @@ def replay() -> dict:
          "expect": {"status": "success"}},
         {"step": "E4", "kind": "assess", "scope": "global",
          "clock": "2026-07-11T10:15:00+02:00", "expect": {"status": "success"}},
-        {"step": "E5", "kind": "assess", "scope": "project", "target": P_K8S,
+        {"step": "E5", "kind": "assess_verify", "snapshot_step": "E4",
+         "clock": "2026-07-11T10:17:00+02:00",
+         "note": "§14.10 refuses bullets over an unverified snapshot; verify first",
+         "expect": {"status": "success"}},
+        {"step": "E6", "kind": "assess", "scope": "project", "target": P_K8S,
          "clock": "2026-07-11T10:20:00+02:00", "expect": {"status": "success"}},
-        {"step": "E6", "kind": "assess", "scope": "project", "target": P_STRENGTH,
+        {"step": "E7", "kind": "assess_verify", "snapshot_step": "E6",
+         "clock": "2026-07-11T10:22:00+02:00", "expect": {"status": "success"}},
+        {"step": "E8", "kind": "assess", "scope": "project", "target": P_STRENGTH,
          "clock": "2026-07-11T10:25:00+02:00",
          "note": "weak-evidence view: manual claims plus displaced consistency retro",
          "expect": {"status": "success"}},
-        {"step": "E7", "kind": "bullets", "jd_file": "jds/jd-docs-engineer-examplia.md",
-         "branch": "docs-examplia", "clock": "2026-07-12T10:00:00+02:00",
+        {"step": "E9", "kind": "assess_verify", "snapshot_step": "E8",
+         "clock": "2026-07-11T10:27:00+02:00", "expect": {"status": "success"}},
+        {"step": "E10", "kind": "bullets", "jd_file": "jds/jd-docs-engineer-examplia.md",
+         "branch": "docs-examplia", "snapshot_step": "E4",
+         "clock": "2026-07-12T10:00:00+02:00",
+         "note": "snapshot_step names the exact --snapshot anchor (§14.10 has no "
+                 "latest default); the harness resolves it to E4's snapshot ID",
          "expect": {"status": "success", "supported_bullets_min": 1,
                     "unmatched_requirements": ["video tutorials", "SEO"]}},
-        {"step": "E8", "kind": "bullets", "jd_file": "jds/jd-junior-backend-clouddocs.md",
-         "branch": "backend-clouddocs", "clock": "2026-07-12T11:00:00+02:00",
+        {"step": "E11", "kind": "bullets", "jd_file": "jds/jd-junior-backend-clouddocs.md",
+         "branch": "backend-clouddocs", "snapshot_step": "E4",
+         "clock": "2026-07-12T11:00:00+02:00",
          "note": "the honest-mirror path: learning-grade Kubernetes evidence never "
                  "promotes to production claims (§5.10, §16)",
          "expect": {"status": "success",
@@ -536,10 +548,12 @@ def replay() -> dict:
                     "reason": "summary not byte-exact in text (§19.2)"}},
     ]
     privacy_epilogue = [
-        {"step": "P1", "kind": "logs_delete", "target_file": "logs/daily-2026-06-20.md",
+        {"step": "P1", "kind": "jd_delete", "target_file": "jds/jd-junior-backend-clouddocs.md",
+         "note": "runs first, while its dependent branch/bullets/findings still exist: "
+                 "dependent purge, no recompute (§13.13 rule 10); after P2's global "
+                 "reset there would be nothing left to exercise"},
+        {"step": "P2", "kind": "logs_delete", "target_file": "logs/daily-2026-06-20.md",
          "note": "point deletion, global derived reset, Stage 3-5 rebuild (§13.13)"},
-        {"step": "P2", "kind": "jd_delete", "target_file": "jds/jd-junior-backend-clouddocs.md",
-         "note": "dependent branch/bullet/finding purge, no recompute (§13.13 rule 10)"},
     ]
     return {
         "corpus": CORPUS_NAME,

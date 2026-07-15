@@ -73,10 +73,12 @@ workspace clock to its `clock` value; `expect` carries the coarse
 §14.14 outcome (import class counts, success, displacement, blocked
 claims) — an outcome contract, never a golden output. The capture and
 import `steps` are runnable against Phase 0 alone; `derived_steps`
-(E1–E8: extraction through the three assessment views to the two
-bullet branches, with the backend JD's production/on-call claims
-blocked) additionally require the #71 fake-runner layer for every
-LLM-backed stage. `failure_steps` run after their `after_step` and
+(E1–E11: extraction through three generated-and-verified assessment
+views — §14.10 refuses bullets over an `unverified` snapshot — to the
+two bullet branches, each anchored to a named snapshot step because
+§14.10 has no latest-snapshot default, with the backend JD's
+production/on-call claims blocked) additionally require the #71
+fake-runner layer for every LLM-backed stage. `failure_steps` run after their `after_step` and
 must fail exactly as stated; the `privacy_epilogue` exercises the
 §13.13 deletion lifecycles after the main path completes.
 
@@ -95,7 +97,7 @@ must fail exactly as stated; the `privacy_epilogue` exercises the
 | JDs with required/preferred requirements | `jds/jd-docs-engineer-examplia.md`, `jds/jd-junior-backend-clouddocs.md` | typed `JDRequirementKind` parsing (§13.8) |
 | Supported and rejected resume bullets | docs-writer JD vs the evidence; backend JD's production/on-call requirements | supported bullets for documented k8s-docs work; blocked claims for production Python/on-call (§16, §18) |
 | Prompt-injection-like source text stays inert | `logs/daily-2026-07-08.md` (quoted forum comment), backend JD's "Note to agents" | byte-exact preservation, no authority (§16.12, §21.49) |
-| Private/sensitive routing markers, invented only | `logs/daily-2026-06-20.md` (knee pain) | stand-in for sensitive content; `privacy_epilogue` P1 deletes it (§13.13); the human-only `private` marker itself stays reserved-unimplemented (§11) |
+| Private/sensitive routing markers, invented only | `logs/daily-2026-06-20.md` (knee pain) | stand-in for sensitive content; `privacy_epilogue` P2 deletes it after P1's dependent-JD purge (§13.13); the human-only `private` marker itself stays reserved-unimplemented (§11) |
 | Duplicate/conflict/invalid import behavior | duplicate line in the ephemeris JSONL; `invalid/*` | counted duplicate; fail-closed conflict and rejections (§19.4) |
 
 ## Consumer contract
