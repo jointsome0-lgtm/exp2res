@@ -1032,13 +1032,14 @@ And later discovery below it selects the nested workspace
 Given --workspace is supplied to init
 Then command validation exits 2 instead of redirecting initialization
 
-Given no .exp2res/ and a pre-existing non-empty out/ tree
+Given no .exp2res/ and a pre-existing non-empty out/ tree whose directory mode is group-listable
 When exp2res init creates the workspace
-Then initialization succeeds and every pre-existing out/ byte and path remains unchanged
+Then initialization succeeds, every byte and path beneath out/ remains unchanged, and the out/ directory entry itself is restored to the §29.2 owner-only mode
+And an init that cannot restore that mode fails closed
 Given that current-version workspace and its non-empty out/ tree
 When exp2res init runs again
 Then it exits 0 as an idempotent no-op
-And every pre-existing out/ byte and path remains unchanged
+And every pre-existing byte and path beneath out/ remains unchanged
 Given .exp2res/ exists without exp2res.sqlite or its database lacks readable schema_meta
 When exp2res init runs
 Then it exits 4 as unrecognized and creates, completes, repairs, overwrites, and deletes nothing
