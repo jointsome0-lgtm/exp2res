@@ -1368,4 +1368,64 @@ When workspace purge runs instead
 Then no processing_runs or llm_calls row remains
 ```
 
+## §21.45 Integration Imports Are Versioned, Idempotent, and Atomic
+
+Test (enforces §8.1, §11's Model validation policy, §13.1 rule 5, §14.5, §14.14 rule 5, §19.1–§19.4, and §29.4–§29.5; extends §21.39's boundary coverage):
+
+```text
+Given one valid §19.4 envelope whose content_hash matches the §11 canonical-serialization bytes of its body
+When its §19-backed import commits
+Then exactly one RawLog and its linked EvidenceItem are created
+And the RawLog metadata records source_system, source_record_id, and content_hash while external_ref retains only source provenance
+And the §14.14 result classifies record_number 1 as accepted with that source_record_id and the created raw_log_id
+When the same envelope is imported again
+Then it is a counted duplicate and creates no RawLog, EvidenceItem, or other business row
+And the retained raw and evidence rows remain byte-for-byte unchanged
+And the complete result has accepted = 0, duplicate = 1, conflict = 0, and rejected = 0, with a null raw_log_id on the duplicate record
+
+Given a retained import identity and a file whose first record is otherwise insertable but whose later record repeats that identity with a different valid content_hash
+When the file is imported
+Then the repeated identity is classified as conflict and the whole §8.1 writer transaction aborts
+And neither the otherwise-insertable RawLog/EvidenceItem pair nor any other candidate business row persists
+And the retained record is not mutated or reinterpreted
+And the complete result has an empty accepted list, keeps the conflicting record in conflict, reclassifies the otherwise-insertable record as rejected, reports no created raw_log_id, and exits through §14.14 class 7
+
+Given two valid envelopes have the same source_system, body, and content_hash but different source_record_id values
+When they are imported in one file
+Then both records are accepted in file order
+And two independent RawLog/EvidenceItem pairs with distinct local IDs persist
+And neither record is classified as a duplicate of the other
+
+Given table-driven mixed files pair one valid record with an unsupported future or source-declared retired contract_version, a mismatched recomputed body hash, or another structurally invalid record
+When each file reaches acquisition
+Then the invalid record is classified as rejected, the otherwise-insertable record is rejected by the atomic rollback, and no business row from the file persists
+And an unsupported external contract version never selects, implies, or runs a §12.14 database migration
+And the completed classification carries the full §14.14 result and exits through class 2
+
+Given a multi-record file exceeds §11's total-object-per-payload limit
+When acquisition validates it
+Then the import fails before persistence without introducing a second batch-size limit
+
+Given a valid multi-record file is interrupted before its transaction commits
+When the owner reruns the same file
+Then the interrupted transaction has left no imported business row and the rerun accepts the complete file normally
+Given the same file committed but its result was lost before the owner received it
+When the owner reruns that file
+Then every record converges as a duplicate and no additional business row is created
+And no partial-resume cursor, per-record commit, or background continuation is used in either case
+
+Given a successful ephemeris file within §11's payload limit establishes more than 100 records, including retained duplicates and newly accepted identities
+When its §14.14 JSON result is emitted
+Then the four input-ordered record lists are complete and untruncated, their counts equal their list lengths, and they partition every one-based record_number exactly once
+And every entry carries source_record_id plus raw_log_id exactly for a newly created accepted record
+
+Given an Atlas envelope supplies a local path and a valid content_digest for its exact file bytes
+When the import commits
+Then the digest is recorded as inert provenance on the linked EvidenceItem and grants no new read, fetch, refresh, selection, or lifecycle authority
+Given a later explicitly authorized §29.4 dereference finds that file missing or finds bytes whose digest differs
+When the required evidence read runs
+Then the missing or changed state is reported and the read fails closed
+And no other content is silently substituted, fetched, refreshed, omitted, or treated as unchanged
+```
+
 ---
