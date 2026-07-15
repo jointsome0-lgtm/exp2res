@@ -1,0 +1,30 @@
+{
+  "corpus": "vera-example-fixtures",
+  "files": {
+    "imports/artifacts/atlas-snapshot-2026-07-05.txt": "f5c60010754084a6400cbcbe62b364812b23c96a926c9916f22ca78f03039acc",
+    "imports/atlas-snapshot-2026-07-05.json": "75e542c91c87f4bbef9c53d1acde8062d234e57e495c75b648d784fed5fe7708",
+    "imports/design-doc-k8s-playbook.md": "8197d349b25e1a580ac07506c935c40989e108d09f32cc68e47fd64369d43f8c",
+    "imports/ephemeris-2026-06.jsonl": "0b1a1eba71bc91df736c274c2609d3b6c203d2003fe9e563efce5a0a18b44eb0",
+    "imports/github-commit-2026-06-15.json": "5f74f3ea07ea24dd7a4a713ebc4048056a710b225e8f5dba040817bd410f45ad",
+    "imports/github-commit-2026-06-28.json": "87cdc4f5310c1ada41d7f558cb525dff931e6d5bb3e28380152e42e9b113d6bc",
+    "invalid/atlas-snapshot-text-mismatch.json": "32c6758b6dc1da1e265217ae6b606782c7b5ca75a8362eb33e18f89c294ff2ec",
+    "invalid/ephemeris-conflict.jsonl": "9c198ed7610ad02aa1656ba4c05dd95df429efba6898f525d8e18ccc11e73155",
+    "invalid/github-commit-bad-hash.json": "f96f3e3a8d0db391520d7389f2973b657151afa6a327c54180e5633127d07b29",
+    "jds/jd-docs-engineer-examplia.md": "50e73bf1b97d4a4587eeb6c0c35098075a14d5a5ee0e5ced12418528cc3e736c",
+    "jds/jd-junior-backend-clouddocs.md": "7b7b1778eb49920a31b8aaea65f480017b34a8c8aba0efec6bf288cb972bc96c",
+    "logs/correction-2026-07-03-k8s.json": "6af88ba765b7a9aa0fed5c3db03bbc2d080c0e3ada1bdf115e9d7e5cddbec1c4",
+    "logs/daily-2026-06-02.md": "ca7b7dae698278397ed0570e424781d4db2f47ba459748b965ddb9f3aa25aeb8",
+    "logs/daily-2026-06-09.md": "50d369cf4439c9d75e94002a27e857b67e696d7c33dbfeebc4d3d765aac66b0f",
+    "logs/daily-2026-06-20.md": "c44c52c7a920771fc30da7467e692126c614d3f2d643ec5906158dc8d638a77b",
+    "logs/daily-2026-06-25.md": "5fd384de5d3c140c99a5a03482d0b612c5a9d8a4050904dfa4c18221b0c6ddba",
+    "logs/daily-2026-07-02.md": "6ac9187880a08163109c61a83054a7d578ef7c230f7b025790c3d246bd34f784",
+    "logs/daily-2026-07-08.md": "e1e0c545e1640da568f69ca4636728fff98006867743c4bcaf8978907f3348ce",
+    "logs/retro-2026-05-strength.json": "20f0c76032c3e838a2dd011696df9f32f5e90f49cd183a646010497d56009803",
+    "logs/retro-2026-06-k8s.json": "c92f84c5c5b058238892697dd5ee01f4c3fe0a054684f7488ac4183c23d303af",
+    "replay.json": "1c64025acd5e817c631c15b0f8ba2c479b8acb886ca795a661964ef831d6f11a"
+  },
+  "generator": "examples/vera/corpus.py",
+  "persona": "Vera Example",
+  "persona_source": "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md",
+  "version": "0.1.0"
+}
