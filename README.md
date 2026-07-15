@@ -20,6 +20,7 @@ To read the design, start with the § index in `SDD.md` and open the section fil
 
 ## Design boundaries
 
+- **Public engine, private workspace.** This repository is a public engine in the [selfos topology](https://github.com/jointsome0-lgtm/selfos/blob/main/docs/architecture.md): specification, docs, and — once implementation lands — code and invented fixtures only. Real data lives in a private exp2res workspace, a SQLite database with managed outputs that the owner creates outside any public checkout; it is never part of this repository. The deletion guarantee (logical deletion vs. purge, and what honestly remains) is canonical in [selfos deletion](https://github.com/jointsome0-lgtm/selfos/blob/main/docs/deletion.md) and is not restated here; exp2res's own managed-data lifecycle inventory is defined in [spec §29](spec/29-security-and-privacy.md).
 - **Local-first and private by default.** The owner's workspace is the only canonical store; nothing is sent anywhere on system initiative. LLM calls happen only inside explicit, user-initiated pipeline runs against an explicitly selected provider.
 - **Evidence over impressiveness.** Raw records are append-only to automation, every derived claim traces to evidence, contradictions are first-class, and verifier gates block flattery, inflated ownership, invented metrics, and unsupported generated-bullet claims.
 - **The export never becomes the master model.** Experience model → self-assessment → export projection → verified bullet pack, in that order.
