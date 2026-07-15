@@ -1,57 +1,103 @@
 ## §19. Integration Contracts
 
-Every importer validates the payload's keys, types, closed-enum mappings, and required identifiers. Importer validation includes the boundary limits and text-hygiene rules in §11's Model validation policy. Its natural-language values remain system-of-record source voice under §16.12: Tick-like `text`, Atlas `summary` and referenced artifact text, GitHub `message`, and local imported-document text are preserved and structure-only scanned at ingestion. A voice rule may constrain a later Exp2Res-authored fact, claim, report sentence, or resume bullet that uses this material, but may never reject, rewrite, or block the imported value itself because of its wording.
+Every importer validates the payload's keys, types, closed-enum mappings, and required identifiers. Importer validation includes the boundary limits and text-hygiene rules in §11's Model validation policy. Its natural-language values remain system-of-record source voice under §16.12: §19.1 activity `text`, §19.2 snapshot `text` and `summary`, GitHub `message`, and local imported-document text are preserved and structure-only scanned at ingestion. A voice rule may constrain a later Exp2Res-authored fact, claim, report sentence, or resume bullet that uses this material, but may never reject, rewrite, or block the imported value itself because of its wording.
 
-Imported source identifiers — Tick-like `event_id`, Atlas `artifact_id`, and GitHub `commit_sha`/`repo` — remain provenance values in `RawLog.external_ref` or `RawLog.metadata` and must never become local entity `id` values. For GitHub, §19.3 defines how `repo` and `commit_sha` form the envelope's `source_record_id`, while §19.4 formalizes (`source_system`, `source_record_id`) as the stable import-idempotency identity; neither source value becomes a local entity ID. §19.4 owns the common import identity, duplicate, conflict, and batch semantics; each source subsection owns its source-specific body, and §19.3 owns any additional GitHub-specific acquisition rule.
+Imported source identifiers — the §19.4 envelope `source_record_id` and GitHub `commit_sha`/`repo` — remain provenance values in `RawLog.external_ref` or `RawLog.metadata` and must never become local entity `id` values. For GitHub, §19.3 defines how `repo` and `commit_sha` form the envelope's `source_record_id`, while §19.4 formalizes (`source_system`, `source_record_id`) as the stable import-idempotency identity; neither source value becomes a local entity ID. §19.4 owns the common import identity, duplicate, conflict, and batch semantics; each source subsection owns its integration body, and §19.3 owns any additional GitHub-specific acquisition rule.
 
 Every local `path` or `file:` URI value carried by an import payload, including Atlas `path`, is governed by §29.4's POSIX-only acquisition and pre-serialization rules.
 
 The JSON objects in §19.1–§19.3 are source-specific `body` shapes inside the one common §19.4 envelope; they are never accepted as unwrapped payload records.
 
-## §19.1 Tick-like Event Contract
+## §19.1 Activity-Domain Evidence Contract
 
-This source contract requires `source_system = "ephemeris"`, supports `contract_version = 1`, and declares the JSON object below as its closed §19.4 `body`.
+This source contract requires `source_system = "ephemeris"`, supports `contract_version = 1`, and declares the JSON object below as its closed §19.4 `body`. It is the source-agnostic activity-domain evidence intake Exp2Res accepts, not a Tick-like wire contract.
 
 ```json
 {
   "source": "ephemeris",
-  "event_id": "tick_001",
-  "occurred_at": "2026-07-03T10:00:00+02:00",
-  "event_type": "daily_note",
+  "domain": "activity",
+  "occurred": {
+    "start": "2026-07-03T10:00:00+02:00",
+    "end": null,
+    "precision": "exact_datetime",
+    "confidence": "high"
+  },
   "project": "Exp2Res",
-  "text": "Worked on verifier-gate design.",
-  "metadata": {}
+  "text": "Worked on verifier-gate design."
 }
 ```
+
+All five fields are required; `source` must equal the envelope source system, `domain` must equal `activity`, `occurred` is a complete §11.1 value, `project` is a non-empty source project label, and `text` is non-empty source voice. The body is closed and has no pass-through metadata or knowledge-state field. Diary/daily notes, verbal work notes, and focus/time aggregates may enter only when the source explicitly reports activity; a plan or learning assertion does not establish completed activity merely by appearing in `text`. A learning record's structured knowledge-state, trail, or evidence-reference payload is invalid here; only a separately represented time/activity aspect may enter this contract, while knowledge state routes through §19.2. Text that mentions learning still carries only `imported_activity_event` scope and cannot establish §9.4 knowledge-state attribution on an Atlas scale.
+
+The selfos-side adapter owns mapping Tick-like's events-replay records (`{timestamp, type, payload_version, payload}`) and calendar series into this body, including source-type interpretation and the §5.4 distinction between source recording time and described occurrence time. It maps the stable upstream identity to envelope `source_record_id`; a source timestamp that records only capture/replay time never populates `occurred`, while a timestamp whose upstream semantics place the described activity may contribute to `occurred`. Exp2Res assigns `RawLog.recorded_at` when the import enters the workspace, independently of body `occurred` and envelope `exported_at`; a source-only recording timestamp remains adapter-side provenance rather than being relabeled as either Exp2Res time field. No field or accepted value in this contract depends on Tick-like's upstream schema.
 
 Import behavior:
 
 ```text
-create raw_log(entry_type=ephemeris_event, source_type=imported_event)
+create raw_log(entry_type=ephemeris_event, source_type=imported_event, occurred=body.occurred, raw_text=body.text, project=body.project)
 create evidence_item(strength=imported_activity_event)
 import creates no fact; Stage 3 may extract only narrow source-supported facts
 ```
 
-## §19.2 Atlas Artifact Contract
+## §19.2 Knowledge-State Snapshot Contract
 
-This source contract requires `source_system = "atlas"`, supports `contract_version = 1`, and declares the JSON object below as its closed §19.4 `body`. The body may pair `path` with the optional `content_digest` defined in §19.4; when present, that field is part of this closed body shape.
+This source contract requires `source_system = "atlas"`, supports `contract_version = 1`, and declares the JSON object below as its closed §19.4 `body`. It accepts one knowledge-state snapshot on Atlas's own scales, with its trail segments and source-owned evidence references; it does not accept a ready-made Exp2Res fact, signal, claim, confidence, or ownership level.
 
 ```json
 {
   "source": "atlas",
-  "artifact_id": "artifact:exp2res-verifier-design",
-  "concepts": ["provenance", "verifier-gate", "grounded-generation"],
-  "summary": "Design note about verifying generated claims.",
-  "path": "docs/verifier.md"
+  "domain": "knowledge_state",
+  "as_of": "2026-07-14T20:00:00+02:00",
+  "occurred": {
+    "start": "2026-07-01T00:00:00+02:00",
+    "end": "2026-07-14T20:00:00+02:00",
+    "precision": "date_range",
+    "confidence": "high"
+  },
+  "text": "Atlas snapshot as of 2026-07-14T20:00:00+02:00. Summary: Studied provenance and verifier-gate design through an evidence-backed trail. Knowledge state: subject provenance; scale atlas_learning_stage; value studied. Trail: Verifier-gate design trail from 2026-07-01T00:00:00+02:00 to 2026-07-14T20:00:00+02:00 with date_range precision and high confidence. Evidence reference: atlas:evidence:exp2res-verifier-design.",
+  "summary": "Studied provenance and verifier-gate design through an evidence-backed trail.",
+  "knowledge_state": [
+    {
+      "subject": "provenance",
+      "scale": "atlas_learning_stage",
+      "value": "studied"
+    }
+  ],
+  "trail_segments": [
+    {
+      "label": "Verifier-gate design trail",
+      "occurred": {
+        "start": "2026-07-01T00:00:00+02:00",
+        "end": "2026-07-14T20:00:00+02:00",
+        "precision": "date_range",
+        "confidence": "high"
+      }
+    }
+  ],
+  "evidence_references": [
+    {
+      "reference": "atlas:evidence:exp2res-verifier-design"
+    }
+  ],
+  "path": "snapshots/atlas-2026-07-14.txt",
+  "content_digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }
 ```
+
+`source` must equal the envelope source system, `domain` must equal `knowledge_state`, `as_of` is an offset-aware source snapshot time, `occurred` is the complete §11.1 placement of the experience represented by the snapshot, and `text` and `summary` are non-empty source voice. `knowledge_state` is a non-empty list of closed `{subject, scale, value}` objects whose members are non-empty strings. `trail_segments` and `evidence_references` are required lists that may be empty; a trail segment is a closed `{label, occurred}` object with a non-empty label and complete §11.1 placement, and an evidence reference is a closed `{reference}` object with a non-empty source-owned logical ID. Snapshot-wide and trail-segment `occurred` values must each have a finite §16.7 uncertainty upper bound, so `precision = "unknown"` is invalid in this contract. The snapshot-wide interval must contain every trail segment's interval, and, compared as a UTC instant, `as_of` must be at or after the snapshot-wide upper bound, including the upper bound of a singleton precision; a violation is invalid acquisition. A snapshot-wide `TemporalConfidence` weaker than a segment's is legal and conservatively governs extracted fact placement; a segment never elevates the governing `RawLog.occurred.confidence`. Atlas scale names and values remain opaque strings: they gain no Exp2Res enum or ordering, and §19.4's float prohibition applies. The selfos-side adapter alone maps Atlas's exact scales, trails, and reference schema into these fields.
+
+The adapter-supplied `text` is the authoritative complete source rendering of the same snapshot represented by the structured members and maps verbatim to `RawLog.raw_text`; Exp2Res never constructs it by serializing, normalizing, summarizing, or translating the body. Before persistence, the importer requires `summary`; every `knowledge_state` subject, scale, and value; every trail label, non-null bound's exact accepted ISO input string, precision literal, and confidence literal; every evidence `reference`; and the exact accepted `as_of` input string to occur byte-exactly in `text`. Thus the persisted source projection contains every accepted structured source value rather than retaining only its hash; a mismatch is invalid acquisition. `occurred` maps unchanged to `RawLog.occurred`, while `as_of` remains snapshot provenance and never substitutes for experience placement. `RawLog.recorded_at` remains the independent service-assigned import time under §5.4.
+
+`path` and `content_digest` are required nullable members: omission is invalid, `path = null` requires `content_digest = null`, and a non-null path may carry either a non-null §19.4 digest or `null`. The path identifies the single source snapshot document represented by the linked `EvidenceItem`, not one member of `evidence_references`; those references are inert logical source IDs and never path or fetch authority. The path/digest pair follows §19.4 rule 6 and maps only to `EvidenceItem.path` and its named digest metadata. Required nullable members give omission and explicit absence one body shape before §19.4 hashing.
+
+The `knowledge_state_snapshot` strength is high only within §9.4's stated knowledge-attribution scope: it can support a narrow studied/learning-grade fact but grants no automatic `Confidence = "high"`, implementation, built/production, outcome, ownership, or mastery conclusion. Under §5.10 and §25.5, the importer creates no `ExperienceFact`, `SelfSignal`, or `SelfClaim`; Exp2Res Stages 3–6 derive those layers through their ordinary contracts.
 
 Import behavior:
 
 ```text
-create raw_log(entry_type=atlas_artifact_ref, source_type=imported_artifact)
-create evidence_item(strength=artifact_reference)
-extract facts only if artifact content/source supports them
+create raw_log(entry_type=atlas_snapshot, source_type=imported_artifact, occurred=body.occurred, raw_text=body.text)
+create one evidence_item(strength=knowledge_state_snapshot, summary=body.summary, path=body.path, metadata.content_digest when non-null)
+derive facts, signals, and claims only through Stages 3–6; import promotes none directly
 ```
 
 ## §19.3 GitHub Commit Contract

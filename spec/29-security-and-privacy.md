@@ -10,6 +10,8 @@ Private-by-default operation sends nothing anywhere on system initiative. Exp2Re
 
 Only a foreground, user-initiated §14 action that invokes a pipeline stage may authorize outward transit, and only for the synchronous §15 contract calls belonging to that run. Correction, owner-deletion, and recompute actions in §14.4, §14.11, and §14.12 carry that authorization only into the Stage 3–5 calls they synchronously orchestrate through §13.13; Stage 6–7 calls require their own §14.9 actions, and the lifecycle service gains no independent call authority. The one invalid-response retry allowed by §15.1 and the bounded transport retries allowed by §15.10 remain inside the same foreground action; neither may be queued, deferred, resumed, or adopted later in the background. Outside one of the eight invoked §15 contracts, no component, importer, renderer, export path, or lifecycle service may call an LLM or any network endpoint. §19 importers consume user-supplied local payloads under §14.5; source acquisition is outside Exp2Res.
 
+Serving a §30 view only on the local host's loopback interface and returning it to a local browser is local presentation, not egress or a ninth model-call site; every view-triggered workflow that reaches §15 remains an explicit foreground user-initiated §14 action under the same authority and confirmation rules.
+
 Workspace timezone, provider, and ignore selection live in the local `.exp2res/config.toml` created by §14.1; they are configuration, not commands:
 
 ```toml

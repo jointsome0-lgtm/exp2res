@@ -12,6 +12,8 @@ No generator, linter, generated documentation, separate machine-readable registr
 
 `DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry; `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target. `OwnerAttribution` types the §19.3 GitHub payload field asserted by the upstream adapter or owner; §19.3 owns its conservative default and importer strength mapping. `CLIResultStatus` types the §14.14 result envelope independently of processing-run status or semantic verification status.
 
+`knowledge_state_snapshot` is produced only by the §14.5 `atlas` importer under §19.2; no other V1 flow may assign that strength.
+
 ```python
 from typing import Literal
 
@@ -36,7 +38,7 @@ EntryType = Literal[
     "gap_answer",
     "correction",
     "ephemeris_event",
-    "atlas_artifact_ref",
+    "atlas_snapshot",
     "github_commit",
     "design_doc",
 ]
@@ -51,6 +53,7 @@ SourceType = Literal[
 EvidenceStrength = Literal[
     "manual_claim",
     "imported_activity_event",
+    "knowledge_state_snapshot",
     "artifact_reference",
     "commit_or_pr",
     "design_doc",

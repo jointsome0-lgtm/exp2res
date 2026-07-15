@@ -683,11 +683,11 @@ When a later entity is allocated in that table
 Then that ID is never reassigned
 And the allocator uses a collision-resistant ID with a random component rather than row count, MAX + 1, or any other surviving-row-derived state
 
-Given two identical valid import payload submissions both proceed as record-creating imports
+Given two valid import records with identical body content proceed as record-creating imports under distinct §19.4 identities
 Then each receives distinct local RawLog and EvidenceItem IDs without collision failure
-And whether the second submission is accepted, deduplicated, or rejected outside this case remains deferred to issues #33 and #52
+And whether a repeated submission is accepted, deduplicated, or conflicted is owned by §19.4 and tested in §21.45
 
-Given Tick-like event_id, Atlas artifact_id, or GitHub commit_sha and repo values are imported
+Given an import carries §19.4 source_record_id and, for GitHub, commit_sha and repo
 Then each upstream identifier appears only in RawLog.external_ref or RawLog.metadata as provenance
 And none is used as any local entity ID
 ```
@@ -1445,6 +1445,64 @@ Given a later explicitly authorized §29.4 dereference finds that file missing o
 When the required evidence read runs
 Then the missing or changed state is reported and the read fails closed
 And no other content is silently substituted, fetched, refreshed, omitted, or treated as unchanged
+```
+
+## §21.46 Domain-Routed Imports and Local Views Preserve Authority Boundaries
+
+Test (enforces §5.10, §6.1–§6.2, §9.4, §10, §13.12, §14.5, §14.7, §14.10, §14.14, §16.11, §17–§18, §19.1–§19.2, §19.4, §25.5, §29.2–§29.3, and §30):
+
+```text
+Given table-driven valid §19.4 envelopes carry §19.1 bodies adapted from a diary or daily note, a verbal work note, and a focus or time aggregate, each of which explicitly reports activity
+When each ephemeris import commits
+Then it creates exactly one RawLog with entry_type ephemeris_event and one linked EvidenceItem with strength imported_activity_event
+And Stage 3 may derive only narrow source-supported activity facts
+And the import itself creates no ExperienceFact, SelfSignal, or SelfClaim
+
+Given an otherwise valid ephemeris body carries a learning event's structured knowledge state, trail segments, evidence references, or another undeclared knowledge-state member
+When the closed §19.1 body is validated
+Then acquisition rejects the record before persistence rather than dropping, flattening, or interpreting the knowledge-state members
+And only a separately represented time or activity aspect may enter §19.1, while the knowledge aspect must arrive through §19.2
+Given a valid §19.1 body instead mentions learning only in source text
+When it is imported and Stage 3 runs
+Then the record retains only imported_activity_event scope and may establish only activity the source explicitly reports at the supplied occurred placement
+And the wording cannot establish §9.4 knowledge-state attribution on an Atlas scale
+
+Given a valid §19.4 Atlas envelope carries a §19.2 body with knowledge_state, trail_segments, and evidence_references
+When the import commits
+Then it creates exactly one RawLog with entry_type atlas_snapshot and one linked EvidenceItem with strength knowledge_state_snapshot
+And the import itself creates no ExperienceFact, SelfSignal, or SelfClaim
+When Stages 3–6 later run through their ordinary contracts
+Then they may derive a narrow studied or learning-grade fact within the snapshot's declared subjects, trail, and references
+And no imported Atlas field is accepted as or directly promoted to an Exp2Res fact, signal, or claim
+And the snapshot cannot establish implementation, built or production use, outcome, ownership depth, or mastery
+
+Given the knowledge_state_snapshot item from one Atlas RawLog is the candidate fact's complete linked source set
+When §9.4 computes the confidence ceiling
+Then it is one non-manual item but its RawLog counts as only one source, so the ceiling is medium rather than automatically high
+And high is reachable only when the complete linked set satisfies §9.4's distinct-RawLog rule, remains a cap rather than an entitlement, and grants no scope beyond knowledge attribution
+
+Given either deferred §30 view is implemented for selfos embedding
+When the shell embeds and uses it
+Then embedding uses only a loopback local URL configured outside Exp2Res
+And Exp2Res stores no consumer identity, shell schema, callback, webhook, or consumer-specific protocol
+And rendering reads only the explicitly selected current derived state
+And every user action delegates to an existing §14 flow with that flow's selectors, lock, confirmation, exit class, and §14.14 result semantics
+And the view adds no command, mutation path, implicit selector, LLM call, network authority, or background work
+
+Given the JD-to-resume view's existing §14.10 flow reaches an export refusal required by §18 or a §16.11 gate without an operational failure
+When the view renders the completed result
+Then it presents the §14.14 blocked outcome, reason, and findings as a first-class result rather than an error page
+And an operational validation or cleanup failure remains failed and is never relabeled as a semantic refusal
+
+Given an export-eligible selected current assessment view contains one still-unanswered gap and one gap answered since synthesis
+When §13.12 writes out/assessment/<view>/gap_questions.md for the shell to discover through configuration
+Then the file contains only the still-unanswered GapQuestion.question value selected by §17
+And it contains no answered question, consumer identity, callback, gap ID, or answer link-back token
+Given the owner answers a question surfaced through that file
+When the answer returns to Exp2Res
+Then it enters only as an ordinary diary or activity RawLog through an existing capture or import flow
+And no shell callback or link-back protocol exists
+And later detection regeneration never re-creates a question-to-answer link under §14.7
 ```
 
 ---

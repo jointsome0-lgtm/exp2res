@@ -29,8 +29,8 @@ manual daily logs
 manual retrospective logs
 gap answers
 corrections
-Tick-like JSONL exports
-Atlas artifact refs
+activity-domain evidence records (§19.1)
+Atlas knowledge-state snapshots (§19.2)
 GitHub commits
 local design documents
 ```

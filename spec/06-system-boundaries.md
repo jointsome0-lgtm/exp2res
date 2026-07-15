@@ -4,18 +4,15 @@
 
 Tick-like is the operational surface of the day.
 
-It can provide:
+The direct Exp2Res import boundary accepts only activity-domain evidence:
 
 ```text
-daily notes
-routine check-ins
-activity events
-focus sessions
-manual notes
-exported JSONL
+diary and daily notes
+verbal work notes
+focus and time aggregates
 ```
 
-The V1 importer accepts Tick-like JSONL events under §19.1 and persists each as a `RawLog` plus linked `EvidenceItem`. Tick-like imports do not create `SelfSignal` records directly.
+The selfos-side adapter maps Tick-like exports into the source-agnostic activity record accepted by §19.1; Exp2Res does not accept or encode Tick-like's wire schema. A learning event is not imported directly as knowledge state: its knowledge aspect arrives only through the Atlas snapshot in §6.2/§19.2, while its time or activity aspect may be mapped into §19.1 as ordinary activity evidence. Each accepted activity record persists as a `RawLog` plus linked `EvidenceItem` and creates no `SelfSignal` directly.
 
 But Tick-like events do not automatically become strong experience facts.
 
@@ -48,18 +45,18 @@ knowledge-state context
 frontier context
 ```
 
-Atlas can contain all of the data above, but the V1 Exp2Res importer accepts only artifact-reference payloads under §19.2. Concepts, directions, materials, trail segments, knowledge-state context, and frontier context remain outside the V1 import surface until they have explicit contracts and entry types.
+The V1 Exp2Res importer accepts the §19.2 knowledge-state snapshot: knowledge state expressed on Atlas's own scales, trail segments, and evidence references. The selfos-side adapter owns the exact Atlas-to-snapshot mapping; Exp2Res neither embeds Atlas's internal schema nor interprets an Atlas scale as an Exp2Res confidence, ownership level, signal, or claim.
 
 But Atlas does not decide career/self claims.
 
 Example:
 
 ```text
-Atlas artifact reference:
-  "Design note about an idempotent REST API"
+Atlas knowledge-state snapshot:
+  "Studied idempotent REST API design; trail and evidence references attached"
 
 Exp2Res possible use:
-  context for an experience fact
+  source-attributed support for a narrow learning-grade fact
 
 Not automatically:
   "Strong backend distributed systems skill"
@@ -100,4 +97,3 @@ verification status
 Resume output must not mutate the internal model.
 
 ---
-

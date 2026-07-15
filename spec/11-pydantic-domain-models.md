@@ -90,6 +90,8 @@ class RawLog(BaseModel):
 
 `corrects_log_id` is a capture-time requirement, not a standing invariant: §14.4 must set it when a correction is captured (`entry_type == "correction"`), it must then resolve to an existing `RawLog`, and it must not create a correction cycle. §13.3 rule 10 defines the field's whole-record displacement, effective-record, governing-record, and orphan re-rooting consequences. Correction text must be self-contained. A correction row with `corrects_log_id = None` is nevertheless a valid model state that hydration, §12 rule 10 validation, and the §13.13 rebuild accept: it arises only when owner deletion removes the target (§12 rule 6 `ON DELETE SET NULL`), and such an orphaned correction is the root of its own correction lineage (§13.3 rule 10). No flow other than owner deletion may null or rewrite the field.
 
+V1 reserves, but does not implement, a future human-only `private` marker as either a field or named metadata key; when introduced, it must bind at the §15 input-assembly boundary and exclude the marked `RawLog` from every LLM-stage input, including an otherwise user-initiated run.
+
 ## §11.3 EvidenceItem
 
 ```python

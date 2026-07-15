@@ -85,8 +85,8 @@ V1 mappings:
 
 | Importer | Accepted payload | `RawLog.entry_type` | `RawLog.source_type` | `EvidenceItem.strength` |
 |----------|------------------|---------------------|----------------------|-------------------------|
-| `ephemeris` | §19.1 event | `ephemeris_event` | `imported_event` | `imported_activity_event` |
-| `atlas` | §19.2 artifact reference | `atlas_artifact_ref` | `imported_artifact` | `artifact_reference` |
+| `ephemeris` | §19.1 activity-domain record | `ephemeris_event` | `imported_event` | `imported_activity_event` |
+| `atlas` | §19.2 knowledge-state snapshot | `atlas_snapshot` | `imported_artifact` | `knowledge_state_snapshot` |
 | `github` | §19.3 commit | `github_commit` | `imported_artifact` | attribution-dependent under §19.3 (`OwnerAttribution` §10) |
 | `file` | local design document | `design_doc` | `imported_artifact` | `design_doc` |
 
