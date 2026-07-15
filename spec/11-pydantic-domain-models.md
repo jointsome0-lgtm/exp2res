@@ -254,7 +254,7 @@ class Contradiction(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-A current `Contradiction` is an immutable conflict detection owned by Stage 4, not a workflow item with an in-place verdict. Stage 4 owns the current set under §13.4's retain-or-replace rule: a content-equivalent rerun that qualifies for retention under that rule retains the current rows, while on a replacing regeneration a continuing conflict receives a replacement row and a conflict absent from current evidence is omitted. Prior rows become superseded inspect-only history; owner deletion may purge them under §13.13.
+A current `Contradiction` is an immutable conflict detection owned by Stage 4, not a workflow item with an in-place verdict; §13.4's retain-or-replace rule owns the current set's retention, replacement, and omission. Prior rows become superseded inspect-only history; owner deletion may purge them under §13.13.
 
 ## §11.10 GapQuestion
 
