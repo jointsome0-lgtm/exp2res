@@ -46,7 +46,7 @@ snapshot, branch, bullet, fact, or self-claim is superseded
 snapshot status is outside the §16.11 Stage 10 anchor allowlist
 any required provenance ID does not resolve to a current retained entity
 bullet references a branch other than the exported branch
-bullet source_self_claim_ids is not the exact set of supported claims used by the writer, or contains a claim outside the branch snapshot
+bullet source_self_claim_ids is not the exact supported claim set supplied to its writer invocation (§13.10/§15.6), or contains a claim outside the branch snapshot
 bullet source_log_ids differs from the raw logs reached through source_fact_ids
 bullet matched_jd_requirements contains a duplicate, missing, free-form, or wrong-job requirement ID
 no source fact reaches a direct fact_sources row, EvidenceItem, and retained RawLog
