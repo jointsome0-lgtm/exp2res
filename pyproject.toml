@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "exp2res"
+version = "0.1.0"
+description = "Local-first, provenance-heavy experience capture"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = [
+  "pydantic>=2.8,<3",
+  "tomli>=2,<3; python_version < '3.11'",
+  "typer>=0.12,<1",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+
+[project.scripts]
+exp2res = "exp2res.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["exp2res"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

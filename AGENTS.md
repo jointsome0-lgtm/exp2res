@@ -1,7 +1,6 @@
 # exp2res — agent instructions
 
-Design-stage project: no code yet; the primary artifact is the specification — `SDD.md` (map) + `spec/` (body, one file per §).
-The current task is refining the SDD: sharpening requirements, finding contradictions and gaps, proposing alternatives. No code until the SDD is agreed.
+Implementation-stage project (SDD v0.3, implementation-ready; executor entry point: issue #88). The specification — `SDD.md` (map) + `spec/` (body, one file per §) — remains the binding contract; code lands phase by phase under §22 and never silently deviates from it. Spec refinement continues through issues and the Decision Log.
 
 ## Public data boundary
 
