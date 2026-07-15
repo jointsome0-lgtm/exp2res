@@ -460,8 +460,8 @@ assessment evidence_map.json = {
 
 bullet-pack evidence_map.json = {
   schema_version, output_kind, entity_id,
-  rendered_bullets: list[{bullet_id, text, target_section, source_self_claim_ids,
-                          source_fact_ids, source_log_ids}],
+  rendered_bullets: list[{bullet_id, text, target_section, matched_jd_requirements,
+                          source_self_claim_ids, source_fact_ids, source_log_ids}],
   claim_links: list[ClaimLink], signal_links: list[SignalLink],
   fact_links: list[FactLink], evidence_links: list[EvidenceLink]
 }

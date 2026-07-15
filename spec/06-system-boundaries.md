@@ -80,9 +80,9 @@ But code existence does not automatically imply impact, production use, leadersh
 
 The V1 GitHub importer accepts commit payloads under §19.3. Pull requests, issues, README files, design documents, tests, and source files may inform future integrations, but are not GitHub import payloads in V1; local design documents use §14.5 instead. Repository and commit selection, repository access, authentication, and remote fetching are upstream-adapter responsibilities; Exp2Res receives only the user-supplied local §19.3 envelope and performs no network selection or remote acquisition.
 
-## §6.4 Relation to Resume Export
+## §6.4 Relation to the Verified Bullet-Pack Export
 
-Resume export is a projection.
+The verified bullet-pack export is a projection; a full resume document model is a named post-mirror iteration (§18).
 
 It must be grounded in:
 
@@ -94,6 +94,6 @@ artifact evidence
 verification status
 ```
 
-Resume output must not mutate the internal model.
+Bullet-pack output must not mutate the internal model.
 
 ---
