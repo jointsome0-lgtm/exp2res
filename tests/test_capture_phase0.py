@@ -213,3 +213,19 @@ def test_workspace_timezone_rejects_dst_gap_and_fold_but_accepts_offset() -> Non
         timezone_name="Europe/Berlin",
     )
     assert explicit.start.isoformat() == "2026-10-25T02:30:00+02:00"
+
+
+def test_reversed_retro_range_is_invalid_input_not_internal_error() -> None:
+    """PR #95 review: owner-typed reversed ranges stay in §14.14 exit class 2."""
+    from exp2res.errors import InvalidInputError
+    from exp2res.services.time_input import parse_occurred
+
+    with pytest.raises(InvalidInputError) as caught:
+        parse_occurred(
+            period="2026-06-10/2026-06-01",
+            precision="date_range",
+            confidence="medium",
+            timezone_name="Europe/Belgrade",
+        )
+    assert caught.value.diagnostic_class == "invalid_time_shape"
+    assert caught.value.exit_code == 2

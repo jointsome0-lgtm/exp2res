@@ -16,7 +16,7 @@ from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.time_input import today_occurred
 from exp2res.storage.repository import RawLogBundle
-from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS
+from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, require_compatible
 
 IdFactory = Callable[[str], str]
 Clock = Callable[[], datetime]
@@ -106,6 +106,8 @@ def capture_daily(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
+    # Fail closed before reading configuration or owner content (§12.14).
+    require_compatible(workspace)
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     config = load_workspace_config(workspace)
     occurred = today_occurred(now=now, timezone_name=require_timezone(config))
@@ -134,6 +136,8 @@ def capture_daily_file(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
+    # Fail closed before acquiring the private source file (§12.14, §22).
+    require_compatible(workspace)
     config = load_workspace_config(workspace)
     raw_text, external_ref = read_capture_file(source_path, config=config)
     return capture_daily(
@@ -159,6 +163,7 @@ def capture_retro(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
+    require_compatible(workspace)
     return capture_manual(
         workspace,
         entry_type="manual_retro",

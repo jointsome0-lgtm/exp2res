@@ -207,11 +207,16 @@ def require_compatible(workspace: Path) -> SchemaStatus:
 
 
 def _is_public_checkout(target: Path) -> bool:
-    return (
-        _entry_kind(target / ".git") is not None
-        and (target / "SDD.md").is_file()
-        and (target / "spec").is_dir()
-    )
+    # The target arrives canonicalized; any containing engine checkout makes
+    # every directory beneath it a forbidden data destination (AGENTS.md).
+    for candidate in (target, *target.parents):
+        if (
+            _entry_kind(candidate / ".git") is not None
+            and (candidate / "SDD.md").is_file()
+            and (candidate / "spec").is_dir()
+        ):
+            return True
+    return False
 
 
 def _write_private_file(path: Path, data: bytes) -> None:

@@ -6,6 +6,8 @@ from datetime import date, datetime, timezone
 import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from pydantic import ValidationError
+
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
 from exp2res.domain.models import OccurredAt
 from exp2res.errors import InvalidInputError
@@ -93,6 +95,17 @@ def _named_anchor(value: str, precision: TemporalPrecision, zone: ZoneInfo) -> d
     return _parse_datetime(value, zone)
 
 
+def _build_occurred(**kwargs: object) -> OccurredAt:
+    try:
+        return OccurredAt(**kwargs)  # type: ignore[arg-type]
+    except ValidationError as error:
+        # Owner-typed shapes (a reversed range, an unknown precision or
+        # confidence literal) are §14.14 exit-class-2 input, not exit 1.
+        raise _time_error(
+            "invalid_time_shape", "The temporal shape is invalid."
+        ) from error
+
+
 def parse_occurred(
     *,
     period: str,
@@ -102,18 +115,20 @@ def parse_occurred(
 ) -> OccurredAt:
     zone = workspace_zone(timezone_name)
     if precision == "unknown":
-        return OccurredAt(start=None, end=None, precision=precision, confidence=confidence)
+        return _build_occurred(
+            start=None, end=None, precision=precision, confidence=confidence
+        )
     if precision in {"date_range", "approximate_range"}:
         parts = period.split("/", 1)
         if len(parts) != 2:
             raise _time_error("invalid_time_shape", "A range requires start/end values.")
-        return OccurredAt(
+        return _build_occurred(
             start=_parse_datetime(parts[0], zone),
             end=_parse_datetime(parts[1], zone),
             precision=precision,
             confidence=confidence,
         )
-    return OccurredAt(
+    return _build_occurred(
         start=_named_anchor(period, precision, zone),
         end=None,
         precision=precision,

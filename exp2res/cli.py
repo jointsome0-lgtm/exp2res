@@ -46,6 +46,7 @@ from exp2res.storage.workspace import (
     discover_workspace,
     initialize_workspace,
     inspect_workspace,
+    require_compatible,
 )
 
 
@@ -301,6 +302,7 @@ def log_today(
             )
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
+        require_compatible(workspace)
         raw_text = typer.prompt("Describe what happened", err=True)
         return _capture_outcome(
             capture_daily(workspace, raw_text=raw_text, project=project)
@@ -314,6 +316,7 @@ def log_retro(context: typer.Context) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
+        require_compatible(workspace)
         period = typer.prompt("What period are we reconstructing?", err=True)
         precision_value = typer.prompt("How precise is this?", err=True)
         confidence_value = typer.prompt("How confident are you?", err=True)

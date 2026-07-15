@@ -206,3 +206,46 @@ def test_losing_the_marker_creation_race_never_removes_the_foreign_marker(
     with pytest.raises(SchemaCompatibilityError):
         initialize_workspace(tmp_path)
     assert foreign.is_dir()
+
+
+def test_init_refuses_subdirectories_of_a_public_checkout(tmp_path: Path) -> None:
+    """PR #95 review: a public-checkout ancestor forbids every nested target."""
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "SDD.md").write_text("# map\n", encoding="utf-8")
+    (tmp_path / "spec").mkdir()
+    nested = tmp_path / "examples" / "scratch"
+    nested.mkdir(parents=True)
+    with pytest.raises(PublicCheckoutError):
+        initialize_workspace(nested)
+    assert not (nested / ".exp2res").exists()
+
+
+def test_incompatible_workspace_blocks_file_capture_before_source_read(
+    tmp_path: Path,
+) -> None:
+    """PR #95 review: the §12.14 gate precedes private source acquisition."""
+    workspace, _, _ = initialize_workspace(tmp_path)
+    configure_timezone(workspace)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    connection = sqlite3.connect(database)
+    connection.execute(
+        "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (2, ?, ?)",
+        (FIXED_NOW.isoformat(), "future"),
+    )
+    connection.commit()
+    connection.close()
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "log",
+            "today",
+            "--file",
+            str(workspace / "definitely-missing.md"),
+        ],
+    )
+    assert result.exit_code == 4
+    envelope = json.loads(result.stdout)
+    assert envelope["diagnostic_class"] == "schema_incompatible"
