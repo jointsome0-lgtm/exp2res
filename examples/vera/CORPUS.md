@@ -68,17 +68,24 @@ a verified mirror and a bullet-pack attempt. Steps use semantic kinds —
 `bullets generate|verify|export` flows, `exp2res logs delete`,
 `exp2res jd delete`). Retro and correction steps replay the interactive
 §14.3/§14.4 prompts from their JSON scripts; `target_story_key` resolves
-through the log created by the named earlier step. Each step pins the
-workspace clock to its `clock` value; `expect` carries the coarse
-§14.14 outcome (import class counts, success, displacement, blocked
-claims) — an outcome contract, never a golden output. The capture and
-import `steps` are runnable against Phase 0 alone; `derived_steps`
-(E1–E11: extraction through three generated-and-verified assessment
-views — §14.10 refuses bullets over an `unverified` snapshot — to the
-two bullet branches, each anchored to a named snapshot step because
-§14.10 has no latest-snapshot default, with the backend JD's
-production/on-call claims blocked) additionally require the #71
-fake-runner layer for every LLM-backed stage. `failure_steps` run after their `after_step` and
+through the log created by the named earlier step. The `setup` object
+names the explicit IANA workspace timezone (§14.14 forbids a default);
+every step, including failure and epilogue steps, pins the workspace
+clock to its `clock` value; `expect` carries the coarse §14.14 outcome
+(the canonical `CLIResultStatus` value `ok`, import class counts,
+displacement, blocked claims) — an outcome contract, never a golden
+output. Steps are ordered by story clock, not by implementation phase:
+each step becomes runnable when its owning §22 phase lands (daily and
+retro capture first; the correction/recompute flow, the §19 importers,
+and the LLM-backed JD parser with their own phases), and every
+LLM-backed step — `jd_add` included — additionally requires the #71
+fake-runner layer. A harness asserts only the subset its implementation
+phase can run. `derived_steps` (E1–E11: extraction through three
+generated-and-verified assessment views — §14.10 refuses bullets over
+an `unverified` snapshot — to the two bullet branches, each anchored to
+a named snapshot step because §14.10 has no latest-snapshot default,
+with the backend JD's production/on-call claims blocked) are the
+LLM-heaviest tail of that ladder. `failure_steps` run after their `after_step` and
 must fail exactly as stated; the `privacy_epilogue` exercises the
 §13.13 deletion lifecycles after the main path completes.
 

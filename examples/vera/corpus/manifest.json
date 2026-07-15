@@ -21,7 +21,7 @@
     "logs/daily-2026-07-08.md": "e1e0c545e1640da568f69ca4636728fff98006867743c4bcaf8978907f3348ce",
     "logs/retro-2026-05-strength.json": "89a02739084ecf21c18b11ddac64c8bd4ce725808ede96d2cf9968198e801c16",
     "logs/retro-2026-06-k8s.json": "c92f84c5c5b058238892697dd5ee01f4c3fe0a054684f7488ac4183c23d303af",
-    "replay.json": "94aa2fc8a606632d786f1f09df481781ba016b7a7906eb39450741ca51c4538a"
+    "replay.json": "3b923b6733ff4db36f98dc3e3f79eb0345ca5ee581c1e90c62ab662114cdb9d5"
   },
   "generator": "examples/vera/corpus.py",
   "persona": "Vera Example",
