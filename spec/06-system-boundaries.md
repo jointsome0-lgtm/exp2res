@@ -81,7 +81,7 @@ source code
 
 But code existence does not automatically imply impact, production use, leadership, or mastery.
 
-The V1 GitHub importer accepts commit payloads under §19.3. Pull requests, issues, README files, design documents, tests, and source files may inform future integrations, but are not GitHub import payloads in V1; local design documents use §14.5 instead.
+The V1 GitHub importer accepts commit payloads under §19.3. Pull requests, issues, README files, design documents, tests, and source files may inform future integrations, but are not GitHub import payloads in V1; local design documents use §14.5 instead. Repository and commit selection, repository access, authentication, and remote fetching are upstream-adapter responsibilities; Exp2Res receives only the user-supplied local §19.3 envelope and performs no network selection or remote acquisition.
 
 ## §6.4 Relation to Resume Export
 

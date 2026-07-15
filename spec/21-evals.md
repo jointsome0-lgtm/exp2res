@@ -1370,7 +1370,7 @@ Then no processing_runs or llm_calls row remains
 
 ## §21.45 Integration Imports Are Versioned, Idempotent, and Atomic
 
-Test (enforces §8.1, §11's Model validation policy, §13.1 rule 5, §14.5, §14.14 rule 5, §19.1–§19.4, and §29.4–§29.5; extends §21.39's boundary coverage):
+Test (enforces §8.1, §10's `OwnerAttribution`, §11's Model validation policy, §13.1 rule 5, §14.5, §14.14 rule 5, §19.1–§19.4, and §29.4–§29.5; extends §21.39's boundary coverage):
 
 ```text
 Given one valid §19.4 envelope whose content_hash matches the §11 canonical-serialization bytes of its body
@@ -1382,6 +1382,25 @@ When the same envelope is imported again
 Then it is a counted duplicate and creates no RawLog, EvidenceItem, or other business row
 And the retained raw and evidence rows remain byte-for-byte unchanged
 And the complete result has accepted = 0, duplicate = 1, conflict = 0, and rejected = 0, with a null raw_log_id on the duplicate record
+
+Given a table-driven matrix of valid GitHub envelopes uses distinct exact `<repo>@<commit_sha>` source_record_id values with full 40-character lowercase-hexadecimal commit_sha values
+And the required author and committer objects carry either null name, email, and login members or arbitrary adapter-supplied strings
+And owner_attribution ranges over owner, not_owner, unknown, and omission
+When each envelope is validated and imported
+Then every identity object validates and every import commits
+And only owner creates EvidenceItem strength commit_or_pr, while not_owner, explicit unknown, and omitted attribution create strength artifact_reference
+And omission materializes unknown before §19.4 canonical body serialization and content-hash verification
+And the null and string identity variants produce the same strength for each owner_attribution case, so identity strings never select or alter attribution
+
+Given table-driven GitHub candidates carry an abbreviated, overlong, uppercase, or non-hexadecimal commit_sha, or a source_record_id other than the exact `<repo>@<commit_sha>` formed from the validated body
+When acquisition validates each candidate
+Then the record is rejected before §19.4 duplicate classification and no RawLog or EvidenceItem is created
+
+Given a valid GitHub envelope has committed under source_system github and its exact `<repo>@<commit_sha>` source_record_id
+When that exact envelope is replayed
+Then the replay is a counted duplicate no-op and the retained RawLog and EvidenceItem remain unchanged
+When the same identity is supplied with materially different body content and a different, correctly recomputed content_hash
+Then the import fails closed as a conflict, creates no candidate business row, and never rewrites the retained raw or evidence record
 
 Given a retained import identity and a file whose first record is otherwise insertable but whose later record repeats that identity with a different valid content_hash
 When the file is imported

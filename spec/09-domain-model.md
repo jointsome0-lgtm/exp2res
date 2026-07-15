@@ -44,7 +44,7 @@ Calibration is capability-based. `EvidenceStrength` membership remains canonical
 | `manual_claim` | Owner self-report captured at entry. Establishes what the owner directly states, as self-report. |
 | `imported_activity_event` | System-recorded activity telemetry. Establishes that the named activity occurred at the recorded time; not outcome, ownership depth, or quality. |
 | `artifact_reference` | Reference to an external artifact. Establishes the artifact's existence and topical content; not authorship depth, outcome, or use. |
-| `commit_or_pr` | Imported VCS commit. Establishes the recorded change and its attributed authorship at commit time; not outcome, production use, or mastery. |
+| `commit_or_pr` | Imported VCS commit explicitly attributed to the owner by its source contract. Establishes the recorded change and that source-asserted owner attribution; not independently verified identity, ownership depth, outcome, production use, or mastery. |
 | `design_doc` | Local design document. Establishes that the design content exists and what it contains; design-level work, not implementation or outcome. |
 
 These values are qualitatively different and deliberately not totally ordered. No rule may rank one `EvidenceStrength` above another.

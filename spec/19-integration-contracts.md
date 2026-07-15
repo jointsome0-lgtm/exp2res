@@ -2,7 +2,7 @@
 
 Every importer validates the payload's keys, types, closed-enum mappings, and required identifiers. Importer validation includes the boundary limits and text-hygiene rules in §11's Model validation policy. Its natural-language values remain system-of-record source voice under §16.12: Tick-like `text`, Atlas `summary` and referenced artifact text, GitHub `message`, and local imported-document text are preserved and structure-only scanned at ingestion. A voice rule may constrain a later Exp2Res-authored fact, claim, report sentence, or resume bullet that uses this material, but may never reject, rewrite, or block the imported value itself because of its wording.
 
-Imported source identifiers — Tick-like `event_id`, Atlas `artifact_id`, and GitHub `commit_sha`/`repo` — remain provenance values in `RawLog.external_ref` or `RawLog.metadata` and must never become local entity `id` values. §19.4 owns the common import identity, duplicate, conflict, and batch semantics; each source subsection owns its source-specific body, and §19.3 owns any additional GitHub-specific acquisition rule.
+Imported source identifiers — Tick-like `event_id`, Atlas `artifact_id`, and GitHub `commit_sha`/`repo` — remain provenance values in `RawLog.external_ref` or `RawLog.metadata` and must never become local entity `id` values. For GitHub, §19.3 defines how `repo` and `commit_sha` form the envelope's `source_record_id`, while §19.4 formalizes (`source_system`, `source_record_id`) as the stable import-idempotency identity; neither source value becomes a local entity ID. §19.4 owns the common import identity, duplicate, conflict, and batch semantics; each source subsection owns its source-specific body, and §19.3 owns any additional GitHub-specific acquisition rule.
 
 Every local `path` or `file:` URI value carried by an import payload, including Atlas `path`, is governed by §29.4's POSIX-only acquisition and pre-serialization rules.
 
@@ -56,25 +56,46 @@ extract facts only if artifact content/source supports them
 
 ## §19.3 GitHub Commit Contract
 
-This source contract requires `source_system = "github"`, supports `contract_version = 1`, and declares the JSON object below as its closed §19.4 `body`.
+This source contract requires `source_system = "github"`, supports `contract_version = 1`, and requires envelope `source_record_id` to equal the exact string `<repo>@<commit_sha>` formed from the validated body values below. The JSON object is the closed §19.4 `body`; its `source` discriminator must equal envelope `source_system` under §19.4 rule 1.
 
 ```json
 {
   "source": "github",
   "repo": "owner/repo",
-  "commit_sha": "abc123",
+  "commit_sha": "0123456789abcdef0123456789abcdef01234567",
   "message": "Add verifier-gate schema",
   "files": ["exp2res/pipeline/verify_bullets.py"],
-  "url": "..."
+  "url": "https://github.com/owner/repo/commit/0123456789abcdef0123456789abcdef01234567",
+  "author": {
+    "name": "Avery Example",
+    "email": "avery@example.com",
+    "login": "avery-example"
+  },
+  "committer": {
+    "name": "Casey Example",
+    "email": "casey@example.com",
+    "login": "casey-example"
+  },
+  "authored_at": "2026-07-14T09:15:00-04:00",
+  "committed_at": "2026-07-14T14:20:00+01:00",
+  "owner_attribution": "unknown"
 }
 ```
+
+`repo` is the adapter-supplied `owner/name` repository identity. `commit_sha` must match `^[0-9a-f]{40}$`; an abbreviated or uppercase SHA, or one containing any non-hexadecimal character, is invalid at acquisition. The envelope `source_record_id` must match the exact, non-normalized concatenation required above or the record is invalid before §19.4 duplicate classification. The §19.4 identity, idempotency, and conflict rules apply without a GitHub-specific exception.
+
+`author` and `committer` are required closed identity objects whose only permitted members are the optional nullable `name`, `email`, and `login` strings supplied by the adapter. Their values are inert provenance under §11's boundary and text-hygiene policy, not locally verified identities. `authored_at` and `committed_at` are required offset-aware datetimes recorded by the upstream source. The importer maps `committed_at` to `RawLog.occurred` as `OccurredAt(start=committed_at, end=None, precision="exact_datetime", confidence="high")`: the upstream record supplies an exact commit instant rather than an inferred temporal placement, and §12 rule 3 preserves its supplied offset in storage. `authored_at` remains separate provenance and never replaces that OccurredAt anchor; `RawLog.recorded_at` remains the independent service-assigned import time under §5.4. Temporal confidence `high` states only confidence in that source-recorded placement and grants no stronger evidence, attribution, or ownership semantics.
+
+Each `files` member is a source-reported repository filename, and `url` is a source-reported locator. Both remain inert provenance under §29.4: neither selects, opens, dereferences, or fetches content, and neither grants filesystem or network authority in V1.
+
+`owner_attribution` is typed by `OwnerAttribution` (§10). When omitted, validation materializes `unknown` before §19.4 canonical body serialization and content-hash verification, so omission and an explicit `unknown` have one validated body. The field is an upstream-adapter or owner assertion that Exp2Res preserves but neither verifies nor infers from `author` or `committer` identity strings. Only `owner_attribution = "owner"` creates `EvidenceItem(strength="commit_or_pr")`; every other canonical value creates `EvidenceItem(strength="artifact_reference")`. This mapping establishes only the evidential scope in §9.4 and never supplies an `OwnershipLevel` or bypasses §16.4.
 
 Import behavior:
 
 ```text
 create raw_log(entry_type=github_commit, source_type=imported_artifact)
-create evidence_item(strength=commit_or_pr)
-extract narrow implementation facts
+create evidence_item(strength from owner_attribution mapping above)
+extract only narrow source-supported implementation facts
 ```
 
 ## §19.4 Integration Envelope and Batch Semantics

@@ -10,7 +10,7 @@ No generator, linter, generated documentation, separate machine-readable registr
 
 `OwnershipLevel` is a normative total order. Members in its assignment are listed from weakest to strongest; `unknown` is the weakest value.
 
-`DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry; `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target. `CLIResultStatus` types the §14.14 result envelope independently of processing-run status or semantic verification status.
+`DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry; `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target. `OwnerAttribution` types the §19.3 GitHub payload field asserted by the upstream adapter or owner; §19.3 owns its conservative default and importer strength mapping. `CLIResultStatus` types the §14.14 result envelope independently of processing-run status or semantic verification status.
 
 ```python
 from typing import Literal
@@ -55,6 +55,8 @@ EvidenceStrength = Literal[
     "commit_or_pr",
     "design_doc",
 ]
+
+OwnerAttribution = Literal["owner", "not_owner", "unknown"]
 
 OwnershipLevel = Literal[
     "unknown",
