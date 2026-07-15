@@ -237,7 +237,7 @@ Then ResumeBranch.assessment_snapshot_id equals that exact ID
 And every bullet source_self_claim_ids is the exact set of supported member claims that guided that bullet
 And generation or export fails if the anchor is superseded or becomes status-ineligible
 
-Given the writer used a self-claim but omitted its ID from source_self_claim_ids
+Given a staged bullet whose source_self_claim_ids differs from the exact self-claim set supplied to its writer invocation
 Then Stage 10 fails before the branch or bullet becomes current
 ```
 
@@ -296,8 +296,11 @@ Then it appears only in an explicit Stage 6 or Stage 10 replacement generation
 Test:
 
 ```text
+Given the extractor returns occurred = null
+Then the persisted fact carries its governing record's placement, copied by Stage 3 under §13.3 rule 10 and §15.11
+
 Given a governing RawLog OccurredAt and no stronger temporal statement in the selected extraction context
-When the fact extractor widens beyond that source window, emits a stronger TemporalPrecision, or raises TemporalConfidence
+When the fact extractor emits a non-null occurred that widens beyond that source window, a stronger TemporalPrecision, or a raised TemporalConfidence
 Then structured validation fails and no replacement fact generation commits
 
 Given selected in-context evidence explicitly supports a contained narrower placement
@@ -426,10 +429,10 @@ And a generated bullet, claim, or report line asserting the owner meets that dem
 Test:
 
 ```text
-Given a project assessment writer emits typed current unanswered GapQuestion references as unknowns and Stage 7 records claim counterevidence
+Given a project assessment synthesis over current unanswered GapQuestions where Stage 7 records claim counterevidence
 When Stage 6 persists and §17 renders the snapshot
 Then scope_target equals the canonical §14.9 project selector
-And gap_question_ids exactly equals the duplicate-free writer unknown set
+And Stage 6 service-populates gap_question_ids with exactly the duplicate-free current unanswered set it supplied to the writer
 And Unknowns and Questions Worth Answering dereference those rows without adding declarative snapshot prose
 And every non-empty claim counterevidence list renders with its claim ID and visible status
 And each counterevidence entry renders its statement with a typed reference resolving inside that claim's §15.5 bundle
@@ -438,15 +441,15 @@ And neither channel improves §16.11 aggregation or independently guides Stage 1
 Given a counterevidence entry references a row outside the supplied §15.5 bundle, an unresolvable ID, or duplicates another entry's reference
 Then the Stage 7 finding is invalid structured output and no verification state commits
 
-Given a missing, duplicate, superseded, or free-form unknown value
-Then Stage 6 fails atomically instead of storing it in metadata or another prose field
+Given a §15.4 response that returns an unknowns list, a summary field, or another service-owned field
+Then it is invalid structured output under §11's field-authorship policy and §15.11
 
-Given at least one current unanswered Stage 4 gap exists
-When the assessment writer omits it or returns an empty unknowns array
+Given a staged snapshot whose gap_question_ids omits a current unanswered gap or duplicates one
+When the Stage 6 transaction validates the batch
 Then the complete-state check fails and no snapshot batch commits
 
 Given a current gap has answered = true under §14.7
-Then Stage 6 excludes it from the gap input and rejects it if the writer returns it as an unknown
+Then Stage 6 excludes it from both the writer's gap input and the service-populated gap_question_ids
 
 Given a current snapshot references a gap that the owner answers afterwards
 When the snapshot is rendered or exported without regeneration
@@ -605,8 +608,8 @@ And a writer claim citing an unsupplied fact or signal is invalid structured out
 
 Given a raw log captured with --project Exp2Res governs a correction lineage
 When facts extract from that lineage
-Then each fact's project equals its governing record's project exactly under §13.3 rule 13
-And an extractor-authored, renamed, or re-cased project value is invalid structured output
+Then Stage 3 sets each fact's project to its governing record's project exactly under §13.3 rule 13
+And a §15.2 response that emits a project value is invalid structured output under §15.11
 
 Given a text-only §14.4 correction to that project-tagged log with no explicit project replacement
 Then the correction stores the target's project exactly
