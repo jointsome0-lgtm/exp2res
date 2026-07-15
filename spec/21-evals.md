@@ -1188,10 +1188,10 @@ Given a stored-boundary fixture presents any same unsupported local form directl
 When §29.4 validates the locator before prompt composition
 Then serialization fails before a provider call and the locator is never reinterpreted or transmitted
 
-Given two case variants beneath one selected root resolve to the same file on a case-folding filesystem
-When acquisition canonicalizes each locator before the mandatory-deny and user-ignore checks
-Then both yield the same canonical real-path bytes and the same deny/ignore decision
-And the byte-wise comparison introduces no path case folding of its own
+Given two case variants beneath one selected root resolve to the same file on a case-insensitive volume, including a denied name supplied as .ENV
+When acquisition canonicalizes each locator and applies the mandatory-deny and user-ignore checks
+Then both variants receive the same decision even when canonicalization preserves the supplied spelling, because on such a volume the same comparisons additionally apply under the locale-independent case fold and the case variant of the denied name is denied
+And on a case-sensitive volume the comparison stays purely byte-wise and introduces no case folding of its own
 ```
 
 ## §21.43 LLM Transport Is Bounded, Foreground, and Fail-Closed
@@ -1318,7 +1318,7 @@ And show adds the complete parsed value but never JobDescription.raw_text
 Given job description J has current and historical branches, their bullets and bullet findings, corresponding managed branch outputs, and managed migration backups
 And unrelated current assessment views plus current and historical snapshots, claims, and assessment findings exist
 When the owner confirms jd delete for J
-Then the service first deduplicates, enumerates, and attempts removal of every managed migration backup and every dependent-owned out/<branch>/ directory — a captured branch name whose fold-equal current branch survives outside the captured set, because a later resume generate reused the name against a different job description, keeps that other branch's current export untouched, while a captured name with no surviving current owner is removed as stale managed output
+Then the service first deduplicates, enumerates, and attempts removal of every managed migration backup and every dependent-owned out/<branch>/ directory, deciding ownership by actual canonical path — a captured directory is spared only when a current branch outside the captured set owns that same canonical path (byte-equal stored name, or one canonical path on a case-insensitive volume) because a later resume generate reused the name against a different job description; on a case-sensitive volume a fold-equal current branch with a different spelling owns a different directory and spares nothing, and a captured directory with no surviving current owner is removed as stale managed output
 And one referentially ordered transaction deletes every bullet finding of those branches, every dependent bullet, every current and historical dependent branch, and J without FK blocking
 And the closed result reports the selected raw-text-free J projection, every purged branch by ID and name, and every successfully removed managed path
 And the unrelated current assessment views remain current, while every current or historical assessment snapshot, claim, and assessment finding remains unchanged
