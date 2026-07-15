@@ -1,10 +1,10 @@
-# Exp2Res — Experience to Self-Assessment to Resume
+# Exp2Res — Experience to Self-Assessment to Verified Bullet Pack
 
-> A mirror first. A resume exporter second.
+> A mirror first. A verified-bullet-pack exporter second.
 
 Exp2Res is a local-first, provenance-heavy self-assessment system.
 
-It turns owner-controlled experience evidence that automation cannot rewrite into an honest model of skills, patterns, gaps, contradictions, and uncertainty. Resume generation is a secondary export: job-targeted bullets are generated only from supported evidence and verified before export.
+It turns owner-controlled experience evidence that automation cannot rewrite into an honest model of skills, patterns, gaps, contradictions, and uncertainty. A verified bullet pack is a secondary export: job-targeted bullets are generated only from supported evidence and verified before export. A full resume document model is deferred to a post-mirror iteration.
 
 ## Project stage: design specification
 
@@ -21,8 +21,8 @@ To read the design, start with the § index in `SDD.md` and open the section fil
 ## Design boundaries
 
 - **Local-first and private by default.** The owner's workspace is the only canonical store; nothing is sent anywhere on system initiative. LLM calls happen only inside explicit, user-initiated pipeline runs against an explicitly selected provider.
-- **Evidence over impressiveness.** Raw records are append-only to automation, every derived claim traces to evidence, contradictions are first-class, and verifier gates block flattery, inflated ownership, invented metrics, and unsupported resume claims.
-- **The resume never becomes the master model.** Experience model → self-assessment → export projection → resume, in that order.
+- **Evidence over impressiveness.** Raw records are append-only to automation, every derived claim traces to evidence, contradictions are first-class, and verifier gates block flattery, inflated ownership, invented metrics, and unsupported generated-bullet claims.
+- **The export never becomes the master model.** Experience model → self-assessment → export projection → verified bullet pack, in that order.
 
 ## Ecosystem
 

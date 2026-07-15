@@ -12,15 +12,16 @@ The system must be honest before it is comforting.
 
 A sweet false story may feel good, but if one detail changes — market feedback, a failed interview, a health constraint, a project collapse, a deadline, a contradiction — the false story can turn into a nightmare. Exp2Res should therefore preserve uncertainty, weakness, gaps, and counterevidence instead of smoothing them into a flattering narrative.
 
-The resume pipeline remains in the system, but it is downstream:
+The verified-bullet-pack pipeline remains in the system, but it is downstream:
 
 ```text
 Self-assessment core
-  -> relevance-aware resume generation for a job description
+  -> isolated relevance-aware bullet generation for a job description
   -> single-pass verifier gate
-  -> export
+  -> verified bullet-pack export
 ```
 
 Every external claim must remain traceable to internal evidence.
+V1 does not claim to produce a complete resume document; that document model is deferred to a post-mirror iteration.
 
 ---

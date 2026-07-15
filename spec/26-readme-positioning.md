@@ -3,23 +3,23 @@
 Recommended README intro:
 
 ```markdown
-# Exp2Res — Experience to Self-Assessment to Resume
+# Exp2Res — Experience to Self-Assessment to Verified Bullet Pack
 
 Exp2Res is a local-first, provenance-heavy self-assessment system.
 
-It turns owner-controlled experience evidence that automation cannot rewrite into an honest model of skills, patterns, gaps, contradictions, and uncertainty. Resume generation is a secondary export: job-targeted bullets are generated only from supported evidence and verified before export.
+It turns owner-controlled experience evidence that automation cannot rewrite into an honest model of skills, patterns, gaps, contradictions, and uncertainty. A verified bullet pack is a secondary export: job-targeted bullets are generated only from supported evidence and verified before export. A full resume document model is deferred to a post-mirror iteration.
 ```
 
 Recommended tagline:
 
 ```text
-A mirror first. A resume exporter second.
+A mirror first. A verified-bullet-pack exporter second.
 ```
 
 Portfolio tagline:
 
 ```text
-Evidence-backed self-assessment and verifier-gated resume generation from owner-controlled experience logs.
+Evidence-backed self-assessment and verifier-gated, job-targeted bullet packs from owner-controlled experience logs.
 ```
 
 ## §26.1 License and Policy Positioning

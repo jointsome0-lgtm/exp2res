@@ -210,12 +210,12 @@ Test:
 
 ```text
 Given each VerificationStatus value on a current snapshot, self-claim, or bullet
-When the row is offered to Stage 10, resume export, or assessment export
+When the row is offered to Stage 10, verified-bullet-pack export, or assessment export
 Then the result matches the applicable §16.11 allowlist
 And unverified always fails
 And a partially_supported or inferred_but_acceptable snapshot may anchor Stage 10
-And may remain the branch anchor through resume export when every used self-claim and bullet is supported
-But a self-claim or bullet with either status cannot become resume content
+And may remain the branch anchor through verified-bullet-pack export when every used self-claim and bullet is supported
+But a self-claim with either status cannot guide bullet generation and a bullet with either status cannot enter the verified bullet pack
 And every assessment-exported non-supported state is visibly labeled
 
 Given snapshot summary prose has no exactly matching narrative_summary member claim
@@ -223,7 +223,7 @@ When Stage 7 or assessment export validates the snapshot
 Then the operation fails instead of bypassing claim verification
 ```
 
-## §21.17 Resume Generation Has One Exact Snapshot Anchor
+## §21.17 Bullet Generation Has One Exact Snapshot Anchor
 
 Test:
 
@@ -466,7 +466,7 @@ Given source facts describe an independent project, competition, or learning exp
 When the resume writer emits a generated bullet that renders the experience as employment
 And Stage 11 verifies that candidate
 Then the resume verifier returns rejected under §16.8
-And the bullet cannot pass resume export
+And the bullet cannot pass verified-bullet-pack export
 And Stage 11 does not rewrite or drop the bullet
 ```
 
@@ -649,14 +649,14 @@ When the later generation replaces the earlier view and its snapshot is exported
 Then they canonicalize to one assessment-view identity while the two snapshots retain distinct never-reused IDs
 And publication uses the later snapshot ID and removes or reports every prior manifest-valid assessment directory naming that same view without touching another view
 
-Given resume generation receives a non-blank §11-valid display name such as assessment, assessment., "assessment ", or assessment/global
+Given bullets generate receives a non-blank §11-valid display name such as assessment, assessment., "assessment ", or assessment/global
 When the branch is generated and exported
 Then the name is neither rejected nor transformed for path purposes and assessment is not a reserved branch name
 And the complete set lands only in out/branch/<branch-id>/ while the owner's exact display spelling appears only in its matching manifest
 And the branch ID, not any encoding of that display name, is the exact bounded lowercase-ASCII path key
 
 Given a current branch named Agent exists
-When resume generation runs with --branch agent
+When bullets generate runs with --branch agent
 Then the NFC case-folded identities match and the Agent branch is superseded rather than joined by a second current row
 And replacement and selection identity do not derive the output path: each branch's distinct opaque ID does, so names cannot collide or alias output directories
 ```
@@ -787,8 +787,8 @@ When verification acquires the lock first
 Then its complete status update commits before replacement and the replacement subsequently supersedes that target
 When replacement acquires the lock first and assess verify uses the superseded snapshot ID
 Then assessment verification rejects that selector and commits no status to it
-When replacement acquires the lock first and verify --branch resolves the branch name
-Then resume verification uses only the new post-commit current branch or fails if no current branch exists
+When replacement acquires the lock first and bullets verify --branch resolves the branch name
+Then bullets verify uses only the new post-commit current branch or fails if no current branch exists
 And neither ordering can commit verifier state to a target that is superseded at that commit boundary
 
 Given either export command races with supersession of its selected generation
@@ -1096,7 +1096,7 @@ Given logs delete reports its selected record and known external source path
 Then result contains the closed captured pre-deletion projection including external_ref
 And it contains neither raw_text nor metadata
 
-Given assess verify or verify --branch completes with non-passing findings
+Given assess verify or bullets verify --branch completes with non-passing findings
 When its result is emitted
 Then it exits 10 with status blocked and the complete VerificationFinding values
 And its verifier processing run remains completed rather than failed
@@ -1497,16 +1497,17 @@ And rendering reads only the explicitly selected current derived state
 And every user action delegates to an existing §14 flow with that flow's selectors, lock, confirmation, exit class, and §14.14 result semantics
 And the view adds no command, mutation path, implicit selector, LLM call, network authority, or background work
 
-Given the JD-to-resume view's existing §14.10 flow reaches an export refusal required by §18 or a §16.11 gate without an operational failure
+Given the JD-to-bullet-pack view's existing §14.10 flow reaches an export refusal required by §18 or a §16.11 gate without an operational failure
 When the view renders the completed result
 Then it presents the §14.14 blocked outcome, reason, and findings as a first-class result rather than an error page
 And an operational validation or cleanup failure remains failed and is never relabeled as a semantic refusal
 
 Given an export-eligible selected current assessment view contains one still-unanswered gap and one gap answered since synthesis
-When §13.12–§13.14 publish the selected snapshot's manifest-backed out/assessment/<snapshot-id>/gap_questions.md and the shell discovers it through that manifest or the §14.14 export result
-Then the file contains only the still-unanswered GapQuestion.question value selected by §17
-And it contains no answered question, consumer identity, callback, gap ID, or answer link-back token
-Given the owner answers a question surfaced through that file
+When §13.12–§13.14 publish the selected snapshot's manifest-backed out/assessment/<snapshot-id>/self_claims.json and the shell discovers it through a successful §14.14 export result or by revalidating current output for its configured assessment-view identity
+Then the shell performs §13.14's complete current-output revalidation and validates the closed companion schema
+And it projects only unknowns entries with answered = false and presents only their question values selected by §17
+And it exposes no other companion field, answered question, consumer identity, callback, gap ID, or answer link-back token
+Given the owner answers a question surfaced through that projection
 When the answer returns to Exp2Res
 Then it enters only as an ordinary diary or activity RawLog through an existing capture or import flow
 And no shell callback or link-back protocol exists
@@ -1560,6 +1561,58 @@ When cleanup attempts to enumerate or remove that set
 Then only the exact contained ID-keyed path can be acted on
 And the outside target remains byte-for-byte unchanged while the unsafe path is reported as a residual
 And an unresolved stale-set residual aborts replacement publication without touching another assessment view's ID-keyed set
+```
+
+## §21.48 Stage 12 Exports Are Closed, Byte-Identical, and Evidence-Complete
+
+Test (enforces §5.5, §11, §13.10, §13.12, §13.14, §14.10, §14.14 rule 5, §15.6, §16.7, §16.11, and §17–§18):
+
+```text
+Given one export-eligible current assessment snapshot and one export-eligible current verified bullet-pack branch whose persisted rows and source bytes do not change
+When export assessment and bullets export each render the same selected entity twice
+Then the assessment's report.md, self_claims.json, and evidence_map.json bytes match their pinned golden files on both runs
+And the branch's bullet_pack.md, evidence_map.json, verification_report.json, gaps.json, and contradictions.json bytes match their pinned golden files on both runs
+And each pair of repeated fixed-member bytes and corresponding manifest member hashes is identical
+And report.md and bullet_pack.md are UTF-8 and NFC with the §17 source-voice exception, use the required LF rules, and end in exactly one LF
+And every JSON companion is UTF-8 with §13.12's canonical key, value, list, datetime, whitespace, and final-LF encoding
+
+Given each assessment and bullet-pack JSON companion contains schema_version = 1 and exactly its §13.12 field set
+When the closed companion validators run
+Then every document validates with undeclared fields forbidden at every nesting level
+When any fixture adds or omits a field, changes a field type, supplies an unsupported schema version, duplicates a typed ID, or leaves a typed reference unresolved
+Then export fails before §13.14 publication and no partial or prior set is reported as the new result
+
+Given bullet_pack.md contains one multi-sentence claim-guided bullet and one facts-only bullet
+When its §13.12 evidence_map.json is validated
+Then every rendered sentence belongs to exactly one rendered_bullets row whose text is the normalized pre-escape value
+And each claim-guided row round-trips through its exact claim links and their declared signal and/or direct-fact edges to fact links, evidence links, and current typed domain rows
+And each facts-only row starts at its exact source_fact_ids and reaches the same fact, evidence-item, and raw-log closure without an invented claim edge
+And verification_report.json contains exactly one same-order current finding for each rendered_bullets row and no other bullet ID
+And the renderer contributes only §18 headings, list markers, separators, and §17 escaping or continuation syntax, with no factual bridge, summary, transition, filler, or inferred coherence prose
+Given any closure member is missing, unresolved, unused, or inconsistent with the persisted §11 relations
+Then export fails before publication instead of repairing, omitting, or supplementing the evidence map
+
+Given a report or bullet-pack fixture has empty sections, partially populated sections, or an answered-since-synthesis unknown
+When §17–§18 render it repeatedly
+Then every fixed heading and selected row appears in its specified deterministic order
+And empty sections contain no placeholder, inferred transition, synthetic summary, or fabricated filler
+And an approximate or ranged OccurredAt remains visibly approximate or ranged under §5.5 and §17 without a narrower invented date
+
+Given nonexcerpt report or bullet values derived from source-backed rows contain every §17 Markdown metacharacter plus embedded tabs and newlines
+When the deterministic Markdown renderer processes them
+Then escaping and continuation syntax preserve the value without creating an extra heading, list item, link, fence, or block
+And a validated source-voice excerpt containing hostile Markdown remains byte-exact inside §17's deterministic fence rather than becoming renderer-authored prose
+
+Given a Stage 10 candidate batch contains two text values that are byte-equal after §11 text hygiene and one semantically similar value that remains byte-distinct after the §13.12 projection
+When §13.10 planning applies its canonical sort and exact-duplicate rule
+Then it retains the first byte-equal candidate by that order, drops every later exact duplicate before persistence, and retains the byte-distinct value
+And it performs no semantic near-duplicate LLM pass, second coherence pass, sibling-bullet context widening, rewrite, or renderer deduplication
+
+Given bullets generate, bullets verify --branch, and bullets export --branch run with --json
+When §14.14 emits their results
+Then each envelope carries its canonical bullets command discriminator and process-matching status and exit code
+And generate and verify use result = null while export uses only the closed manifest_path and complete managed_paths projection after current-output revalidation
+And a completed non-passing verification or §16.11 export refusal remains a blocked class-10 result rather than an operational failure
 ```
 
 ---
