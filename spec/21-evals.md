@@ -627,31 +627,38 @@ When Stage 6 runs for that view
 Then the run fails before any provider call and no snapshot is persisted
 ```
 
-## §21.34 Assessment Exports Are Namespaced Per View
+## §21.34 Managed Exports Are ID-Keyed and Manifest-Identified
 
 Test:
 
 ```text
-Given a current global snapshot and a current project snapshot for target "Exp2Res"
-When each is exported under §13.12
-Then the global files land in out/assessment/global/
-And the project files land in out/assessment/project--exp2res/ using the case-folded canonical percent-encoded target
-And the second export does not overwrite or remove the first view's files
+Given a current global snapshot G and a current project snapshot P for target "Exp2Res"
+When each is exported under §13.12 through §13.14
+Then their complete sets land only in out/assessment/<G.id>/ and out/assessment/<P.id>/
+And G.id and P.id are the exact bounded lowercase-ASCII path-key forms allocated by the service, never encodings of scope or target text
+And each valid matching manifest carries its snapshot ID, exact assessment-view identity, and §13.14 render-input hash while no scope or scope-target string contributes a path component
+And exporting P neither overwrites nor removes G's set
 
-Given re-verification changes the project snapshot's status
-Then removal targets exactly that snapshot's view directory and its dependent branch exports
-And the global view directory is untouched
+Given re-verification or gaps answer changes state read by P's renderer while P's entity ID, generation ID, and source IDs remain unchanged
+Then the prior manifest's recomputed render-input hash differs and that set is no longer current
+And invalidation targets exactly P's snapshot-ID directory and the out/branch/<branch-id>/ sets of branches dependent on P
+And G's directory is untouched
 
 Given two project targets that differ only in case or surrounding whitespace
-Then they canonicalize to one view and one directory, and the later generation replaces the earlier
+When the later generation replaces the earlier view and its snapshot is exported
+Then they canonicalize to one assessment-view identity while the two snapshots retain distinct never-reused IDs
+And publication uses the later snapshot ID and removes or reports every prior manifest-valid assessment directory naming that same view without touching another view
 
-Given resume generation is invoked with --branch assessment, --branch Assessment, a path-normalizing alias such as "assessment." or "assessment ", or a branch name containing a path separator such as assessment/global
-Then command parsing fails because a branch is a single plain path segment and out/assessment/ is the reserved assessment namespace
+Given resume generation receives a non-blank §11-valid display name such as assessment, assessment., "assessment ", or assessment/global
+When the branch is generated and exported
+Then the name is neither rejected nor transformed for path purposes and assessment is not a reserved branch name
+And the complete set lands only in out/branch/<branch-id>/ while the owner's exact display spelling appears only in its matching manifest
+And the branch ID, not any encoding of that display name, is the exact bounded lowercase-ASCII path key
 
 Given a current branch named Agent exists
 When resume generation runs with --branch agent
 Then the NFC case-folded identities match and the Agent branch is superseded rather than joined by a second current row
-And no two current branches fold equal, so branch directories never collide or alias on a case-insensitive or normalization-insensitive filesystem
+And replacement and selection identity do not derive the output path: each branch's distinct opaque ID does, so names cannot collide or alias output directories
 ```
 
 ## §21.35 Entity Identity Is Unique, Immutable, and Never Reused
@@ -1175,7 +1182,7 @@ And cross-language extraction grants no evidence or overclaim exception
 Given one label pair has code-point sequences "Caf\u00e9" and "Cafe\u0301" and another pair is "I" and "i"
 When either pair is used as a project scope target and copied project provenance, or as a branch name and selector
 Then NFC plus locale-independent Unicode Default Case Folding yields one project match and assessment-view identity and one branch replacement identity
-And view-slug derivation cannot create a second managed-output identity
+And neither folded identity becomes a managed-output path component: §13.14 derives each directory only from the opaque snapshot or branch ID
 And "I" and "i" yield the same identities under both the C and Turkish process locales
 When either pair instead occurs as two EvidenceItem.title values whose owning rules name no normalization or fold
 Then its validated code points remain distinct and no title or duplicate comparison collapses them
@@ -1319,7 +1326,8 @@ And show adds the complete parsed value but never JobDescription.raw_text
 Given job description J has current and historical branches, their bullets and bullet findings, corresponding managed branch outputs, and managed migration backups
 And unrelated current assessment views plus current and historical snapshots, claims, and assessment findings exist
 When the owner confirms jd delete for J
-Then the service first deduplicates, enumerates, and attempts removal of every managed migration backup and every dependent-owned out/<branch>/ directory, deciding ownership by actual canonical path — a captured directory is spared only when a current branch outside the captured set owns that same canonical path (byte-equal stored name, or one canonical path on a case-insensitive volume) because a later resume generate reused the name against a different job description; on a case-sensitive volume a fold-equal current branch with a different spelling owns a different directory and spares nothing, and a captured directory with no surviving current owner is removed as stale managed output
+Then the service first deduplicates, enumerates, and attempts removal of every managed migration backup and every dependent out/branch/<branch-id>/ set derived from a captured branch's opaque ID
+And no surviving branch outside the captured set can own or spare a captured directory: IDs never collide or are reused, so a later branch for another job description keeps its own distinct ID-keyed output even when its stored name is byte-equal or fold-equal, independent of filesystem case or normalization behavior
 And one referentially ordered transaction deletes every bullet finding of those branches, every dependent bullet, every current and historical dependent branch, and J without FK blocking
 And the closed result reports the selected raw-text-free J projection, every purged branch by ID and name, and every successfully removed managed path
 And the unrelated current assessment views remain current, while every current or historical assessment snapshot, claim, and assessment finding remains unchanged
@@ -1449,7 +1457,7 @@ And no other content is silently substituted, fetched, refreshed, omitted, or tr
 
 ## §21.46 Domain-Routed Imports and Local Views Preserve Authority Boundaries
 
-Test (enforces §5.10, §6.1–§6.2, §9.4, §10, §13.12, §14.5, §14.7, §14.10, §14.14, §16.11, §17–§18, §19.1–§19.2, §19.4, §25.5, §29.2–§29.3, and §30):
+Test (enforces §5.10, §6.1–§6.2, §9.4, §10, §13.12, §13.14, §14.5, §14.7, §14.10, §14.14, §16.11, §17–§18, §19.1–§19.2, §19.4, §25.5, §29.2–§29.3, and §30):
 
 ```text
 Given table-driven valid §19.4 envelopes carry §19.1 bodies adapted from a diary or daily note, a verbal work note, and a focus or time aggregate, each of which explicitly reports activity
@@ -1495,7 +1503,7 @@ Then it presents the §14.14 blocked outcome, reason, and findings as a first-cl
 And an operational validation or cleanup failure remains failed and is never relabeled as a semantic refusal
 
 Given an export-eligible selected current assessment view contains one still-unanswered gap and one gap answered since synthesis
-When §13.12 writes out/assessment/<view>/gap_questions.md for the shell to discover through configuration
+When §13.12–§13.14 publish the selected snapshot's manifest-backed out/assessment/<snapshot-id>/gap_questions.md and the shell discovers it through that manifest or the §14.14 export result
 Then the file contains only the still-unanswered GapQuestion.question value selected by §17
 And it contains no answered question, consumer identity, callback, gap ID, or answer link-back token
 Given the owner answers a question surfaced through that file
@@ -1503,6 +1511,55 @@ When the answer returns to Exp2Res
 Then it enters only as an ordinary diary or activity RawLog through an existing capture or import flow
 And no shell callback or link-back protocol exists
 And later detection regeneration never re-creates a question-to-answer link under §14.7
+```
+
+## §21.47 Managed-Output Publication Is Atomic, Manifest-Gated, and Contained
+
+Test (enforces §8.1, §11, §13.12–§13.14, §14.14, and §29.2):
+
+```text
+Given export-eligible assessment and resume entities whose user-controlled identities contain traversal, separator, reserved-name, dot/whitespace-edge, and Unicode-confusable forms
+And the resume branch display name is exactly "../../outside"
+When each complete set is published through §13.14
+Then its final directory is exactly out/assessment/<snapshot-id>/ or out/branch/<branch-id>/ using the service-assigned bounded opaque ID
+And no user-controlled string is encoded, normalized, truncated, or otherwise used as a managed path component
+And within the managed resume set the hostile display name appears only as closed manifest identity data
+And no managed filesystem operation reaches a path outside the canonical out/ root
+
+Given the out/ entry or any managed ancestor, candidate, rollback, final-set, manifest, or member entry is a planted symlink whose target is inside or outside the workspace
+When the writer attempts its preamble, construction, publication, export-read validation, enumeration, stale-set removal, or deletion
+Then it never follows the symlink and leaves the target byte-for-byte unchanged
+And it skips the unsafe entry, reports the exact residual, and never publishes or reports that entry as current output
+
+Given a process umask that would otherwise permit group or world access
+When the writer creates managed parents, candidate or rollback siblings, final-set directories, members, and manifests
+Then every newly created directory has mode 0700 and every newly created member and manifest has mode 0600 without relying on that umask
+And any mode-setting failure aborts before the set can become current
+
+Given table-driven interruption or crash injection after each fixed member write and immediately before the last-written manifest becomes valid
+And the fixture runs once without a prior set and once with a valid prior current set
+When any reader, index listing, or §14.14 export result validates the managed entries
+Then no partial candidate or directory with an absent, invalid, or mismatched manifest is current or reported as output
+And the prior final set remains current when present
+And the next writer's preamble removes the deterministically named abandoned candidate or reports it once as a residual before new publication
+
+Given a valid prior current set and a candidate encounters disk-full, member or manifest validation failure, or an atomic-exchange failure before the prior entry moves
+When publication fails before its visibility commit point
+Then no candidate is published, database state is unchanged, and the prior set remains current
+And the candidate is removed or its exact path is reported as a residual
+Given the non-exchange fallback instead fails to rename the complete candidate after moving the prior set to a rollback sibling
+Then one no-follow atomic restoration is attempted
+And successful restoration leaves the prior set current, while restoration failure leaves no current final set and reports the recoverable rollback residual without claiming success
+
+Given a final directory whose manifest member SHA-256 does not match the stored member bytes or whose render_input_sha256 does not match the current coherent database render inputs
+When export-read validation, listing, or result emission inspects it
+Then validation fails closed and the directory is neither current output nor returned as a valid export
+
+Given stale-set removal encounters a manifest field, user-controlled identity, changed ancestor, or planted entry that would direct or resolve outside the canonical workspace out/ root
+When cleanup attempts to enumerate or remove that set
+Then only the exact contained ID-keyed path can be acted on
+And the outside target remains byte-for-byte unchanged while the unsafe path is reported as a residual
+And an unresolved stale-set residual aborts replacement publication without touching another assessment view's ID-keyed set
 ```
 
 ---

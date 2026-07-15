@@ -15,8 +15,8 @@ Placement principles:
    not structure: the spec does not predict them.
 5. The spec lives at the repo root (SDD.md map + spec/ + DECISION-LOG.md);
    no docs/ mirror restating it. The runtime workspace (`.exp2res/` and
-   `out/`) is initialized under §14.1 and owned by §14.1 and §13.12; it is
-   not part of the source tree.
+   `out/`) is initialized under §14.1; §13.12 owns export content and §13.14
+   owns managed-output paths/publication. It is not part of the source tree.
 ```
 
 Normative skeleton — the shape §20 commits to; deeper paths are content:
