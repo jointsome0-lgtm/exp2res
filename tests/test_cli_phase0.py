@@ -202,3 +202,15 @@ def test_interactive_capture_validates_timezone_before_owner_text(
         result, envelope = invoke_json(root, command)
         assert result.exit_code == 2
         assert envelope["diagnostic_class"] == "workspace_timezone_required"
+
+
+def test_file_capture_validates_timezone_before_source_read(tmp_path: Path) -> None:
+    """PR #95 review r3: the local-time gate precedes private source acquisition."""
+    root = tmp_path / "unconfigured-workspace"
+    root.mkdir()
+    initialize_workspace(root, clock=lambda: FIXED_NOW)
+    result, envelope = invoke_json(
+        root, ["log", "today", "--file", str(root / "definitely-missing.md")]
+    )
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] == "workspace_timezone_required"

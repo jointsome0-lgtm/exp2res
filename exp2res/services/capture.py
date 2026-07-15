@@ -14,7 +14,7 @@ from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
 from exp2res.errors import IdCollisionError, InvalidInputError
 from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
 from exp2res.services.source_files import read_capture_file
-from exp2res.services.time_input import today_occurred
+from exp2res.services.time_input import today_occurred, workspace_zone
 from exp2res.storage.repository import RawLogBundle
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, require_compatible
 
@@ -136,9 +136,11 @@ def capture_daily_file(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
-    # Fail closed before acquiring the private source file (§12.14, §22).
+    # Fail closed before acquiring the private source file (§12.14, §22);
+    # the local-time contract gates source acquisition too (§14.14).
     require_compatible(workspace)
     config = load_workspace_config(workspace)
+    workspace_zone(require_timezone(config))
     raw_text, external_ref = read_capture_file(source_path, config=config)
     return capture_daily(
         workspace,
