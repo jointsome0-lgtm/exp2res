@@ -18,7 +18,7 @@ assessment snapshot
   -> verified bullet-pack export
 ```
 
-The snapshot, branch, bullets, facts, and self-claims in this pipeline must all be current (`superseded_at IS NULL`). Correction invalidates dependent branches; owner deletion purges their database rows, attempts verified managed-export removal, and reports every residual path as incomplete. Neither path permits an old branch to survive as an apparently valid current bullet-pack export.
+The snapshot, branch, bullets, facts, and self-claims in this pipeline must all be current (`superseded_at IS NULL`). Correction invalidates dependent branches, and owner deletion purges them (§13.13); neither path permits an old branch to survive as an apparently valid current bullet-pack export.
 
 Minimum bullet contract:
 

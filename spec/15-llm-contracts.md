@@ -137,7 +137,7 @@ An extractor may select a displaced-support descriptor's `id`, and then includes
 
 Each fact output selects its supporting evidence explicitly through `evidence_item_ids`. Persistence accepts only item IDs supplied in `evidence_items` or `displaced_support_items`, verifies §13.3 rule 10 and §12.4 selectability, and verifies that `source_log_ids` is exactly their distinct raw-log set before writing one `direct` §12.4 row per item. A selected descriptor's owner `RawLog` is intentionally absent from `raw_logs`, but its `raw_log_id` remains required in `source_log_ids`. Every linked item participates in §9.4 confidence calibration within its evidential scope.
 
-The extractor's emitted `confidence` must be at or below the §9.4 ceiling for its selected evidence, may be conservatively lower, and must be at most `low` when that context contains materially conflicting statements bearing on the fact.
+The extractor's emitted `confidence` must satisfy §9.4's deterministic ceiling and its materially-conflicting-context cap for the selected evidence, and may be conservatively lower.
 
 Every fact output carries every model-authored §11.4 field shown above; Stage 3 supplies `id`, `created_at`, `superseded_at`, and `metadata`. Optional/default model-authored fields are explicit in the contract so a model change cannot silently fall outside the structured boundary.
 
@@ -184,7 +184,7 @@ Do not infer identity from one artifact.
 Do not hide counterevidence.
 ```
 
-`evidence_items` is exactly the duplicate-free set reached through the supplied current facts, serialized under §13.3 rule 10's universal displaced-record projection, and is context for §9.4 confidence calibration; signal provenance remains the fact IDs in §11.5. Candidate `SelfSignal.confidence` obeys §9.4's propagation caps: it cannot exceed the supporting-fact maximum, `high` requires at least two supporting facts reached through at least two distinct raw logs, and non-empty `counter_fact_ids` cap it at `medium`. Prior signals are never inputs because Stage 5 produces a complete replacement generation. Raw gap answers are not inputs either: §13.5 requires them to pass through Stage 3 first, so only re-extracted current facts and their linked evidence can influence this contract.
+`evidence_items` is exactly the duplicate-free set reached through the supplied current facts, serialized under §13.3 rule 10's universal displaced-record projection, and is context for §9.4 confidence calibration; signal provenance remains the fact IDs in §11.5. Candidate `SelfSignal.confidence` obeys §9.4's propagation caps. Prior signals are never inputs because Stage 5 produces a complete replacement generation. Raw gap answers are not inputs either: §13.5 requires them to pass through Stage 3 first, so only re-extracted current facts and their linked evidence can influence this contract.
 
 ## §15.4 Self-Assessment Writer Contract
 
@@ -325,7 +325,7 @@ Output:
 
 Every `status` uses the canonical meaning in §16.11. Stage 7 validates one finding for every claim in the snapshot and derives the snapshot's own status from those claim results; the writer or verifier may not assign a more permissive snapshot label independently.
 
-`suggested_rewrite` is owner-facing advisory output of the one command class that invokes Stage 7 (§14.9). It is persisted only as verification-finding history (§11.14), never applied by Stage 7, never passed to §15.4, §15.6, or any later prompt, and never rendered by §17 or §18 exports. If the owner requests revised wording, the assessment writer must emit a new claim in a later Stage 6 replacement generation.
+`suggested_rewrite` is owner-facing advisory output presented through §14.9 and follows §11.14's inspect-only lifecycle; revised wording requires a Stage 6 replacement generation (§13.7).
 
 ## §15.6 Resume Writer Contract
 
@@ -436,7 +436,7 @@ Output:
 }
 ```
 
-`status` uses §16.11. Stage 11 validates one finding for every current bullet and persists `status`, `unsupported_phrases`, and `reason` both to the denormalized `ResumeBullet.verification_status`, `unsupported_phrases`, and `verifier_reason` fields and inside the complete §11.14 `VerificationFinding` (§11.8, §13.11). `suggested_rewrite` is owner-facing advisory output: it is presented by §14.10, persisted only as verification-finding history, never applied, never passed to any later prompt, and never rendered by §17 or §18 exports.
+`status` uses §16.11. Stage 11 validates one finding for every current bullet and persists `status`, `unsupported_phrases`, and `reason` both to the denormalized `ResumeBullet.verification_status`, `unsupported_phrases`, and `verifier_reason` fields and inside the complete §11.14 `VerificationFinding` (§11.8, §13.11). `suggested_rewrite` is owner-facing advisory output presented through §14.10 and follows §11.14's inspect-only lifecycle; revised wording requires a Stage 10 replacement generation (§13.11).
 
 Stage 11 applies §13.3 rule 10 when assembling this provenance context. `source_facts` is exactly the duplicate-free fact set named by `resume_bullet.source_fact_ids`. `source_logs` contains exactly the duplicate-free retained `RawLog` objects reached through those facts' §12.4 rows whose owning records are not displaced; it never contains a displaced `RawLog` object. Both arrays are ID-ordered ascending by byte order. This contract serializes no `EvidenceItem` object. A fact may retain displaced-support identities in its `evidence_item_ids` and `source_log_ids`, but those remain opaque provenance references here: neither the displaced item nor its `RawLog` is hydrated. `resume_bullet.source_log_ids` remains the exact raw-log identity set reached through all source facts, including displaced identities whose objects are intentionally absent, so provenance stays visible without displaced prose.
 

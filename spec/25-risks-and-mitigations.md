@@ -1,5 +1,7 @@
 ## §25. Risks and Mitigations
 
+Like §27, this section is reference-only: each mitigation names a rule whose normative home is its owning section, and a mitigation line is never a second normative home.
+
 ## §25.1 Risk: Exp2Res Becomes a Resume Tool Again
 
 Mitigation:
