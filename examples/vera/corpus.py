@@ -211,7 +211,7 @@ def atlas_artifact() -> str:
     return atlas_text() + "\n"
 
 
-def atlas_body(text: str, summary: str) -> dict:
+def atlas_body(text: str, summary: str, with_artifact: bool = True) -> dict:
     return {
         "source": "atlas",
         "domain": "knowledge_state",
@@ -224,8 +224,14 @@ def atlas_body(text: str, summary: str) -> dict:
             {"label": ATLAS_TRAIL["label"], "occurred": dict(ATLAS_TRAIL["occurred"])}
         ],
         "evidence_references": [{"reference": ATLAS_REFERENCE}],
-        "path": ATLAS_ARTIFACT_RELPATH,
-        "content_digest": hashlib.sha256(atlas_artifact().encode("utf-8")).hexdigest(),
+        # §19.2 allows the null pair; the mismatch fixture uses it so its ONLY
+        # failure stays the summary/text embedding, not an unresolvable locator
+        # under invalid/'s payload root (§29.4).
+        "path": ATLAS_ARTIFACT_RELPATH if with_artifact else None,
+        "content_digest": (
+            hashlib.sha256(atlas_artifact().encode("utf-8")).hexdigest()
+            if with_artifact else None
+        ),
     }
 
 
@@ -524,8 +530,10 @@ def replay() -> dict:
          "branch": "backend-clouddocs", "snapshot_step": "E4",
          "clock": "2026-07-12T11:00:00+02:00",
          "note": "the honest-mirror path: learning-grade Kubernetes evidence never "
-                 "promotes to production claims (§5.10, §16)",
-         "expect": {"status": "ok",
+                 "promotes to production claims (§5.10, §16); the supported bullet "
+                 "comes from the preferred Kubernetes-familiarity requirement, so "
+                 "P1's dependent purge is guaranteed material to purge",
+         "expect": {"status": "ok", "supported_bullets_min": 1,
                     "blocked_claims": ["production Python services",
                                        "PostgreSQL in production",
                                        "on-call rotation"]}},
@@ -552,10 +560,14 @@ def replay() -> dict:
          "clock": "2026-07-14T10:00:00+02:00",
          "note": "runs first, while its dependent branch/bullets/findings still exist: "
                  "dependent purge, no recompute (§13.13 rule 10); after P2's global "
-                 "reset there would be nothing left to exercise"},
+                 "reset there would be nothing left to exercise",
+         "expect": {"status": "ok", "purged_branches": ["backend-clouddocs"],
+                    "residual_paths": []}},
         {"step": "P2", "kind": "logs_delete", "target_file": "logs/daily-2026-06-20.md",
          "clock": "2026-07-14T11:00:00+02:00",
-         "note": "point deletion, global derived reset, Stage 3-5 rebuild (§13.13)"},
+         "note": "point deletion, global derived reset, Stage 3-5 rebuild (§13.13)",
+         "expect": {"status": "ok", "derived_reset": "global",
+                    "rebuild_through": "stage_5", "residual_paths": []}},
     ]
     return {
         "corpus": CORPUS_NAME,
@@ -633,7 +645,7 @@ def build_files() -> dict:
     mismatch_summary = ATLAS_SUMMARY + " Extra sentence absent from text."
     files["invalid/atlas-snapshot-text-mismatch.json"] = json_file(
         envelope("atlas", "vera-atlas-snapshot-2026-07-05-broken", "2026-07-05T21:00:00+02:00",
-                 atlas_body(text, mismatch_summary))
+                 atlas_body(text, mismatch_summary, with_artifact=False))
     )
 
     files["replay.json"] = json_file(replay())

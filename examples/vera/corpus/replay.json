@@ -115,11 +115,12 @@
           "PostgreSQL in production",
           "on-call rotation"
         ],
-        "status": "ok"
+        "status": "ok",
+        "supported_bullets_min": 1
       },
       "jd_file": "jds/jd-junior-backend-clouddocs.md",
       "kind": "bullets",
-      "note": "the honest-mirror path: learning-grade Kubernetes evidence never promotes to production claims (§5.10, §16)",
+      "note": "the honest-mirror path: learning-grade Kubernetes evidence never promotes to production claims (§5.10, §16); the supported bullet comes from the preferred Kubernetes-familiarity requirement, so P1's dependent purge is guaranteed material to purge",
       "snapshot_step": "E4",
       "step": "E11"
     }
@@ -175,6 +176,13 @@
   "privacy_epilogue": [
     {
       "clock": "2026-07-14T10:00:00+02:00",
+      "expect": {
+        "purged_branches": [
+          "backend-clouddocs"
+        ],
+        "residual_paths": [],
+        "status": "ok"
+      },
       "kind": "jd_delete",
       "note": "runs first, while its dependent branch/bullets/findings still exist: dependent purge, no recompute (§13.13 rule 10); after P2's global reset there would be nothing left to exercise",
       "step": "P1",
@@ -182,6 +190,12 @@
     },
     {
       "clock": "2026-07-14T11:00:00+02:00",
+      "expect": {
+        "derived_reset": "global",
+        "rebuild_through": "stage_5",
+        "residual_paths": [],
+        "status": "ok"
+      },
       "kind": "logs_delete",
       "note": "point deletion, global derived reset, Stage 3-5 rebuild (§13.13)",
       "step": "P2",

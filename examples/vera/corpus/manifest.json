@@ -7,7 +7,7 @@
     "imports/ephemeris-2026-06.jsonl": "0b1a1eba71bc91df736c274c2609d3b6c203d2003fe9e563efce5a0a18b44eb0",
     "imports/github-commit-2026-06-15.json": "5f74f3ea07ea24dd7a4a713ebc4048056a710b225e8f5dba040817bd410f45ad",
     "imports/github-commit-2026-06-28.json": "87cdc4f5310c1ada41d7f558cb525dff931e6d5bb3e28380152e42e9b113d6bc",
-    "invalid/atlas-snapshot-text-mismatch.json": "32c6758b6dc1da1e265217ae6b606782c7b5ca75a8362eb33e18f89c294ff2ec",
+    "invalid/atlas-snapshot-text-mismatch.json": "59f452199569e75f43f76b7dd6e844799e838dff9015ef7e7add950feb2e042a",
     "invalid/ephemeris-conflict.jsonl": "9c198ed7610ad02aa1656ba4c05dd95df429efba6898f525d8e18ccc11e73155",
     "invalid/github-commit-bad-hash.json": "f96f3e3a8d0db391520d7389f2973b657151afa6a327c54180e5633127d07b29",
     "jds/jd-docs-engineer-examplia.md": "50e73bf1b97d4a4587eeb6c0c35098075a14d5a5ee0e5ced12418528cc3e736c",
@@ -21,7 +21,7 @@
     "logs/daily-2026-07-08.md": "e1e0c545e1640da568f69ca4636728fff98006867743c4bcaf8978907f3348ce",
     "logs/retro-2026-05-strength.json": "89a02739084ecf21c18b11ddac64c8bd4ce725808ede96d2cf9968198e801c16",
     "logs/retro-2026-06-k8s.json": "c92f84c5c5b058238892697dd5ee01f4c3fe0a054684f7488ac4183c23d303af",
-    "replay.json": "3b923b6733ff4db36f98dc3e3f79eb0345ca5ee581c1e90c62ab662114cdb9d5"
+    "replay.json": "ba171094b0ba1c82394695175d2fc0fdea412e09b990e2d059407fd21d7be51e"
   },
   "generator": "examples/vera/corpus.py",
   "persona": "Vera Example",
