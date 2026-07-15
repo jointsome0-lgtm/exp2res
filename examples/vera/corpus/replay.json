@@ -1,6 +1,98 @@
 {
   "clock_rule": "the harness pins the workspace clock to each step's value before running it",
   "corpus": "vera-example-fixtures",
+  "derived_rule": "derived_steps run after steps and require the #71 fake-runner layer for every LLM-backed stage; their expectations are coarse outcome contracts, not golden outputs",
+  "derived_steps": [
+    {
+      "clock": "2026-07-11T10:00:00+02:00",
+      "expect": {
+        "status": "success"
+      },
+      "kind": "extract",
+      "step": "E1"
+    },
+    {
+      "clock": "2026-07-11T10:05:00+02:00",
+      "expect": {
+        "contradiction_between": [
+          "logs/daily-2026-06-25.md",
+          "logs/daily-2026-07-02.md"
+        ],
+        "status": "success"
+      },
+      "kind": "detect",
+      "step": "E2"
+    },
+    {
+      "clock": "2026-07-11T10:10:00+02:00",
+      "expect": {
+        "status": "success"
+      },
+      "kind": "signals",
+      "step": "E3"
+    },
+    {
+      "clock": "2026-07-11T10:15:00+02:00",
+      "expect": {
+        "status": "success"
+      },
+      "kind": "assess",
+      "scope": "global",
+      "step": "E4"
+    },
+    {
+      "clock": "2026-07-11T10:20:00+02:00",
+      "expect": {
+        "status": "success"
+      },
+      "kind": "assess",
+      "scope": "project",
+      "step": "E5",
+      "target": "K8s Playbook"
+    },
+    {
+      "clock": "2026-07-11T10:25:00+02:00",
+      "expect": {
+        "status": "success"
+      },
+      "kind": "assess",
+      "note": "weak-evidence view: manual claims plus displaced consistency retro",
+      "scope": "project",
+      "step": "E6",
+      "target": "Strength Basics"
+    },
+    {
+      "branch": "docs-examplia",
+      "clock": "2026-07-12T10:00:00+02:00",
+      "expect": {
+        "status": "success",
+        "supported_bullets_min": 1,
+        "unmatched_requirements": [
+          "video tutorials",
+          "SEO"
+        ]
+      },
+      "jd_file": "jds/jd-docs-engineer-examplia.md",
+      "kind": "bullets",
+      "step": "E7"
+    },
+    {
+      "branch": "backend-clouddocs",
+      "clock": "2026-07-12T11:00:00+02:00",
+      "expect": {
+        "blocked_claims": [
+          "production Python services",
+          "PostgreSQL in production",
+          "on-call rotation"
+        ],
+        "status": "success"
+      },
+      "jd_file": "jds/jd-junior-backend-clouddocs.md",
+      "kind": "bullets",
+      "note": "the honest-mirror path: learning-grade Kubernetes evidence never promotes to production claims (§5.10, §16)",
+      "step": "E8"
+    }
+  ],
   "failure_steps": [
     {
       "after_step": 9,

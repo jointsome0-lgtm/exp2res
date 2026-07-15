@@ -488,6 +488,36 @@ def replay() -> dict:
          "note": "'Note to agents' section is untrusted JD data, never an instruction",
          "expect": {"status": "success"}},
     ]
+    derived_steps = [
+        {"step": "E1", "kind": "extract", "clock": "2026-07-11T10:00:00+02:00",
+         "expect": {"status": "success"}},
+        {"step": "E2", "kind": "detect", "clock": "2026-07-11T10:05:00+02:00",
+         "expect": {"status": "success",
+                    "contradiction_between": ["logs/daily-2026-06-25.md",
+                                              "logs/daily-2026-07-02.md"]}},
+        {"step": "E3", "kind": "signals", "clock": "2026-07-11T10:10:00+02:00",
+         "expect": {"status": "success"}},
+        {"step": "E4", "kind": "assess", "scope": "global",
+         "clock": "2026-07-11T10:15:00+02:00", "expect": {"status": "success"}},
+        {"step": "E5", "kind": "assess", "scope": "project", "target": P_K8S,
+         "clock": "2026-07-11T10:20:00+02:00", "expect": {"status": "success"}},
+        {"step": "E6", "kind": "assess", "scope": "project", "target": P_STRENGTH,
+         "clock": "2026-07-11T10:25:00+02:00",
+         "note": "weak-evidence view: manual claims plus displaced consistency retro",
+         "expect": {"status": "success"}},
+        {"step": "E7", "kind": "bullets", "jd_file": "jds/jd-docs-engineer-examplia.md",
+         "branch": "docs-examplia", "clock": "2026-07-12T10:00:00+02:00",
+         "expect": {"status": "success", "supported_bullets_min": 1,
+                    "unmatched_requirements": ["video tutorials", "SEO"]}},
+        {"step": "E8", "kind": "bullets", "jd_file": "jds/jd-junior-backend-clouddocs.md",
+         "branch": "backend-clouddocs", "clock": "2026-07-12T11:00:00+02:00",
+         "note": "the honest-mirror path: learning-grade Kubernetes evidence never "
+                 "promotes to production claims (§5.10, §16)",
+         "expect": {"status": "success",
+                    "blocked_claims": ["production Python services",
+                                       "PostgreSQL in production",
+                                       "on-call rotation"]}},
+    ]
     failure_steps = [
         {"step": "F1", "kind": "import", "importer": "ephemeris",
          "file": "invalid/ephemeris-conflict.jsonl",
@@ -516,7 +546,11 @@ def replay() -> dict:
         "version": CORPUS_VERSION,
         "persona": MARKER,
         "clock_rule": "the harness pins the workspace clock to each step's value before running it",
+        "derived_rule": "derived_steps run after steps and require the #71 fake-runner layer "
+                        "for every LLM-backed stage; their expectations are coarse outcome "
+                        "contracts, not golden outputs",
         "steps": steps,
+        "derived_steps": derived_steps,
         "failure_steps": failure_steps,
         "privacy_epilogue": privacy_epilogue,
     }
@@ -617,7 +651,7 @@ def check() -> int:
         target = ROOT / path
         if not target.is_file():
             problems.append(f"MISSING: {path}")
-        elif target.read_text(encoding="utf-8") != content:
+        elif target.read_bytes() != content.encode("utf-8"):
             problems.append(f"STALE: {path} differs from generated content")
     expected = {str(p.relative_to(ROOT)).replace("\\", "/") for p in ROOT.rglob("*") if p.is_file()}
     for extra in sorted(expected - set(files)):

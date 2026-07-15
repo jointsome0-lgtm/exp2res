@@ -67,11 +67,16 @@ DENIED_BASENAME_PATTERNS = (
     "delivery-registry",
 )
 
-FIXTURE_PATH_PATTERNS = ("fixtures/**",)
+FIXTURE_PATH_PATTERNS = ("fixtures/**", "examples/vera/corpus/**")
 
 DENIED_PATH_ALLOWLIST: frozenset[str] = frozenset(
     {
         # Add only exact paths here, with a comment explaining each exception.
+        # Generated Vera Example fixture batches (#78): the only committed
+        # .jsonl files; invented demo envelopes, marker-checked above and
+        # byte-verified by examples/vera/corpus.py check.
+        "examples/vera/corpus/imports/ephemeris-2026-06.jsonl",
+        "examples/vera/corpus/invalid/ephemeris-conflict.jsonl",
     }
 )
 

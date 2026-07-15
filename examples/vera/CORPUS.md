@@ -22,9 +22,16 @@ python3 examples/vera/corpus.py check      # verify corpus/ is byte-identical to
 
 The canonical source is the `STORY` section of `corpus.py` (stdlib-only,
 offline, no wall clock, no randomness): repeated generation is
-byte-stable, and `check` fails on a missing, stale, or unexpected file.
-`manifest.json` records the corpus name, version, persona pointer, and a
-SHA-256 per generated file.
+byte-stable, and `check` fails on a missing, byte-stale, or unexpected
+file. `manifest.json` records the corpus name, version, persona pointer,
+and a SHA-256 per generated file.
+
+CI enforcement: `scripts/check_public_hygiene.py` registers
+`examples/vera/corpus/**` as a fixture path, so every corpus file is
+marker-checked at the public Git layer (the two `.jsonl` batches are
+exact-path allowlist exceptions to the repo-wide `*.jsonl` denial and
+are force-added past `.gitignore`); the #80 aggregate `scripts/check.py`
+runs `corpus.py check` whenever the corpus is present.
 
 ## Layout
 
@@ -53,15 +60,23 @@ patch around.
 `replay.json` is the ordered end-to-end path from an empty workspace to
 a verified mirror and a bullet-pack attempt. Steps use semantic kinds —
 `log_daily`, `log_retro`, `correction_add`, `import`, `jd_add`,
-`logs_delete`, `jd_delete` — that a harness maps to the §14 commands
+`logs_delete`, `jd_delete`, and the derived kinds `extract`, `detect`,
+`signals`, `assess`, `bullets` — that a harness maps to the §14 commands
 (`exp2res log today --file … --project …`, `exp2res log retro`,
 `exp2res correction add`, `exp2res import <importer> <file>`,
-`exp2res jd add`, `exp2res logs delete`, `exp2res jd delete`). Retro and
-correction steps replay the interactive §14.3/§14.4 prompts from their
-JSON scripts; `target_story_key` resolves through the log created by the
-named earlier step. Each step pins the workspace clock to its `clock`
-value; `expect` carries the coarse §14.14 outcome (import class counts,
-success, displacement). `failure_steps` run after their `after_step` and
+`exp2res jd add`, `exp2res extract`, the §14.7–§14.10 generation and
+`bullets generate|verify|export` flows, `exp2res logs delete`,
+`exp2res jd delete`). Retro and correction steps replay the interactive
+§14.3/§14.4 prompts from their JSON scripts; `target_story_key` resolves
+through the log created by the named earlier step. Each step pins the
+workspace clock to its `clock` value; `expect` carries the coarse
+§14.14 outcome (import class counts, success, displacement, blocked
+claims) — an outcome contract, never a golden output. The capture and
+import `steps` are runnable against Phase 0 alone; `derived_steps`
+(E1–E8: extraction through the three assessment views to the two
+bullet branches, with the backend JD's production/on-call claims
+blocked) additionally require the #71 fake-runner layer for every
+LLM-backed stage. `failure_steps` run after their `after_step` and
 must fail exactly as stated; the `privacy_epilogue` exercises the
 §13.13 deletion lifecycles after the main path completes.
 
