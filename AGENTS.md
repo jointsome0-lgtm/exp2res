@@ -3,9 +3,9 @@
 Design-stage project: no code yet; the primary artifact is the specification — `SDD.md` (map) + `spec/` (body, one file per §).
 The current task is refining the SDD: sharpening requirements, finding contradictions and gaps, proposing alternatives. No code until the SDD is agreed.
 
-## Data boundary
+## Public data boundary
 
-This is a public engine repository in the [selfos topology](https://github.com/jointsome0-lgtm/selfos/blob/main/docs/architecture.md): specification, docs, and — once implementation lands — code and invented fixtures only. The owner's real data belongs in a private exp2res workspace (a SQLite database outside any public checkout) and never appears here in any form: no real records or excerpts in docs, fixtures, prompts, issues, or review output — examples are invented. Deletion guarantees are canonical in [selfos deletion](https://github.com/jointsome0-lgtm/selfos/blob/main/docs/deletion.md), never restated here; exp2res's managed-data lifecycle inventory lives in spec §29.
+Treat this as a public engine repository in the [selfos topology](https://github.com/jointsome0-lgtm/selfos/blob/main/docs/architecture.md): specification, docs, and — once implementation lands — code and invented demo fixtures only. The owner's canonical store is a [private SQLite workspace](https://github.com/jointsome0-lgtm/selfos/blob/main/docs/instance.md) outside this public repository. Resolve it through an explicit flag, then `EXP2RES_WORKSPACE`, then `instances.exp2res` in `~/.config/selfos/config.toml`; a public checkout is never a data destination. Real workspace data never enters this checkout, tracked or untracked: no real records or excerpts in docs, fixtures, prompts, issues, or review output. Author demo fixtures as the [synthetic persona](https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md), invent every example, and include the literal marker `Vera Example` in every fixture file. Deletion guarantees are canonical in the [selfos deletion contract](https://github.com/jointsome0-lgtm/selfos/blob/main/docs/deletion.md), never restated here; exp2res's managed-data lifecycle inventory lives in spec §29. Enable the committed pre-commit hook once per clone with `git config core.hooksPath .githooks`.
 
 ## SDD refinement rules
 
