@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 
+import pytest
+import typer
 from typer.testing import CliRunner
 
-from exp2res.cli import app
+from exp2res.cli import app, main
 from exp2res.storage.workspace import initialize_workspace
 
 from conftest import FIXED_NOW, VERA_CORPUS
@@ -171,3 +174,31 @@ def test_literal_credential_config_fails_without_echo(workspace: Path) -> None:
     assert result.exit_code == 7
     assert envelope["diagnostic_class"] == "configuration_invalid"
     assert credential not in result.stdout + result.stderr
+
+
+def test_console_entry_point_exits_with_contract_code(tmp_path: Path, monkeypatch) -> None:
+    """PR #95 review r2: the installed entry point returns §14.14 codes, not a traceback."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["exp2res", "--json", "db", "status"])
+    with pytest.raises(SystemExit) as caught:
+        main()
+    assert caught.value.code == 3
+
+
+def test_interactive_capture_validates_timezone_before_owner_text(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """PR #95 review r2: a doomed local-time capture never collects owner text."""
+    root = tmp_path / "unconfigured-workspace"
+    root.mkdir()
+    initialize_workspace(root, clock=lambda: FIXED_NOW)
+    monkeypatch.setattr("exp2res.cli._noninteractive", lambda _controls: False)
+
+    def refuse_prompt(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("owner text was requested before timezone validation")
+
+    monkeypatch.setattr(typer, "prompt", refuse_prompt)
+    for command in (["log", "today"], ["log", "retro"]):
+        result, envelope = invoke_json(root, command)
+        assert result.exit_code == 2
+        assert envelope["diagnostic_class"] == "workspace_timezone_required"

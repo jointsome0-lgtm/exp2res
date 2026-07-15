@@ -229,3 +229,17 @@ def test_reversed_retro_range_is_invalid_input_not_internal_error() -> None:
         )
     assert caught.value.diagnostic_class == "invalid_time_shape"
     assert caught.value.exit_code == 2
+
+
+def test_out_of_range_calendar_anchor_is_invalid_input_not_internal_error() -> None:
+    """PR #95 review r2: month 13 / week 99 stay in §14.14 exit class 2."""
+    for period, precision in (("2026-13", "month"), ("2026-W99", "week")):
+        with pytest.raises(InvalidInputError) as caught:
+            parse_occurred(
+                period=period,
+                precision=precision,
+                confidence="medium",
+                timezone_name="Etc/UTC",
+            )
+        assert caught.value.diagnostic_class == "invalid_time"
+        assert caught.value.exit_code == 2

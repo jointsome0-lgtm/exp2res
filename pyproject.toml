@@ -15,6 +15,9 @@ dependencies = [
   "typer>=0.12,<1",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+
 [project.scripts]
 exp2res = "exp2res.cli:main"
 

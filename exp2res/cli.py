@@ -11,9 +11,9 @@ from typing import Callable, cast
 import typer
 
 try:
-    from typer._click.exceptions import Abort, UsageError
+    from typer._click.exceptions import Abort, Exit, UsageError
 except ImportError:  # typer releases that depend on an external click
-    from click.exceptions import Abort, UsageError
+    from click.exceptions import Abort, Exit, UsageError
 
 from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
@@ -40,7 +40,7 @@ from exp2res.services.capture import (
     capture_retro,
 )
 from exp2res.services.logs import delete_log, list_logs, show_log
-from exp2res.services.time_input import parse_occurred
+from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.storage.workspace import (
     SchemaStatus,
     discover_workspace,
@@ -303,6 +303,8 @@ def log_today(
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
         require_compatible(workspace)
+        # Fail closed on the local-time contract before collecting owner text.
+        workspace_zone(require_timezone(load_workspace_config(workspace)))
         raw_text = typer.prompt("Describe what happened", err=True)
         return _capture_outcome(
             capture_daily(workspace, raw_text=raw_text, project=project)
@@ -317,17 +319,19 @@ def log_retro(context: typer.Context) -> None:
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
         require_compatible(workspace)
+        # Fail closed on the local-time contract before collecting owner text.
+        timezone_name = require_timezone(load_workspace_config(workspace))
+        workspace_zone(timezone_name)
         period = typer.prompt("What period are we reconstructing?", err=True)
         precision_value = typer.prompt("How precise is this?", err=True)
         confidence_value = typer.prompt("How confident are you?", err=True)
         project = typer.prompt("Project/activity?", default="", err=True) or None
         raw_text = typer.prompt("Describe what you remember.", err=True)
-        config = load_workspace_config(workspace)
         occurred = parse_occurred(
             period=period,
             precision=cast(TemporalPrecision, precision_value),
             confidence=cast(TemporalConfidence, confidence_value),
-            timezone_name=require_timezone(config),
+            timezone_name=timezone_name,
         )
         return _capture_outcome(
             capture_retro(
@@ -448,6 +452,8 @@ def main() -> None:
         result = app(standalone_mode=False)
         if isinstance(result, int) and result:
             raise SystemExit(result)
+    except Exit as error:
+        raise SystemExit(error.exit_code)
     except UsageError:
         _parse_error_envelope("--json" in sys.argv, "invalid_usage", "Invalid command usage.")
         raise SystemExit(2)

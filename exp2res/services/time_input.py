@@ -75,23 +75,29 @@ def today_occurred(*, now: datetime, timezone_name: str) -> OccurredAt:
 
 
 def _named_anchor(value: str, precision: TemporalPrecision, zone: ZoneInfo) -> datetime:
-    if precision == "year" and re.fullmatch(r"\d{4}", value):
-        return day_start(date(int(value), 1, 1), zone)
-    if precision == "month" and re.fullmatch(r"\d{4}-\d{2}", value):
-        year, month = (int(part) for part in value.split("-"))
-        return day_start(date(year, month, 1), zone)
-    if precision == "quarter":
-        match = re.fullmatch(r"(?:Q([1-4])\s+(\d{4})|(\d{4})-Q([1-4]))", value)
-        if match:
-            quarter = int(match.group(1) or match.group(4))
-            year = int(match.group(2) or match.group(3))
-            return day_start(date(year, (quarter - 1) * 3 + 1, 1), zone)
-    if precision == "week":
-        match = re.fullmatch(r"(\d{4})-W(\d{2})", value)
-        if match:
-            return day_start(
-                date.fromisocalendar(int(match.group(1)), int(match.group(2)), 1), zone
-            )
+    try:
+        if precision == "year" and re.fullmatch(r"\d{4}", value):
+            return day_start(date(int(value), 1, 1), zone)
+        if precision == "month" and re.fullmatch(r"\d{4}-\d{2}", value):
+            year, month = (int(part) for part in value.split("-"))
+            return day_start(date(year, month, 1), zone)
+        if precision == "quarter":
+            match = re.fullmatch(r"(?:Q([1-4])\s+(\d{4})|(\d{4})-Q([1-4]))", value)
+            if match:
+                quarter = int(match.group(1) or match.group(4))
+                year = int(match.group(2) or match.group(3))
+                return day_start(date(year, (quarter - 1) * 3 + 1, 1), zone)
+        if precision == "week":
+            match = re.fullmatch(r"(\d{4})-W(\d{2})", value)
+            if match:
+                return day_start(
+                    date.fromisocalendar(int(match.group(1)), int(match.group(2)), 1),
+                    zone,
+                )
+    except ValueError as error:
+        # Out-of-range calendar anchors (month 13, week 99, year 0000) are
+        # §14.14 exit-class-2 owner input, not exit 1.
+        raise _time_error("invalid_time", "The time value is invalid.") from error
     return _parse_datetime(value, zone)
 
 
