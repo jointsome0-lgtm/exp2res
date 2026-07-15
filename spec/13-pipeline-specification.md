@@ -250,6 +250,8 @@ next questions
 
 For a project-scoped run, Stage 6 copies the canonical non-blank §14.9 `--project` value into `AssessmentSnapshot.scope_target`; the writer receives it as branch-free structural context but cannot rewrite it. For `global`, Stage 6 persists `scope_target = None`.
 
+Stage 6 also derives `AssessmentSnapshot.title` deterministically from the assessment-view identity: the renderer-owned literal `Self-Assessment — Global` for `global`, and `Self-Assessment — <scope_target>` for `project`, where `<scope_target>` is the persisted canonical pre-fold §14.9 value. The title is structural view metadata, never writer prose: no model output, owner flag, or configuration participates, equal view identities always derive equal titles, and §13.14's `snapshot_title` manifest identity stays deterministic (§11.7, §15.11).
+
 Known-gap assertions are emitted as ordinary `SelfClaim(dimension="gap")` rows and receive Stage 7 status. Stage 6 service-populates `AssessmentSnapshot.gap_question_ids` with exactly the complete current unanswered Stage 4 gap set it supplied to the writer — no scope filter and no writer echo (§15.4, §15.11) — so every current unanswered `GapQuestion` appears exactly once. Unknowns are uncertainty/question presentation, not claim-grade assertions: they do not receive an independent status, do not improve the §16.11 snapshot aggregate, and cannot guide Stage 10. Declarative prose about what is or is not true must be a snapshot-owned `SelfClaim` and pass the existing status gate.
 
 Every current Stage 4 contradiction appears exactly once in `AssessmentSnapshot.contradiction_ids`; Stage 6 does not scope-filter conflicts. The writer cannot suppress one as resolved or dismissed; duplicate or stale IDs fail under §12 rule 10.
