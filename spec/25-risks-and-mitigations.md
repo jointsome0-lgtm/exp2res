@@ -33,6 +33,7 @@ Mitigation:
 ```text
 structured outputs
 Pydantic validation
+deterministic fail-closed size, token, context, call-count, and applicable cost-budget preflight before transport, with no input truncation
 transactional typed-reference resolution before persistence
 fail-closed single-pass verifier gates whose non-passing findings never trigger automatic repair
 complete current provenance-chain requirements
@@ -69,7 +70,9 @@ Mitigation:
 automation cannot delete or rewrite raw records
 owner deletion is never blocked by provenance links
 correction replaces one coherent current generation
-owner deletion globally purges every derived database generation and verifies managed-export removal
+raw-log owner deletion globally purges every derived database generation and verifies managed-export removal
+job-description deletion (§14.15) purges every dependent branch, bullet, finding, backup, and managed branch output without FK blocking
+workspace purge (§14.16) removes all managed source and derived content, telemetry, backups, and temporary outputs, then applies checkpoint and VACUUM erasure
 residual managed paths are reported as deletion_incomplete, never as success
 rebuild uses only retained raw records and may be retried without restoring deleted data
 external source files and copied exports are reported as outside Exp2Res control

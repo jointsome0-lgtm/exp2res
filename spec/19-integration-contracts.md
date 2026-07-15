@@ -4,6 +4,8 @@ Every importer validates the payload's keys, types, closed-enum mappings, and re
 
 Imported source identifiers — Tick-like `event_id`, Atlas `artifact_id`, and GitHub `commit_sha`/`repo` — remain provenance values in `RawLog.external_ref` or `RawLog.metadata` and must never become local entity `id` values; duplicate-import and idempotency-key semantics are deferred to issues #33 and #52.
 
+Every local `path` or `file:` URI value carried by an import payload, including Atlas `path`, is governed by §29.4's POSIX-only acquisition and pre-serialization rules.
+
 ## §19.1 Tick-like Event Contract
 
 ```json

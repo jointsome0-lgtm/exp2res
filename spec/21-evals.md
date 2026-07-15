@@ -1001,4 +1001,371 @@ And the prior current fact generation remains unchanged
 And the same check rejects any item that is neither owned by an effective record nor a non-manual displaced-record support item of that fact's lineage
 ```
 
+## §21.41 CLI Runtime Contract Is Deterministic and Machine-Readable
+
+Test (enforces §8.1, §12.14, §13.13, §14.1, §14.14, §15.10, §16.11, and §29):
+
+```text
+Given one valid workspace and a current directory several levels beneath its root
+When any non-init command runs without --workspace
+Then discovery walks physical canonical parents and selects that workspace
+
+Given a valid nested workspace inside a valid enclosing workspace
+When a command runs below the nested root
+Then the nested workspace wins
+Given the nearest .exp2res/ marker is partial or has an unrecognized database while the enclosing workspace is valid
+Then discovery stops at the nearest marker and exits 4 under §12.14
+And it never skips to or reads business state from the enclosing workspace
+
+Given a valid second workspace named by --workspace from any current directory
+Then only that canonical root is selected and no parent walk occurs
+Given the override is invalid
+Then the command exits 3 without falling back to discovery
+Given no ancestor workspace and no override
+When a non-init command runs
+Then it exits 3 with workspace = null and performs no business I/O
+
+Given the current directory is inside an enclosing workspace but has no local .exp2res/
+When exp2res init runs
+Then it creates a legal nested workspace in the canonical current directory without walking upward
+And later discovery below it selects the nested workspace
+Given --workspace is supplied to init
+Then command validation exits 2 instead of redirecting initialization
+
+Given no .exp2res/ and a pre-existing non-empty out/ tree whose directory mode is group-listable
+When exp2res init creates the workspace
+Then initialization succeeds, every byte and path beneath out/ remains unchanged, and the out/ directory entry itself is restored to the §29.2 owner-only mode
+And an init that cannot restore that mode fails closed
+Given that current-version workspace and its non-empty out/ tree
+When exp2res init runs again
+Then it exits 0 as an idempotent no-op
+And every pre-existing byte and path beneath out/ remains unchanged
+Given .exp2res/ exists without exp2res.sqlite or its database lacks readable schema_meta
+When exp2res init runs
+Then it exits 4 as unrecognized and creates, completes, repairs, overwrites, and deletes nothing
+
+Given one declared setting has distinct values in an explicit flag, its documented EXP2RES_* variable, .exp2res/config.toml, and the built-in default
+When each higher-precedence representation is removed in turn
+Then selection follows flag, environment, workspace config, default in that order
+And an undocumented environment variable or ambient repository, user, shell, provider, or platform setting never changes the result
+And workspace resolution happens before config is read
+And provider credentials remain outside the chain under §29.2/§29.4
+Given a required setting declares no built-in default and no higher representation supplies it
+Then the command fails closed rather than inventing or discovering a value
+Given --yes, --no-input, --json, or --workspace appears only in environment or config
+Then it has no invocation-control effect
+
+Given stdin is piped or --no-input is present and a §14.3 capture lacks prompt-supplied values
+When the command runs
+Then it exits 2 before blocking and emits no prompt
+Given any destructive or cost-bearing command has non-TTY stdin and lacks --yes
+Then it exits 2 before a destructive step or provider call
+Given all required declared inputs plus --yes are present
+Then the same command may proceed without reading stdin
+Given TTY stdin and no --yes
+Then only the §14.14 confirmation set may prompt before destruction or provider cost
+
+Given table-driven command fixtures for exit 0, every operational failure class 1 through 8, cancellation 9, and semantic blocking 10
+When each runs with --json
+Then stdout is exactly one parseable version-1 envelope plus at most its final newline
+And every required field is present with no undeclared outer or nested field
+And exit_code equals the process exit status
+And status is ok for 0, failed for 1 through 8, cancelled for 9, and blocked for 10
+And diagnostic_class is null exactly for 0 and is a stable class for every other code
+And command and workspace are null only when their respective parse or discovery boundary could not establish them
+And diagnostics and progress appear only on stderr
+And --verbose or --quiet changes neither stdout, status, nor exit_code
+
+Given db status, every operable list/show form, and each export runs with --json
+Then result validates against exactly the closed projection selected by command
+And a show result has the required single selected record while list results preserve every reported record
+And runs show places its complete run and call rows in result — the run's metadata_json carried as its stored JSON TEXT string so the projection stays closed — and its VerificationFinding rows in findings
+And no result contains RawLog.raw_text, JobDescription.raw_text, a free-form object, or a field outside its projection
+Given a mutation whose standard envelope fields carry its complete result
+Then result is null rather than an untyped duplicate
+Given detections generate retains or replaces its complete generation
+Then result contains both complete gap and contradiction sets even when retention creates no affected or generation ID
+Given logs delete reports its selected record and known external source path
+Then result contains the closed captured pre-deletion projection including external_ref
+And it contains neither raw_text nor metadata
+
+Given assess verify or verify --branch completes with non-passing findings
+When its result is emitted
+Then it exits 10 with status blocked and the complete VerificationFinding values
+And its verifier processing run remains completed rather than failed
+Given a §16.11 allowlist refuses export without an operational error
+Then the result also exits 10 with a gate-specific diagnostic and no invented finding
+
+Given a mutating command creates, supersedes, or deletes typed rows and records producing runs or generations
+When its JSON result is emitted
+Then affected_ids groups every surfaced ID under its entity type and operation
+And generation_ids and run_ids contain the available duplicate-free IDs in deterministic order
+Given the same command invalidates assessment views or branches or surfaces contract warnings
+Then every §13.13 report is present in its closed structured shape and every warning uses the closed secret-safe warning shape
+
+Given a cleanup or privacy deletion commits but leaves multiple managed residual paths
+Then the command exits 8
+And every residual path appears once in deterministic order in the envelope
+And retry carries the documented executable retry command when §13.13/§14.12 defines one
+
+Given a user interrupt arrives during a write or provider call
+Then the in-flight transaction rolls back, the lock is released, no partial current generation appears, and the command exits 9
+And any correction, deletion, or cleanup boundary already committed under §13.13 remains committed and is reported rather than restored
+Given deletion has committed and the interrupt arrives while managed cleanup is incomplete
+Then code 9 takes precedence over code 8
+And status is cancelled while every known residual path and committed effect remains in the envelope
+
+Given a forced internal, provider, validation, cleanup, or cancellation failure whose inputs contain a credential, prompt text, and a unique raw source string
+Then stdout, stderr, and retained internal diagnostics contain none of those values
+And the envelope contains only its declared IDs, codes, allowed findings, managed paths, warnings, lifecycle reports, and allowed closed command-result projections
+
+Given the V1 command registry
+Then the operable lifecycle inspection forms are exactly db status; logs list; facts list/show; gaps list; contradictions list/show; signals list; assess list/show; jd list/show; and runs list/show
+And evidence-item listing, branch/bullet listing, historical-generation browsing beyond runs show, and parsed-requirement dumps beyond jd show remain absent as explicitly deferred read-only additions
+```
+
+## §21.42 Temporal, Language, Unicode, and Path Semantics Are Deterministic
+
+Test (enforces §11's Model validation policy and §11.1, §12 rule 3, §13.6 and §13.12, §14.9–§14.10 and §14.14 rule 8, §15.1–§15.2, §16.6 and §16.12–§16.13, §19, and §29.4; extends §21.39's canonical-hash coverage):
+
+```text
+Given a naive local timestamp T and a workspace whose configured IANA timezone has offset O at T
+And the ambient OS timezone and locale differ from that workspace configuration
+When T reaches a §15 or §19 transport boundary, SQLite hydration, or direct §11 construction
+Then each boundary rejects it as naive without consulting either workspace or ambient timezone
+When the same owner local time T instead enters a §14 local-time feature
+Then §14.14 resolves T carrying offset O before model construction
+And §12 stores ISO 8601 TEXT carrying O rather than an ambient or UTC-normalized replacement offset
+And changing the ambient OS timezone or locale changes neither the resolved instant nor the stored offset
+
+Given §21.39 already establishes equal canonical hash bytes for otherwise identical validated objects carrying 2026-07-14T09:00:00+03:00 and 2026-07-14T06:00:00Z
+When both values are persisted and used in datetime equality, ordering, or sorting
+Then each stored TEXT retains its supplied +03:00 or Z offset
+And both temporal sort keys and equality operands denote the same UTC instant rather than following TEXT byte order
+
+Given the configured workspace timezone's available tzdata marks one naive local timestamp as a daylight-saving gap and another as a fold
+When a §14 local-time feature attempts to resolve either timestamp
+Then each input fails closed without persistence or a silently selected fold
+And each diagnostic guides the owner to supply an explicit offset
+
+Given the named periods June 2026, Q1 2026, and 2026-W23 and workspace timezone Etc/UTC
+When two conforming implementations normalize them to OccurredAt
+Then June 2026 has precision month and starts at 2026-06-01 00:00:00 with offset +00:00
+And Q1 2026 has precision quarter, denotes January through March, and starts at 2026-01-01 00:00:00 with offset +00:00
+And 2026-W23 has precision week and starts at 2026-06-01 00:00:00 with offset +00:00, a Monday
+And all three resulting OccurredAt values are identical across the implementations
+
+Given a Russian-language RawLog whose raw_text is the UTF-8 bytes for "Создал локальный прототип для проверки идеи."
+When Stage 3 extracts a meaning-preserving ExperienceFact
+Then the fact's generated prose is English and passes every applicable §16 rule
+And the RawLog remains byte-for-byte unchanged
+And any rendered source quote remains source voice only when a typed reference verifies the exact Russian bytes or a contiguous substring
+And any English paraphrase remains generated voice rather than gaining a source exemption
+
+Given the same Russian source and an otherwise valid generated ExperienceFact claim written in Russian
+When the §16.12 segment-scoped voice validation runs
+Then the candidate fails §16.13 voice validation and no generated fact persists
+And it neither rejects nor rewrites the Russian source
+
+Given a Russian source says "Обсуждал production-развертывание, но сам его не выполнял." and no other evidence supports a production outcome
+When an English candidate claims that the owner deployed or operated the system in production
+Then §16.6 rejects the unsupported production claim exactly as it would for an English-language source
+And cross-language extraction grants no evidence or overclaim exception
+
+Given one label pair has code-point sequences "Caf\u00e9" and "Cafe\u0301" and another pair is "I" and "i"
+When either pair is used as a project scope target and copied project provenance, or as a branch name and selector
+Then NFC plus locale-independent Unicode Default Case Folding yields one project match and assessment-view identity and one branch replacement identity
+And view-slug derivation cannot create a second managed-output identity
+And "I" and "i" yield the same identities under both the C and Turkish process locales
+When either pair instead occurs as two EvidenceItem.title values whose owning rules name no normalization or fold
+Then its validated code points remain distinct and no title or duplicate comparison collapses them
+
+Given acquisition receives C:\work\log.md, C:/work/log.md, \\server\share\log.md, work\log.md, or file://server/share/log.md as a local locator
+When §29.4 validates the locator
+Then each Windows drive-letter, UNC, backslash-separated, or non-POSIX file URI form is rejected before a file read or persistence
+And no rejected form is reinterpreted as a POSIX path
+
+Given a stored-boundary fixture presents any same unsupported local form directly to the pre-serialization re-check
+When §29.4 validates the locator before prompt composition
+Then serialization fails before a provider call and the locator is never reinterpreted or transmitted
+
+Given two case variants beneath one selected root resolve to the same file on a case-insensitive volume, including a denied name supplied as .ENV
+When acquisition canonicalizes each locator and applies the mandatory-deny and user-ignore checks
+Then both variants receive the same decision even when canonicalization preserves the supplied spelling, because on such a volume the same comparisons additionally apply under the locale-independent case fold and the case variant of the denied name is denied
+And on a case-sensitive volume the comparison stays purely byte-wise and introduces no case folding of its own
+```
+
+## §21.43 LLM Transport Is Bounded, Foreground, and Fail-Closed
+
+Test (enforces §8.1, §12 rule 13, §12.13, §12.15, §13.3, §13.7, §13.10–§13.11, §13.13, §14.14, §15.1, §15.10, §29.2, and §29.4):
+
+```text
+Given table-driven retryable failures for connection or TLS failure, response timeout, HTTP 408, HTTP 429, HTTP 5xx, provider-reported overload, and ambiguous lost response in either the initial request round or §15.1's validation-retry request round
+And that request round has configured transport-attempt cap C greater than one, configured backoff bounds, controlled jitter, and enough invocation-deadline time for C attempts
+When each failure persists through the request round
+Then exactly C physical attempts execute synchronously inside the same foreground action and the same llm_calls row
+And transport_retries increases by C minus one during that round because the terminal failure is not a retry that occurs
+And every inter-attempt delay uses jitter within the configured bounds
+And the transport retries neither change schema_retries nor widen §15.1's one response-validation retry
+And no further attempt is queued, deferred, resumed, or adopted in the background
+And response timeout or HTTP 408 records transport_timeout, HTTP 429 records transport_rate_limited, ambiguous delivery records transport_lost_response, and the remaining fixtures record transport_provider_error on both the failed call and run
+And the command exits through provider or transport class 6 rather than cancelled class 9
+
+Given the request-round cap would permit another retry
+And the one per-invocation deadline expires during an attempt or its backoff
+When the foreground action reaches that deadline
+Then no later attempt starts
+And the same deadline has bounded every request round, physical attempt, and backoff of the invocation
+And the call and run fail with transport_timeout and exit class 6 rather than cancelled class 9
+
+Given table-driven non-retryable transport responses for HTTP 4xx other than 408 or 429, authentication or authorization failure, and provider-rejected request shape
+When the provider returns the response
+Then exactly one physical attempt occurs on the planned invocation's one llm_calls row
+And transport_retries does not increment, no backoff occurs, and the call fails immediately
+And authentication or authorization records transport_auth_failed while the other fixtures record transport_provider_error
+
+Given an adapter or model omits structured-output support, a declared model identifier, declared context or output bounds, timeout or cancellation support, or a required deterministic credential or token classifier
+When selection or configuration validation runs
+Then that adapter or model is not selectable
+When the same missing capability is encountered by the run's pre-transport recheck
+Then the run fails with capability_mismatch and exit class 6 before any provider request
+And the capability check uses adapter declarations or configuration rather than making a discovery request
+
+Given the first physical attempt of one planned invocation is an ambiguous lost response
+And its request-round cap permits a retry whose byte-identical request returns valid structured output
+When the invocation completes
+Then transport_retries increments on the existing llm_calls row and no second call row is created
+And the recovered call has no terminal failure code
+And local validation permits at most one business replacement or verifier update, never one per provider-side completion
+
+Given an ambiguous lost response exhausts its request-round cap and the call and run finish with transport_lost_response
+When the provider later delivers a response from any exhausted attempt
+Then the response is discarded
+And no business row, verifier update, second llm_calls row, background completion, or out-of-band adoption occurs
+
+Given table-driven complete inputs for Stage 4, Stage 6, a Stage 7 provenance closure, and a Stage 10 or Stage 11 per-bullet invocation
+And one fixture exceeds its configured input budget while another exceeds the declared combined context bound after planned maximum output is included
+When deterministic local preflight runs
+Then no provider attempt occurs
+And the configured-budget fixture fails with budget_exceeded while the model-bound fixture fails with context_overflow
+And each diagnostic names the stage, exceeded limit, and measured value without payload content
+And no fixture is truncated, sampled, elided, summarized, partitioned, merged, or otherwise narrowed to fit
+And a fitting control sends bytes identical to the complete declared serialization while an exceeded fixture sends no request bytes, so the complete-set input is bit-identical or absent
+
+Given a planned maximum output, planned stage call count, or conservative potentially billable cost exceeds its applicable configured hard ceiling
+When preflight evaluates the plan
+Then it fails with budget_exceeded before the affected provider transport
+And the cost estimate includes every potentially billable attempt through both request rounds' caps, including an ambiguous lost request
+And retry charges collapse only when the provider declares the applicable idempotent-billing guarantee
+
+Given the database exposes prior current generation G or an already-committed §13.13 invalidated state
+When a handled owner interrupt arrives before transport, during transport, or after local validation but before business commit
+Then the adapter sends nothing before transport, aborts or abandons an in-flight request during transport, and rolls back any uncommitted business transaction after validation
+And any response completed provider-side after the interrupt is never adopted
+And the run finishes with status = "failed" and failure_code = "cancelled", and any call row interrupted before terminal state does likewise
+And the database still exposes G or the invalidated state, never a partial new generation
+And the command exits with status cancelled through class 9
+
+Given a process crashes before or during provider transport or after local validation but before business commit
+When the OS releases the dead writer's workspace lock and WAL recovery runs
+Then the database exposes the prior current generation or already-committed invalidated state and no partial new generation
+And the dead process emits no exit envelope
+When the next compatible writer acquires the workspace lock before its business operation
+Then it marks the abandoned run and every nonterminal call status = "failed" with failure_code = "cancelled" and supplies missing finish times
+And already terminal call rows remain unchanged
+And no validated response from the crashed run is reused
+
+Given a table-driven Stage 3, Stage 7, Stage 10, or Stage 11 run plans five invocations
+And invocations 1 and 2 validate but invocation 3 fails terminally
+When the run ends
+Then no business row, verification finding, or verifier update from that run commits and its durable telemetry is not business output
+And the prior current generation or invalidated state remains visible
+When the owner reruns the stage as a new command
+Then the new processing run owns fresh llm_calls rows and invokes all five planned calls again
+And it does not reuse either validated response from the failed run
+And only a fully valid rerun may commit the stage's one atomic replacement or verifier update, with repeated provider cost accepted
+
+Given .exp2res/config.toml supplies no numeric [llm] overrides
+When an LLM-backed action resolves its runtime configuration
+Then the service supplies defaults for the request-round attempt cap, backoff bounds, invocation deadline, input and output token budgets, run call ceiling, and applicable invocation and run cost ceilings
+When only those numeric [llm] values change in the same build and schema
+Then the next action enforces the changed values without an SDD edit or database migration
+And the required budget structure and fail-before-call behavior remain unchanged
+
+Given a service-default retry count is proposed to change
+When the transport policy is tuned
+Then observed failure distributions justify the change
+And an unmeasured provider-SDK default is insufficient
+
+Given prompt content, response content, and provider credentials each contain a unique sentinel
+And the adapter reports token usage and cost
+When the action emits progress or cost reporting
+Then no progress or cost event appears on stdout
+And the report appears only on stderr with data limited to stage, call index and count, token counts, and reported cost
+And stderr progress and retained call telemetry contain none of the prompt, response, credential, or sentinel values
+```
+
+## §21.44 JD Deletion and Workspace Purge Are Complete Privacy Operations
+
+Test (enforces §8.1, §13.13 rules 5–6 and 10, §14.14–§14.16, and §29.2 and §29.6):
+
+```text
+Given a retained job description has raw source text and a complete parsed value
+When jd list and jd show inspect it
+Then neither command acquires the workspace writer lock, changes a database row or managed path, invokes a provider, or serializes content into a prompt
+And list returns only ID, creation time, title, and company
+And show adds the complete parsed value but never JobDescription.raw_text
+
+Given job description J has current and historical branches, their bullets and bullet findings, corresponding managed branch outputs, and managed migration backups
+And unrelated current assessment views plus current and historical snapshots, claims, and assessment findings exist
+When the owner confirms jd delete for J
+Then the service first deduplicates, enumerates, and attempts removal of every managed migration backup and every dependent-owned out/<branch>/ directory, deciding ownership by actual canonical path — a captured directory is spared only when a current branch outside the captured set owns that same canonical path (byte-equal stored name, or one canonical path on a case-insensitive volume) because a later resume generate reused the name against a different job description; on a case-sensitive volume a fold-equal current branch with a different spelling owns a different directory and spares nothing, and a captured directory with no surviving current owner is removed as stale managed output
+And one referentially ordered transaction deletes every bullet finding of those branches, every dependent bullet, every current and historical dependent branch, and J without FK blocking
+And the closed result reports the selected raw-text-free J projection, every purged branch by ID and name, and every successfully removed managed path
+And the unrelated current assessment views remain current, while every current or historical assessment snapshot, claim, and assessment finding remains unchanged
+And the deletion creates one content-free stage 13.13 orchestration run and no provider or recompute run, and every llm_calls row committed before the deletion transaction has input_hash and output_hash NULL
+And the committed point deletion finishes with wal_checkpoint(TRUNCATE) but never VACUUM
+
+Given one required managed-path removal fails and another managed path is a symlink, whether its target is inside or outside the workspace
+When jd delete reaches a non-cancelled completion
+Then deletion never follows the symlink and leaves its target byte-for-byte unchanged
+And the JD, branches, bullets, and bullet findings remain deleted despite the filesystem failure and their prior FK graph
+And every failed or untraversed path is reported once as a residual path with deletion_incomplete and exit code 8, never success
+And the post-deletion checkpoint is still attempted and VACUUM is not
+
+Given an initialized workspace contains rows in every managed source, derived, and execution class plus managed exports, backups, temporary outputs, and retained schema_meta history
+And known content sentinels occur in the live main database, WAL, and managed content-bearing files
+And config.toml contains only owner-authored, secret-free configuration
+When the owner confirms workspace purge and every required cleanup and erasure step succeeds
+Then managed paths are enumerated and removal is attempted before one referentially ordered transaction clears every business and telemetry row
+And schema_meta is replaced by exactly one fresh row for the running build's current schema version and application version
+And no processing_runs or llm_calls row records the purge itself
+And .exp2res/, its empty current-version database, config.toml, and empty managed directory roots remain initialized
+And no rebuild follows
+And every database connection has set and verified PRAGMA secure_delete = ON before business I/O
+And the committed purge executes wal_checkpoint(TRUNCATE), then VACUUM outside a transaction, then a final wal_checkpoint(TRUNCATE)
+And the live main database has no free pages and a byte scan of it and every extant WAL or SHM sidecar finds no managed-content sentinel
+And success does not require unsafe unlinking of an empty or SQLite-maintained sidecar in use by a reader
+
+Given workspace purge cannot remove a managed path, truncate a required checkpoint, complete VACUUM, or complete the final checkpoint
+When the command reaches a non-cancelled completion
+Then the database purge remains committed and no rebuild follows
+And every affected managed, database, or sidecar path is reported as residual with deletion_incomplete and exit code 8, never success
+And any managed symlink is reported without traversal and its target remains unchanged
+
+Given a value in .exp2res/config.toml is recognized as a literal credential by a supported adapter's registered credential or token classifier
+When workspace configuration loads
+Then loading fails closed before business I/O with a non-secret diagnostic
+And the literal is neither echoed nor copied into telemetry
+
+Given table-driven raw-log and job-description point deletions have pre-existing call telemetry containing known source and derived-content hashes
+When each deletion transaction commits and any raw-log Stage 3–5 rebuild finishes
+Then every llm_calls row committed before that deletion transaction has input_hash and output_hash NULL
+And JD deletion creates no post-deletion call row, while a raw-log rebuild may create fresh call hashes over surviving content only
+And column-level inspection of retained processing_runs and llm_calls values finds no source text, derived prose, source path, account or user identifier, email address, or other person-stable or content-derived identifier
+And opaque run, entity, and provider-request IDs plus the non-content-derived prompt_policy_hash may remain
+When workspace purge runs instead
+Then no processing_runs or llm_calls row remains
+```
+
 ---

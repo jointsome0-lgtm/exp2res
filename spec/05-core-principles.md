@@ -27,9 +27,11 @@ Raw records are immutable to automation while retained: importers, extractors, v
 
 The owner may hard-delete any raw record. This privacy override is not a contradiction of append-only operation: append-only protects the trail from the system, not from its owner. Owner deletion uses §14.11 and the privacy-first reset in §13.13; it must not be blocked by provenance foreign keys or by a failed rebuild.
 
+The owner's deletion authority also extends to a selected job description through §14.15 and to the whole-workspace privacy operation in §14.16. §13.13 owns the point-deletion semantics; neither authority is weakened by derived dependencies.
+
 If the user corrects a memory, Exp2Res stores a self-contained correction event linked to the target record and invokes the recomputation flow in §13.13 through §14.4. The target remains unchanged as a stored row, while the correction displaces its interpretation; §13.3 defines the lineage's effective records. An ordinary rerun supersedes the previous derived generation only when its replacement is valid; a source-changing correction invalidates stale current derivations even if rebuilding fails. Neither path silently edits derived payloads in place.
 
-Correction history remains available, including superseded assessment snapshots. Owner deletion is stronger: it purges all derived database generations, removes every managed export it can, and reports any residual path as `deletion_incomplete` before rebuilding from the raw records that remain, because silently retaining derived copies could defeat deletion.
+Correction history remains available, including superseded assessment snapshots. Raw-log owner deletion is stronger: it purges all derived database generations, removes every managed export it can, and reports any residual path as `deletion_incomplete` before rebuilding from the raw records that remain, because silently retaining derived copies could defeat deletion.
 
 ## §5.4 recorded_at Is Not occurred_at
 

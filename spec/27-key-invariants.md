@@ -15,7 +15,7 @@ Confidence never exceeds its §9.4 calibration ceiling or propagation cap, and e
 Every typed JSON or polymorphic reference resolves to its current target when written (§12 rule 10).
 Every matched JD requirement resolves in the exact typed ParsedJD supplied to Stage 10 (§12 rule 10, §13.10).
 At most one derived generation per lineage, assessment view, or named branch is current; superseded history is inspect-only (§11, §13.13).
-Owner deletion purges all derived database generations, verifies managed-export removal, and reports residual paths as incomplete before rebuilding (§13.13).
+Raw-log owner deletion purges all derived database generations, verifies managed-export removal, and reports residual paths as incomplete before rebuilding; JD deletion purges its dependent resume state without recompute, and workspace purge removes every managed class (§13.13, §14.15, §14.16).
 Uncertainty is preserved.
 Assessment unknowns are typed GapQuestion references, never free snapshot prose or independent resume inputs (§11.7, §13.6).
 Contradictions are preserved as immutable members of Stage 4 replacement generations and cannot be transitioned in place (§5.9, §13.4).

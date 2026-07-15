@@ -42,6 +42,8 @@ Do not claim impact/production/customer/scale/revenue/reliability unless evidenc
 
 A verifier must normalize every source and candidate time expression to `OccurredAt` before comparing precision. A candidate with no temporal expression does not introduce a precision claim.
 
+Every datetime equality, ordering, duration, and interval operation in this rule uses the UTC instant under §12 rule 3; stored ISO 8601 TEXT bytes never participate in temporal comparison.
+
 For non-range values, the normative order from weakest to strongest is `unknown < year < quarter < month < week < exact_day < exact_datetime`. For comparison with ranges, normalize these values to maximum uncertainty widths: `unknown` is unbounded, `year` is 366 days, `quarter` is 92 days, `month` is 31 days, `week` is 7 days, `exact_day` is 1 day, and `exact_datetime` is zero.
 
 For containment and widening checks, normalize an `OccurredAt` to an anchored uncertainty interval. `unknown` is the unbounded timeline; `exact_datetime` is the singleton at `start`; every other non-range value is the half-open interval from `start` to `start +` its maximum uncertainty width above; and `date_range` / `approximate_range` use the half-open interval `[start, end)`. An extractor candidate is contained only when its normalized interval is a subset of its governing record's interval (§13.3 rule 10). The extractor must not re-align the source anchor to manufacture containment.
@@ -137,5 +139,15 @@ Every natural-language field emitted by an LLM is generated voice by default, in
 `GapQuestion.question` is generated voice and must pass §16 before Stage 4 persistence. At `gaps answer` capture, the service verifies that `RawLog.metadata.question_text` is an exact copy of that already validated question. Once copied into the owner-controlled raw record, the field is immutable source context for later extraction and is not rewritten or blocked by a later voice scan; this one-way handoff cannot admit unvalidated question text. In every case, a voice finding must never force a rewrite of owner memory or system-of-record material.
 
 This subsection does not change §16.1 or any §16.11 status meaning, aggregation rule, or consumer allowlist. Voice compliance is a phrase/content check on generated candidates; status gates remain the independent permission layer for assessment and resume consumers.
+
+## §16.13 Language Scope
+
+Except for the source-faithful mixed-language job-description fields below, V1 Exp2Res-authored natural-language output is English. This applies to every generated segment under §16.12, including facts, signals, claims, questions, contradictions, verifier prose and warnings, resume bullets, and §17–§18 report and export prose. A non-English generated segment is a §16 voice violation evaluated at §16.12's segment boundary; mixed source/generated content is never concatenated to evade that check. The §16.3 anti-flattery term list and the §16.9/§16.10 phrase rules are specified and verified for English, which is the honest generated-language coverage boundary of V1.
+
+Source voice may be in any language and remains byte-for-byte preserved under §16.12; it is never rejected, translated, normalized, or rewritten because of language. Cross-language extraction is in scope: Russian-language or other-language source text may produce English facts, claims, and other generated prose. Meaning-preserving translation occurs only inside generated voice, and it never weakens the evidence and overclaim rules in §16. A quoted source segment remains source voice only through §16.12's typed-reference and byte-for-byte check; an English paraphrase of a Russian source is generated voice.
+
+For a mixed-language job description, §15.9 requirement and keyword text must preserve the vacancy's demand modality and meaning. Faithfully preserved demand wording may remain non-English; it remains generated voice for structural validation and §15.9 parse fidelity and characterizes the vacancy under §16.12. Every Exp2Res-authored assertion about the owner remains English and fully bound by §16.2–§16.10.
+
+Localized or multilingual generated output is explicitly deferred beyond V1.
 
 ---
