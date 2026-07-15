@@ -15,6 +15,7 @@ It turns owner-controlled experience evidence that automation cannot rewrite int
 - [`SDD.md`](SDD.md) — the map: a stable-numbered § index. Each section lives in its own file under [`spec/`](spec/) (`spec/NN-slug.md`).
 - [`spec/`](spec/) — the specification body: domain model, typed contracts, SQLite schema, pipeline stages, CLI, LLM contracts, verification rules, evals, and acceptance criteria.
 - [`DECISION-LOG.md`](DECISION-LOG.md) — dated one-line design decisions with rejected alternatives.
+- [`scripts/`](scripts/) — repository-owned offline checks: public hygiene, the SDD-conventions and Decision Log linters vendored from selfos-skills with recorded versions, and the aggregate `scripts/check.py`; all validate in a fresh offline checkout.
 
 To read the design, start with the § index in `SDD.md` and open the section files you need; §1 (executive summary) and §28 (final design statement) are the shortest complete picture.
 

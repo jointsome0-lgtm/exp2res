@@ -1,6 +1,8 @@
-## Decision Log
-
 Format: `YYYY-MM-DD — decision in one phrase; rejected alternative and why.`
+New entries are linted by `python3 scripts/check_decision_log.py --baseline 2026-07-15 DECISION-LOG.md`;
+entries on or before 2026-07-15 are a grandfathered baseline.
+
+## Decision Log
 
 - 2026-07-03 — Keep the SDD as a single file navigated via the § Index (map-as-interface);
   a physical split into a map file plus per-section files is deferred until after the
@@ -148,3 +150,4 @@ Format: `YYYY-MM-DD — decision in one phrase; rejected alternative and why.`
 - 2026-07-15 — Issue #43 clusters 5b/5d: §9.4 remains the sole calibration home — §15.2/§15.3 cite its ceiling, conflicting-context cap, and propagation caps instead of restating the parameters — while §11.7's answered-gap paragraph defers to §14.7/§17's owning semantics and the known-gap-assertion rule stays canonical at §13.6. Rejected alternative: keeping cap parameters inside the §15 contracts as self-contained prompt text — §15 contracts already cite § rules throughout, and duplicated parameters (two-distinct-raw-logs, the `medium` counter-fact cap) are exactly the multi-home drift #43 targets.
 - 2026-07-15 — Issue #54, following the "Owner pre-decision (2026-07-14)" issue comment and the same issue's P8 handoff comment: V1's product-facing export artifact is a verified bullet pack with closed versioned companion schemas and deterministic byte-identical rendering; the full resume document model is deferred to a post-mirror iteration; and cross-bullet coherence uses deterministic planning, never §15.6 writer-context widening or a second LLM coherence pass. Rejected alternatives: shipping "resume export" naming for a bullet artifact — the product would claim a document it does not produce, violating §5's honesty stance toward its own surface; an LLM coherence/dedup pass — it reintroduces the cross-bullet fabrication surface §15.6's isolation exists to prevent; open-shape companions — unversioned JSON becomes an implicit contract consumers guess at.
 - 2026-07-15 — SDD version 0.3, status "Draft / implementation-oriented" → "Implementation-ready": #59's definition-of-ready holds — gates A–C landed via PRs #66–#68 and #83–#85, the #43 dedupe pass via PR #86, and the Decision Log/§21/§24 meta-gates verified (111 dated decisions before this entry, 49 evals, 52 acceptance criteria matching the map). Spec changes continue through issues and this log; the version marks readiness, not freeze. Rejected alternative: bumping to 1.0 — the spec is implementation-ready, not implementation-proven; 1.0 belongs after the V1 slices validate the contracts.
+- 2026-07-15 — Issue #80: vendored the selfos-skills SDD-conventions template v1.0.0 as a generated AGENTS.md block and the Decision Log lint 1.1.0 into scripts/, with one repository-owned aggregate check in offline CI and a 2026-07-15 grandfather baseline for pre-adoption entries. Rejected: referencing selfos-skills at runtime — a fresh offline checkout must not depend on another repository or the network for its own correctness rules. #80
