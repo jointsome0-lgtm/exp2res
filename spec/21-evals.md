@@ -1079,7 +1079,7 @@ And --verbose or --quiet changes neither stdout, status, nor exit_code
 Given db status, every operable list/show form, and each export runs with --json
 Then result validates against exactly the closed projection selected by command
 And a show result has the required single selected record while list results preserve every reported record
-And runs show places its complete run and call rows in result and its VerificationFinding rows in findings
+And runs show places its complete run and call rows in result — the run's metadata_json carried as its stored JSON TEXT string so the projection stays closed — and its VerificationFinding rows in findings
 And no result contains RawLog.raw_text, JobDescription.raw_text, a free-form object, or a field outside its projection
 Given a mutation whose standard envelope fields carry its complete result
 Then result is null rather than an untyped duplicate
