@@ -681,7 +681,18 @@ def previous_manifest_paths() -> set:
         recorded = json.loads(manifest.read_text(encoding="utf-8"))["files"]
     except (ValueError, KeyError):
         return set()
-    return set(recorded) | {"manifest.json"}
+    safe = set()
+    for path in recorded:
+        # A manifest key is untrusted input to the cleanup below: only a
+        # relative, traversal-free POSIX path resolving inside ROOT may be
+        # deleted; anything else is left for check() to report.
+        parts = Path(path).parts
+        if Path(path).is_absolute() or "\\" in path or ".." in parts:
+            continue
+        if not (ROOT / path).resolve().is_relative_to(ROOT.resolve()):
+            continue
+        safe.add(path)
+    return safe | {"manifest.json"}
 
 
 def generate() -> int:
