@@ -16,9 +16,9 @@ Whenever a status-bearing row is offered to Stage 10 bullet generation or either
 
 Every §13 business-state mutation and all coupled managed-output work, including enumeration, writes, removal, and residual-path handling, run while the §8.1 workspace writer lock is held.
 
-Whenever any transition supersedes a current `AssessmentSnapshot`, `ResumeBranch`, or `ResumeBullet`, it also enumerates and attempts to remove all dependent managed assessment/resume artifacts under `out/`. Database invalidation remains committed if cleanup fails; every residual path is reported as an unsuccessful invalidation and no command may report the stale files as current output. `gaps answer` triggers the same enumeration, removal attempt, and residual-path reporting for the managed exports its answered state makes stale, without superseding any row (§14.7).
+**Stale-export invalidation rule.** Exactly three trigger classes make a retained managed export stale: any transition that supersedes a current `AssessmentSnapshot`, `ResumeBranch`, or `ResumeBullet`; a completed Stage 7 or Stage 11 verifier pass that changes any current claim, snapshot, or bullet verification field (§13.7, §13.11); and a `gaps answer` whose answered state the dependent exports no longer reflect, which supersedes no row (§14.7). The triggering operation enumerates every affected manifest-backed set and attempts removal through §13.14; database state remains committed if cleanup fails, every residual path is reported as an unsuccessful invalidation, and no command may report the stale files as current output. The trigger sites name their trigger and affected sets while this rule owns the shared mechanics; privacy deletions remove managed sets under §13.13 and §14.16 rather than through this rule.
 
-Before any writer begins its business operation, while it holds the §8.1 workspace lock, it applies §13.14's managed-output preamble: deterministically named abandoned candidate and rollback siblings are removed, restored, or reported according to their recoverable state. An unreconciled sibling stops managed-output publication before rendering or final-path I/O, with complete residual-path reporting; it does not block a database mutation, invalidation, owner deletion, or workspace purge whose owning §13/§14 rule commits despite managed-cleanup failure, and no operation silently trusts or adopts it as current output.
+Before any writer begins its business operation, while it holds the §8.1 workspace lock, it applies §13.14's managed-output preamble; §13.14 rule 5 owns abandoned-sibling identification and disposition and the boundary that an unreconciled residual stops managed-output publication without blocking a database mutation, invalidation, owner deletion, or workspace purge.
 
 ## §13.1 Stage 1 — Raw Capture and Evidence Recording
 
@@ -288,7 +288,7 @@ Stage 7 obtains a validated §15.5 verdict for every claim in the current snapsh
 
 One Stage 7 invocation performs one semantic verifier pass per current claim and then terminates after aggregation. A valid non-passing verdict completes verification but closes every consumer gate that disallows its status. Stage 7 returns the complete §15.5 findings to the invoking CLI command, persists the denormalized operational fields plus the complete append-only finding history, and never invokes Stage 6, applies `suggested_rewrite`, edits or drops claim prose, or creates a gap question. The advisory rewrite is persisted only inside its finding and never re-enters a prompt or export; revised claim wording can appear only in a later explicit Stage 6 replacement generation.
 
-If verification or re-verification changes a current claim's status or counterevidence or the current snapshot status, that snapshot's manifest-backed managed set at `out/assessment/<snapshot-id>/` (§13.12, §13.14) is removed or reported as a residual-path failure. Every branch and bullet based on that snapshot is also superseded and each dependent `out/branch/<branch-id>/` set is removed or reported under the global rule above; a verifier result may not leave a resume current against a changed verifier state.
+If verification or re-verification changes a current claim's status or counterevidence or the current snapshot status, every branch and bullet based on that snapshot is superseded in the same transaction, and the affected sets under §13's stale-export invalidation rule are that snapshot's `out/assessment/<snapshot-id>/` set (§13.12) and each dependent `out/branch/<branch-id>/` set; a verifier result may not leave a resume current against a changed verifier state.
 
 ## §13.8 Stage 8 — Job Description Parsing
 
@@ -382,7 +382,7 @@ Stage 11 owns the semantic transition from each current bullet's initial `unveri
 
 One Stage 11 invocation performs one semantic verifier pass per current bullet, returns the complete findings to the invoking CLI command, persists the denormalized `verification_status`, `unsupported_phrases`, and `verifier_reason` plus the complete append-only finding history, and terminates. It never invokes Stage 10, applies the advisory `suggested_rewrite`, rewrites or drops a bullet, or creates a gap question. The advisory rewrite is persisted only inside its finding and never re-enters a prompt or export; revised bullet wording requires an explicit Stage 10 generation, which supersedes the prior current branch generation.
 
-If verification or re-verification changes any current bullet verification field, the branch's manifest-backed `out/branch/<branch-id>/` set is removed or reported as a residual-path failure before the new finding set is reported current. A verifier result may not leave an older valid matching manifest current against changed bullet verdicts.
+If verification or re-verification changes any current bullet verification field, the affected set under §13's stale-export invalidation rule is the branch's `out/branch/<branch-id>/` set, and its removal or residual report completes before the new finding set is reported current. A verifier result may not leave an older valid matching manifest current against changed bullet verdicts.
 
 Verification rejects a superseded branch or bullet and any bullet whose current provenance chain no longer resolves.
 
@@ -412,7 +412,7 @@ out/assessment/<snapshot-id>/evidence_map.json
 out/assessment/<snapshot-id>/manifest.json
 ```
 
-`<snapshot-id>` is the exported `AssessmentSnapshot.id` in §13.14's service-owned path-key form. No scope or scope-target text contributes a path component. The matching manifest carries the exact assessment-view identity; before publishing a newer snapshot for that view, §13.14 removes or reports every prior manifest-valid assessment set naming the same view without touching another view.
+`<snapshot-id>` is the exported `AssessmentSnapshot.id` in §13.14's service-owned path-key form. No scope or scope-target text contributes a path component. The matching manifest carries the exact assessment-view identity; §13.14 rule 5 owns same-view replacement of prior assessment sets at publication.
 
 Persisted verified-bullet-pack outputs:
 

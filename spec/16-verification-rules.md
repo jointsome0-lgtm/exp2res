@@ -121,7 +121,7 @@ inferred_but_acceptable
 supported
 ```
 
-Stage 7 is the only operation that may write this aggregate while the snapshot is current. Claim verification fields, the aggregate, and dependent branch/bullet supersession commit in one database transaction. Stage 7 and assessment export must reject a snapshot unless exactly one member claim is a `narrative_summary` whose claim text equals `AssessmentSnapshot.summary`; every gated consumer must also reject a stored aggregate that does not equal a fresh reduction of the current claims. Manifest-backed managed-set removal is attempted under §13.13 and §13.14, cannot roll back that database state, and reports residual paths on failure. Stage 10 initializes bullets to `unverified`, and Stage 11 alone assigns their semantic verdicts.
+Stage 7 is the only operation that may write this aggregate while the snapshot is current. Claim verification fields, the aggregate, and dependent branch/bullet supersession commit in one database transaction. Stage 7 and assessment export must reject a snapshot unless exactly one member claim is a `narrative_summary` whose claim text equals `AssessmentSnapshot.summary`; every gated consumer must also reject a stored aggregate that does not equal a fresh reduction of the current claims. Manifest-backed managed-set removal follows §13's stale-export invalidation rule and cannot roll back that database state. Stage 10 initializes bullets to `unverified`, and Stage 11 alone assigns their semantic verdicts.
 
 ## §16.12 Generated-Voice Boundary
 
