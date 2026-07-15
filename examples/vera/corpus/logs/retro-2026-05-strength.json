@@ -1,0 +1,15 @@
+{
+  "answers": {
+    "period": {
+      "confidence": "low",
+      "end": "2026-06-25T00:00:00+02:00",
+      "precision": "approximate_range",
+      "start": "2026-05-01T00:00:00+02:00"
+    },
+    "project": "Strength Basics",
+    "text": "Strength Basics retro for May into late June, from memory (Vera Example). I trained consistently, about three sessions a week, and logged squat form notes with anatomy references."
+  },
+  "kind": "log_retro",
+  "persona": "Vera Example",
+  "story_key": "retro-2026-05-strength"
+}

@@ -1,0 +1,9 @@
+{
+  "kind": "correction_add",
+  "occurred": "copy",
+  "persona": "Vera Example",
+  "project": "copy",
+  "story_key": "correction-2026-07-03-k8s",
+  "target_story_key": "retro-2026-06-k8s",
+  "text": "Correction to the June K8s Playbook retro (Vera Example). In June I reorganized the playbook's structure and completed about six of the twelve planned runbooks; the etcd and kubectl runbooks got real test runs. The ingress guide was still unfinished at the end of June, and the playbook was not fully rewritten."
+}

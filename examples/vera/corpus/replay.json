@@ -1,0 +1,387 @@
+{
+  "clock_rule": "the harness pins the workspace clock to each step's value before running it",
+  "corpus": "vera-example-fixtures",
+  "derived_rule": "derived_steps run after steps and require the #71 fake-runner layer for every LLM-backed stage; their expectations are coarse outcome contracts, not golden outputs",
+  "derived_steps": [
+    {
+      "clock": "2026-07-11T10:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "kind": "extract",
+      "step": "E1"
+    },
+    {
+      "clock": "2026-07-11T10:05:00+02:00",
+      "expect": {
+        "contradiction_between": [
+          "logs/daily-2026-06-25.md",
+          "logs/daily-2026-07-02.md"
+        ],
+        "status": "ok"
+      },
+      "kind": "detect",
+      "step": "E2"
+    },
+    {
+      "clock": "2026-07-11T10:10:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "kind": "signals",
+      "step": "E3"
+    },
+    {
+      "clock": "2026-07-11T10:15:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "kind": "assess",
+      "scope": "global",
+      "step": "E4"
+    },
+    {
+      "clock": "2026-07-11T10:17:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "kind": "assess_verify",
+      "note": "§14.10 refuses bullets over an unverified snapshot; verify first",
+      "snapshot_step": "E4",
+      "step": "E5"
+    },
+    {
+      "clock": "2026-07-11T10:20:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "kind": "assess",
+      "scope": "project",
+      "step": "E6",
+      "target": "K8s Playbook"
+    },
+    {
+      "clock": "2026-07-11T10:22:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "kind": "assess_verify",
+      "snapshot_step": "E6",
+      "step": "E7"
+    },
+    {
+      "clock": "2026-07-11T10:25:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "kind": "assess",
+      "note": "weak-evidence view: manual claims plus displaced consistency retro",
+      "scope": "project",
+      "step": "E8",
+      "target": "Strength Basics"
+    },
+    {
+      "clock": "2026-07-11T10:27:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "kind": "assess_verify",
+      "snapshot_step": "E8",
+      "step": "E9"
+    },
+    {
+      "branch": "docs-examplia",
+      "clock": "2026-07-12T10:00:00+02:00",
+      "expect": {
+        "status": "ok",
+        "supported_bullets_min": 1,
+        "unmatched_requirements": [
+          "video tutorials",
+          "SEO"
+        ]
+      },
+      "jd_file": "jds/jd-docs-engineer-examplia.md",
+      "kind": "bullets",
+      "note": "snapshot_step names the exact --snapshot anchor (§14.10 has no latest default); the harness resolves it to E4's snapshot ID",
+      "snapshot_step": "E4",
+      "step": "E10"
+    },
+    {
+      "branch": "backend-clouddocs",
+      "clock": "2026-07-12T11:00:00+02:00",
+      "expect": {
+        "blocked_claims": [
+          "production Python services",
+          "PostgreSQL in production",
+          "on-call rotation"
+        ],
+        "status": "ok",
+        "supported_bullets_min": 1
+      },
+      "jd_file": "jds/jd-junior-backend-clouddocs.md",
+      "kind": "bullets",
+      "note": "the honest-mirror path: learning-grade Kubernetes evidence never promotes to production claims (§5.10, §16); the supported bullet comes from the preferred Kubernetes-familiarity requirement, so P1's dependent purge is guaranteed material to purge",
+      "snapshot_step": "E4",
+      "step": "E11"
+    }
+  ],
+  "failure_steps": [
+    {
+      "after_step": 9,
+      "clock": "2026-07-13T09:00:00+02:00",
+      "expect": {
+        "accepted": 0,
+        "batch": "aborted",
+        "conflict": 1,
+        "duplicate": 0,
+        "rejected": 0
+      },
+      "file": "invalid/ephemeris-conflict.jsonl",
+      "importer": "ephemeris",
+      "kind": "import",
+      "step": "F1"
+    },
+    {
+      "after_step": 9,
+      "clock": "2026-07-13T09:05:00+02:00",
+      "expect": {
+        "accepted": 0,
+        "conflict": 0,
+        "duplicate": 0,
+        "reason": "content_hash mismatch (§19.4 rule 3)",
+        "rejected": 1
+      },
+      "file": "invalid/github-commit-bad-hash.json",
+      "importer": "github",
+      "kind": "import",
+      "step": "F2"
+    },
+    {
+      "after_step": 9,
+      "clock": "2026-07-13T09:10:00+02:00",
+      "expect": {
+        "accepted": 0,
+        "conflict": 0,
+        "duplicate": 0,
+        "reason": "summary not byte-exact in text (§19.2)",
+        "rejected": 1
+      },
+      "file": "invalid/atlas-snapshot-text-mismatch.json",
+      "importer": "atlas",
+      "kind": "import",
+      "step": "F3"
+    }
+  ],
+  "persona": "Vera Example",
+  "privacy_epilogue": [
+    {
+      "clock": "2026-07-14T10:00:00+02:00",
+      "expect": {
+        "purged_branches": [
+          "backend-clouddocs"
+        ],
+        "residual_paths": [],
+        "status": "ok"
+      },
+      "kind": "jd_delete",
+      "note": "runs first, while its dependent branch/bullets/findings still exist: dependent purge, no recompute (§13.13 rule 10); after P2's global reset there would be nothing left to exercise",
+      "step": "P1",
+      "target_file": "jds/jd-junior-backend-clouddocs.md"
+    },
+    {
+      "clock": "2026-07-14T11:00:00+02:00",
+      "expect": {
+        "derived_reset": "global",
+        "rebuild_through": "stage_5",
+        "residual_paths": [],
+        "status": "ok"
+      },
+      "kind": "logs_delete",
+      "note": "point deletion, global derived reset, Stage 3-5 rebuild (§13.13)",
+      "step": "P2",
+      "target_file": "logs/daily-2026-06-20.md"
+    }
+  ],
+  "setup": {
+    "note": "configured at init before any step: §14.14 requires an explicit IANA workspace timezone and forbids a default; for this demo, fictional Exampleburg keeps Europe/Berlin clocks, matching every +02:00 offset in the corpus",
+    "workspace_timezone": "Europe/Berlin"
+  },
+  "steps": [
+    {
+      "clock": "2026-06-02T21:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "logs/daily-2026-06-02.md",
+      "kind": "log_daily",
+      "project": "K8s Playbook",
+      "step": 1
+    },
+    {
+      "clock": "2026-06-09T21:30:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "logs/daily-2026-06-09.md",
+      "kind": "log_daily",
+      "note": "project label folds equal to 'K8s Playbook' (§11 named identity)",
+      "project": "k8s playbook",
+      "step": 2
+    },
+    {
+      "clock": "2026-06-20T20:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "logs/daily-2026-06-20.md",
+      "kind": "log_daily",
+      "note": "sensitive-content stand-in; deletion target of epilogue step P2",
+      "project": "Strength Basics",
+      "step": 3
+    },
+    {
+      "clock": "2026-06-25T22:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "logs/daily-2026-06-25.md",
+      "kind": "log_daily",
+      "project": "K8s Playbook",
+      "step": 4
+    },
+    {
+      "clock": "2026-06-28T19:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "logs/retro-2026-05-strength.json",
+      "kind": "log_retro",
+      "step": 5
+    },
+    {
+      "clock": "2026-07-01T09:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "logs/retro-2026-06-k8s.json",
+      "kind": "log_retro",
+      "step": 6
+    },
+    {
+      "clock": "2026-07-02T21:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "logs/daily-2026-07-02.md",
+      "kind": "log_daily",
+      "project": "K8s Playbook",
+      "step": 7
+    },
+    {
+      "clock": "2026-07-03T10:00:00+02:00",
+      "expect": {
+        "displaces": "retro-2026-06-k8s",
+        "status": "ok"
+      },
+      "file": "logs/correction-2026-07-03-k8s.json",
+      "kind": "correction_add",
+      "step": 8
+    },
+    {
+      "clock": "2026-07-06T09:30:00+02:00",
+      "expect": {
+        "accepted": 3,
+        "conflict": 0,
+        "duplicate": 1,
+        "rejected": 0
+      },
+      "file": "imports/ephemeris-2026-06.jsonl",
+      "importer": "ephemeris",
+      "kind": "import",
+      "step": 9
+    },
+    {
+      "clock": "2026-07-06T09:35:00+02:00",
+      "expect": {
+        "accepted": 1,
+        "conflict": 0,
+        "duplicate": 0,
+        "rejected": 0
+      },
+      "file": "imports/atlas-snapshot-2026-07-05.json",
+      "importer": "atlas",
+      "kind": "import",
+      "step": 10
+    },
+    {
+      "clock": "2026-07-06T09:40:00+02:00",
+      "expect": {
+        "accepted": 1,
+        "conflict": 0,
+        "duplicate": 0,
+        "evidence_strength": "commit_or_pr",
+        "rejected": 0
+      },
+      "file": "imports/github-commit-2026-06-15.json",
+      "importer": "github",
+      "kind": "import",
+      "step": 11
+    },
+    {
+      "clock": "2026-07-06T09:41:00+02:00",
+      "expect": {
+        "accepted": 1,
+        "conflict": 0,
+        "duplicate": 0,
+        "evidence_strength": "artifact_reference",
+        "rejected": 0
+      },
+      "file": "imports/github-commit-2026-06-28.json",
+      "importer": "github",
+      "kind": "import",
+      "step": 12
+    },
+    {
+      "clock": "2026-07-07T11:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "imports/design-doc-k8s-playbook.md",
+      "importer": "file",
+      "kind": "import",
+      "project": "K8s Playbook",
+      "step": 13
+    },
+    {
+      "clock": "2026-07-08T21:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "logs/daily-2026-07-08.md",
+      "kind": "log_daily",
+      "note": "quoted instruction-like text stays inert data (§21.49)",
+      "project": null,
+      "step": 14
+    },
+    {
+      "clock": "2026-07-09T10:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "jds/jd-docs-engineer-examplia.md",
+      "kind": "jd_add",
+      "step": 15
+    },
+    {
+      "clock": "2026-07-10T10:00:00+02:00",
+      "expect": {
+        "status": "ok"
+      },
+      "file": "jds/jd-junior-backend-clouddocs.md",
+      "kind": "jd_add",
+      "note": "'Note to agents' section is untrusted JD data, never an instruction",
+      "step": 16
+    }
+  ],
+  "version": "0.1.0"
+}

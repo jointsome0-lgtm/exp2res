@@ -1,0 +1,51 @@
+{
+  "adapter_version": "selfos-demo-adapter/0.1",
+  "body": {
+    "as_of": "2026-07-05T20:00:00+02:00",
+    "content_digest": null,
+    "domain": "knowledge_state",
+    "evidence_references": [
+      {
+        "reference": "atlas:evidence:k8s-ops-notes"
+      }
+    ],
+    "knowledge_state": [
+      {
+        "scale": "atlas_learning_stage",
+        "subject": "kubernetes operations",
+        "value": "studied"
+      },
+      {
+        "scale": "atlas_learning_stage",
+        "subject": "human anatomy",
+        "value": "learning"
+      }
+    ],
+    "occurred": {
+      "confidence": "high",
+      "end": "2026-07-05T18:00:00+02:00",
+      "precision": "date_range",
+      "start": "2026-06-01T00:00:00+02:00"
+    },
+    "path": null,
+    "source": "atlas",
+    "summary": "Studied Kubernetes operations through the playbook drafts and kept human anatomy at an early learning stage. Extra sentence absent from text.",
+    "text": "Atlas snapshot for Vera Example as of 2026-07-05T20:00:00+02:00. Summary: Studied Kubernetes operations through the playbook drafts and kept human anatomy at an early learning stage. Snapshot window: from 2026-06-01T00:00:00+02:00 to 2026-07-05T18:00:00+02:00 with date_range precision and high confidence. Knowledge state: subject kubernetes operations; scale atlas_learning_stage; value studied. Knowledge state: subject human anatomy; scale atlas_learning_stage; value learning. Trail: K8s operations study trail from 2026-06-02T00:00:00+02:00 to 2026-07-04T22:00:00+02:00 with date_range precision and high confidence. Evidence reference: atlas:evidence:k8s-ops-notes.",
+    "trail_segments": [
+      {
+        "label": "K8s operations study trail",
+        "occurred": {
+          "confidence": "high",
+          "end": "2026-07-04T22:00:00+02:00",
+          "precision": "date_range",
+          "start": "2026-06-02T00:00:00+02:00"
+        }
+      }
+    ]
+  },
+  "content_hash": "16a5ad059dd89e05f11f160e6a3309f94aafc69f1d5c20fedeaac57c2dc63bf9",
+  "contract_version": 1,
+  "exported_at": "2026-07-05T21:00:00+02:00",
+  "source_record_id": "vera-atlas-snapshot-2026-07-05-broken",
+  "source_system": "atlas"
+}

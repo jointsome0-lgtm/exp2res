@@ -1,0 +1,15 @@
+{
+  "answers": {
+    "period": {
+      "confidence": "medium",
+      "end": "2026-07-01T00:00:00+02:00",
+      "precision": "approximate_range",
+      "start": "2026-06-01T00:00:00+02:00"
+    },
+    "project": "K8s Playbook",
+    "text": "June retro for the K8s Playbook, from memory (Vera Example). I rewrote the whole playbook structure and finished all twelve runbooks in June. The etcd and kubectl ones got real test runs."
+  },
+  "kind": "log_retro",
+  "persona": "Vera Example",
+  "story_key": "retro-2026-06-k8s"
+}

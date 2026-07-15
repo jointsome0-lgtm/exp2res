@@ -1,0 +1,31 @@
+{
+  "adapter_version": "selfos-demo-adapter/0.1",
+  "body": {
+    "author": {
+      "email": "sasha@example.com",
+      "login": "sasha-example",
+      "name": "Sasha Example"
+    },
+    "authored_at": "2026-06-28T14:05:00+02:00",
+    "commit_sha": "396050fa90ab75bbe33a41e05dec4e5720ef324b",
+    "committed_at": "2026-06-28T16:40:00+02:00",
+    "committer": {
+      "email": "vera@example.com",
+      "login": "vera-example",
+      "name": "Vera Example"
+    },
+    "files": [
+      "runbooks/kubectl-troubleshooting.md"
+    ],
+    "message": "Fix typos in the kubectl runbook (community patch)",
+    "owner_attribution": "unknown",
+    "repo": "vera-example/k8s-playbook",
+    "source": "github",
+    "url": "https://github.com/vera-example/k8s-playbook/commit/396050fa90ab75bbe33a41e05dec4e5720ef324b"
+  },
+  "content_hash": "1a460d547ddea06cde3d3fd763a5934edd6e2d649278070bc19be5e3f41efd75",
+  "contract_version": 1,
+  "exported_at": "2026-07-06T09:00:00+02:00",
+  "source_record_id": "vera-example/k8s-playbook@396050fa90ab75bbe33a41e05dec4e5720ef324b",
+  "source_system": "github"
+}
