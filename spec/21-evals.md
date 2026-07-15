@@ -22,15 +22,15 @@ Then system may create weak activity fact
 But must not create "verification expert"
 ```
 
-## §21.3 Atlas Artifact Does Not Equal Mastery
+## §21.3 Atlas Snapshot Does Not Equal Mastery
 
 Test:
 
 ```text
-Given an Atlas artifact reference mentions Kafka
+Given a §19.2 knowledge-state snapshot reports a studied-grade Kafka subject on Atlas's own scale
 When Exp2Res imports it
-Then it may create context evidence
-But must not claim Kafka mastery
+Then it creates only the atomic RawLog and knowledge_state_snapshot evidence
+But must not claim Kafka mastery, implementation, or production use
 ```
 
 ## §21.4 No Hidden Contradiction
