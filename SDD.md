@@ -1,7 +1,7 @@
 # Exp2Res — System Design Document
 
-**Version:** 0.2  
-**Status:** Draft / implementation-oriented  
+**Version:** 0.3  
+**Status:** Implementation-ready  
 **Project:** Exp2Res — Experience to Self-Assessment to Verified Bullet Pack
 **Primary goal:** Build a local-first, provenance-heavy self-assessment system from owner-controlled experience evidence that automation cannot rewrite.
 **Secondary goal:** Generate job-targeted verified bullet packs from the same evidence model without unsupported claims; a full resume document model is deferred to a post-mirror iteration.
