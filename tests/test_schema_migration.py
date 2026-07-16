@@ -24,6 +24,7 @@ from conftest import FIXED_NOW, configure_timezone
 
 
 runner = CliRunner()
+pytestmark = pytest.mark.lifecycle
 
 
 def v1_workspace(tmp_path: Path) -> tuple[Path, str, str]:

@@ -30,6 +30,7 @@ from conftest import FIXED_NOW, configure_timezone
 
 
 runner = CliRunner()
+pytestmark = pytest.mark.lifecycle
 
 
 def test_fresh_init_and_idempotent_reopen_are_private_and_versioned(

@@ -16,6 +16,9 @@ from exp2res.storage.workspace import initialize_workspace, writer_database
 from conftest import FIXED_NOW, configure_timezone
 
 
+pytestmark = pytest.mark.lifecycle
+
+
 def test_automation_cannot_rewrite_or_delete_but_owner_deletion_cascades(
     workspace: Path,
 ) -> None:

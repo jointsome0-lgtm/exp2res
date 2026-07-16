@@ -26,4 +26,12 @@ packages = ["exp2res"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = '-ra -m "not live"'
+markers = [
+  "unit: model, schema, and deterministic boundary unit tests",
+  "lifecycle: workspace and state-machine lifecycle tests",
+  "contract: fake-runner tests through the production LLM runner interface",
+  "invariant: property-style or parameterized invariant tests",
+  "golden: deterministic export tests pinned to golden files",
+  "live: explicit live-model tests excluded from normal runs and CI",
+]
