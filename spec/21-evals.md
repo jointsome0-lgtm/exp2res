@@ -1682,11 +1682,11 @@ Test (enforces §15.10 rule 4, §15.12, §29.2, §29.4, and §29.6; extends §21
 
 ```text
 Given every agent-backed adapter the build ships, including the Codex CLI reference adapter and any Agent SDK adapter
-And a planted canary file outside the contract workspace, the Exp2Res workspace path, a .env file, and user-level agent rules and configuration carrying a unique sentinel
-When the §15.12 rule 8 confinement canary executes a trivial no-network command inside the sandbox
-Then reading inside the contract workspace succeeds while reading the planted canary, the Exp2Res workspace path, .env, and the user-level rules each fails
-And the probe invokes no model, network, provider credential, or provider request
-And where the sandbox mechanism is unavailable the probe is skip-marked with an explicit reason rather than silently passed
+And planted sentinel files outside the contract workspace, at the Exp2Res workspace path and its database, at a .env path, at an unrelated source module, and at the user-level agent rules and configuration paths
+When the §15.12 rule 8 confinement canary executes a trivial no-network command inside the same sandbox assembly the shipping runner uses
+Then reading inside the contract workspace succeeds while reading each planted sentinel fails
+And the probe invokes no model, network, provider credential, or provider request, so it is safe for offline CI
+And where the sandbox mechanism is unavailable the probe is skip-marked with an explicit reason rather than silently passed, while the runtime's rule 8 preflight still fails closed with capability_mismatch before transport, so skipping the eval never weakens the gate
 
 Given one agent-backed invocation of a §15 contract with a parent environment variable carrying a credential-like sentinel
 When the runner launches the runtime

@@ -1,0 +1,280 @@
+["21.1"]
+status = "pending"
+phase = "3"
+
+["21.2"]
+status = "pending"
+phase = "5"
+
+["21.3"]
+status = "pending"
+phase = "5"
+
+["21.4"]
+status = "pending"
+phase = "3"
+
+["21.5"]
+status = "pending"
+phase = "4"
+
+["21.6"]
+status = "pending"
+phase = "3"
+
+["21.7"]
+status = "pending"
+phase = "1"
+
+["21.8"]
+status = "pending"
+phase = "3"
+
+["21.9"]
+status = "pending"
+phase = "4"
+
+["21.10"]
+status = "pending"
+phase = "3"
+
+["21.11"]
+status = "covered"
+nodes = [
+  "tests/test_deletion_phase0.py::test_automation_cannot_rewrite_or_delete_but_owner_deletion_cascades",
+  "tests/test_deletion_phase0.py::test_owner_delete_re_roots_retained_correction_without_fk_block",
+]
+
+["21.12"]
+status = "pending"
+phase = "1"
+
+["21.13"]
+status = "pending"
+phase = "4"
+
+["21.14"]
+status = "partial"
+nodes = [
+  "tests/test_deletion_phase0.py::test_automation_cannot_rewrite_or_delete_but_owner_deletion_cascades",
+  "tests/test_deletion_phase0.py::test_delete_preserves_external_source_and_does_not_follow_backup_symlink",
+]
+phase = "4"
+note = "Phase 0 proves owner deletion, raw/evidence purge, secure cleanup, and committed deletion with residual paths; derived generations, rebuilds, views, and exports land with later lifecycle phases"
+
+["21.15"]
+status = "partial"
+nodes = [
+  "tests/test_capture_phase0.py::test_vera_daily_and_retro_round_trip_with_atomic_manual_evidence",
+  "tests/test_capture_phase0.py::test_injected_failure_between_raw_and_evidence_rolls_back_both",
+]
+phase = "3"
+note = "Stage 1 proves linked evidence references and atomic candidate persistence; typed derived-stage references, fact_sources, and Stage 6 ownership checks remain"
+
+["21.16"]
+status = "pending"
+phase = "4"
+
+["21.17"]
+status = "pending"
+phase = "4"
+
+["21.18"]
+status = "pending"
+phase = "4"
+
+["21.19"]
+status = "pending"
+phase = "3"
+
+["21.20"]
+status = "pending"
+phase = "4"
+
+["21.21"]
+status = "pending"
+phase = "1"
+
+["21.22"]
+status = "pending"
+phase = "4"
+
+["21.23"]
+status = "pending"
+phase = "2"
+
+["21.24"]
+status = "pending"
+phase = "4"
+
+["21.25"]
+status = "pending"
+phase = "4"
+
+["21.26"]
+status = "pending"
+phase = "3"
+
+["21.27"]
+status = "pending"
+phase = "4"
+
+["21.28"]
+status = "pending"
+phase = "3"
+
+["21.29"]
+status = "pending"
+phase = "3"
+
+["21.30"]
+status = "pending"
+phase = "4"
+
+["21.31"]
+status = "pending"
+phase = "3"
+
+["21.32"]
+status = "pending"
+phase = "3"
+
+["21.33"]
+status = "pending"
+phase = "3"
+
+["21.34"]
+status = "pending"
+phase = "4"
+
+["21.35"]
+status = "partial"
+nodes = [
+  "tests/test_capture_phase0.py::test_retained_id_collision_retries_then_fails_without_duplicate",
+]
+phase = "5"
+note = "Phase 0 proves retained primary-key collision handling for RawLog and EvidenceItem creation; immutable IDs, all later entity tables, no reuse, wrong-table references, and import identities remain"
+
+["21.36"]
+status = "partial"
+nodes = [
+  "tests/test_workspace_phase0.py::test_fresh_init_and_idempotent_reopen_are_private_and_versioned",
+  "tests/test_workspace_phase0.py::test_init_refuses_public_checkout_and_partial_state",
+  "tests/test_workspace_phase0.py::test_incompatible_schema_blocks_business_io_but_status_reports",
+  "tests/test_schema_migration.py::test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data",
+  "tests/test_schema_migration.py::test_cli_reports_a_rolled_back_migration_as_integrity_class_7",
+  "tests/test_schema_migration.py::test_migration_failure_rolls_back_ddl_and_version_but_retains_backup",
+]
+phase = "4"
+note = "Init, idempotent reopen, fail-closed compatibility, verified backup, preserved data, and single-migration rollback are covered; §13.13 owner deletion of managed migration backups needs the Phase 4 purge, and the multi-pending-migration injected-failure shape needs a second registered migration"
+
+["21.37"]
+status = "partial"
+nodes = [
+  "tests/test_workspace_phase0.py::test_busy_writer_fails_with_stable_class_and_no_partial_pair",
+  "tests/test_llm_runner.py::test_other_writers_block_while_an_invocation_holds_authority",
+]
+phase = "4"
+note = "Writer-lock exclusion, bounded workspace_busy failure, and no partial Stage 1 pair are covered; later-stage race orderings, read snapshots, supersession, and managed exports remain"
+
+["21.38"]
+status = "partial"
+nodes = [
+  "tests/test_llm_runner.py::test_fake_runner_valid_round_trip_persists_content_free_exact_hashes",
+  "tests/test_llm_runner.py::test_multi_call_run_appends_contiguous_calls_and_caller_finishes",
+  "tests/test_llm_runner.py::test_call_failure_in_a_multi_call_run_fails_the_whole_run",
+  "tests/test_llm_runner.py::test_next_writer_reconciles_only_nonterminal_telemetry",
+]
+phase = "4"
+note = "Processing-run and per-call telemetry, contiguous call indexes, terminal failure, and abandoned-run reconciliation are covered; produced business rows, generations, findings, and deletion redaction remain"
+
+["21.39"]
+status = "partial"
+nodes = [
+  "tests/test_capture_phase0.py::test_invalid_temporal_shapes_fail_before_persistence[naive]",
+  "tests/test_capture_phase0.py::test_invalid_temporal_shapes_fail_before_persistence[reversed-range]",
+  "tests/test_capture_phase0.py::test_invalid_temporal_shapes_fail_before_persistence[unknown-with-bound]",
+  "tests/test_capture_phase0.py::test_oversize_and_forbidden_source_files_leave_no_record",
+  "tests/test_llm_runner.py::test_datetime_outputs_validate_through_the_json_boundary",
+  "tests/test_llm_runner.py::test_invalid_output_retries_once_then_fails_without_business_effect[extra-key]",
+  "tests/test_llm_runner.py::test_invalid_output_retries_once_then_fails_without_business_effect[service-owned-injection]",
+]
+phase = "5"
+note = "Strict temporal construction, bounded acquisition, closed runner outputs, JSON datetime parsing, and service-owned-field rejection are covered; every later §15 and §19 shape plus stored hydration remain"
+
+["21.40"]
+status = "pending"
+phase = "4"
+
+["21.41"]
+status = "partial"
+nodes = [
+  "tests/test_cli_phase0.py::test_cli_daily_demo_lists_only_raw_text_free_projection",
+  "tests/test_cli_phase0.py::test_noninteractive_capture_and_delete_never_prompt_or_block",
+  "tests/test_cli_phase0.py::test_json_workspace_failure_is_one_closed_envelope",
+  "tests/test_cli_phase0.py::test_confirmed_owner_delete_reports_closed_raw_free_result",
+  "tests/test_cli_phase0.py::test_literal_credential_config_fails_without_echo",
+  "tests/test_cli_phase0.py::test_console_entry_point_exits_with_contract_code",
+  "tests/test_workspace_phase0.py::test_nearest_partial_marker_wins_and_override_never_falls_back",
+  "tests/test_workspace_phase0.py::test_incompatible_workspace_blocks_file_capture_before_source_read",
+]
+phase = "4"
+note = "Phase 0 covers discovery, compatibility ordering, non-interactive controls, stable exit classes, closed JSON envelopes, raw-text-free projections, and secret-safe diagnostics; later command projections and lifecycle reports remain"
+
+["21.42"]
+status = "partial"
+nodes = [
+  "tests/test_cli_phase0.py::test_local_time_requires_workspace_config_and_ignores_ambient_timezone",
+  "tests/test_capture_phase0.py::test_workspace_timezone_rejects_dst_gap_and_fold_but_accepts_offset",
+  "tests/test_capture_phase0.py::test_oversize_and_forbidden_source_files_leave_no_record",
+]
+phase = "5"
+note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit-offset preservation, and Windows-path rejection are covered; canonical hashing, generated-language scope, Unicode identities, and integration locators remain"
+
+["21.43"]
+status = "partial"
+nodes = [
+  "tests/test_llm_preflight.py::test_missing_bwrap_fails_capability_before_any_canary_or_transport",
+  "tests/test_llm_preflight.py::test_size_budget_context_and_secret_preflight_codes[context-window]",
+  "tests/test_llm_runner.py::test_budget_preflight_stops_before_fake_transport_and_records_code",
+  "tests/test_llm_runner.py::test_timeout_retries_same_call_and_cancellation_is_terminal",
+  "tests/test_llm_runner.py::test_adapter_maps_terminal_error_channel_without_persisting_it[http-408]",
+  "tests/test_llm_runner.py::test_adapter_maps_terminal_error_channel_without_persisting_it[rate-limit]",
+  "tests/test_llm_runner.py::test_adapter_maps_terminal_error_channel_without_persisting_it[auth]",
+  "tests/test_llm_runner.py::test_adapter_maps_terminal_error_channel_without_persisting_it[lost-response]",
+  "tests/test_llm_runner.py::test_call_failure_in_a_multi_call_run_fails_the_whole_run",
+]
+phase = "1"
+note = "Transport bounds and telemetry are covered at the runner seam; stage-level complete-set fixtures land with the stages"
+
+["21.44"]
+status = "pending"
+phase = "4"
+
+["21.45"]
+status = "pending"
+phase = "5"
+
+["21.46"]
+status = "pending"
+phase = "5"
+
+["21.47"]
+status = "pending"
+phase = "4"
+
+["21.48"]
+status = "pending"
+phase = "4"
+
+["21.49"]
+status = "pending"
+phase = "5"
+
+["21.50"]
+status = "partial"
+nodes = [
+  "tests/test_llm_preflight.py::test_canary_proves_closed_read_namespace_or_skips_explicitly",
+]
+phase = "1"
+note = "The shipped canary probe proves read confinement for the Codex reference runner; the generalized §15.12 blocks — environment/ambient isolation sentinels, final-message-only result channel across completion paths, tool-disable and protocol-version preflight failures, and agent-backed adapter classification — land with the #102 adapter lineup"

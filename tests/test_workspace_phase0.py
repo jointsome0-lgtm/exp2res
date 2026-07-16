@@ -30,6 +30,7 @@ from conftest import FIXED_NOW, configure_timezone
 
 
 runner = CliRunner()
+pytestmark = pytest.mark.lifecycle
 
 
 def test_fresh_init_and_idempotent_reopen_are_private_and_versioned(
@@ -105,7 +106,7 @@ def test_incompatible_schema_blocks_business_io_but_status_reports(
     with sqlite3.connect(database) as connection:
         connection.execute(
             "INSERT INTO schema_meta VALUES (?, ?, ?)",
-            (2, FIXED_NOW.isoformat(), "future-build"),
+            (3, FIXED_NOW.isoformat(), "future-build"),
         )
 
     with pytest.raises(SchemaCompatibilityError):
@@ -118,7 +119,7 @@ def test_incompatible_schema_blocks_business_io_but_status_reports(
     envelope = json.loads(result.stdout)
     assert result.exit_code == 4
     assert envelope["diagnostic_class"] == "schema_incompatible"
-    assert envelope["result"]["schema"]["stored_version"] == 2
+    assert envelope["result"]["schema"]["stored_version"] == 3
     assert original.raw_log.raw_text not in result.stdout
     assert original.raw_log.raw_text not in result.stderr
 
@@ -229,7 +230,7 @@ def test_incompatible_workspace_blocks_file_capture_before_source_read(
     database = workspace / ".exp2res" / "exp2res.sqlite"
     connection = sqlite3.connect(database)
     connection.execute(
-        "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (2, ?, ?)",
+        "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (3, ?, ?)",
         (FIXED_NOW.isoformat(), "future"),
     )
     connection.commit()

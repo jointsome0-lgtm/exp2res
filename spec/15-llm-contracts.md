@@ -15,7 +15,7 @@ All LLM calls must:
 9. Before any provider call, deterministically preflight the fully serialized payload against §11's boundary limits alongside §29.4's credential preflight; a failure is local and fail-closed and reports only a non-secret diagnostic.
 10. Emit every generated natural-language output under the V1 language scope in §16.13.
 
-§15.10 owns transport attempts, provider capability checks, runtime budgets, context-overflow refusal, and cancellation. Its transport retry does not widen the response-validation retry below, which remains limited to schema and reference invalidity. §15.12 owns the versioned isolated agent-runner protocol; an agent-backed adapter executes every §15 call under it.
+§15.10 owns transport attempts, provider capability checks, runtime budgets, context-overflow refusal, and cancellation. Its transport retry does not widen the response-validation retry below, which remains limited to schema and reference invalidity. §15.12 owns the versioned isolated agent-runner protocol — the per-invocation contract workspace whose §15.1 retry adds only content-free `validation_errors.json`, wrapper-provided read confinement, the native schema-constrained final-message result channel (fenced JSON parsed from agent prose is forbidden), and the two-half fail-closed capability preflight with §21.50's provider-free canary; an agent-backed adapter executes every §15 call under it.
 
 Under §11's field-authorship policy, a model response that sets a service-owned persisted field instead of its declared model-authored transition result, or sets any undeclared field, is invalid structured output.
 

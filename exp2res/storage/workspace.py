@@ -17,18 +17,34 @@ from urllib.parse import quote
 
 from exp2res import __version__
 from exp2res.errors import (
+    MigrationFailedError,
     PublicCheckoutError,
     SchemaCompatibilityError,
     WorkspaceBusyError,
     WorkspaceError,
 )
 
-from .schema import create_schema
+from .schema import apply_migration_1_to_2, create_schema
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 CONFIG_TEMPLATE = """[workspace]
 timezone = ""
+
+[llm]
+runner = "codex-cli"
+model = ""
+codex_home_env = "CODEX_HOME"
+transport_attempt_cap = 2
+backoff_lower_seconds = 0.25
+backoff_upper_seconds = 2.0
+invocation_deadline_seconds = 120.0
+max_input_bytes = 1048576
+input_token_budget = 120000
+output_token_budget = 8192
+per_run_call_ceiling = 100
+per_invocation_cost_ceiling = 5.0
+per_run_cost_ceiling = 25.0
 
 [privacy]
 ignore_paths = []
@@ -167,13 +183,35 @@ def inspect_schema(connection: sqlite3.Connection) -> SchemaStatus:
         return SchemaStatus(None, CURRENT_SCHEMA_VERSION, False, False, None)
     stored = max(versions)
     compatible = stored == CURRENT_SCHEMA_VERSION
-    migration_available = False if stored < CURRENT_SCHEMA_VERSION else None
+    migration_available = (
+        _migration_path_available(stored)
+        if stored < CURRENT_SCHEMA_VERSION
+        else None
+    )
     return SchemaStatus(
         stored,
         CURRENT_SCHEMA_VERSION,
         True,
         compatible,
         migration_available,
+    )
+
+
+def _migration_path_available(stored_version: int) -> bool:
+    version = stored_version
+    while version < CURRENT_SCHEMA_VERSION:
+        if version != 1:
+            return False
+        version = 2
+    return version == CURRENT_SCHEMA_VERSION
+
+
+def migration_available(stored_version: int) -> bool:
+    """Return whether the registered migrations reach the current schema."""
+
+    return (
+        stored_version < CURRENT_SCHEMA_VERSION
+        and _migration_path_available(stored_version)
     )
 
 
@@ -314,6 +352,171 @@ def initialize_workspace(
         raise
 
 
+def _migration_time(clock: Callable[[], datetime] | None) -> datetime:
+    now = (clock or (lambda: datetime.now(timezone.utc)))()
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("migration clock must be offset-aware")
+    return now
+
+
+def _create_verified_backup(
+    connection: sqlite3.Connection,
+    *,
+    workspace: Path,
+    from_version: int,
+    now: datetime,
+) -> Path:
+    backup_directory = workspace / ".exp2res" / "backup"
+    backup_created = False
+    try:
+        backup_directory.mkdir(mode=0o700, exist_ok=True)
+        if not _is_real_directory(backup_directory):
+            raise OSError("backup directory is not a real directory")
+        os.chmod(backup_directory, 0o700)
+        timestamp = now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        backup_path = backup_directory / (
+            f"exp2res-v{from_version}-{timestamp}.sqlite"
+        )
+        _write_private_file(backup_path, b"")
+        backup_created = True
+        destination = sqlite3.connect(backup_path)
+        try:
+            connection.backup(destination)
+            # A rollback-journal backup restores from one self-contained file
+            # with no WAL/SHM siblings, and the read-only verifier below
+            # creates none next to it.
+            destination.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            destination.close()
+        os.chmod(backup_path, 0o600)
+        verifier = sqlite3.connect(
+            f"file:{quote(str(backup_path), safe='/')}?mode=ro", uri=True
+        )
+        try:
+            integrity = verifier.execute("PRAGMA integrity_check").fetchone()
+            version = verifier.execute(
+                "SELECT MAX(version) FROM schema_meta"
+            ).fetchone()
+        finally:
+            verifier.close()
+        if integrity is None or integrity[0] != "ok":
+            raise sqlite3.DatabaseError("backup integrity verification failed")
+        if version is None or version[0] != from_version:
+            raise sqlite3.DatabaseError("backup schema version verification failed")
+        return backup_path
+    except BaseException:
+        candidate = locals().get("backup_path")
+        if backup_created and isinstance(candidate, Path):
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
+def _validate_migration_target(connection: sqlite3.Connection) -> None:
+    from .repository import hydrate_evidence_item, hydrate_raw_log
+
+    for row in connection.execute("SELECT * FROM raw_logs"):
+        hydrate_raw_log(row)
+    for row in connection.execute("SELECT * FROM evidence_items"):
+        hydrate_evidence_item(row)
+    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+        raise sqlite3.IntegrityError("foreign key validation failed")
+    status = inspect_schema(connection)
+    if not status.compatible:
+        raise sqlite3.DatabaseError("migration target is incompatible")
+    for table in ("processing_runs", "llm_calls"):
+        row = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        if row is None:
+            raise sqlite3.DatabaseError("migration target table missing")
+
+
+def migrate_workspace(
+    workspace: Path,
+    *,
+    clock: Callable[[], datetime] | None = None,
+    failure_injector: Callable[[str], None] | None = None,
+    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+) -> SchemaStatus:
+    """Upgrade a recognized v1 workspace to v2 after a verified local backup."""
+
+    initial = inspect_workspace(workspace)
+    if not initial.recognized:
+        raise SchemaCompatibilityError()
+    if initial.compatible:
+        return initial
+    if initial.stored_version is None or not migration_available(
+        initial.stored_version
+    ):
+        raise SchemaCompatibilityError()
+
+    backup_path: Path | None = None
+    with writer_lock(workspace, timeout_ms=timeout_ms):
+        connection = connect_database(
+            workspace / ".exp2res" / "exp2res.sqlite",
+            readonly=False,
+            busy_timeout_ms=timeout_ms,
+        )
+        try:
+            locked_status = inspect_schema(connection)
+            if (
+                locked_status.stored_version != initial.stored_version
+                or not migration_available(locked_status.stored_version)
+            ):
+                raise SchemaCompatibilityError()
+            now = _migration_time(clock)
+            backup_path = _create_verified_backup(
+                connection,
+                workspace=workspace,
+                from_version=locked_status.stored_version,
+                now=now,
+            )
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                apply_migration_1_to_2(connection)
+                if failure_injector is not None:
+                    failure_injector("after_ddl")
+                connection.execute(
+                    """
+                    INSERT INTO schema_meta(version, applied_at, app_version)
+                    VALUES (?, ?, ?)
+                    """,
+                    (CURRENT_SCHEMA_VERSION, now.isoformat(), __version__),
+                )
+                if failure_injector is not None:
+                    failure_injector("before_validation")
+                _validate_migration_target(connection)
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+        except (SchemaCompatibilityError, WorkspaceBusyError):
+            raise
+        except BaseException as error:
+            raise MigrationFailedError(
+                managed_backup_path=(
+                    None if backup_path is None else str(backup_path)
+                )
+            ) from error
+        finally:
+            connection.close()
+
+    result = inspect_workspace(workspace)
+    if not result.compatible:
+        raise MigrationFailedError(managed_backup_path=str(backup_path))
+    return SchemaStatus(
+        stored_version=result.stored_version,
+        supported_version=result.supported_version,
+        recognized=result.recognized,
+        compatible=result.compatible,
+        migration_path_available=result.migration_path_available,
+        managed_backup_path=str(backup_path),
+    )
+
+
 @contextmanager
 def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -> Iterator[None]:
     lock_path = workspace / ".exp2res" / "lock"
@@ -350,6 +553,7 @@ def writer_database(
     *,
     owner_delete: bool = False,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    reconcile: bool = True,
 ) -> Iterator[sqlite3.Connection]:
     # The first compatibility gate precedes lock acquisition and write I/O.
     require_compatible(workspace)
@@ -366,6 +570,22 @@ def writer_database(
             status = inspect_schema(connection)
             if not status.compatible:
                 raise SchemaCompatibilityError()
+            if reconcile:
+                # §15.10 rule 8: the next compatible writer marks abandoned
+                # LLM telemetry before its business operation. Telemetry
+                # transactions inside a live invocation pass reconcile=False
+                # so a running run cannot cancel itself.
+                from .telemetry import reconcile_abandoned_telemetry
+
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    reconcile_abandoned_telemetry(
+                        connection, finished_at=datetime.now(timezone.utc)
+                    )
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
             yield connection
         finally:
             connection.close()

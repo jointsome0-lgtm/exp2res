@@ -31,6 +31,7 @@ from exp2res.domain.results import (
 )
 from exp2res.errors import (
     Exp2ResError,
+    MigrationFailedError,
     NonInteractiveInputRequired,
     OperationDeferredError,
 )
@@ -46,6 +47,7 @@ from exp2res.storage.workspace import (
     discover_workspace,
     initialize_workspace,
     inspect_workspace,
+    migrate_workspace,
     require_compatible,
 )
 
@@ -172,6 +174,27 @@ def _run_command(
         outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
     except Abort:
         outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
+    except MigrationFailedError as error:
+        status = inspect_workspace(workspace) if workspace is not None else None
+        outcome = Outcome(
+            exit_code=error.exit_code,
+            diagnostic_class=error.diagnostic_class,
+            result=(
+                None
+                if status is None
+                else _schema_result(
+                    SchemaStatus(
+                        stored_version=status.stored_version,
+                        supported_version=status.supported_version,
+                        recognized=status.recognized,
+                        compatible=status.compatible,
+                        migration_path_available=status.migration_path_available,
+                        managed_backup_path=error.managed_backup_path,
+                    )
+                )
+            ),
+        )
+        typer.echo(error.public_message, err=True)
     except Exp2ResError as error:
         outcome = Outcome(
             exit_code=error.exit_code,
@@ -253,12 +276,33 @@ def db_status(context: typer.Context) -> None:
 
 @db_app.command("migrate")
 def db_migrate(context: typer.Context) -> None:
-    def operation(workspace: Path, _controls: Controls) -> Outcome:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
         status = inspect_workspace(workspace)
         if status.compatible:
             return Outcome(
                 result=_schema_result(status),
                 human_result="No migration is required.",
+            )
+        if status.migration_path_available:
+            # §14.14 rule 3: db migrate is in the confirmation set — explicit
+            # --yes when non-interactive, a TTY confirmation otherwise.
+            if not controls.yes:
+                if _noninteractive(controls):
+                    raise NonInteractiveInputRequired()
+                if not typer.confirm(
+                    f"Migrate workspace schema from version "
+                    f"{status.stored_version} to {status.supported_version} "
+                    "(a verified backup is created first)?",
+                    err=True,
+                ):
+                    return Outcome(exit_code=9, diagnostic_class="cancelled")
+            migrated = migrate_workspace(workspace)
+            return Outcome(
+                result=_schema_result(migrated),
+                human_result=(
+                    f"Migrated schema to version {migrated.stored_version}; "
+                    f"backup: {migrated.managed_backup_path}."
+                ),
             )
         return Outcome(
             exit_code=4,
