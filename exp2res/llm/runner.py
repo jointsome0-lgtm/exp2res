@@ -222,6 +222,8 @@ class CodexCLIRunner:
                 "/work",
                 "-s",
                 "read-only",
+                "-c",
+                'approval_policy="never"',
                 "--output-schema",
                 "/work/schema.json",
                 "--output-last-message",

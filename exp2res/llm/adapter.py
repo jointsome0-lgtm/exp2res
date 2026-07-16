@@ -57,6 +57,7 @@ REQUIRED_FLAGS = frozenset(
         "--ignore-user-config",
         "--ignore-rules",
         "-C",
+        "-c",
         "--skip-git-repo-check",
     }
 )
