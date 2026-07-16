@@ -11,6 +11,7 @@ from pydantic import ValidationError
 import pytest
 
 from exp2res.domain.models import (
+    EvidenceItem,
     ExperienceFact,
     OccurredAt,
     RawLog,
@@ -24,8 +25,11 @@ from exp2res.errors import (
 from exp2res.services.capture import capture_daily
 from exp2res.services.logs import show_log
 from exp2res.storage.repository import (
+    RawLogBundle,
     get_experience_fact,
+    insert_evidence_item,
     insert_experience_fact,
+    insert_raw_log,
     list_experience_facts,
     mark_facts_superseded,
 )
@@ -109,11 +113,6 @@ def persist_fact(
         insert_experience_fact(
             connection,
             fact,
-            project_key=(
-                None
-                if fact.project is None
-                else canonical_project_key(fact.project)
-            ),
             produced_by_run_id=run_id,
             generation_id=generation_id,
         )
@@ -213,29 +212,71 @@ def test_raw_log_model_rejects_blank_canonical_project_label() -> None:
         )
 
 
+def correction_lineage(
+    workspace: Path,
+    *,
+    root_project: str | None,
+    correction_project: str | None,
+) -> tuple[RawLogBundle, RawLog, EvidenceItem, EvidenceItem]:
+    """Build one §13.3 rule 10 lineage: root displaced by one correction.
+
+    Returns the root bundle, the correction, the correction's manual item,
+    and a non-manual root item that stays selectable as displaced support.
+    """
+
+    root = capture_daily(
+        workspace,
+        raw_text="Vera Example corrected lineage root",
+        project=root_project,
+        clock=lambda: FIXED_NOW,
+    )
+    correction = RawLog(
+        id="log_vera_lineage_correction",
+        recorded_at=FIXED_NOW.replace(hour=13),
+        entry_type="correction",
+        source_type="manual_entry",
+        occurred=root.raw_log.occurred,
+        raw_text="Vera Example self-contained corrected restatement",
+        project=correction_project,
+        corrects_log_id=root.raw_log.id,
+    )
+    correction_item = EvidenceItem(
+        id="evi_vera_lineage_correction",
+        created_at=correction.recorded_at,
+        raw_log_id=correction.id,
+        summary="Owner-authored corrected restatement.",
+        strength="manual_claim",
+    )
+    root_doc_item = EvidenceItem(
+        id="evi_vera_lineage_rootdoc",
+        created_at=root.raw_log.recorded_at,
+        raw_log_id=root.raw_log.id,
+        summary="Imported design artifact linked to the displaced root.",
+        strength="design_doc",
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        insert_raw_log(connection, correction)
+        insert_evidence_item(connection, correction_item)
+        insert_evidence_item(connection, root_doc_item)
+        connection.commit()
+    return root, correction, correction_item, root_doc_item
+
+
 def test_fact_round_trip_derives_ordered_sources_and_preserves_production_identity(
     workspace: Path,
 ) -> None:
     """§12 rules 8/13/14: fact hydration derives sources and keeps run identity."""
 
-    first = capture_daily(
-        workspace,
-        raw_text="Vera Example first fact source",
-        project="Straße",
-        clock=lambda: FIXED_NOW,
-    )
-    second = capture_daily(
-        workspace,
-        raw_text="Vera Example second fact source",
-        project="Straße",
-        clock=lambda: FIXED_NOW.replace(hour=13),
+    root, correction, correction_item, root_doc_item = correction_lineage(
+        workspace, root_project="Straße", correction_project="Straße"
     )
     evidence_ids = sorted(
-        [first.evidence_items[0].id, second.evidence_items[0].id],
+        [correction_item.id, root_doc_item.id],
         key=lambda value: value.encode("utf-8"),
     )
     source_ids = sorted(
-        [first.raw_log.id, second.raw_log.id],
+        [root.raw_log.id, correction.id],
         key=lambda value: value.encode("utf-8"),
     )
     fact = ExperienceFact(
@@ -460,7 +501,6 @@ def test_fact_insert_requires_valid_run_and_maps_identity_collision(
             insert_experience_fact(
                 connection,
                 fact,
-                project_key=None,
                 produced_by_run_id="run_" + "f" * 32,
                 generation_id=GEN_A,
             )
@@ -469,17 +509,18 @@ def test_fact_insert_requires_valid_run_and_maps_identity_collision(
     persist_fact(workspace, fact)
     with writer_database(workspace) as connection:
         connection.execute("BEGIN IMMEDIATE")
-        mismatched = make_fact(
+        # An internally consistent label/key pair still fails when it does
+        # not match the governing record's stored project provenance.
+        misfiled = make_fact(
             raw_log_id=bundle.raw_log.id,
             evidence_item_id=bundle.evidence_items[0].id,
             id=FACT_B,
-            project=None,
+            project="Beta",
         )
         with pytest.raises(IntegrityFailureError):
             insert_experience_fact(
                 connection,
-                mismatched,
-                project_key="unexpected",
+                misfiled,
                 produced_by_run_id=RUN_A,
                 generation_id=GEN_A,
             )
@@ -487,8 +528,139 @@ def test_fact_insert_requires_valid_run_and_maps_identity_collision(
             insert_experience_fact(
                 connection,
                 fact,
-                project_key=None,
                 produced_by_run_id=RUN_A,
                 generation_id=GEN_A,
             )
+        connection.rollback()
+
+
+def test_fact_insert_copies_project_from_the_governing_record(
+    workspace: Path,
+) -> None:
+    """§12 rules 10/14, §13.3 rules 6/10/13: governing provenance, not caller input."""
+
+    root, correction, correction_item, root_doc_item = correction_lineage(
+        workspace, root_project="Alpha", correction_project="Beta"
+    )
+    evidence_ids = sorted(
+        [correction_item.id, root_doc_item.id],
+        key=lambda value: value.encode("utf-8"),
+    )
+    source_ids = sorted(
+        [root.raw_log.id, correction.id],
+        key=lambda value: value.encode("utf-8"),
+    )
+    misfiled = ExperienceFact(
+        **fact_values(
+            project="Alpha",
+            source_log_ids=source_ids,
+            evidence_item_ids=evidence_ids,
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+            input_ids=misfiled.source_log_ids,
+        )
+        # The displaced root's label is not the governing record's label.
+        with pytest.raises(IntegrityFailureError):
+            insert_experience_fact(
+                connection,
+                misfiled,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        governed = ExperienceFact(
+            **fact_values(
+                project="Beta",
+                source_log_ids=source_ids,
+                evidence_item_ids=evidence_ids,
+            )
+        )
+        insert_experience_fact(
+            connection,
+            governed,
+            produced_by_run_id=RUN_A,
+            generation_id=GEN_A,
+        )
+        stored = connection.execute(
+            "SELECT project, project_key FROM experience_facts WHERE id = ?",
+            (governed.id,),
+        ).fetchone()
+        connection.rollback()
+    assert tuple(stored) == ("Beta", "beta")
+
+
+def test_fact_insert_enforces_the_retained_rows_selectability_predicate(
+    workspace: Path,
+) -> None:
+    """§12 rule 10, §13.3 rule 6: displaced/manual/cross-lineage selections fail."""
+
+    root, correction, correction_item, root_doc_item = correction_lineage(
+        workspace, root_project=None, correction_project=None
+    )
+    unrelated = capture_daily(
+        workspace,
+        raw_text="Vera Example unrelated lineage source",
+        clock=lambda: FIXED_NOW.replace(hour=14),
+    )
+    displaced_only = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=[root.raw_log.id],
+            evidence_item_ids=[root_doc_item.id],
+        )
+    )
+    displaced_manual = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=sorted(
+                [root.raw_log.id, correction.id],
+                key=lambda value: value.encode("utf-8"),
+            ),
+            evidence_item_ids=sorted(
+                [root.evidence_items[0].id, correction_item.id],
+                key=lambda value: value.encode("utf-8"),
+            ),
+        )
+    )
+    cross_lineage = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=sorted(
+                [correction.id, unrelated.raw_log.id],
+                key=lambda value: value.encode("utf-8"),
+            ),
+            evidence_item_ids=sorted(
+                [correction_item.id, unrelated.evidence_items[0].id],
+                key=lambda value: value.encode("utf-8"),
+            ),
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        for candidate in (displaced_only, displaced_manual, cross_lineage):
+            with pytest.raises(IntegrityFailureError):
+                insert_experience_fact(
+                    connection,
+                    candidate,
+                    produced_by_run_id=RUN_A,
+                    generation_id=GEN_A,
+                )
         connection.rollback()

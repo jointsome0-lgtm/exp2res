@@ -35,6 +35,44 @@ def _iso(value: object) -> str | None:
     return value.isoformat()  # type: ignore[union-attr]
 
 
+def _utc_instant(stored: object) -> datetime:
+    """Decode one stored §12 rule 3 datetime TEXT for UTC-instant comparison."""
+
+    if not isinstance(stored, str):
+        raise IntegrityFailureError()
+    try:
+        parsed = datetime.fromisoformat(stored.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise IntegrityFailureError() from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise IntegrityFailureError()
+    return parsed.astimezone(timezone.utc)
+
+
+def lineage_root(connection: sqlite3.Connection, raw_log_id: str) -> str:
+    """Resolve a retained record's correction-lineage root (§13.3 rule 10).
+
+    Capture rejects correction cycles and owner deletion re-roots orphans, so
+    the walk terminates; a cycle or missing link in stored rows fails closed.
+    """
+
+    current = raw_log_id
+    seen = {current}
+    while True:
+        row = connection.execute(
+            "SELECT corrects_log_id FROM raw_logs WHERE id = ?", (current,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError()
+        target = row["corrects_log_id"]
+        if target is None:
+            return current
+        if target in seen:
+            raise IntegrityFailureError()
+        seen.add(target)
+        current = target
+
+
 def insert_raw_log(connection: sqlite3.Connection, raw_log: RawLog) -> None:
     project_key = (
         None if raw_log.project is None else canonical_project_key(raw_log.project)
@@ -162,31 +200,65 @@ def insert_experience_fact(
     connection: sqlite3.Connection,
     fact: ExperienceFact,
     *,
-    project_key: str | None,
     produced_by_run_id: str,
     generation_id: str,
 ) -> None:
-    expected_key = (
-        None if fact.project is None else canonical_project_key(fact.project)
-    )
-    if (
-        project_key != expected_key
-        or (fact.project is not None and not expected_key)
-        or not produced_by_run_id
-        or not generation_id
-    ):
+    if not produced_by_run_id or not generation_id:
         raise IntegrityFailureError()
     if len(fact.evidence_item_ids) != len(set(fact.evidence_item_ids)):
         raise IntegrityFailureError()
-    derived_source_ids: set[str] = set()
+    # §12 rule 10 with §13.3 rules 6/10/13: resolve every selected item,
+    # enforce the retained-rows selectability predicate — no displaced
+    # manual_claim selection, at least one effective selection, one
+    # correction lineage — and copy `project`/`project_key` from the
+    # governing record rather than trusting the caller's fact values.
+    selections: list[tuple[str, str]] = []
     for evidence_id in fact.evidence_item_ids:
         source = connection.execute(
-            "SELECT raw_log_id FROM evidence_items WHERE id = ?", (evidence_id,)
+            "SELECT raw_log_id, strength FROM evidence_items WHERE id = ?",
+            (evidence_id,),
         ).fetchone()
         if source is None:
             raise IntegrityFailureError()
-        derived_source_ids.add(source[0])
-    if derived_source_ids != set(fact.source_log_ids):
+        selections.append((source["raw_log_id"], source["strength"]))
+    reached_ids = {raw_log_id for raw_log_id, _ in selections}
+    if reached_ids != set(fact.source_log_ids):
+        raise IntegrityFailureError()
+    reached_logs: dict[str, sqlite3.Row] = {}
+    for raw_log_id in reached_ids:
+        row = connection.execute(
+            """
+            SELECT id, recorded_at, project, project_key,
+                   EXISTS(
+                       SELECT 1 FROM raw_logs AS correction
+                       WHERE correction.corrects_log_id = raw_logs.id
+                   ) AS displaced
+            FROM raw_logs WHERE id = ?
+            """,
+            (raw_log_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError()
+        reached_logs[raw_log_id] = row
+    for raw_log_id, strength in selections:
+        if reached_logs[raw_log_id]["displaced"] and strength == "manual_claim":
+            raise IntegrityFailureError()
+    effective = [row for row in reached_logs.values() if not row["displaced"]]
+    if not effective:
+        raise IntegrityFailureError()
+    if len({lineage_root(connection, raw_log_id) for raw_log_id in reached_ids}) != 1:
+        raise IntegrityFailureError()
+    governing = max(
+        effective,
+        key=lambda row: (_utc_instant(row["recorded_at"]), row["id"].encode("utf-8")),
+    )
+    if fact.project != governing["project"]:
+        raise IntegrityFailureError()
+    project_key = governing["project_key"]
+    expected_key = (
+        None if fact.project is None else canonical_project_key(fact.project)
+    )
+    if project_key != expected_key or (fact.project is not None and not expected_key):
         raise IntegrityFailureError()
     try:
         connection.execute(

@@ -103,7 +103,6 @@ def _persist_facts_and_completed_calls(workspace: Path):
             insert_experience_fact(
                 connection,
                 fact,
-                project_key=None,
                 produced_by_run_id=run_id,
                 generation_id="gen_" + fact.id[-32:],
             )
