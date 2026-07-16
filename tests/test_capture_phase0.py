@@ -78,7 +78,13 @@ def test_vera_daily_and_retro_round_trip_with_atomic_manual_evidence(
             "SELECT occurred_start, occurred_end FROM raw_logs WHERE id = ?",
             (retro.raw_log.id,),
         ).fetchone()
-    assert tables == {"schema_meta", "raw_logs", "evidence_items"}
+    assert tables == {
+        "schema_meta",
+        "raw_logs",
+        "evidence_items",
+        "processing_runs",
+        "llm_calls",
+    }
     assert stored_retro == (
         "2026-06-01T00:00:00+02:00",
         "2026-07-01T00:00:00+02:00",

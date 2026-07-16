@@ -52,6 +52,15 @@ class SchemaCompatibilityError(Exp2ResError):
     public_message = "The workspace schema is incompatible or unrecognized."
 
 
+class MigrationFailedError(SchemaCompatibilityError):
+    diagnostic_class = "migration_failed"
+    public_message = "The workspace migration failed and was rolled back."
+
+    def __init__(self, *, managed_backup_path: str | None = None) -> None:
+        super().__init__()
+        self.managed_backup_path = managed_backup_path
+
+
 class WorkspaceBusyError(Exp2ResError):
     exit_code = 5
     diagnostic_class = "workspace_busy"
@@ -77,3 +86,25 @@ class HydrationFailureError(IntegrityFailureError):
 class ConfigurationError(IntegrityFailureError):
     diagnostic_class = "configuration_invalid"
     public_message = "Workspace configuration is invalid."
+
+
+class LLMInvocationError(Exp2ResError):
+    """Privacy-safe §15 failure carrying only a stable machine code."""
+
+    exit_code = 6
+    diagnostic_class = "transport_provider_error"
+    public_message = "The model invocation failed."
+
+    def __init__(self, failure_code: str) -> None:
+        super().__init__()
+        self.failure_code = failure_code
+        self.diagnostic_class = failure_code
+
+
+class LLMCancelledError(LLMInvocationError):
+    exit_code = 9
+    diagnostic_class = "cancelled"
+    public_message = "The model invocation was cancelled."
+
+    def __init__(self) -> None:
+        super().__init__("cancelled")

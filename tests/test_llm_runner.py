@@ -1,0 +1,516 @@
+"""Offline §15 runner, validation-retry, and telemetry tests."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import datetime, timezone
+from decimal import Decimal
+import hashlib
+import json
+import os
+from pathlib import Path
+import sqlite3
+import time
+
+import pytest
+from pydantic import Field
+
+from exp2res.domain.models import StrictModel
+from exp2res.errors import LLMCancelledError, LLMInvocationError
+from exp2res.llm.adapter import invoke_contract
+from exp2res.llm.contracts import (
+    ContractDefinition,
+    ContractWarning,
+    strict_output_schema,
+)
+from exp2res.llm.runner import (
+    AttemptTelemetry,
+    CallBudgets,
+    CodexCLIRunner,
+    PreparedCall,
+    ProcessOutcome,
+    RawResult,
+    _read_output,
+    run_subprocess,
+)
+from exp2res.storage.telemetry import reconcile_abandoned_telemetry
+from exp2res.storage.workspace import writer_database
+
+from conftest import FIXED_NOW
+from fakes import FakeContractRunner
+
+
+class SampleContractOutput(StrictModel):
+    service_id: str
+    value: str
+    warnings: list[ContractWarning] = Field(default_factory=list)
+
+
+CONTRACT = ContractDefinition(
+    contract_id="test-only-vera-example",
+    output_model=SampleContractOutput,
+    fixed_instructions="Return the test-only value and warnings fields.",
+    schema_revision="test-v1",
+    service_owned_fields=frozenset({"service_id"}),
+)
+INPUT = b'{"subject":"Vera Example synthetic input"}'
+VALID = b'{"value":"Vera Example validated","warnings":[]}'
+
+
+def budgets(**overrides: object) -> CallBudgets:
+    values: dict[str, object] = {
+        "transport_attempt_cap": 2,
+        "backoff_lower_seconds": 0.0,
+        "backoff_upper_seconds": 0.0,
+        "invocation_deadline_seconds": 10.0,
+        "max_input_bytes": 1_048_576,
+        "input_token_budget": 100_000,
+        "output_token_budget": 4_096,
+        "planned_output_tokens": 512,
+        "model_context_tokens": 128_000,
+        "model_max_output_tokens": 8_192,
+        "per_run_call_ceiling": 10,
+        "planned_call_count": 1,
+        "per_invocation_cost_ceiling": Decimal("1"),
+        "per_run_cost_ceiling": Decimal("2"),
+        "input_cost_per_million": Decimal("1"),
+        "output_cost_per_million": Decimal("2"),
+    }
+    values.update(overrides)
+    return CallBudgets(**values)  # type: ignore[arg-type]
+
+
+def enrich(payload: dict[str, object]) -> dict[str, object]:
+    return {**payload, "service_id": "svc_vera_example"}
+
+
+def invoke(
+    workspace: Path,
+    fake: FakeContractRunner,
+    *,
+    run_id: str,
+    call_budgets: CallBudgets | None = None,
+):
+    return invoke_contract(
+        workspace=workspace,
+        runner=fake,
+        contract=CONTRACT,
+        serialized_input=INPUT,
+        model_id="gpt-test-vera-example",
+        budgets=call_budgets or budgets(),
+        run_id=run_id,
+        stage="13.test",
+        cli_version="0.144.4-test",
+        enrich=enrich,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+
+
+def telemetry(workspace: Path, run_id: str) -> tuple[sqlite3.Row, sqlite3.Row]:
+    connection = sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite")
+    connection.row_factory = sqlite3.Row
+    try:
+        run = connection.execute(
+            "SELECT * FROM processing_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        call = connection.execute(
+            "SELECT * FROM llm_calls WHERE run_id = ?", (run_id,)
+        ).fetchone()
+    finally:
+        connection.close()
+    assert run is not None and call is not None
+    return run, call
+
+
+def test_fake_runner_valid_round_trip_persists_content_free_exact_hashes(
+    workspace: Path,
+) -> None:
+    """Issue #69: native-schema bytes validate before telemetry completes."""
+
+    fake = FakeContractRunner([VALID])
+    result = invoke(workspace, fake, run_id="run_vera_valid")
+    run, call = telemetry(workspace, "run_vera_valid")
+
+    assert result.output == SampleContractOutput(
+        service_id="svc_vera_example",
+        value="Vera Example validated",
+        warnings=[],
+    )
+    assert run["status"] == call["status"] == "completed"
+    assert run["provider"] == "codex-cli"
+    assert run["model"] == "gpt-test-vera-example"
+    assert run["prompt_policy_hash"]
+    assert call["input_hash"] == hashlib.sha256(INPUT).hexdigest()
+    assert call["output_hash"] == hashlib.sha256(VALID).hexdigest()
+    assert call["transport_retries"] == call["schema_retries"] == 0
+    metadata = json.loads(run["metadata_json"])
+    assert metadata["call_1_exit_code"] == "0"
+    assert metadata["call_1_duration_ms"] == "10"
+    retained = run["metadata_json"] + " ".join(str(value) for value in call)
+    assert "Vera Example synthetic input" not in retained
+    assert "Vera Example validated" not in retained
+
+    schema = strict_output_schema(CONTRACT)
+    assert "service_id" not in schema["properties"]
+
+    def every_object_is_closed(value: object) -> None:
+        if isinstance(value, dict):
+            if value.get("type") == "object" or "properties" in value:
+                assert value.get("additionalProperties") is False
+            for child in value.values():
+                every_object_is_closed(child)
+        elif isinstance(value, list):
+            for child in value:
+                every_object_is_closed(child)
+
+    every_object_is_closed(schema)
+
+
+def test_real_runner_workspace_has_only_declared_retry_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #69: W/W' contain only typed bytes, schema, and safe diagnostics."""
+
+    codex = tmp_path / "codex"
+    bwrap = tmp_path / "bwrap"
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    for binary in (codex, bwrap):
+        binary.write_text("Vera Example inert executable\n", encoding="utf-8")
+        binary.chmod(0o700)
+    (codex_home / "auth.json").write_text(
+        '{"fixture":"Vera Example inert auth"}', encoding="utf-8"
+    )
+    seen: list[tuple[set[str], bytes, list[str], Path]] = []
+
+    def inspect_workspace(command: list[str], *, timeout_seconds: float) -> ProcessOutcome:
+        _ = timeout_seconds
+        bind_index = command.index("--bind")
+        workspace_path = Path(command[bind_index + 1])
+        names = {item.name for item in workspace_path.iterdir()}
+        diagnostic_path = workspace_path / "validation_errors.json"
+        diagnostics = diagnostic_path.read_bytes() if diagnostic_path.exists() else b""
+        seen.append((names, diagnostics, command, workspace_path))
+        (workspace_path / "output.json").write_bytes(VALID)
+        return ProcessOutcome(0, 0.01, b"", False, False)
+
+    monkeypatch.setattr("exp2res.llm.runner.run_subprocess", inspect_workspace)
+    runner = CodexCLIRunner(
+        codex_binary=codex,
+        bwrap_binary=bwrap,
+        codex_home=codex_home,
+    )
+    diagnostics = b'{"errors":[{"location":["extra"],"type":"extra_forbidden"}]}'
+    prepared = PreparedCall(
+        contract_id=CONTRACT.contract_id,
+        serialized_input=INPUT,
+        json_schema=json.dumps(strict_output_schema(CONTRACT)).encode("utf-8"),
+        model_id="gpt-test-vera-example",
+        fixed_instruction="Vera Example fixed test-only instruction",
+        budgets=budgets(),
+        validation_errors=diagnostics,
+        validation_round=1,
+    )
+    initial = replace(prepared, validation_errors=None, validation_round=0)
+    assert runner.run_contract(initial).final_message_bytes == VALID
+    result = runner.run_contract(prepared)
+    assert result.final_message_bytes == VALID
+    assert seen[0][0] == {"input.json", "schema.json"}
+    assert seen[0][1] == b""
+    assert seen[1][0] == {"input.json", "schema.json", "validation_errors.json"}
+    assert seen[1][1] == diagnostics
+    assert b"Vera Example validated" not in diagnostics
+    command = seen[1][2]
+    for flag in (
+        "--ephemeral",
+        "--ignore-user-config",
+        "--skip-git-repo-check",
+        "-C",
+        "-s",
+        "--output-schema",
+        "--output-last-message",
+        "--model",
+    ):
+        assert flag in command
+    assert command[-1] == prepared.fixed_instruction
+    assert all(not workspace_path.exists() for *_rest, workspace_path in seen)
+
+
+def test_runner_never_follows_an_output_symlink_to_a_host_file(tmp_path: Path) -> None:
+    """§29.4: parent-side result collection cannot reopen ambient host data."""
+
+    outside = tmp_path / "Vera Example outside response sentinel"
+    outside.write_bytes(b"Vera Example host content must not be read")
+    output = tmp_path / "output.json"
+    output.symlink_to(outside)
+    assert _read_output(output) is None
+
+
+def test_budget_preflight_stops_before_fake_transport_and_records_code(
+    workspace: Path,
+) -> None:
+    """§15.10: local refusal creates telemetry but invokes no transport."""
+
+    fake = FakeContractRunner([VALID])
+    with pytest.raises(LLMInvocationError) as caught:
+        invoke(
+            workspace,
+            fake,
+            run_id="run_vera_local_refusal",
+            call_budgets=budgets(max_input_bytes=len(INPUT) - 1),
+        )
+    run, call = telemetry(workspace, "run_vera_local_refusal")
+    assert caught.value.failure_code == "budget_exceeded"
+    assert fake.calls == []
+    assert run["failure_code"] == call["failure_code"] == "budget_exceeded"
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        b'{"value":"Vera Example prose","warnings":[],"extra":"denied"}',
+        b'{"value":"Vera Example malformed",',
+        b'{"service_id":"injected","value":"Vera Example","warnings":[]}',
+    ],
+    ids=["extra-key", "malformed-json", "service-owned-injection"],
+)
+def test_invalid_output_retries_once_then_fails_without_business_effect(
+    workspace: Path, invalid: bytes
+) -> None:
+    """§15.1/§15.11: closed invalid responses get exactly one retry."""
+
+    fake = FakeContractRunner([invalid, invalid])
+    run_id = "run_" + hashlib.sha256(invalid).hexdigest()[:12]
+    with pytest.raises(LLMInvocationError) as caught:
+        invoke(workspace, fake, run_id=run_id)
+    run, call = telemetry(workspace, run_id)
+
+    assert caught.value.failure_code == "response_validation_failed"
+    assert len(fake.calls) == 2
+    assert call["schema_retries"] == 1
+    assert call["transport_retries"] == 0
+    assert run["status"] == call["status"] == "failed"
+    assert run["failure_code"] == call["failure_code"] == "response_validation_failed"
+    assert call["output_hash"] is None
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_logs").fetchone()[0] == 0
+
+
+def test_validation_retry_carries_diagnostics_only_and_can_recover(
+    workspace: Path,
+) -> None:
+    """§15.1: W' gets diagnostic shape, never the prior response prose."""
+
+    prior = b'{"value":"Vera Example PRIOR RESPONSE PROSE","extra":"denied"}'
+    fake = FakeContractRunner([prior, VALID])
+    invoke(workspace, fake, run_id="run_vera_retry")
+    _run, call = telemetry(workspace, "run_vera_retry")
+
+    assert len(fake.calls) == 2
+    first, second = fake.calls
+    assert first.validation_errors is None
+    assert second.validation_round == 1
+    diagnostics = json.loads(second.validation_errors)
+    assert list(diagnostics) == ["errors"]
+    assert diagnostics["errors"]
+    assert set(diagnostics["errors"][0]) == {"location", "type"}
+    assert b"PRIOR RESPONSE PROSE" not in second.validation_errors
+    assert second.serialized_input == first.serialized_input == INPUT
+    assert second.json_schema == first.json_schema
+    assert call["schema_retries"] == 1
+    assert call["status"] == "completed"
+
+
+def test_diagnostics_name_declared_fields_and_anonymize_invented_keys(
+    workspace: Path,
+) -> None:
+    """§15.1: retry diagnostics locate declared contract fields by name."""
+
+    missing_value = b'{"warnings":[]}'
+    fake = FakeContractRunner([missing_value, VALID])
+    invoke(workspace, fake, run_id="run_vera_named_diag")
+    diagnostics = json.loads(fake.calls[1].validation_errors)
+    locations = [error["location"] for error in diagnostics["errors"]]
+    assert ["value"] in locations
+    assert all("$field" not in location for location in locations)
+
+    invented = b'{"value":"Vera Example","warnings":[],"Vera Example key":1}'
+    fake_invented = FakeContractRunner([invented, VALID])
+    invoke(workspace, fake_invented, run_id="run_vera_anon_diag")
+    raw = fake_invented.calls[1].validation_errors
+    assert b"Vera Example key" not in raw
+    diagnostics = json.loads(raw)
+    assert ["$field"] in [error["location"] for error in diagnostics["errors"]]
+
+
+def test_enrich_reference_invalidity_stays_in_the_validation_retry_class(
+    workspace: Path,
+) -> None:
+    """§15.1: reference validation inside enrichment gets the one retry."""
+
+    from exp2res.llm.contracts import ContractValidationError
+
+    def referee(payload: dict[str, object]) -> dict[str, object]:
+        if payload["value"] != "Vera Example validated":
+            raise ContractValidationError(
+                b'{"errors":[{"location":["value"],"type":"unresolved_reference"}]}'
+            )
+        return {**payload, "service_id": "svc_vera_example"}
+
+    wrong_reference = b'{"value":"Vera Example wrong reference","warnings":[]}'
+    fake = FakeContractRunner([wrong_reference, VALID])
+    result = invoke_contract(
+        workspace=workspace,
+        runner=fake,
+        contract=CONTRACT,
+        serialized_input=INPUT,
+        model_id="gpt-test-vera-example",
+        budgets=budgets(),
+        run_id="run_vera_enrich_reference",
+        stage="13.test",
+        cli_version="0.144.4-test",
+        enrich=referee,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    _run, call = telemetry(workspace, "run_vera_enrich_reference")
+    assert len(fake.calls) == 2
+    assert b"unresolved_reference" in fake.calls[1].validation_errors
+    assert call["schema_retries"] == 1
+    assert call["status"] == "completed"
+    assert result.output.value == "Vera Example validated"
+
+
+def test_timeout_retries_same_call_and_cancellation_is_terminal(
+    workspace: Path,
+) -> None:
+    """§15.10: timeout retries are bounded; cancellation never adopts output."""
+
+    timed_out = RawResult(
+        None,
+        None,
+        0.02,
+        (AttemptTelemetry(1, None, 0.02, timed_out=True),),
+        timed_out=True,
+    )
+    fake_timeout = FakeContractRunner([timed_out, timed_out])
+    with pytest.raises(LLMInvocationError) as timeout_error:
+        invoke(workspace, fake_timeout, run_id="run_vera_timeout")
+    _run, timeout_call = telemetry(workspace, "run_vera_timeout")
+    assert timeout_error.value.failure_code == "transport_timeout"
+    assert timeout_call["transport_retries"] == 1
+    assert timeout_call["failure_code"] == "transport_timeout"
+
+    cancelled = RawResult(
+        None,
+        None,
+        0.01,
+        (AttemptTelemetry(1, None, 0.01, cancelled=True),),
+        cancelled=True,
+    )
+    fake_cancelled = FakeContractRunner([cancelled])
+    with pytest.raises(LLMCancelledError):
+        invoke(workspace, fake_cancelled, run_id="run_vera_cancelled")
+    cancelled_run, cancelled_call = telemetry(workspace, "run_vera_cancelled")
+    assert len(fake_cancelled.calls) == 1
+    assert cancelled_run["failure_code"] == cancelled_call["failure_code"] == "cancelled"
+    assert cancelled_call["output_hash"] is None
+
+
+@pytest.mark.parametrize(
+    ("error_channel", "exit_code", "expected"),
+    [
+        (b"HTTP 429 rate limit", 1, "transport_rate_limited"),
+        (b"HTTP 401 authentication failed", 1, "transport_auth_failed"),
+        (b"ambiguous delivery lost response", 1, "transport_lost_response"),
+        (b"provider rejected request", 1, "transport_provider_error"),
+        (b"", 0, "transport_provider_error"),
+    ],
+    ids=["rate-limit", "auth", "lost-response", "provider", "missing-output"],
+)
+def test_adapter_maps_terminal_error_channel_without_persisting_it(
+    workspace: Path, error_channel: bytes, exit_code: int, expected: str
+) -> None:
+    """§15.10 rule 10: CLI failure classes map deterministically and safely."""
+
+    raw = RawResult(
+        None,
+        exit_code,
+        0.01,
+        (AttemptTelemetry(1, exit_code, 0.01),),
+        error_channel=error_channel,
+    )
+    fake = FakeContractRunner([raw])
+    run_id = f"run_vera_{expected}_{exit_code}_{len(error_channel)}"
+    with pytest.raises(LLMInvocationError) as caught:
+        invoke(
+            workspace,
+            fake,
+            run_id=run_id,
+            call_budgets=budgets(transport_attempt_cap=1),
+        )
+    run, call = telemetry(workspace, run_id)
+    assert caught.value.failure_code == expected
+    assert run["failure_code"] == call["failure_code"] == expected
+    if error_channel:
+        assert error_channel.decode("ascii", errors="ignore") not in run["metadata_json"]
+
+
+def test_process_timeout_kills_the_child_process_group(tmp_path: Path) -> None:
+    """Issue #69: a deadline kills the foreground group, including descendants."""
+
+    pid_path = tmp_path / "Vera Example child.pid"
+    command = [
+        "/usr/bin/sh",
+        "-c",
+        f"sleep 30 & child=$!; echo $child > '{pid_path}'; wait",
+    ]
+    outcome = run_subprocess(command, timeout_seconds=0.1)
+    assert outcome.timed_out is True
+    assert outcome.exit_code is None
+    child_pid = int(pid_path.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 1
+    while Path(f"/proc/{child_pid}").exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not Path(f"/proc/{child_pid}").exists()
+
+
+def test_next_writer_reconciles_only_nonterminal_telemetry(workspace: Path) -> None:
+    """§15.10 rule 8: crash leftovers fail as cancelled; terminals stay exact."""
+
+    fake = FakeContractRunner([VALID])
+    invoke(workspace, fake, run_id="run_vera_terminal")
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            INSERT INTO processing_runs(id, stage, started_at, status)
+            VALUES ('run_vera_abandoned', '13.test', ?, 'running')
+            """,
+            (FIXED_NOW.isoformat(),),
+        )
+        connection.execute(
+            """
+            INSERT INTO llm_calls(
+                run_id, call_index, started_at, status,
+                transport_retries, schema_retries
+            ) VALUES ('run_vera_abandoned', 1, ?, 'running', 0, 0)
+            """,
+            (FIXED_NOW.isoformat(),),
+        )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        assert reconcile_abandoned_telemetry(
+            connection, finished_at=datetime(2026, 7, 16, tzinfo=timezone.utc)
+        ) == (1, 1)
+        connection.commit()
+    terminal_run, terminal_call = telemetry(workspace, "run_vera_terminal")
+    abandoned_run, abandoned_call = telemetry(workspace, "run_vera_abandoned")
+    assert terminal_run["status"] == terminal_call["status"] == "completed"
+    assert terminal_run["failure_code"] is terminal_call["failure_code"] is None
+    assert abandoned_run["status"] == abandoned_call["status"] == "failed"
+    assert abandoned_run["failure_code"] == abandoned_call["failure_code"] == "cancelled"
+    assert abandoned_run["finished_at"] and abandoned_call["finished_at"]
