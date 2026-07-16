@@ -110,6 +110,25 @@ def validate_entry(
     if status == "partial" and (not isinstance(note, str) or not note.strip()):
         errors.append(f"{key}: partial requires note")
 
+    gated = entry.get("environment_gated")
+    if "environment_gated" in entry:
+        valid_gated = isinstance(gated, list) and all(
+            isinstance(node, str) and node for node in gated
+        )
+        if not valid_gated:
+            errors.append(
+                f"{key}: environment_gated must be a list of non-empty pytest node IDs"
+            )
+        elif status != "partial":
+            errors.append(
+                f"{key}: environment_gated is allowed only on partial rows; "
+                "covered rows admit no runtime-skip exception"
+            )
+        elif not valid_nodes or not set(gated) <= set(nodes):
+            errors.append(
+                f"{key}: environment_gated must be a subset of the row's nodes"
+            )
+
     if status in {"covered", "partial"} and valid_nodes:
         for node in nodes:
             if node not in collected:
@@ -127,7 +146,7 @@ def junit_identity(node: str) -> tuple[str, str]:
     return ".".join([module, *parts[1:-1]]), parts[-1]
 
 
-def execute_evidence_nodes(nodes: set[str]) -> list[str]:
+def execute_evidence_nodes(nodes: set[str], skip_allowed: set[str]) -> list[str]:
     if not nodes:
         return []
 
@@ -172,10 +191,13 @@ def execute_evidence_nodes(nodes: set[str]) -> list[str]:
     errors: list[str] = []
     for node in ordered_nodes:
         outcome = outcomes.get(junit_identity(node), "not reported")
-        if outcome != "passed":
-            errors.append(
-                f"evidence test did not pass in required CI ({outcome}): {node}"
-            )
+        if outcome == "passed":
+            continue
+        if outcome == "skipped" and node in skip_allowed:
+            continue
+        errors.append(
+            f"evidence test did not pass in required CI ({outcome}): {node}"
+        )
     if result.returncode != 0 and not errors:
         detail_lines = [
             line.strip()
@@ -232,7 +254,14 @@ def main() -> int:
             for node in entry.get("nodes", [])
             if isinstance(node, str)
         }
-        errors.extend(execute_evidence_nodes(evidence_nodes))
+        skip_allowed = {
+            node
+            for entry in coverage_map.values()
+            if isinstance(entry, dict) and entry.get("status") == "partial"
+            for node in entry.get("environment_gated", [])
+            if isinstance(node, str)
+        }
+        errors.extend(execute_evidence_nodes(evidence_nodes, skip_allowed))
 
     if errors:
         for error in errors:
