@@ -27,6 +27,9 @@ from exp2res.llm.sandbox import probe_isolation
 from test_llm_runner import CONTRACT, INPUT, budgets
 
 
+pytestmark = pytest.mark.contract
+
+
 def prepared(input_bytes: bytes = INPUT, **budget_overrides: object) -> PreparedCall:
     return PreparedCall(
         contract_id=CONTRACT.contract_id,
@@ -131,6 +134,7 @@ def test_npm_launcher_resolves_to_the_native_binary_only(
     assert codex_adapter._resolve_codex_binary(launcher) == native
 
 
+@pytest.mark.invariant
 @pytest.mark.parametrize(
     ("call", "failure_code"),
     [
@@ -218,6 +222,7 @@ def test_exact_adapter_resolved_credential_is_detected_without_echo() -> None:
     assert credential.decode("ascii") not in str(caught.value)
 
 
+@pytest.mark.invariant
 @pytest.mark.parametrize(
     "key",
     ["apiKey", "access-token", "REFRESH_TOKEN", "password", "authorization"],
@@ -238,6 +243,7 @@ def test_normalized_literal_credential_fields_in_config_fail_closed(
         load_workspace_config(workspace)
 
 
+@pytest.mark.invariant
 @pytest.mark.parametrize(
     "llm_lines",
     [

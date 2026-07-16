@@ -17,6 +17,7 @@ from conftest import FIXED_NOW, VERA_CORPUS
 
 
 runner = CliRunner()
+pytestmark = [pytest.mark.unit, pytest.mark.lifecycle]
 
 
 def invoke_json(workspace: Path, arguments: list[str]):

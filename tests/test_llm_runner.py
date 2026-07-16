@@ -40,6 +40,9 @@ from conftest import FIXED_NOW
 from fakes import FakeContractRunner
 
 
+pytestmark = pytest.mark.contract
+
+
 class SampleContractOutput(StrictModel):
     service_id: str
     value: str
@@ -390,6 +393,7 @@ def test_budget_preflight_stops_before_fake_transport_and_records_code(
     assert run["failure_code"] == call["failure_code"] == "budget_exceeded"
 
 
+@pytest.mark.invariant
 @pytest.mark.parametrize(
     "invalid",
     [
@@ -621,6 +625,7 @@ def test_interrupt_during_backoff_records_cancelled_terminals(
     assert call["transport_retries"] == 1
 
 
+@pytest.mark.invariant
 @pytest.mark.parametrize(
     ("error_channel", "exit_code", "expected"),
     [

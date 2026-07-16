@@ -27,6 +27,7 @@ def main() -> int:
     checks = [
         ["scripts/check_public_hygiene.py"],
         ["scripts/check_sdd_conventions.py", "check", "AGENTS.md"],
+        ["scripts/check_coverage_map.py"],
         [
             "scripts/check_decision_log.py",
             "--baseline",

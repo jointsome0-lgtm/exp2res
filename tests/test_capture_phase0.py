@@ -23,6 +23,9 @@ from exp2res.services.time_input import parse_occurred
 from conftest import FIXED_NOW, VERA_CORPUS
 
 
+pytestmark = [pytest.mark.unit, pytest.mark.lifecycle]
+
+
 def _retro_occurred(payload: dict[str, object]) -> OccurredAt:
     period = payload["answers"]["period"]  # type: ignore[index]
     return OccurredAt.model_validate_json(json.dumps(period))
