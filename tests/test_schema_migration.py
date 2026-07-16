@@ -14,6 +14,7 @@ from exp2res.cli import app
 from exp2res.errors import MigrationFailedError
 from exp2res.services.capture import capture_daily
 from exp2res.services.logs import show_log
+from exp2res.storage.schema import LLM_CALLS_SQL, PROCESSING_RUNS_SQL
 from exp2res.storage.workspace import (
     inspect_workspace,
     initialize_workspace,
@@ -44,6 +45,14 @@ def v1_workspace(tmp_path: Path) -> tuple[Path, str, str]:
             (FIXED_NOW.isoformat(), "0.1.0-v1-fixture"),
         )
     return root, bundle.raw_log.id, raw_text
+
+
+def table_shape(database: Path, table: str) -> list[tuple[object, ...]]:
+    with sqlite3.connect(database) as connection:
+        return [
+            tuple(row[index] for index in range(1, 6))
+            for row in connection.execute(f"PRAGMA table_info({table})")
+        ]
 
 
 def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
@@ -126,6 +135,28 @@ def test_cli_reports_a_rolled_back_migration_as_integrity_class_7(
     assert envelope["result"]["schema"]["stored_version"] == 1
 
 
+def test_cli_reports_migration_interrupt_as_cancelled_class_9(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rules 4/6: a service interrupt keeps cancellation precedence."""
+
+    import exp2res.cli as cli_module
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def interrupted_migration(_workspace: Path):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_module, "migrate_workspace", interrupted_migration)
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 9
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "cancelled"
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert envelope["result"] is None
+
+
 def test_migration_failure_rolls_back_ddl_and_version_but_retains_backup(
     tmp_path: Path,
 ) -> None:
@@ -166,3 +197,92 @@ def test_migration_failure_rolls_back_ddl_and_version_but_retains_backup(
     assert "llm_calls" not in tables
     assert stored_text == raw_text
     assert inspect_workspace(workspace).stored_version == 1
+
+
+def test_migration_interrupt_rolls_back_and_propagates_with_backup_retained(
+    tmp_path: Path,
+) -> None:
+    """§12.14/§14.14: Ctrl-C rolls back unchanged and is not class 7."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE processing_runs (id TEXT PRIMARY KEY)")
+    stale_shape = table_shape(database, "processing_runs")
+
+    def interrupt_after_ddl(point: str) -> None:
+        if point == "after_ddl":
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        migrate_workspace(
+            workspace,
+            clock=lambda: FIXED_NOW.replace(day=16),
+            failure_injector=interrupt_after_ddl,
+        )
+
+    assert inspect_workspace(workspace).stored_version == 1
+    assert table_shape(database, "processing_runs") == stale_shape
+    assert table_shape(database, "llm_calls") == []
+    backups = list((workspace / ".exp2res" / "backup").iterdir())
+    assert len(backups) == 1
+    assert backups[0].is_file()
+
+
+@pytest.mark.parametrize("table", ["processing_runs", "llm_calls"])
+def test_cli_rejects_wrong_shaped_preexisting_telemetry_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, table: str
+) -> None:
+    """§12.14: stale telemetry DDL fails validation and rolls back v1."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        if table == "processing_runs":
+            connection.execute("CREATE TABLE processing_runs (id TEXT PRIMARY KEY)")
+        else:
+            connection.execute(
+                """
+                CREATE TABLE llm_calls (
+                    run_id TEXT NOT NULL,
+                    call_index INTEGER NOT NULL,
+                    PRIMARY KEY (run_id, call_index)
+                )
+                """
+            )
+    stale_shape = table_shape(database, table)
+
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 7
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "failed"
+    assert envelope["diagnostic_class"] == "migration_failed"
+    backup = Path(envelope["result"]["schema"]["managed_backup_path"])
+    assert backup.is_file()
+    assert envelope["result"]["schema"]["stored_version"] == 1
+    assert table_shape(database, table) == stale_shape
+
+
+@pytest.mark.parametrize(
+    ("table", "ddl"),
+    [("processing_runs", PROCESSING_RUNS_SQL), ("llm_calls", LLM_CALLS_SQL)],
+)
+def test_exact_shape_preexisting_telemetry_table_migrates(
+    tmp_path: Path, table: str, ddl: str
+) -> None:
+    """§12.13/§12.15: an exact normative pre-existing shape is accepted."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute(ddl)
+    expected_shape = table_shape(database, table)
+
+    migrated = migrate_workspace(
+        workspace, clock=lambda: FIXED_NOW.replace(day=16)
+    )
+
+    assert migrated.stored_version == 2
+    assert migrated.compatible is True
+    assert table_shape(database, table) == expected_shape

@@ -24,7 +24,12 @@ from exp2res.errors import (
     WorkspaceError,
 )
 
-from .schema import apply_migration_1_to_2, create_schema
+from .schema import (
+    LLM_CALLS_SQL,
+    PROCESSING_RUNS_SQL,
+    apply_migration_1_to_2,
+    create_schema,
+)
 
 CURRENT_SCHEMA_VERSION = 2
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
@@ -426,12 +431,31 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
     status = inspect_schema(connection)
     if not status.compatible:
         raise sqlite3.DatabaseError("migration target is incompatible")
-    for table in ("processing_runs", "llm_calls"):
-        row = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
-        ).fetchone()
-        if row is None:
-            raise sqlite3.DatabaseError("migration target table missing")
+
+    def column_shape(
+        database: sqlite3.Connection, table: str
+    ) -> list[tuple[object, ...]]:
+        return [
+            tuple(row[index] for index in range(1, 6))
+            for row in database.execute(f"PRAGMA table_info({table})")
+        ]
+
+    scratch = sqlite3.connect(":memory:")
+    try:
+        scratch.execute(PROCESSING_RUNS_SQL)
+        scratch.execute(LLM_CALLS_SQL)
+        expected_shapes = {
+            table: column_shape(scratch, table)
+            for table in ("processing_runs", "llm_calls")
+        }
+    finally:
+        scratch.close()
+
+    for table, expected_shape in expected_shapes.items():
+        if column_shape(connection, table) != expected_shape:
+            raise sqlite3.DatabaseError(
+                "migration target telemetry table shape mismatch"
+            )
 
 
 def migrate_workspace(
@@ -493,6 +517,8 @@ def migrate_workspace(
             except BaseException:
                 connection.rollback()
                 raise
+        except KeyboardInterrupt:
+            raise
         except (SchemaCompatibilityError, WorkspaceBusyError):
             raise
         except BaseException as error:
