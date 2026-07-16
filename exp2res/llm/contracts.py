@@ -174,6 +174,20 @@ def _diagnostics(
     ).encode("utf-8")
 
 
+def validation_diagnostics(
+    contract: ContractDefinition, errors: list[dict[str, Any]]
+) -> bytes:
+    """Encode retry-safe schema/reference diagnostics for one contract.
+
+    Contract-specific enrichment hooks use this public spelling so the
+    diagnostic allowlist remains owned here alongside ordinary schema
+    validation. Response prose and invented field names never cross into the
+    retry workspace.
+    """
+
+    return _diagnostics(errors, _declared_names(contract))
+
+
 def _find_service_field(
     value: object,
     service_owned: frozenset[str],
