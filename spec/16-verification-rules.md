@@ -2,9 +2,9 @@
 
 ## §16.1 Evidence Rule
 
-Every typed domain reference must resolve to the current target required by §12 rule 10 when written; missing, wrong-type, superseded, or duplicate IDs fail the producing operation atomically. JSON storage is not an integrity exception.
+Write-time typed-reference and JSON-storage integrity follow §12 rules 2 and 10.
 
-Every current self-claim and resume bullet — and any row entering verification or export — must resolve a complete current chain through at least one fact, one `fact_sources` row with `support_type = direct`, its non-null `EvidenceItem`, and that item's retained `RawLog`. Every current resume branch must resolve its required current assessment snapshot, every bullet must resolve its current branch, and each source self-claim on that bullet must belong to that exact snapshot. `ResumeBullet.source_self_claim_ids` must be the duplicate-free exact self-claim set supplied to that bullet's writer invocation under §13.10/§15.6 — the claims selected to guide it — and must be empty iff none was. Superseded rows are exempt inspect-only history: after a lifecycle swap their references legitimately point at superseded targets, which is why §12 rule 9 keeps them out of processing, verification, generation, and export inputs. A resume bullet's `source_log_ids` must equal the distinct raw logs reachable from its `source_fact_ids`; a non-empty but inconsistent ID list fails verification and export. Owner deletion is handled before those consumers run: §13.13's purge-and-rebuild reset (rules 5–6) removes the derived graph rather than leaving vanished private sources as skippable evidence.
+Every current self-claim and resume bullet — and any row entering verification or export — must resolve a complete current chain through at least one fact, one `fact_sources` row with `support_type = direct`, its non-null `EvidenceItem`, and that item's retained `RawLog`. Every current resume branch must resolve its required current assessment snapshot, every bullet must resolve its current branch, and each source self-claim on that bullet must belong to that exact snapshot. `ResumeBullet.source_self_claim_ids` must satisfy §13.10/§15.6's exact-use contract. Superseded rows are exempt inspect-only history: after a lifecycle swap their references legitimately point at superseded targets, which is why §12 rule 9 keeps them out of processing, verification, generation, and export inputs. A resume bullet's `source_log_ids` must equal the distinct raw logs reachable from its `source_fact_ids`; a non-empty but inconsistent ID list fails verification and export. Owner deletion is handled before those consumers run: §13.13's purge-and-rebuild reset (rules 5–6) removes the derived graph rather than leaving vanished private sources as skippable evidence.
 
 ## §16.2 Mirror Rule
 
@@ -42,7 +42,7 @@ Do not claim impact/production/customer/scale/revenue/reliability unless evidenc
 
 A verifier must normalize every source and candidate time expression to `OccurredAt` before comparing precision. A candidate with no temporal expression does not introduce a precision claim.
 
-Every datetime equality, ordering, duration, and interval operation in this rule uses the UTC instant under §12 rule 3; stored ISO 8601 TEXT bytes never participate in temporal comparison.
+Temporal comparisons in this rule use the UTC instant under §12 rule 3.
 
 For non-range values, the normative order from weakest to strongest is `unknown < year < quarter < month < week < exact_day < exact_datetime`. For comparison with ranges, normalize these values to maximum uncertainty widths: `unknown` is unbounded, `year` is 366 days, `quarter` is 92 days, `month` is 31 days, `week` is 7 days, `exact_day` is 1 day, and `exact_datetime` is zero.
 
