@@ -538,7 +538,13 @@ def invoke_contract(
                 if monotonic() + delay >= deadline:
                     fail("transport_timeout")
                     raise LLMInvocationError("transport_timeout")
-                sleeper(delay)
+                try:
+                    sleeper(delay)
+                except KeyboardInterrupt:
+                    # §15.10 rule 8: an owner interrupt during backoff is a
+                    # handled cancellation and records its terminal rows.
+                    fail("cancelled")
+                    raise LLMCancelledError() from None
                 continue
             fail(code)
             raise LLMInvocationError(code)

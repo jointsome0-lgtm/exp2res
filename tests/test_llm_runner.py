@@ -543,6 +543,45 @@ def test_timeout_retries_same_call_and_cancellation_is_terminal(
     assert cancelled_call["output_hash"] is None
 
 
+def test_interrupt_during_backoff_records_cancelled_terminals(
+    workspace: Path,
+) -> None:
+    """§15.10 rule 8: Ctrl-C in the retry backoff still finishes rows cancelled."""
+
+    timed_out = RawResult(
+        None,
+        None,
+        0.02,
+        (AttemptTelemetry(1, None, 0.02, timed_out=True),),
+        timed_out=True,
+    )
+
+    def interrupting_sleep(_delay: float) -> None:
+        raise KeyboardInterrupt()
+
+    with pytest.raises(LLMCancelledError):
+        invoke_contract(
+            workspace=workspace,
+            runner=FakeContractRunner([timed_out, VALID]),
+            contract=CONTRACT,
+            serialized_input=INPUT,
+            model_id="gpt-test-vera-example",
+            budgets=budgets(backoff_lower_seconds=0.01, backoff_upper_seconds=0.01),
+            run_id="run_vera_backoff_interrupt",
+            stage="13.test",
+            cli_version="0.144.4-test",
+            enrich=enrich,
+            clock=lambda: FIXED_NOW,
+            sleeper=interrupting_sleep,
+            jitter=lambda lower, _upper: lower,
+        )
+    run, call = telemetry(workspace, "run_vera_backoff_interrupt")
+    assert run["status"] == call["status"] == "failed"
+    assert run["failure_code"] == call["failure_code"] == "cancelled"
+    assert run["finished_at"] and call["finished_at"]
+    assert call["transport_retries"] == 1
+
+
 @pytest.mark.parametrize(
     ("error_channel", "exit_code", "expected"),
     [
