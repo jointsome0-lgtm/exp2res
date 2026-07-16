@@ -15,6 +15,9 @@ try:  # Python 3.11+
 except ImportError:  # exercised by the supported Python 3.10 environment
     import tomli as tomllib  # type: ignore[no-redef]
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_coverage_map import execute_evidence_nodes  # noqa: E402
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 SPEC_PATH = REPOSITORY_ROOT / "spec" / "24-acceptance-criteria.md"
@@ -221,6 +224,15 @@ def main() -> int:
                     key, ledger[key], coverage_map, collected, ci_collected
                 )
             )
+
+        direct_evidence_nodes = {
+            node
+            for entry in ledger.values()
+            if isinstance(entry, dict) and entry.get("status") in {"met", "partial"}
+            for node in entry.get("nodes", [])
+            if isinstance(node, str)
+        }
+        errors.extend(execute_evidence_nodes(direct_evidence_nodes, set()))
 
     if errors:
         for error in errors:
