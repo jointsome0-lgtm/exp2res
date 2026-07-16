@@ -124,6 +124,15 @@ class LLMModelInvalidError(ConfigurationError):
     public_message = "The selected LLM model identifier is invalid."
 
 
+class LLMSelectionMissingError(ConfigurationError):
+    """§29.2: explicit [llm] selection is never replaced by a fallback."""
+
+    diagnostic_class = "llm_selection_missing"
+    public_message = (
+        "Select [llm].adapter and [llm].model explicitly before LLM use."
+    )
+
+
 class LLMInvocationError(Exp2ResError):
     """Privacy-safe §15 failure carrying only a stable machine code."""
 

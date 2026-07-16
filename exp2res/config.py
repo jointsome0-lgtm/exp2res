@@ -16,6 +16,7 @@ from .errors import (
     ConfigurationError,
     InvalidInputError,
     LLMInvocationError,
+    LLMSelectionMissingError,
     UnknownLLMConfigKeyError,
 )
 from .llm.registry import LLMSelection, resolve_selection
@@ -34,8 +35,8 @@ except ImportError:  # exercised by the supported Python 3.10 test environment
 
 @dataclass(frozen=True)
 class LLMConfig:
-    adapter: str
-    model: str
+    adapter: str | None
+    model: str | None
     codex_home_env: str
     transport_attempt_cap: int
     backoff_lower_seconds: float
@@ -50,6 +51,12 @@ class LLMConfig:
 
     @property
     def selection(self) -> LLMSelection:
+        # §29.2: the adapter and model must be selected explicitly in [llm]
+        # before the first outward call — the fresh-init template value is
+        # owner-editable configuration, never a call-time fallback, so an
+        # absent selection fails the LLM use closed here.
+        if self.adapter is None or self.model is None:
+            raise LLMSelectionMissingError()
         return LLMSelection(adapter=self.adapter, model=self.model)
 
 
@@ -61,8 +68,11 @@ class WorkspaceConfig:
 
 
 DEFAULT_LLM_CONFIG = LLMConfig(
-    adapter="codex-cli",
-    model="gpt-5.6-sol",
+    # No built-in selection default: §14.1's fresh init writes the §15.13
+    # default into config.toml, and a workspace that later drops the keys
+    # has no selection rather than a silent revert (§29.2).
+    adapter=None,
+    model=None,
     codex_home_env="CODEX_HOME",
     transport_attempt_cap=2,
     backoff_lower_seconds=0.25,
@@ -220,18 +230,28 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
     if not set(llm_section).issubset(allowed_llm_keys):
         raise UnknownLLMConfigKeyError()
 
-    adapter = llm_section.get("adapter", DEFAULT_LLM_CONFIG.adapter)
-    model = llm_section.get("model", DEFAULT_LLM_CONFIG.model)
+    adapter = llm_section.get("adapter")
+    model = llm_section.get("model")
     codex_home_env = llm_section.get(
         "codex_home_env", DEFAULT_LLM_CONFIG.codex_home_env
     )
     if not isinstance(codex_home_env, str):
         raise ConfigurationError()
-    selection = resolve_selection(adapter, model)
-    try:
-        validate_structural(selection.model)
-    except ValueError as error:
-        raise ConfigurationError() from error
+    # §29.2: no built-in selection default and no silent revert — a config
+    # with neither key simply carries no selection, and dropping one key of
+    # a selection is a configuration error rather than a partial fallback.
+    if (adapter is None) != (model is None):
+        raise LLMSelectionMissingError()
+    selected_adapter: str | None = None
+    selected_model: str | None = None
+    if adapter is not None:
+        selection = resolve_selection(adapter, model)
+        try:
+            validate_structural(selection.model)
+        except ValueError as error:
+            raise ConfigurationError() from error
+        selected_adapter = selection.adapter
+        selected_model = selection.model
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", codex_home_env) is None:
         raise ConfigurationError()
 
@@ -248,8 +268,8 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
     if upper < lower:
         raise ConfigurationError()
     llm = LLMConfig(
-        adapter=selection.adapter,
-        model=selection.model,
+        adapter=selected_adapter,
+        model=selected_model,
         codex_home_env=codex_home_env,
         transport_attempt_cap=integer(
             "transport_attempt_cap", DEFAULT_LLM_CONFIG.transport_attempt_cap

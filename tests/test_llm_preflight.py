@@ -16,6 +16,7 @@ from exp2res.errors import (
     LLMAdapterNotRegisteredError,
     LLMInvocationError,
     LLMModelInvalidError,
+    LLMSelectionMissingError,
     UnknownLLMAdapterError,
     UnknownLLMConfigKeyError,
 )
@@ -155,6 +156,45 @@ def test_llm_config_is_closed_and_model_is_strict(
 ) -> None:
     write_llm_config(workspace, llm_lines)
     with pytest.raises(error_type):
+        load_workspace_config(workspace)
+
+
+def test_absent_selection_loads_but_llm_use_fails_closed(workspace: Path) -> None:
+    """PR #118 r1 / §29.2: the init default is never a call-time fallback."""
+
+    write_llm_config(workspace, 'codex_home_env = "CODEX_HOME"')
+    config = load_workspace_config(workspace).llm
+    assert config.adapter is None
+    assert config.model is None
+    with pytest.raises(LLMSelectionMissingError) as caught:
+        _ = config.selection
+    assert caught.value.diagnostic_class == "llm_selection_missing"
+
+
+def test_config_without_llm_section_loads_without_a_selection(
+    workspace: Path,
+) -> None:
+    config_path = workspace / ".exp2res" / "config.toml"
+    config_path.write_text(
+        '[workspace]\ntimezone = "Etc/UTC"\n\n[privacy]\nignore_paths = []\n',
+        encoding="utf-8",
+    )
+    config = load_workspace_config(workspace).llm
+    assert config.adapter is None
+    with pytest.raises(LLMSelectionMissingError):
+        _ = config.selection
+
+
+@pytest.mark.parametrize(
+    "llm_lines",
+    ['adapter = "codex-cli"', 'model = "gpt-5.6-sol"'],
+    ids=["adapter-only", "model-only"],
+)
+def test_half_selection_fails_config_load_closed(
+    workspace: Path, llm_lines: str
+) -> None:
+    write_llm_config(workspace, llm_lines)
+    with pytest.raises(LLMSelectionMissingError):
         load_workspace_config(workspace)
 
 
