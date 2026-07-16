@@ -23,8 +23,12 @@ status = "pending"
 phase = "3"
 
 ["21.7"]
-status = "pending"
-phase = "1"
+status = "covered"
+nodes = [
+  "tests/test_stage3_extraction.py::test_temporal_upgrades_widening_and_confidence_raise_are_rejected[unsupported-exact-day]",
+  "tests/test_stage3_extraction.py::test_temporal_upgrades_widening_and_confidence_raise_are_rejected[unsupported-two-day-range]",
+  "tests/test_stage3_extraction.py::test_temporal_upgrades_widening_and_confidence_raise_are_rejected[approximate-to-exact-upgrade]",
+]
 
 ["21.8"]
 status = "pending"
@@ -46,8 +50,13 @@ nodes = [
 ]
 
 ["21.12"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage3_extraction.py::test_rerun_supersedes_prior_generation_at_one_swap_instant",
+  "tests/test_vera_replay_extract.py::test_vera_e1_cli_replay_preserves_provenance_and_one_current_generation",
+]
 phase = "1"
+note = "Stage 3 service and Vera CLI reruns prove one coherent current fact generation per lineage; higher-layer generation mixing and managed-export invalidation remain unavailable until their owning phases"
 
 ["21.13"]
 status = "pending"
@@ -92,8 +101,15 @@ status = "pending"
 phase = "4"
 
 ["21.21"]
-status = "pending"
-phase = "1"
+status = "covered"
+nodes = [
+  "tests/test_stage3_extraction.py::test_happy_path_persists_governing_provenance_and_telemetry",
+  "tests/test_stage3_extraction.py::test_temporal_upgrades_widening_and_confidence_raise_are_rejected[widening]",
+  "tests/test_stage3_extraction.py::test_temporal_upgrades_widening_and_confidence_raise_are_rejected[approximate-to-exact-upgrade]",
+  "tests/test_stage3_extraction.py::test_temporal_upgrades_widening_and_confidence_raise_are_rejected[raised-temporal-confidence]",
+  "tests/test_stage3_extraction.py::test_selected_effective_placement_can_license_anchored_narrowing",
+  "tests/test_vera_replay_extract.py::test_vera_e1_cli_replay_preserves_provenance_and_one_current_generation",
+]
 
 ["21.22"]
 status = "pending"
@@ -243,9 +259,15 @@ nodes = [
   "tests/test_llm_runner.py::test_adapter_maps_terminal_error_channel_without_persisting_it[auth]",
   "tests/test_llm_runner.py::test_adapter_maps_terminal_error_channel_without_persisting_it[lost-response]",
   "tests/test_llm_runner.py::test_call_failure_in_a_multi_call_run_fails_the_whole_run",
+  "tests/test_stage3_extraction.py::test_multi_lineage_failure_keeps_prior_complete_generations",
+  "tests/test_stage3_extraction.py::test_keyboard_interrupt_cancels_call_and_keeps_prior_generation",
+  "tests/test_stage3_extraction.py::test_per_run_call_ceiling_fails_before_transport",
+  "tests/test_cli_extract.py::test_build_llm_execution_uses_workspace_selection_and_budget_defaults",
+  "tests/test_cli_extract.py::test_extract_invalid_after_retry_reports_failure_and_durable_telemetry",
+  "tests/test_cli_extract.py::test_extract_interrupt_is_cancelled_without_partial_facts",
 ]
 phase = "1"
-note = "Transport bounds and telemetry are covered at the runner seam; stage-level complete-set fixtures land with the stages"
+note = "Runner and Stage 3 fixtures prove bounded foreground calls, whole-stage rollback, durable failed telemetry, budget preflight, and handled cancellation; the full transport-failure matrix, hard-crash timings, late-response discard, stderr progress limits, and other named stages remain"
 
 ["21.44"]
 status = "pending"

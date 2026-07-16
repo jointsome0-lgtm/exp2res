@@ -1,0 +1,31 @@
+{
+  "facts": [
+    {
+      "action": "resumed drafting",
+      "claim": "Vera Example resumed drafting the ingress guide after finding placeholder TLS text.",
+      "claim_kind": "observed_fact",
+      "company": null,
+      "confidence": "medium",
+      "context": "independent_project",
+      "evidence_item_ids": [
+        "evi_vera_0007"
+      ],
+      "object": "the ingress guide",
+      "occurred": null,
+      "outcome": null,
+      "ownership_level": "contributed",
+      "role": null,
+      "skills": [
+        "technical writing"
+      ],
+      "technologies": [
+        "Kubernetes",
+        "TLS"
+      ],
+      "themes": [
+        "platform documentation"
+      ]
+    }
+  ],
+  "warnings": []
+}

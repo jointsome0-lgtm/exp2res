@@ -1,0 +1,31 @@
+{
+  "facts": [
+    {
+      "action": "finished",
+      "claim": "Vera Example reported finishing the ingress guide and closing its checklist item.",
+      "claim_kind": "observed_fact",
+      "company": null,
+      "confidence": "medium",
+      "context": "independent_project",
+      "evidence_item_ids": [
+        "evi_vera_0004"
+      ],
+      "object": "the ingress guide",
+      "occurred": null,
+      "outcome": "closed the checklist item",
+      "ownership_level": "contributed",
+      "role": null,
+      "skills": [
+        "technical writing"
+      ],
+      "technologies": [
+        "Kubernetes",
+        "TLS"
+      ],
+      "themes": [
+        "platform documentation"
+      ]
+    }
+  ],
+  "warnings": []
+}

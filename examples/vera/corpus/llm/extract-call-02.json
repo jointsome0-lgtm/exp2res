@@ -1,0 +1,31 @@
+{
+  "facts": [
+    {
+      "action": "outlined",
+      "claim": "Vera Example outlined an ingress guide and listed TLS gotchas for the playbook.",
+      "claim_kind": "observed_fact",
+      "company": null,
+      "confidence": "medium",
+      "context": "independent_project",
+      "evidence_item_ids": [
+        "evi_vera_0002"
+      ],
+      "object": "an ingress guide with TLS gotchas",
+      "occurred": null,
+      "outcome": null,
+      "ownership_level": "contributed",
+      "role": null,
+      "skills": [
+        "technical writing"
+      ],
+      "technologies": [
+        "Kubernetes",
+        "TLS"
+      ],
+      "themes": [
+        "platform documentation"
+      ]
+    }
+  ],
+  "warnings": []
+}

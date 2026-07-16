@@ -28,8 +28,8 @@ issues = []
 status = "partial"
 phases = ["1"]
 evals = ["21.15"]
-issues = ["#81", "PR #95"]
-note = "Stage 1 proves non-null EvidenceItem links and atomic provenance persistence for manual capture; ExperienceFact source rows and derived source-log IDs await Phase 1"
+issues = ["#81", "PR #95", "#82", "PR-3"]
+note = "Stage 1 proves atomic EvidenceItem capture and Stage 3 now proves direct fact_sources rows plus source_log_ids derived through selected evidence; the broader wrong-type, superseded, duplicate, and Stage 6 clauses in the linked eval remain"
 
 ["24.6"]
 status = "pending"
@@ -86,10 +86,11 @@ evals = ["21.2", "21.3"]
 issues = []
 
 ["24.15"]
-status = "pending"
+status = "partial"
 phases = ["1", "2", "3", "4"]
 evals = ["21.12"]
-issues = []
+issues = ["#82", "PR-3"]
+note = "Stage 3 service and Vera CLI reruns replace each lineage with one coherent current fact generation; downstream generation mixing and managed-export invalidation remain for later phases"
 
 ["24.16"]
 status = "pending"
@@ -108,8 +109,8 @@ note = "Current tests prove committed owner deletion, raw/evidence purge, global
 status = "partial"
 phases = ["1", "3"]
 evals = ["21.15"]
-issues = ["#81", "PR #95"]
-note = "Stage 1 proves atomic non-null EvidenceItem linkage and multiple items can be retained; typed derived references, fact_sources semantics, and Stage 6 cardinality remain"
+issues = ["#81", "PR #95", "#82", "PR-3"]
+note = "Stage 1 proves atomic non-null EvidenceItem linkage and Stage 3 proves transactional fact_sources semantics, derived source-log IDs, and exact selected-item persistence; the same-log multi-item calibration clause and Stage 6 cardinality remain"
 
 ["24.19"]
 status = "pending"
@@ -142,10 +143,11 @@ evals = ["21.20"]
 issues = []
 
 ["24.24"]
-status = "pending"
+status = "met"
 phases = ["1"]
 evals = ["21.7", "21.21"]
-issues = []
+issues = ["#82", "PR-3"]
+note = "Stage 3 tests cover governing-placement inheritance, unsupported precision increases, widening and confidence raises, and selected-support anchored narrowing; Vera E1 checks copied placement through the CLI"
 
 ["24.25"]
 status = "pending"
@@ -181,8 +183,8 @@ issues = []
 status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.30", "21.43", "21.44", "21.49"]
-issues = ["#81", "PR #95", "#69", "PR #101", "PR #107"]
-note = "Phase 0 and the shipped runner prove local workspace controls plus bounded foreground model transport and secret-safe preflight at the runner seam; the complete no-egress, prompt-composition, injection, integration, and managed-deletion contract remains"
+issues = ["#81", "PR #95", "#69", "PR #101", "PR #107", "#82", "PR-3"]
+note = "Local workspace controls, bounded foreground transport, secret-safe preflight, explicit extraction consent, and an instruction-like Vera source replay are proven; the complete no-egress, prompt-composition, full injection matrix, integration, and managed-deletion contract remains"
 
 ["24.31"]
 status = "pending"
@@ -251,8 +253,8 @@ note = "The workspace and runner prove held writer exclusion, bounded workspace_
 status = "partial"
 phases = ["1", "2", "3", "4"]
 evals = ["21.38"]
-issues = ["#69", "PR #101"]
-note = "Runner telemetry proves processing-run and per-call identity, contiguous call indexes, terminal failure, and abandoned-run reconciliation; all recomputable rows, per-swap generations, orchestration parents, findings, and deletion redaction remain"
+issues = ["#69", "PR #101", "#82", "PR-3"]
+note = "Runner and Stage 3 tests prove processing-run and per-call identity, contiguous call indexes, terminal failure, one generation per extracted lineage, producing-run links, and failed-run telemetry without business rows; later recomputable tables, orchestration parents, findings, and deletion redaction remain"
 
 ["24.42"]
 status = "partial"
@@ -262,17 +264,23 @@ issues = ["#81", "PR #95", "#69", "PR #101"]
 note = "Current tests prove strict temporal construction, bounded acquisition, closed runner output fields, JSON datetime parsing, service-owned-field rejection, ExperienceFact strict timestamps/list/project/metadata shapes, derived-source hydration, and raw/fact project-key drift rejection; all remaining §11, §15, §19, and hydration shapes and identical limit enforcement remain"
 
 ["24.43"]
-status = "pending"
+status = "partial"
 phases = ["1", "2"]
 evals = ["21.40"]
-issues = []
+issues = ["#82", "PR-3"]
+nodes = [
+  "tests/test_stage3_extraction.py::test_displacement_projection_excludes_prose_and_manual_item",
+  "tests/test_stage3_extraction.py::test_reference_and_service_authorship_invalidity_retry_once[descriptor_only]",
+  "tests/test_vera_replay_extract.py::test_vera_e1_cli_replay_preserves_provenance_and_one_current_generation",
+]
+note = "Stage 3 and Vera E1 prove deterministic correction displacement, effective-only content, descriptor-only rejection, and correction governing provenance; Stage 4 and the Stage 7/10/11 downstream descriptor projections remain"
 
 ["24.44"]
 status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.41"]
-issues = ["#81", "PR #95", "#69", "PR #101"]
-note = "Phase 0 proves discovery precedence, schema gating, non-interactive controls, stable exit classes, closed JSON envelopes, raw-text-free projections, and secret-safe diagnostics; later commands, lifecycle reports, cancellation, and complete inspection remain"
+issues = ["#81", "PR #95", "#69", "PR #101", "#82", "PR-3"]
+note = "Discovery, schema gating, non-interactive controls, stable exit classes, closed envelopes, extraction consent/cancellation, standard Stage 3 affected/generation/run/warning fields, and complete read-only facts list/show projections are proven; later command families and lifecycle reports remain"
 
 ["24.45"]
 status = "partial"
@@ -285,8 +293,8 @@ note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit offs
 status = "partial"
 phases = ["1", "2", "3", "4"]
 evals = ["21.43"]
-issues = ["#69", "PR #101"]
-note = "The runner proves bounded foreground transport attempts, budgets, deadlines, retry telemetry, cancellation, terminal error mapping, and whole-run failure at its seam; complete stage fixtures, all declared adapters, and every interruption/crash timing remain"
+issues = ["#69", "PR #101", "#82", "PR-3"]
+note = "The runner plus Stage 3 CLI prove bounded foreground attempts, budgets, deadlines, retry telemetry, complete-stage rollback, fresh failed-run telemetry, and handled cancellation with no partial facts; the exhaustive failure matrix, all adapters, hard crashes, late responses, and every interruption timing remain"
 
 ["24.47"]
 status = "pending"
@@ -335,11 +343,12 @@ note = "The shipped Codex runner canary proves structural read confinement for t
 status = "partial"
 phases = ["0", "1", "2", "3", "4"]
 evals = []
-issues = ["#110"]
+issues = ["#110", "#82", "PR-3"]
 nodes = [
   "tests/test_llm_preflight.py::test_fresh_config_exposes_adapter_model_home_reference_and_all_budgets",
   "tests/test_llm_preflight.py::test_known_but_unregistered_adapter_fails_with_distinct_diagnostic[claude-agent-sdk]",
   "tests/test_llm_preflight.py::test_known_but_unregistered_adapter_fails_with_distinct_diagnostic[openai-compat]",
   "tests/test_llm_runner.py::test_loaded_selection_drives_fake_runner_processing_identity",
+  "tests/test_cli_extract.py::test_build_llm_execution_uses_workspace_selection_and_budget_defaults",
 ]
-note = "Config-only Codex selection, injected processing identity, and fail-closed known-but-unregistered adapter choices are proven; the Agent SDK and OpenAI-compatible transports remain unimplemented"
+note = "Config-only Codex selection now reaches the Stage 3 CLI execution builder and registered isolated runner, injected processing identity is proven, and known-but-unregistered choices fail closed; the Agent SDK and OpenAI-compatible transports remain unimplemented"

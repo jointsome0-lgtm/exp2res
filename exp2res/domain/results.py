@@ -1,4 +1,4 @@
-"""Closed Phase 0 subset of the §14.14 version-1 result envelope."""
+"""Closed implemented subset of the §14.14 version-1 result envelope."""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
+from exp2res.llm.contracts import ContractWarning
+
 from .enums import CLIResultStatus, EntryType, SourceType
-from .models import OccurredAt, StrictModel
+from .models import ExperienceFact, OccurredAt, StrictModel
 
 CommandPath = Literal[
     "init",
@@ -17,8 +19,11 @@ CommandPath = Literal[
     "log today",
     "log retro",
     "correction add",
+    "extract",
     "logs list",
     "logs delete",
+    "facts list",
+    "facts show",
 ]
 
 
@@ -72,7 +77,11 @@ class LogsDeleteResult(StrictModel):
     selected_log: SelectedLogProjection
 
 
-ResultPayload = SchemaResult | LogsListResult | LogsDeleteResult
+class FactsListResult(StrictModel):
+    facts: list[ExperienceFact]
+
+
+ResultPayload = SchemaResult | LogsListResult | LogsDeleteResult | FactsListResult
 
 
 class CLIEnvelope(StrictModel):
@@ -95,7 +104,7 @@ class CLIEnvelope(StrictModel):
     invalidated_branches: list[Any] = Field(default_factory=list)
     findings: list[Any] = Field(default_factory=list)
     residual_paths: list[str] = Field(default_factory=list)
-    warnings: list[Any] = Field(default_factory=list)
+    warnings: list[ContractWarning] = Field(default_factory=list)
     retry: Retry | None = None
     result: ResultPayload | None = None
 

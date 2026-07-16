@@ -1,0 +1,30 @@
+{
+  "facts": [
+    {
+      "action": "completed",
+      "claim": "Vera Example completed about six of twelve planned K8s Playbook runbooks in June.",
+      "claim_kind": "observed_fact",
+      "company": null,
+      "confidence": "medium",
+      "context": "independent_project",
+      "evidence_item_ids": [
+        "evi_vera_0008"
+      ],
+      "object": "about six of twelve planned runbooks",
+      "occurred": null,
+      "outcome": null,
+      "ownership_level": "implemented",
+      "role": null,
+      "skills": [
+        "technical writing"
+      ],
+      "technologies": [
+        "Kubernetes"
+      ],
+      "themes": [
+        "runbook documentation"
+      ]
+    }
+  ],
+  "warnings": []
+}

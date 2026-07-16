@@ -1,0 +1,28 @@
+{
+  "facts": [
+    {
+      "action": "trained",
+      "claim": "Vera Example reported training about three sessions a week during the Strength Basics period.",
+      "claim_kind": "observed_fact",
+      "company": null,
+      "confidence": "low",
+      "context": "learning",
+      "evidence_item_ids": [
+        "evi_vera_0005"
+      ],
+      "object": "about three sessions a week",
+      "occurred": null,
+      "outcome": null,
+      "ownership_level": "participated",
+      "role": null,
+      "skills": [
+        "squat form practice"
+      ],
+      "technologies": [],
+      "themes": [
+        "strength training"
+      ]
+    }
+  ],
+  "warnings": []
+}

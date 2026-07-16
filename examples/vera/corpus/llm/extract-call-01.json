@@ -1,0 +1,31 @@
+{
+  "facts": [
+    {
+      "action": "drafted",
+      "claim": "Vera Example drafted the kubectl troubleshooting runbook for the K8s Playbook.",
+      "claim_kind": "observed_fact",
+      "company": null,
+      "confidence": "medium",
+      "context": "independent_project",
+      "evidence_item_ids": [
+        "evi_vera_0001"
+      ],
+      "object": "the kubectl troubleshooting runbook",
+      "occurred": null,
+      "outcome": null,
+      "ownership_level": "contributed",
+      "role": null,
+      "skills": [
+        "technical writing"
+      ],
+      "technologies": [
+        "Kubernetes",
+        "kubectl"
+      ],
+      "themes": [
+        "troubleshooting documentation"
+      ]
+    }
+  ],
+  "warnings": []
+}

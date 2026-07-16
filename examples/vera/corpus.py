@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 CORPUS_NAME = "vera-example-fixtures"
-CORPUS_VERSION = "0.1.0"
+CORPUS_VERSION = "0.2.0"
 MARKER = "Vera Example"
 PERSONA_SOURCE = "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md"
 ROOT = Path(__file__).resolve().parent / "corpus"
@@ -378,6 +378,189 @@ CORRECTION_K8S = {
     ),
 }
 
+
+# §15.2 responses for replay E1's manual-capture subset. Planned-call order is
+# the correction-lineage root order from §13.3 rule 10; each model-authored
+# field is explicit, including conservative nulls and empty lists.
+EXTRACT_RESPONSES = [
+    {
+        "facts": [
+            {
+                "claim": "Vera Example drafted the kubectl troubleshooting runbook for the K8s Playbook.",
+                "claim_kind": "observed_fact",
+                "role": None,
+                "company": None,
+                "context": "independent_project",
+                "ownership_level": "contributed",
+                "action": "drafted",
+                "object": "the kubectl troubleshooting runbook",
+                "outcome": None,
+                "skills": ["technical writing"],
+                "technologies": ["Kubernetes", "kubectl"],
+                "themes": ["troubleshooting documentation"],
+                "occurred": None,
+                "evidence_item_ids": ["evi_vera_0001"],
+                "confidence": "medium",
+            }
+        ],
+        "warnings": [],
+    },
+    {
+        "facts": [
+            {
+                "claim": "Vera Example outlined an ingress guide and listed TLS gotchas for the playbook.",
+                "claim_kind": "observed_fact",
+                "role": None,
+                "company": None,
+                "context": "independent_project",
+                "ownership_level": "contributed",
+                "action": "outlined",
+                "object": "an ingress guide with TLS gotchas",
+                "outcome": None,
+                "skills": ["technical writing"],
+                "technologies": ["Kubernetes", "TLS"],
+                "themes": ["platform documentation"],
+                "occurred": None,
+                "evidence_item_ids": ["evi_vera_0002"],
+                "confidence": "medium",
+            }
+        ],
+        "warnings": [],
+    },
+    {
+        "facts": [
+            {
+                "claim": "Vera Example skipped the rest of a training week after knee pain.",
+                "claim_kind": "observed_fact",
+                "role": None,
+                "company": None,
+                "context": "personal_system",
+                "ownership_level": "observed",
+                "action": "skipped",
+                "object": "the rest of a training week",
+                "outcome": None,
+                "skills": [],
+                "technologies": [],
+                "themes": ["strength training"],
+                "occurred": None,
+                "evidence_item_ids": ["evi_vera_0003"],
+                "confidence": "medium",
+            }
+        ],
+        "warnings": [],
+    },
+    {
+        "facts": [
+            {
+                "claim": "Vera Example reported finishing the ingress guide and closing its checklist item.",
+                "claim_kind": "observed_fact",
+                "role": None,
+                "company": None,
+                "context": "independent_project",
+                "ownership_level": "contributed",
+                "action": "finished",
+                "object": "the ingress guide",
+                "outcome": "closed the checklist item",
+                "skills": ["technical writing"],
+                "technologies": ["Kubernetes", "TLS"],
+                "themes": ["platform documentation"],
+                "occurred": None,
+                "evidence_item_ids": ["evi_vera_0004"],
+                "confidence": "medium",
+            }
+        ],
+        "warnings": [],
+    },
+    {
+        "facts": [
+            {
+                "claim": "Vera Example reported training about three sessions a week during the Strength Basics period.",
+                "claim_kind": "observed_fact",
+                "role": None,
+                "company": None,
+                "context": "learning",
+                "ownership_level": "participated",
+                "action": "trained",
+                "object": "about three sessions a week",
+                "outcome": None,
+                "skills": ["squat form practice"],
+                "technologies": [],
+                "themes": ["strength training"],
+                "occurred": None,
+                "evidence_item_ids": ["evi_vera_0005"],
+                "confidence": "low",
+            }
+        ],
+        "warnings": [],
+    },
+    {
+        "facts": [
+            {
+                "claim": "Vera Example completed about six of twelve planned K8s Playbook runbooks in June.",
+                "claim_kind": "observed_fact",
+                "role": None,
+                "company": None,
+                "context": "independent_project",
+                "ownership_level": "implemented",
+                "action": "completed",
+                "object": "about six of twelve planned runbooks",
+                "outcome": None,
+                "skills": ["technical writing"],
+                "technologies": ["Kubernetes"],
+                "themes": ["runbook documentation"],
+                "occurred": None,
+                "evidence_item_ids": ["evi_vera_0008"],
+                "confidence": "medium",
+            }
+        ],
+        "warnings": [],
+    },
+    {
+        "facts": [
+            {
+                "claim": "Vera Example resumed drafting the ingress guide after finding placeholder TLS text.",
+                "claim_kind": "observed_fact",
+                "role": None,
+                "company": None,
+                "context": "independent_project",
+                "ownership_level": "contributed",
+                "action": "resumed drafting",
+                "object": "the ingress guide",
+                "outcome": None,
+                "skills": ["technical writing"],
+                "technologies": ["Kubernetes", "TLS"],
+                "themes": ["platform documentation"],
+                "occurred": None,
+                "evidence_item_ids": ["evi_vera_0007"],
+                "confidence": "medium",
+            }
+        ],
+        "warnings": [],
+    },
+    {
+        "facts": [
+            {
+                "claim": "Vera Example copied an instruction-like forum comment into a daily log.",
+                "claim_kind": "observed_fact",
+                "role": None,
+                "company": None,
+                "context": "unknown",
+                "ownership_level": "observed",
+                "action": "copied",
+                "object": "an instruction-like forum comment into a daily log",
+                "outcome": None,
+                "skills": [],
+                "technologies": [],
+                "themes": ["untrusted source text"],
+                "occurred": None,
+                "evidence_item_ids": ["evi_vera_0009"],
+                "confidence": "medium",
+            }
+        ],
+        "warnings": [],
+    },
+]
+
 DESIGN_DOC = """# K8s Playbook — information architecture
 
 Design note by Vera Example for her public runbook project
@@ -601,6 +784,9 @@ def build_files() -> dict:
     files["logs/retro-2026-06-k8s.json"] = json_file(RETRO_K8S)
     files["logs/retro-2026-05-strength.json"] = json_file(RETRO_STRENGTH)
     files["logs/correction-2026-07-03-k8s.json"] = json_file(CORRECTION_K8S)
+
+    for call_index, response in enumerate(EXTRACT_RESPONSES, start=1):
+        files[f"llm/extract-call-{call_index:02d}.json"] = json_file(response)
 
     files["imports/ephemeris-2026-06.jsonl"] = jsonl_file(ephemeris_envelopes())
 
