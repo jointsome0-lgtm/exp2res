@@ -66,8 +66,11 @@ def fact_values(**overrides: object) -> dict[str, object]:
         "skills": ["Schema design"],
         "technologies": ["SQLite"],
         "themes": ["Local-first"],
+        # Anchored like the capture fixtures' governing records: exact_day
+        # placements anchor at the day start (§11.1), and §13.3 rule 2's
+        # copy/containment checks compare against that governing window.
         "occurred": OccurredAt(
-            start=FIXED_NOW,
+            start=FIXED_NOW.replace(hour=0, minute=0),
             end=None,
             precision="exact_day",
             confidence="high",
@@ -596,6 +599,218 @@ def test_fact_insert_copies_project_from_the_governing_record(
         ).fetchone()
         connection.rollback()
     assert tuple(stored) == ("Beta", "beta")
+
+
+def _month_lineage_log(
+    workspace: Path,
+    *,
+    log_id: str,
+    occurred: OccurredAt,
+    corrects_log_id: str | None = None,
+    recorded_at: datetime | None = None,
+) -> str:
+    """Insert one raw log with a manual item and return the item id."""
+
+    raw_log = RawLog(
+        id=log_id,
+        recorded_at=recorded_at or FIXED_NOW,
+        entry_type="manual_retro" if corrects_log_id is None else "correction",
+        source_type="user_memory" if corrects_log_id is None else "manual_entry",
+        occurred=occurred,
+        raw_text=f"Vera Example temporal fixture {log_id}",
+        corrects_log_id=corrects_log_id,
+    )
+    item = EvidenceItem(
+        id=f"evi_{log_id}",
+        created_at=raw_log.recorded_at,
+        raw_log_id=log_id,
+        summary="Owner-authored temporal fixture entry.",
+        strength="manual_claim",
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        insert_raw_log(connection, raw_log)
+        insert_evidence_item(connection, item)
+        connection.commit()
+    return item.id
+
+
+def test_fact_insert_enforces_governing_temporal_provenance(workspace: Path) -> None:
+    """§13.3 rule 2, §15.2, §16.7 at commit: no widening, upgrade, or raise."""
+
+    utc = timezone.utc
+    month = OccurredAt(
+        start=datetime(2026, 7, 1, tzinfo=utc),
+        end=None,
+        precision="month",
+        confidence="medium",
+    )
+    item_id = _month_lineage_log(workspace, log_id="log_vera_month", occurred=month)
+    base = {
+        "project": None,
+        "source_log_ids": ["log_vera_month"],
+        "evidence_item_ids": [item_id],
+    }
+    widened = ExperienceFact(
+        **fact_values(
+            **base,
+            occurred=OccurredAt(
+                start=datetime(2026, 6, 20, tzinfo=utc),
+                end=datetime(2026, 7, 10, tzinfo=utc),
+                precision="date_range",
+                confidence="medium",
+            ),
+        )
+    )
+    upgraded = ExperienceFact(
+        **fact_values(
+            **base,
+            occurred=OccurredAt(
+                start=datetime(2026, 7, 5, tzinfo=utc),
+                end=None,
+                precision="exact_day",
+                confidence="medium",
+            ),
+        )
+    )
+    raised = ExperienceFact(
+        **fact_values(**base, occurred=month.model_copy(update={"confidence": "high"}))
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        for candidate in (widened, upgraded, raised):
+            with pytest.raises(IntegrityFailureError):
+                insert_experience_fact(
+                    connection,
+                    candidate,
+                    produced_by_run_id=RUN_A,
+                    generation_id=GEN_A,
+                )
+        copied = ExperienceFact(**fact_values(**base, occurred=month))
+        insert_experience_fact(
+            connection,
+            copied,
+            produced_by_run_id=RUN_A,
+            generation_id=GEN_A,
+        )
+        connection.rollback()
+
+
+def test_fact_insert_accepts_narrowing_supported_by_a_selected_effective_record(
+    workspace: Path,
+) -> None:
+    """§13.3 rules 2/10: a sibling correction's placement supports narrowing."""
+
+    utc = timezone.utc
+    month = OccurredAt(
+        start=datetime(2026, 7, 1, tzinfo=utc),
+        end=None,
+        precision="month",
+        confidence="medium",
+    )
+    day = OccurredAt(
+        start=datetime(2026, 7, 5, tzinfo=utc),
+        end=None,
+        precision="exact_day",
+        confidence="medium",
+    )
+    _month_lineage_log(workspace, log_id="log_vera_narrow_root", occurred=month)
+    day_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_narrow_day",
+        occurred=day,
+        corrects_log_id="log_vera_narrow_root",
+        recorded_at=FIXED_NOW.replace(hour=13),
+    )
+    month_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_narrow_month",
+        occurred=month,
+        corrects_log_id="log_vera_narrow_root",
+        recorded_at=FIXED_NOW.replace(hour=14),
+    )
+    narrowed = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=sorted(
+                ["log_vera_narrow_day", "log_vera_narrow_month"],
+                key=lambda value: value.encode("utf-8"),
+            ),
+            evidence_item_ids=sorted(
+                [day_item, month_item], key=lambda value: value.encode("utf-8")
+            ),
+            occurred=day,
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        # The governing record is the later month-precision sibling; the
+        # earlier sibling's day placement supplies the §16.7 support.
+        insert_experience_fact(
+            connection,
+            narrowed,
+            produced_by_run_id=RUN_A,
+            generation_id=GEN_A,
+        )
+        stored = connection.execute(
+            "SELECT temporal_precision FROM experience_facts WHERE id = ?",
+            (narrowed.id,),
+        ).fetchone()
+        connection.rollback()
+    assert stored[0] == "exact_day"
+
+
+def test_fact_insert_rejects_non_extractor_claim_kinds(workspace: Path) -> None:
+    """§15.2: SelfClaim-only ClaimKind members never persist as facts."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example claim-kind boundary source",
+        clock=lambda: FIXED_NOW,
+    )
+    summary_fact = make_fact(
+        raw_log_id=bundle.raw_log.id,
+        evidence_item_id=bundle.evidence_items[0].id,
+        project=None,
+        claim_kind="narrative_summary",
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        with pytest.raises(IntegrityFailureError):
+            insert_experience_fact(
+                connection,
+                summary_fact,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        connection.rollback()
 
 
 def test_fact_insert_enforces_the_retained_rows_selectability_predicate(

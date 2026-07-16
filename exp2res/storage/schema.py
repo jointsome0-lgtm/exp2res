@@ -255,10 +255,9 @@ CREATE TABLE experience_facts (
     created_at TEXT NOT NULL,
     superseded_at TEXT,
     claim TEXT NOT NULL CHECK (claim <> ''),
-    claim_kind TEXT NOT NULL CHECK (claim_kind IN (
-        'observed_fact', 'inferred_fact', 'pattern_signal',
-        'hypothesis', 'narrative_summary'
-    )),
+    -- §15.2: only these two ClaimKind members are valid fact-extractor
+    -- outputs; the remaining §10 members belong to SelfClaim producers.
+    claim_kind TEXT NOT NULL CHECK (claim_kind IN ('observed_fact', 'inferred_fact')),
     project TEXT,
     project_key TEXT,
     role TEXT,

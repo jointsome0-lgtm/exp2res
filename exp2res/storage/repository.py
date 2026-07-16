@@ -13,8 +13,15 @@ from pydantic import ValidationError
 from exp2res.domain.models import (
     EvidenceItem,
     ExperienceFact,
+    OccurredAt,
     RawLog,
     canonical_project_key,
+)
+from exp2res.domain.temporal import (
+    confidence_exceeds,
+    interval_contains,
+    occurred_interval,
+    strength_exceeds_support,
 )
 from exp2res.errors import HydrationFailureError, IdCollisionError, IntegrityFailureError
 
@@ -229,6 +236,8 @@ def insert_experience_fact(
         row = connection.execute(
             """
             SELECT id, recorded_at, project, project_key,
+                   occurred_start, occurred_end, temporal_precision,
+                   temporal_confidence,
                    EXISTS(
                        SELECT 1 FROM raw_logs AS correction
                        WHERE correction.corrects_log_id = raw_logs.id
@@ -259,6 +268,44 @@ def insert_experience_fact(
         None if fact.project is None else canonical_project_key(fact.project)
     )
     if project_key != expected_key or (fact.project is not None and not expected_key):
+        raise IntegrityFailureError()
+    # §13.3 rule 2 / §15.2 / §16.7 at the commit boundary: the persisted
+    # placement never widens beyond the governing window, never exceeds the
+    # strongest placement among the fact's selected effective records, and
+    # never raises temporal confidence above the governing record's.
+    def stored_occurred(row: sqlite3.Row) -> OccurredAt:
+        try:
+            return OccurredAt(
+                start=(
+                    None
+                    if row["occurred_start"] is None
+                    else datetime.fromisoformat(
+                        row["occurred_start"].replace("Z", "+00:00")
+                    )
+                ),
+                end=(
+                    None
+                    if row["occurred_end"] is None
+                    else datetime.fromisoformat(
+                        row["occurred_end"].replace("Z", "+00:00")
+                    )
+                ),
+                precision=row["temporal_precision"],
+                confidence=row["temporal_confidence"],
+            )
+        except (TypeError, ValueError, ValidationError) as error:
+            raise IntegrityFailureError() from error
+
+    governing_occurred = stored_occurred(governing)
+    if not interval_contains(
+        occurred_interval(governing_occurred), occurred_interval(fact.occurred)
+    ):
+        raise IntegrityFailureError()
+    if confidence_exceeds(fact.occurred.confidence, governing_occurred.confidence):
+        raise IntegrityFailureError()
+    if strength_exceeds_support(
+        fact.occurred, tuple(stored_occurred(row) for row in effective)
+    ):
         raise IntegrityFailureError()
     try:
         connection.execute(
