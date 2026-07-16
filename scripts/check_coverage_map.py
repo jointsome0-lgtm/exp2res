@@ -261,7 +261,19 @@ def main() -> int:
             for node in entry.get("environment_gated", [])
             if isinstance(node, str)
         }
-        errors.extend(execute_evidence_nodes(evidence_nodes, skip_allowed))
+        covered_only_nodes = {
+            node
+            for entry in coverage_map.values()
+            if isinstance(entry, dict) and entry.get("status") == "covered"
+            for node in entry.get("nodes", [])
+            if isinstance(node, str)
+        }
+        errors.extend(
+            "environment_gated node is also evidence for a covered row, "
+            f"which admits no skip exception: {node}"
+            for node in sorted(skip_allowed & covered_only_nodes)
+        )
+        errors.extend(execute_evidence_nodes(evidence_nodes, skip_allowed - covered_only_nodes))
 
     if errors:
         for error in errors:
