@@ -10,8 +10,15 @@ import re
 import pytest
 
 import exp2res.llm.adapter as codex_adapter
-from exp2res.config import load_workspace_config
-from exp2res.errors import ConfigurationError, LLMInvocationError
+from exp2res.config import load_workspace_config, resolve_codex_home
+from exp2res.errors import (
+    ConfigurationError,
+    LLMAdapterNotRegisteredError,
+    LLMInvocationError,
+    LLMModelInvalidError,
+    UnknownLLMAdapterError,
+    UnknownLLMConfigKeyError,
+)
 from exp2res.llm.adapter import (
     CodexCapabilityDeclaration,
     REQUIRED_FLAGS,
@@ -21,8 +28,10 @@ from exp2res.llm.adapter import (
 )
 from exp2res.llm.contracts import schema_bytes, runner_instruction
 from exp2res.llm.preflight import preflight_call
+from exp2res.llm.registry import ADAPTER_REGISTRY
 from exp2res.llm.runner import PreparedCall
 from exp2res.llm.sandbox import probe_isolation
+from exp2res.storage.workspace import initialize_workspace
 
 from test_llm_runner import CONTRACT, INPUT, budgets
 
@@ -39,6 +48,10 @@ def prepared(input_bytes: bytes = INPUT, **budget_overrides: object) -> Prepared
         fixed_instruction=runner_instruction(CONTRACT),
         budgets=budgets(**budget_overrides),
     )
+
+
+def test_this_build_registers_only_the_codex_adapter() -> None:
+    assert tuple(ADAPTER_REGISTRY) == ("codex-cli",)
 
 
 def test_cli_version_table_fails_closed_when_a_required_flag_is_undeclared() -> None:
@@ -60,14 +73,22 @@ def test_cli_version_table_fails_closed_when_a_required_flag_is_undeclared() -> 
     assert caught.value.failure_code == "capability_mismatch"
 
 
-def test_fresh_config_exposes_runner_model_home_reference_and_all_budgets(
-    workspace: Path,
+def test_fresh_config_exposes_adapter_model_home_reference_and_all_budgets(
+    tmp_path: Path,
 ) -> None:
-    """Issue #69: runner settings and numeric §15.10 budgets are local config."""
+    """Issue #110: init writes and loading exposes the §15.13 selection."""
+
+    workspace = tmp_path / "fresh-workspace"
+    workspace.mkdir()
+    initialize_workspace(workspace)
+    text = (workspace / ".exp2res" / "config.toml").read_text(encoding="utf-8")
+    assert 'adapter = "codex-cli"' in text
+    assert 'model = "gpt-5.6-sol"' in text
+    assert "runner =" not in text
 
     config = load_workspace_config(workspace).llm
-    assert config.runner == "codex-cli"
-    assert config.model is None
+    assert config.adapter == "codex-cli"
+    assert config.model == "gpt-5.6-sol"
     assert config.codex_home_env == "CODEX_HOME"
     assert config.transport_attempt_cap > 0
     assert 0 <= config.backoff_lower_seconds <= config.backoff_upper_seconds
@@ -80,6 +101,77 @@ def test_fresh_config_exposes_runner_model_home_reference_and_all_budgets(
     assert config.per_invocation_cost_ceiling > 0
     assert config.per_run_cost_ceiling is not None
     assert config.per_run_cost_ceiling > 0
+
+
+def write_llm_config(workspace: Path, llm_lines: str) -> None:
+    config = workspace / ".exp2res" / "config.toml"
+    config.write_text(
+        '[workspace]\ntimezone = "Etc/UTC"\n\n'
+        f"[llm]\n{llm_lines}\n\n"
+        "[privacy]\nignore_paths = []\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("adapter", ["claude-agent-sdk", "openai-compat"])
+def test_known_but_unregistered_adapter_fails_with_distinct_diagnostic(
+    workspace: Path, adapter: str
+) -> None:
+    write_llm_config(
+        workspace,
+        f'adapter = "{adapter}"\nmodel = "Vera-Example-model"',
+    )
+    with pytest.raises(LLMAdapterNotRegisteredError) as caught:
+        load_workspace_config(workspace)
+    assert caught.value.diagnostic_class == "llm_adapter_not_registered"
+    assert "not registered in this build" in caught.value.public_message
+
+
+def test_unknown_adapter_fails_distinct_from_unregistered(workspace: Path) -> None:
+    write_llm_config(
+        workspace,
+        'adapter = "vera-example-fabricated"\nmodel = "Vera-Example-model"',
+    )
+    with pytest.raises(UnknownLLMAdapterError) as caught:
+        load_workspace_config(workspace)
+    assert caught.value.diagnostic_class == "llm_adapter_unknown"
+
+
+@pytest.mark.parametrize(
+    "llm_lines, error_type",
+    [
+        ('runner = "codex-cli"\nmodel = "gpt-5.6-sol"', UnknownLLMConfigKeyError),
+        (
+            'adapter = "codex-cli"\nmodel = "gpt-5.6-sol"\nVera_Unknown = 1',
+            UnknownLLMConfigKeyError,
+        ),
+        ('adapter = "codex-cli"\nmodel = ""', LLMModelInvalidError),
+        ('adapter = "codex-cli"\nmodel = "bad model"', LLMModelInvalidError),
+    ],
+    ids=["legacy-runner", "unknown-key", "empty-model", "spaced-model"],
+)
+def test_llm_config_is_closed_and_model_is_strict(
+    workspace: Path, llm_lines: str, error_type: type[ConfigurationError]
+) -> None:
+    write_llm_config(workspace, llm_lines)
+    with pytest.raises(error_type):
+        load_workspace_config(workspace)
+
+
+def test_missing_external_codex_session_uses_auth_failure_class(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_workspace_config(workspace).llm
+    monkeypatch.delenv(config.codex_home_env, raising=False)
+    with pytest.raises(LLMInvocationError) as unresolved:
+        resolve_codex_home(config)
+    assert unresolved.value.failure_code == "transport_auth_failed"
+
+    empty_home = tmp_path / "empty-codex-home"
+    empty_home.mkdir()
+    with pytest.raises(LLMInvocationError) as unauthenticated:
+        codex_adapter._preflight_auth(empty_home)
+    assert unauthenticated.value.failure_code == "transport_auth_failed"
 
 
 def test_missing_bwrap_fails_capability_before_any_canary_or_transport(

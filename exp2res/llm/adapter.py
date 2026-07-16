@@ -43,52 +43,20 @@ from .contracts import (
     validate_output,
 )
 from .preflight import CODEX_TOKEN_PATTERNS, estimate_tokens, preflight_call
+from .registry import (
+    CLITestRange,
+    CodexCapabilityDeclaration,
+    DEFAULT_DECLARATION,
+    LLMSelection,
+    REQUIRED_FLAGS,
+    registration_for,
+)
 from .runner import CallBudgets, ContractRunner, PreparedCall, RawResult
 from .sandbox import discover_bwrap, probe_isolation
 
 
-RUNNER_ID = "codex-cli"
 RUNNER_PROTOCOL_VERSION = 1
 SANDBOX_MECHANISM = "bwrap"
-REQUIRED_FLAGS = frozenset(
-    {
-        "--output-schema",
-        "--output-last-message",
-        "--ephemeral",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "-C",
-        "-c",
-        "--skip-git-repo-check",
-    }
-)
-@dataclass(frozen=True)
-class CLITestRange:
-    minimum: tuple[int, int, int]
-    maximum_exclusive: tuple[int, int, int]
-    supported_flags: frozenset[str]
-
-
-@dataclass(frozen=True)
-class CodexCapabilityDeclaration:
-    required_flags: frozenset[str]
-    tested_ranges: tuple[CLITestRange, ...]
-    token_patterns: tuple[Pattern[bytes], ...]
-    timeout_supported: bool = True
-    cancellation_supported: bool = True
-
-
-DEFAULT_DECLARATION = CodexCapabilityDeclaration(
-    required_flags=REQUIRED_FLAGS,
-    tested_ranges=(
-        CLITestRange(
-            minimum=(0, 144, 0),
-            maximum_exclusive=(0, 145, 0),
-            supported_flags=REQUIRED_FLAGS,
-        ),
-    ),
-    token_patterns=CODEX_TOKEN_PATTERNS,
-)
 
 
 @dataclass(frozen=True)
@@ -121,9 +89,12 @@ def validate_cli_declaration(
     """Validate local CLI capability from version plus the tested-range table."""
 
     if (
-        not declaration.timeout_supported
+        declaration.credential_form != "externally-managed-session"
+        or not declaration.structured_outputs_supported
+        or not declaration.timeout_supported
         or not declaration.cancellation_supported
         or not declaration.token_patterns
+        or declaration.runner_protocol_version != RUNNER_PROTOCOL_VERSION
     ):
         raise LLMInvocationError("capability_mismatch")
     version = parse_codex_version(version_output)
@@ -212,6 +183,12 @@ def _preflight_auth(codex_home: Path) -> None:
             raise OSError("auth file must not be a symlink")
     except OSError:
         raise LLMInvocationError("transport_auth_failed") from None
+
+
+def codex_logical_correlation() -> str:
+    """Return adapter-owned logical metadata, not a provider request ID."""
+
+    return f"logical_{uuid.uuid4().hex}"
 
 
 def preflight_adapter(
@@ -321,7 +298,7 @@ def invoke_contract(
     runner: ContractRunner,
     contract: ContractDefinition,
     input_payload: BaseModel,
-    model_id: str,
+    selection: LLMSelection,
     budgets: CallBudgets,
     run_id: str,
     stage: str,
@@ -362,7 +339,7 @@ def invoke_contract(
                 runner=runner,
                 contract=contract,
                 input_payload=input_payload,
-                model_id=model_id,
+                selection=selection,
                 budgets=budgets,
                 run_id=run_id,
                 stage=stage,
@@ -384,6 +361,7 @@ def invoke_contract(
             )
 
     writer = connection
+    registration = registration_for(selection)
     # §11's datetime normalization governs hash bytes only: the provider
     # sees the declared typed input with its offsets preserved, while the
     # §12.15 hashes stay canonical for exact-recomputation identity.
@@ -399,17 +377,19 @@ def invoke_contract(
         contract_id=contract.contract_id,
         serialized_input=serialized_input,
         json_schema=schema,
-        model_id=model_id,
+        model_id=selection.model,
         fixed_instruction=runner_instruction(contract),
         budgets=budgets,
     )
-    provider_request_id = f"req_{uuid.uuid4().hex}"
+    provider_request_id = codex_logical_correlation()
     started_at = now()
     initial_metadata = {
         "cli_version": cli_version,
         "contract_id": contract.contract_id,
-        "runner_id": RUNNER_ID,
-        "runner_protocol_version": str(RUNNER_PROTOCOL_VERSION),
+        "adapter_id": selection.adapter,
+        "runner_protocol_version": str(
+            registration.declaration.runner_protocol_version
+        ),
         "sandbox_mechanism": SANDBOX_MECHANISM,
         "schema_hash": hashlib.sha256(schema).hexdigest(),
     }
@@ -421,8 +401,8 @@ def invoke_contract(
                 run_id=run_id,
                 stage=stage,
                 started_at=started_at,
-                provider=RUNNER_ID,
-                model=model_id,
+                provider=selection.adapter,
+                model=selection.model,
                 prompt_policy_hash=policy_hash,
                 input_ids=input_ids,
                 metadata=initial_metadata,
@@ -434,8 +414,8 @@ def invoke_contract(
             require_running_run(
                 connection,  # type: ignore[arg-type]
                 run_id=run_id,
-                provider=RUNNER_ID,
-                model=model_id,
+                provider=selection.adapter,
+                model=selection.model,
                 prompt_policy_hash=policy_hash,
             )
         create_llm_call(

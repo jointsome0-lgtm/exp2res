@@ -38,8 +38,8 @@ CONFIG_TEMPLATE = """[workspace]
 timezone = ""
 
 [llm]
-runner = "codex-cli"
-model = ""
+adapter = "codex-cli"
+model = "gpt-5.6-sol"
 codex_home_env = "CODEX_HOME"
 transport_attempt_cap = 2
 backoff_lower_seconds = 0.25
