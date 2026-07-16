@@ -151,6 +151,7 @@ def fact_response(
     confidence: str = "medium",
     occurred: dict[str, object] | None = None,
     extra_fact_fields: dict[str, object] | None = None,
+    drop_fact_fields: tuple[str, ...] = (),
     warnings: list[dict[str, str]] | None = None,
 ) -> bytes:
     fact: dict[str, object] = {
@@ -171,6 +172,8 @@ def fact_response(
         "confidence": confidence,
     }
     fact.update(extra_fact_fields or {})
+    for dropped in drop_fact_fields:
+        fact.pop(dropped)
     return json.dumps(
         {
             "facts": [fact],
@@ -443,7 +446,7 @@ def test_displacement_projection_excludes_prose_and_manual_item(
 @pytest.mark.invariant
 @pytest.mark.parametrize(
     "invalid_kind",
-    ["descriptor_only", "out_of_context", "service_owned"],
+    ["descriptor_only", "out_of_context", "service_owned", "omitted_claim_kind"],
 )
 def test_reference_and_service_authorship_invalidity_retry_once(
     workspace: Path, invalid_kind: str
@@ -455,6 +458,12 @@ def test_reference_and_service_authorship_invalidity_retry_once(
         invalid = fact_response([root_items[1].id])
     elif invalid_kind == "out_of_context":
         invalid = fact_response(["evi_vera_unknown"])
+    elif invalid_kind == "omitted_claim_kind":
+        # An omitted model judgment must retry/fail, never silently
+        # validate into the stronger observed_fact.
+        invalid = fact_response(
+            [correction_items[0].id], drop_fact_fields=("claim_kind",)
+        )
     else:
         invalid = fact_response(
             [correction_items[0].id],

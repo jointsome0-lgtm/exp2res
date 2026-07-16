@@ -59,7 +59,10 @@ class FactCandidate(StrictModel):
     """Only the model-authored fields of one §15.2 fact."""
 
     claim: str
-    claim_kind: Literal["observed_fact", "inferred_fact"] = "observed_fact"
+    # Required on the wire: a default would let an omitted model judgment
+    # validate and silently persist as the stronger observed_fact instead of
+    # entering the §15.1 retry/fail-closed path.
+    claim_kind: Literal["observed_fact", "inferred_fact"]
 
     role: Optional[str] = None
     company: Optional[str] = None
