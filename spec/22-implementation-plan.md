@@ -1,6 +1,6 @@
 ## §22. Implementation Plan
 
-Phases sequence the pipeline stages of §13. Commands per phase are specified in §14, tables in §12, models in §11, LLM contracts in §15.
+Phases sequence the pipeline stages of §13. Commands per phase are specified in §14, tables in §12, models in §11, LLM contracts in §15. From the first model-backed slice (Phase 1) onward, an agent-backed adapter executes every §15 call only through the versioned §15.12 isolated agent-runner protocol; that runner boundary is part of each LLM-backed phase's definition of done.
 
 | Phase | Pipeline stages (§13) | Definition of done |
 |-------|-----------------------|--------------------|

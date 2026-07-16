@@ -1676,4 +1676,46 @@ And any rendered source-voice excerpt remains an exact referenced value or conti
 And when a correction displaces a source record, §13.3 rule 10's prose-free descriptor projection excludes its source prose without mutating the retained source bytes
 ```
 
+## §21.50 Agent-Backed Runners Are Structurally Confined
+
+Test (enforces §15.10 rule 4, §15.12, §29.2, §29.4, and §29.6; extends §21.43's transport coverage and §21.49's injection matrix):
+
+```text
+Given every agent-backed adapter the build ships, including the Codex CLI reference adapter and any Agent SDK adapter
+And a planted canary file outside the contract workspace, the Exp2Res workspace path, a .env file, and user-level agent rules and configuration carrying a unique sentinel
+When the §15.12 rule 8 confinement canary executes a trivial no-network command inside the sandbox
+Then reading inside the contract workspace succeeds while reading the planted canary, the Exp2Res workspace path, .env, and the user-level rules each fails
+And the probe invokes no model, network, provider credential, or provider request
+And where the sandbox mechanism is unavailable the probe is skip-marked with an explicit reason rather than silently passed
+
+Given one agent-backed invocation of a §15 contract with a parent environment variable carrying a credential-like sentinel
+When the runner launches the runtime
+Then the launched contract workspace contains exactly the serialized typed contract input and the expected JSON Schema, and a §15.1 validation-retry workspace adds only validation diagnostics
+And the runtime receives a cleared allowlist environment in which neither the parent sentinel nor any ambient rules sentinel is visible
+And no ambient model, reasoning-effort, tool-policy, or instruction-file default influences the invocation because every honored generation parameter is explicit adapter configuration
+
+Given table-driven completions: success, invalid response, transport failure, and cancellation
+When each invocation finishes
+Then the service consumed only the dedicated final-message file bytes as the result channel and parsed no transcript prose, fenced block, or standard-output content
+And the contract workspace is deleted on every completion path and no session state, history, or memory artifact persists outside it
+And a simulated hard crash leaves at most one inert owner-only-mode prefix-recognizable directory in the system temporary location, which the next-writer preamble does not reconcile
+And a runtime completion whose final-message file is missing or unreadable fails as transport_provider_error under §15.10 with no prose fallback
+
+Given an installed runtime that does not declare a required §15.12 control — schema-constrained final output, final-message file, ephemerality, ambient-configuration disable, or working-directory selection — or declares a runner-protocol version the build does not support, or a host whose sandbox mechanism is absent or whose canary fails
+When the two-half preflight runs
+Then the invocation fails with capability_mismatch before any provider transport
+And the diagnostic names the failing half without payload content
+And drifted declared-control semantics are never silently adapted to
+
+Given §21.49's undeclared-authority fixtures seeded through an agent-backed adapter
+When the named §15 contract executes inside the runner
+Then filesystem and environment spies record no access outside the sandbox's bound set and no ambient rule or configuration load
+And the agent process writes no SQLite state and no managed output
+
+Given the non-agent-backed direct-API adapter from the same build
+When adapter classification runs
+Then its §15.10 rule 4 declaration rules out every agent affordance, §15.12 does not bind it, and its capability declaration still applies
+And an adapter that cannot rule out an agent affordance by declaration classifies as agent-backed and is unselectable without the full §15.12 preflight
+```
+
 ---
