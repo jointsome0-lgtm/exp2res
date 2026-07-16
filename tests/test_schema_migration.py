@@ -11,7 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 from exp2res.cli import app
-from exp2res.errors import MigrationFailedError
+from exp2res.errors import MigrationFailedError, MigrationInterrupted
 from exp2res.services.capture import capture_daily
 from exp2res.services.logs import show_log
 from exp2res.storage.schema import LLM_CALLS_SQL, PROCESSING_RUNS_SQL
@@ -229,7 +229,7 @@ def test_migration_interrupt_rolls_back_and_propagates_with_backup_retained(
         if point == "after_ddl":
             raise KeyboardInterrupt
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(KeyboardInterrupt) as interrupt_info:
         migrate_workspace(
             workspace,
             clock=lambda: FIXED_NOW.replace(day=16),
@@ -242,6 +242,75 @@ def test_migration_interrupt_rolls_back_and_propagates_with_backup_retained(
     backups = list((workspace / ".exp2res" / "backup").iterdir())
     assert len(backups) == 1
     assert backups[0].is_file()
+    # §14.14 rule 4: the committed effect rides along for the cancelled
+    # envelope instead of being dropped with a bare re-raise.
+    assert isinstance(interrupt_info.value, MigrationInterrupted)
+    assert interrupt_info.value.managed_backup_path == str(backups[0])
+
+
+def test_cli_reports_retained_backup_in_the_cancelled_migration_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: cancellation still reports the retained backup path."""
+
+    import exp2res.cli as cli_module
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def interrupt_before_validation(point: str) -> None:
+        if point == "before_validation":
+            raise KeyboardInterrupt
+
+    def interrupted_migration(target: Path):
+        return migrate_workspace(
+            target,
+            clock=lambda: FIXED_NOW.replace(day=16),
+            failure_injector=interrupt_before_validation,
+        )
+
+    monkeypatch.setattr(cli_module, "migrate_workspace", interrupted_migration)
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 9
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "cancelled"
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert envelope["result"]["schema"]["stored_version"] == 1
+    backup = Path(envelope["result"]["schema"]["managed_backup_path"])
+    assert backup.is_file()
+
+
+@pytest.mark.parametrize("table", ["processing_runs", "llm_calls"])
+def test_extra_trigger_on_exact_telemetry_table_fails_migration(
+    tmp_path: Path, table: str
+) -> None:
+    """§12.13/§12.15: a rider trigger on an exact table fails validation."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    ddl = PROCESSING_RUNS_SQL if table == "processing_runs" else LLM_CALLS_SQL
+    with sqlite3.connect(database) as connection:
+        connection.execute(ddl)
+        connection.execute(
+            f"""
+            CREATE TRIGGER stale_rider_guard
+            BEFORE INSERT ON {table}
+            BEGIN
+                SELECT RAISE(ABORT, 'stale rider');
+            END
+            """
+        )
+
+    with pytest.raises(MigrationFailedError):
+        migrate_workspace(workspace, clock=lambda: FIXED_NOW.replace(day=16))
+
+    assert inspect_workspace(workspace).stored_version == 1
+    with sqlite3.connect(database) as connection:
+        rider = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            " AND name = 'stale_rider_guard'"
+        ).fetchone()
+    assert rider is not None
 
 
 @pytest.mark.parametrize("table", ["processing_runs", "llm_calls"])

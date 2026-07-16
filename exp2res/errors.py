@@ -75,6 +75,20 @@ class MigrationFailedError(IntegrityFailureError):
         self.managed_backup_path = managed_backup_path
 
 
+class MigrationInterrupted(KeyboardInterrupt):
+    """An owner interrupt during migration, carrying the retained backup.
+
+    §14.14 rule 4 keeps code-9 precedence while requiring committed effects
+    to remain reported: the verified backup created before the interrupt is
+    durable managed workspace state, so its path rides along for the
+    cancelled envelope instead of being dropped with a bare re-raise.
+    """
+
+    def __init__(self, *, managed_backup_path: str | None = None) -> None:
+        super().__init__()
+        self.managed_backup_path = managed_backup_path
+
+
 class IdCollisionError(IntegrityFailureError):
     diagnostic_class = "id_collision"
     public_message = "A service-assigned entity ID collided repeatedly."

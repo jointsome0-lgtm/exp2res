@@ -18,6 +18,7 @@ from urllib.parse import quote
 from exp2res import __version__
 from exp2res.errors import (
     MigrationFailedError,
+    MigrationInterrupted,
     PublicCheckoutError,
     SchemaCompatibilityError,
     WorkspaceBusyError,
@@ -432,31 +433,36 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
     if not status.compatible:
         raise sqlite3.DatabaseError("migration target is incompatible")
 
-    # SQLite stores each table's complete CREATE statement (constraints
-    # included, `IF NOT EXISTS` stripped), so comparing it against a scratch
-    # table created from the unchanged normative DDL rejects any pre-existing
-    # shape PRAGMA table_info cannot distinguish — a missing REFERENCES or
-    # CHECK clause, not only a column mismatch.
-    def stored_sql(database: sqlite3.Connection, table: str) -> object:
-        row = database.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-            (table,),
-        ).fetchone()
-        return None if row is None else row[0]
+    # SQLite stores each schema object's complete CREATE statement
+    # (constraints included, `IF NOT EXISTS` stripped), so comparing every
+    # sqlite_master entry attached to a telemetry table against a scratch
+    # database created from the unchanged normative DDL rejects what PRAGMA
+    # table_info cannot distinguish — a missing REFERENCES or CHECK clause —
+    # and any extra trigger or index riding on the table.
+    def table_entries(
+        database: sqlite3.Connection, table: str
+    ) -> list[tuple[object, ...]]:
+        return sorted(
+            (row[0], row[1], row[2])
+            for row in database.execute(
+                "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ?",
+                (table,),
+            )
+        )
 
     scratch = sqlite3.connect(":memory:")
     try:
         scratch.execute(PROCESSING_RUNS_SQL)
         scratch.execute(LLM_CALLS_SQL)
-        expected_sql = {
-            table: stored_sql(scratch, table)
+        expected_entries = {
+            table: table_entries(scratch, table)
             for table in ("processing_runs", "llm_calls")
         }
     finally:
         scratch.close()
 
-    for table, expected in expected_sql.items():
-        if expected is None or stored_sql(connection, table) != expected:
+    for table, expected in expected_entries.items():
+        if not expected or table_entries(connection, table) != expected:
             raise sqlite3.DatabaseError(
                 "migration target telemetry table shape mismatch"
             )
@@ -522,7 +528,11 @@ def migrate_workspace(
                 connection.rollback()
                 raise
         except KeyboardInterrupt:
-            raise
+            raise MigrationInterrupted(
+                managed_backup_path=(
+                    None if backup_path is None else str(backup_path)
+                )
+            ) from None
         except (SchemaCompatibilityError, WorkspaceBusyError):
             raise
         except BaseException as error:
