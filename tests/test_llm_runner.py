@@ -423,13 +423,14 @@ def test_timeout_retries_same_call_and_cancellation_is_terminal(
 @pytest.mark.parametrize(
     ("error_channel", "exit_code", "expected"),
     [
+        (b"HTTP 408 request timeout", 1, "transport_timeout"),
         (b"HTTP 429 rate limit", 1, "transport_rate_limited"),
         (b"HTTP 401 authentication failed", 1, "transport_auth_failed"),
         (b"ambiguous delivery lost response", 1, "transport_lost_response"),
         (b"provider rejected request", 1, "transport_provider_error"),
         (b"", 0, "transport_provider_error"),
     ],
-    ids=["rate-limit", "auth", "lost-response", "provider", "missing-output"],
+    ids=["http-408", "rate-limit", "auth", "lost-response", "provider", "missing-output"],
 )
 def test_adapter_maps_terminal_error_channel_without_persisting_it(
     workspace: Path, error_channel: bytes, exit_code: int, expected: str
@@ -518,27 +519,86 @@ def test_next_writer_reconciles_only_nonterminal_telemetry(workspace: Path) -> N
     assert abandoned_run["finished_at"] and abandoned_call["finished_at"]
 
 
-def test_live_run_telemetry_transactions_do_not_cancel_their_own_run(
+def test_invocation_holds_writer_authority_and_sweeps_only_dead_rows(
     workspace: Path,
 ) -> None:
-    """§15.10 rule 8 sweeps abandoned rows, never the invoking run itself."""
+    """§8.1/§15.10 rule 8: entry sweeps dead rows; a run never sweeps itself."""
 
-    _plant_abandoned_run(workspace, "run_vera_live")
+    _plant_abandoned_run(workspace, "run_vera_dead")
     with writer_database(workspace, reconcile=False) as connection:
         connection.execute("BEGIN IMMEDIATE")
         assert reconcile_abandoned_telemetry(
             connection, finished_at=datetime(2026, 7, 16, tzinfo=timezone.utc)
         ) == (1, 1)
         connection.rollback()
-    run, call = telemetry(workspace, "run_vera_live")
+    run, call = telemetry(workspace, "run_vera_dead")
     assert run["status"] == call["status"] == "running"
 
-    # A full invocation's internal telemetry transactions leave the planted
-    # running row untouched because they never reconcile.
+    # The invocation holds the writer seam door-to-door, so the nonterminal
+    # row it observes at entry belongs to a dead writer and is swept before
+    # its own run row exists; its own run then completes normally.
     fake = FakeContractRunner([VALID])
     invoke(workspace, fake, run_id="run_vera_second")
-    run, call = telemetry(workspace, "run_vera_live")
-    assert run["status"] == call["status"] == "running"
+    dead_run, dead_call = telemetry(workspace, "run_vera_dead")
+    assert dead_run["status"] == dead_call["status"] == "failed"
+    assert dead_run["failure_code"] == dead_call["failure_code"] == "cancelled"
+    own_run, own_call = telemetry(workspace, "run_vera_second")
+    assert own_run["status"] == own_call["status"] == "completed"
+
+
+def test_other_writers_block_while_an_invocation_holds_authority(
+    workspace: Path,
+) -> None:
+    """§8.1: a live run's writer authority excludes concurrent business writers."""
+
+    from exp2res.errors import WorkspaceBusyError
+
+    with writer_database(workspace):
+        with pytest.raises(WorkspaceBusyError):
+            with writer_database(workspace, timeout_ms=100):
+                pass
+
+
+def test_multi_call_stage_shares_one_held_writer_connection(
+    workspace: Path,
+) -> None:
+    """The Phase 1 stage shape: one held connection spans planned invocations."""
+
+    from exp2res.storage.telemetry import finish_processing_run
+
+    with writer_database(workspace) as held:
+        for index in (1, 2):
+            invoke_contract(
+                workspace=workspace,
+                runner=FakeContractRunner([VALID]),
+                contract=CONTRACT,
+                serialized_input=INPUT,
+                model_id="gpt-test-vera-example",
+                budgets=budgets(planned_call_count=2),
+                run_id="run_vera_held",
+                stage="13.test",
+                call_index=index,
+                finish_run=False,
+                cli_version="0.144.4-test",
+                enrich=enrich,
+                clock=lambda: FIXED_NOW,
+                sleeper=lambda _seconds: None,
+                jitter=lambda lower, _upper: lower,
+                connection=held,
+            )
+        held.execute("BEGIN IMMEDIATE")
+        finish_processing_run(
+            held,
+            run_id="run_vera_held",
+            finished_at=FIXED_NOW,
+            status="completed",
+            output_ids=("fact_vera_held",),
+        )
+        held.commit()
+    run, _call = telemetry(workspace, "run_vera_held")
+    assert run["status"] == "completed"
+    metadata = json.loads(run["metadata_json"])
+    assert "call_1_exit_code" in metadata and "call_2_exit_code" in metadata
 
 
 def multi_invoke(

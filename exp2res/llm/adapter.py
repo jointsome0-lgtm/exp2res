@@ -11,6 +11,7 @@ import platform
 import random
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import time
@@ -249,17 +250,16 @@ def preflight_adapter(
     return AdapterRuntime(codex, bwrap, codex_home, version)
 
 
-def _transaction(workspace: Path, operation: Callable[[object], None]) -> None:
-    # reconcile=False: a run's own telemetry transactions must not trip the
-    # §15.10 rule 8 abandoned-row sweep against the run they belong to.
-    with writer_database(workspace, reconcile=False) as connection:
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            operation(connection)
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
+def _transaction(
+    connection: sqlite3.Connection, operation: Callable[[object], None]
+) -> None:
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        operation(connection)
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
 
 
 def _failure_from_result(result: RawResult) -> tuple[str | None, bool]:
@@ -270,6 +270,12 @@ def _failure_from_result(result: RawResult) -> tuple[str | None, bool]:
     if result.exit_code == 0 and result.final_message_bytes is not None:
         return None, False
     channel = result.error_channel.lower()
+    if any(
+        marker in channel
+        for marker in (b"408", b"request timeout", b"response timeout")
+    ):
+        # §15.10: HTTP 408 and response timeouts are retryable transport_timeout.
+        return "transport_timeout", True
     if any(
         marker in channel
         for marker in (
@@ -328,9 +334,49 @@ def invoke_contract(
     jitter: Callable[[float, float], float] | None = None,
     token_patterns: Iterable[Pattern[bytes]] = CODEX_TOKEN_PATTERNS,
     resolved_credentials: Iterable[bytes] = (),
+    connection: sqlite3.Connection | None = None,
 ) -> InvocationResult:
-    """Run, validate once plus one diagnostic-only retry, and persist telemetry."""
+    """Run, validate once plus one diagnostic-only retry, and persist telemetry.
 
+    The invocation holds business-writer authority door-to-door: either the
+    caller passes its held writer `connection` (a multi-call stage keeps one
+    across its planned invocations and owns rule 8 reconciliation at its own
+    entry), or this function acquires the workspace writer seam for the whole
+    invocation, so a nonterminal telemetry row visible to any other lock
+    holder always belongs to a dead writer (§8.1, §15.10 rule 8).
+    """
+
+    if connection is None:
+        # Reconcile only before this run's row exists; a later call index
+        # must never sweep the run it belongs to.
+        with writer_database(workspace, reconcile=(call_index == 1)) as held:
+            return invoke_contract(
+                workspace=workspace,
+                runner=runner,
+                contract=contract,
+                serialized_input=serialized_input,
+                model_id=model_id,
+                budgets=budgets,
+                run_id=run_id,
+                stage=stage,
+                call_index=call_index,
+                finish_run=finish_run,
+                cli_version=cli_version,
+                input_ids=input_ids,
+                output_ids=output_ids,
+                enrich=enrich,
+                persist_validated=persist_validated,
+                capability_check=capability_check,
+                clock=clock,
+                monotonic=monotonic,
+                sleeper=sleeper,
+                jitter=jitter,
+                token_patterns=token_patterns,
+                resolved_credentials=resolved_credentials,
+                connection=held,
+            )
+
+    writer = connection
     now = clock or (lambda: datetime.now(timezone.utc))
     random_jitter = jitter or random.SystemRandom().uniform
     registered_patterns = tuple(token_patterns)
@@ -387,7 +433,7 @@ def invoke_contract(
             provider_request_id=provider_request_id,
         )
 
-    _transaction(workspace, create_rows)
+    _transaction(writer, create_rows)
     total_duration = 0.0
     last_exit_code: int | None = None
 
@@ -421,7 +467,7 @@ def invoke_contract(
                 metadata=terminal_metadata(),
             )
 
-        _transaction(workspace, finish)
+        _transaction(writer, finish)
 
     try:
         if capability_check is not None:
@@ -476,7 +522,7 @@ def invoke_contract(
                 raise LLMCancelledError() from None
             if retryable and physical_attempt < budgets.transport_attempt_cap:
                 _transaction(
-                    workspace,
+                    writer,
                     lambda connection: increment_call_retry(
                         connection,  # type: ignore[arg-type]
                         run_id=run_id,
@@ -509,7 +555,7 @@ def invoke_contract(
                 fail("response_validation_failed")
                 raise LLMInvocationError("response_validation_failed") from None
             _transaction(
-                workspace,
+                writer,
                 lambda connection: increment_call_retry(
                     connection,  # type: ignore[arg-type]
                     run_id=run_id,
@@ -554,7 +600,7 @@ def invoke_contract(
                         metadata=terminal_metadata(),
                     )
 
-                _transaction(workspace, fail_business)
+                _transaction(writer, fail_business)
                 raise LLMInvocationError("business_commit_failed") from None
 
         def complete(connection: object) -> None:
@@ -588,6 +634,6 @@ def invoke_contract(
                     metadata=terminal_metadata(),
                 )
 
-        _transaction(workspace, complete)
+        _transaction(writer, complete)
         return InvocationResult(validated, output, run_id, call_index)
     raise AssertionError("unreachable validation loop")

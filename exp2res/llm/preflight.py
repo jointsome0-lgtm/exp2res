@@ -155,6 +155,10 @@ def preflight_call(
     ):
         raise LLMInvocationError("credential_detected")
 
+    # §15.10 rule 5: cost maxima exist only when the provider declares
+    # pricing; without a declaration the configured cost ceilings are inert
+    # rather than a capability failure. A half-declared or negative price
+    # remains an invalid declaration.
     invocation_cost: Decimal | None = None
     run_cost: Decimal | None = None
     pricing = (budgets.input_cost_per_million, budgets.output_cost_per_million)
@@ -167,15 +171,15 @@ def preflight_call(
             + Decimal(budgets.planned_output_tokens) * pricing[1]  # type: ignore[operator]
         ) / Decimal(1_000_000)
         run_cost = invocation_cost * Decimal(budgets.planned_call_count)
-    if budgets.per_invocation_cost_ceiling is not None:
-        if invocation_cost is None:
-            raise LLMInvocationError("capability_mismatch")
-        if invocation_cost > budgets.per_invocation_cost_ceiling:
+        if (
+            budgets.per_invocation_cost_ceiling is not None
+            and invocation_cost > budgets.per_invocation_cost_ceiling
+        ):
             raise LLMInvocationError("budget_exceeded")
-    if budgets.per_run_cost_ceiling is not None:
-        if run_cost is None:
-            raise LLMInvocationError("capability_mismatch")
-        if run_cost > budgets.per_run_cost_ceiling:
+        if (
+            budgets.per_run_cost_ceiling is not None
+            and run_cost > budgets.per_run_cost_ceiling
+        ):
             raise LLMInvocationError("budget_exceeded")
     return PreflightMetrics(
         input_bytes=byte_count,

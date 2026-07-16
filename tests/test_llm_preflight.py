@@ -185,6 +185,28 @@ def test_size_budget_context_and_secret_preflight_codes(
     assert "Vera Example" not in str(caught.value)
 
 
+def test_cost_ceilings_without_declared_pricing_are_inert() -> None:
+    """§15.10 rule 5: cost maxima exist only when the provider declares pricing."""
+
+    undeclared = prepared(
+        input_cost_per_million=None,
+        output_cost_per_million=None,
+        per_invocation_cost_ceiling=Decimal("5"),
+        per_run_cost_ceiling=Decimal("25"),
+    )
+    metrics = preflight_call(undeclared)
+    assert metrics.conservative_invocation_cost is None
+    assert metrics.conservative_run_cost is None
+
+    half_declared = prepared(
+        input_cost_per_million=Decimal("1"),
+        output_cost_per_million=None,
+    )
+    with pytest.raises(LLMInvocationError) as caught:
+        preflight_call(half_declared)
+    assert caught.value.failure_code == "capability_mismatch"
+
+
 def test_exact_adapter_resolved_credential_is_detected_without_echo() -> None:
     """§29.4: transport-only resolved values are checked against exact input bytes."""
 
