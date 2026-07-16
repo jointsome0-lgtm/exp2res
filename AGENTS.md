@@ -19,9 +19,9 @@ Treat this as a public engine repository in the [selfos topology](https://github
 
 ## Canon
 
-Specification: `SDD.md` is the map (§ index and numbering rules); the body lives in `spec/` (one file per §, file names start with the § number); decisions live in `DECISION-LOG.md`. The map is imported into session context (line below); @-importing the body or the log is forbidden:
-- point task → pick the § from the map's index and read only its file in `spec/`;
-- full read (all of `spec/` in index order) — only for full-pass reviews or cross-section decisions.
+Specification: `SDD.md` is the map (§ index and numbering rules); the body lives in `spec/` (one file per §, file names start with the § number); a § may additionally own an authored canon artifact beside its file in `spec/` (for example `spec/21-evals-cases.toml`) — normative spec text linked from the § file and named in its map line; decisions live in `DECISION-LOG.md`. The map is imported into session context (line below); @-importing the body or the log is forbidden:
+- point task → pick the § from the map's index and read its file in `spec/` plus every authored canon artifact that file links;
+- full read (all of `spec/` in index order, including authored canon artifacts) — only for full-pass reviews or cross-section decisions.
 
 @SDD.md
 
