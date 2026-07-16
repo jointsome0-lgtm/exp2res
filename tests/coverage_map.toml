@@ -272,7 +272,9 @@ status = "pending"
 phase = "5"
 
 ["21.50"]
-status = "covered"
+status = "partial"
 nodes = [
   "tests/test_llm_preflight.py::test_canary_proves_closed_read_namespace_or_skips_explicitly",
 ]
+phase = "1"
+note = "The shipped canary probe proves read confinement for the Codex reference runner; the generalized §15.12 blocks — environment/ambient isolation sentinels, final-message-only result channel across completion paths, tool-disable and protocol-version preflight failures, and agent-backed adapter classification — land with the #102 adapter lineup"

@@ -352,14 +352,17 @@ def test_real_runner_workspace_has_only_declared_retry_files(
     for flag in (
         "--ephemeral",
         "--ignore-user-config",
+        "--ignore-rules",
         "--skip-git-repo-check",
         "-C",
         "-s",
+        "-c",
         "--output-schema",
         "--output-last-message",
         "--model",
     ):
         assert flag in command
+    assert 'approval_policy="never"' in command
     assert command[-1] == prepared.fixed_instruction
     assert all(not workspace_path.exists() for *_rest, workspace_path in seen)
 

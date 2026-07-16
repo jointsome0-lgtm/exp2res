@@ -1676,21 +1676,46 @@ And any rendered source-voice excerpt remains an exact referenced value or conti
 And when a correction displaces a source record, §13.3 rule 10's prose-free descriptor projection excludes its source prose without mutating the retained source bytes
 ```
 
-## §21.50 Isolated Runner Read Confinement Is Effective
+## §21.50 Agent-Backed Runners Are Structurally Confined
 
-Test (enforces §15.1 and §29.4):
+Test (enforces §15.10 rule 4, §15.12, §29.2, §29.4, and §29.6; extends §21.43's transport coverage and §21.49's injection matrix):
 
 ```text
-Given a provider-free fixture with an empty per-call workspace containing a readable /work canary
-And planted files at the repository map, .env, .exp2res database, an unrelated source module, outside the per-call workspace, and the user Codex rules path
-When the same bubblewrap namespace assembly used by the Codex runner executes the cat-based effectiveness probe
-Then the child can read /work
-And it cannot read the repository, .env, .exp2res, unrelated source files, the outside-workspace canary, or user Codex rules
-And the probe invokes no model and uses no network request, so it is safe for offline CI
-Given CI cannot create the required user namespace or bubblewrap is unavailable
-When the eval runs
-Then it is skipped with an explicit unavailability reason
-And the runtime's wrapper preflight still fails closed with capability_mismatch before transport, so skipping the eval never weakens the gate
+Given every agent-backed adapter the build ships, including the Codex CLI reference adapter and any Agent SDK adapter
+And planted sentinel files outside the contract workspace, at the Exp2Res workspace path and its database, at a .env path, at an unrelated source module, and at the user-level agent rules and configuration paths
+When the §15.12 rule 8 confinement canary executes a trivial no-network command inside the same sandbox assembly the shipping runner uses
+Then reading inside the contract workspace succeeds while reading each planted sentinel fails
+And the probe invokes no model, network, provider credential, or provider request, so it is safe for offline CI
+And where the sandbox mechanism is unavailable the probe is skip-marked with an explicit reason rather than silently passed, while the runtime's rule 8 preflight still fails closed with capability_mismatch before transport, so skipping the eval never weakens the gate
+
+Given one agent-backed invocation of a §15 contract with a parent environment variable carrying a credential-like sentinel
+When the runner launches the runtime
+Then the launched contract workspace contains exactly the serialized typed contract input and the expected JSON Schema, and a §15.1 validation-retry workspace adds only validation diagnostics
+And the runtime receives a cleared allowlist environment in which neither the parent sentinel nor any ambient rules sentinel is visible
+And no ambient model, reasoning-effort, tool-policy, or instruction-file default influences the invocation because every honored generation parameter is explicit adapter configuration
+
+Given table-driven completions: success, invalid response, transport failure, and cancellation
+When each invocation finishes
+Then the service consumed only the dedicated final-message file bytes as the result channel and parsed no transcript prose, fenced block, or standard-output content
+And the contract workspace is deleted on every completion path and no session state, history, or memory artifact persists outside it
+And a simulated hard crash leaves at most one inert owner-only-mode prefix-recognizable directory in the system temporary location, which the next-writer preamble does not reconcile
+And a runtime completion whose final-message file is missing or unreadable fails as transport_provider_error under §15.10 with no prose fallback
+
+Given an installed runtime that does not declare a required §15.12 control — schema-constrained final output, final-message file, ephemerality, ambient-configuration disable, working-directory selection, or tool-disable for a declared agent affordance — or declares a runner-protocol version the build does not support, or a host whose sandbox mechanism is absent or whose canary fails
+When the two-half preflight runs
+Then the invocation fails with capability_mismatch before any provider transport
+And the diagnostic names the failing half without payload content
+And drifted declared-control semantics are never silently adapted to
+
+Given §21.49's undeclared-authority fixtures seeded through an agent-backed adapter
+When the named §15 contract executes inside the runner
+Then filesystem and environment spies record no access outside the sandbox's bound set and no ambient rule or configuration load
+And the agent process writes no SQLite state and no managed output
+
+Given the non-agent-backed direct-API adapter from the same build
+When adapter classification runs
+Then its §15.10 rule 4 declaration rules out every agent affordance, §15.12 does not bind it, and its capability declaration still applies
+And an adapter that cannot rule out an agent affordance by declaration classifies as agent-backed and is unselectable without the full §15.12 preflight
 ```
 
 ---
