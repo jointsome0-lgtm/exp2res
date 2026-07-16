@@ -12,7 +12,7 @@ body or the log; decisions live in [DECISION-LOG.md](DECISION-LOG.md).
 
 Claude-only rule — the reason is Fable-specific, and in AGENTS.md it would just tell Codex to delegate to itself. Ecosystem-wide; the full version lives in ephemeris's CLAUDE.md.
 
-Adversarial security / threat-model reviews — red-teaming a spec §, abuse-case analysis, attack-surface probing of any future code — are **delegated to Codex** (`codex:rescue` or the codex plugin), not run by Claude in the first person.
+Adversarial security / threat-model reviews — red-teaming a spec §, abuse-case analysis, attack-surface probing of any future code — are **delegated to Codex** (a direct `codex exec` with a self-contained prompt), not run by Claude in the first person.
 
 - Reason, so nobody "fixes" this later: Fable's dual-use safeguards are documented (anthropic.com, Fable 5 announcement) to fall back to Claude Opus 4.8 on cybersecurity framing — a first-person adversarial pass can silently switch models and drop the thread mid-task. Codex is unaffected and gives a genuinely independent adversarial view.
 - Claude's role is the correctness half (§ consistency, invariants, plan alignment) and converging Codex's findings with its own.
@@ -51,11 +51,12 @@ How to apply:
 - Never use Haiku.
 - Mechanics: gpt-5.6 is only reachable through the Codex CLI — `codex exec` /
   `codex review` (my `~/.codex/config.toml` defaults to `gpt-5.6-sol` at xhigh
-  effort). Use the codex plugin skills (`codex:rescue` for delegated
-  diagnosis/fix passes, `codex:setup` for CLI health checks); for work they
-  don't cover (investigation, data analysis, verification), run
-  `codex exec -s read-only` directly with a self-contained prompt, and drop the
-  sandbox flag only when codex must edit files.
+  effort). Always run `codex exec` directly via Bash
+  with a self-contained prompt you wrote: `-s read-only` for pure
+  reading/analysis; `-s workspace-write` when it must edit files OR run
+  tests/builds — test runs write caches and temp state, so read-only makes
+  them fail or stall (this produced a false "verify.py hangs" finding once).
+  Health check: `codex --version` plus a trivial exec.
 - Claude models (sonnet-5, opus-4.8, fable-5) run via the Agent/Workflow model
   parameter.
 
