@@ -32,6 +32,7 @@ from exp2res.domain.results import (
 from exp2res.errors import (
     Exp2ResError,
     MigrationFailedError,
+    MigrationInterrupted,
     NonInteractiveInputRequired,
     OperationDeferredError,
 )
@@ -296,7 +297,31 @@ def db_migrate(context: typer.Context) -> None:
                     err=True,
                 ):
                     return Outcome(exit_code=9, diagnostic_class="cancelled")
-            migrated = migrate_workspace(workspace)
+            try:
+                migrated = migrate_workspace(workspace)
+            except MigrationInterrupted as interrupt:
+                # §14.14 rule 4: cancellation keeps code-9 precedence while
+                # the committed effect — the retained verified backup —
+                # remains reported in the cancelled envelope. Before the
+                # backup exists there is no committed effect, so the generic
+                # interrupt envelope (null result) applies.
+                if interrupt.managed_backup_path is None:
+                    return Outcome(exit_code=9, diagnostic_class="cancelled")
+                after = inspect_workspace(workspace)
+                return Outcome(
+                    exit_code=9,
+                    diagnostic_class="cancelled",
+                    result=_schema_result(
+                        SchemaStatus(
+                            stored_version=after.stored_version,
+                            supported_version=after.supported_version,
+                            recognized=after.recognized,
+                            compatible=after.compatible,
+                            migration_path_available=after.migration_path_available,
+                            managed_backup_path=interrupt.managed_backup_path,
+                        )
+                    ),
+                )
             return Outcome(
                 result=_schema_result(migrated),
                 human_result=(

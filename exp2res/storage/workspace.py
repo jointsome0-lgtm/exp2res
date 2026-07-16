@@ -18,13 +18,19 @@ from urllib.parse import quote
 from exp2res import __version__
 from exp2res.errors import (
     MigrationFailedError,
+    MigrationInterrupted,
     PublicCheckoutError,
     SchemaCompatibilityError,
     WorkspaceBusyError,
     WorkspaceError,
 )
 
-from .schema import apply_migration_1_to_2, create_schema
+from .schema import (
+    LLM_CALLS_SQL,
+    PROCESSING_RUNS_SQL,
+    apply_migration_1_to_2,
+    create_schema,
+)
 
 CURRENT_SCHEMA_VERSION = 2
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
@@ -426,12 +432,40 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
     status = inspect_schema(connection)
     if not status.compatible:
         raise sqlite3.DatabaseError("migration target is incompatible")
-    for table in ("processing_runs", "llm_calls"):
-        row = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
-        ).fetchone()
-        if row is None:
-            raise sqlite3.DatabaseError("migration target table missing")
+
+    # SQLite stores each schema object's complete CREATE statement
+    # (constraints included, `IF NOT EXISTS` stripped), so comparing every
+    # sqlite_master entry attached to a telemetry table against a scratch
+    # database created from the unchanged normative DDL rejects what PRAGMA
+    # table_info cannot distinguish — a missing REFERENCES or CHECK clause —
+    # and any extra trigger or index riding on the table.
+    def table_entries(
+        database: sqlite3.Connection, table: str
+    ) -> list[tuple[object, ...]]:
+        return sorted(
+            (row[0], row[1], row[2])
+            for row in database.execute(
+                "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ?",
+                (table,),
+            )
+        )
+
+    scratch = sqlite3.connect(":memory:")
+    try:
+        scratch.execute(PROCESSING_RUNS_SQL)
+        scratch.execute(LLM_CALLS_SQL)
+        expected_entries = {
+            table: table_entries(scratch, table)
+            for table in ("processing_runs", "llm_calls")
+        }
+    finally:
+        scratch.close()
+
+    for table, expected in expected_entries.items():
+        if not expected or table_entries(connection, table) != expected:
+            raise sqlite3.DatabaseError(
+                "migration target telemetry table shape mismatch"
+            )
 
 
 def migrate_workspace(
@@ -454,57 +488,74 @@ def migrate_workspace(
         raise SchemaCompatibilityError()
 
     backup_path: Path | None = None
-    with writer_lock(workspace, timeout_ms=timeout_ms):
-        connection = connect_database(
-            workspace / ".exp2res" / "exp2res.sqlite",
-            readonly=False,
-            busy_timeout_ms=timeout_ms,
-        )
-        try:
-            locked_status = inspect_schema(connection)
-            if (
-                locked_status.stored_version != initial.stored_version
-                or not migration_available(locked_status.stored_version)
-            ):
-                raise SchemaCompatibilityError()
-            now = _migration_time(clock)
-            backup_path = _create_verified_backup(
-                connection,
-                workspace=workspace,
-                from_version=locked_status.stored_version,
-                now=now,
+    try:
+        with writer_lock(workspace, timeout_ms=timeout_ms):
+            connection = connect_database(
+                workspace / ".exp2res" / "exp2res.sqlite",
+                readonly=False,
+                busy_timeout_ms=timeout_ms,
             )
             try:
-                connection.execute("BEGIN IMMEDIATE")
-                apply_migration_1_to_2(connection)
-                if failure_injector is not None:
-                    failure_injector("after_ddl")
-                connection.execute(
-                    """
-                    INSERT INTO schema_meta(version, applied_at, app_version)
-                    VALUES (?, ?, ?)
-                    """,
-                    (CURRENT_SCHEMA_VERSION, now.isoformat(), __version__),
+                locked_status = inspect_schema(connection)
+                if (
+                    locked_status.stored_version != initial.stored_version
+                    or not migration_available(locked_status.stored_version)
+                ):
+                    raise SchemaCompatibilityError()
+                now = _migration_time(clock)
+                backup_path = _create_verified_backup(
+                    connection,
+                    workspace=workspace,
+                    from_version=locked_status.stored_version,
+                    now=now,
                 )
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    apply_migration_1_to_2(connection)
+                    if failure_injector is not None:
+                        failure_injector("after_ddl")
+                    connection.execute(
+                        """
+                        INSERT INTO schema_meta(version, applied_at, app_version)
+                        VALUES (?, ?, ?)
+                        """,
+                        (CURRENT_SCHEMA_VERSION, now.isoformat(), __version__),
+                    )
+                    if failure_injector is not None:
+                        failure_injector("before_validation")
+                    _validate_migration_target(connection)
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
                 if failure_injector is not None:
-                    failure_injector("before_validation")
-                _validate_migration_target(connection)
-                connection.commit()
-            except BaseException:
-                connection.rollback()
+                    failure_injector("after_commit")
+            except KeyboardInterrupt:
                 raise
-        except (SchemaCompatibilityError, WorkspaceBusyError):
-            raise
-        except BaseException as error:
-            raise MigrationFailedError(
-                managed_backup_path=(
-                    None if backup_path is None else str(backup_path)
-                )
-            ) from error
-        finally:
-            connection.close()
+            except (SchemaCompatibilityError, WorkspaceBusyError):
+                raise
+            except BaseException as error:
+                raise MigrationFailedError(
+                    managed_backup_path=(
+                        None if backup_path is None else str(backup_path)
+                    )
+                ) from error
+            finally:
+                connection.close()
 
-    result = inspect_workspace(workspace)
+        result = inspect_workspace(workspace)
+    except KeyboardInterrupt:
+        # An interrupt anywhere in the migrate flow — transaction, backup,
+        # connection close, lock release, or the final status inspection —
+        # keeps §14.14 rule 4's code-9 precedence while still reporting the
+        # committed effects: the retained verified backup and, after commit,
+        # the durable v2 schema surface through the cancelled envelope.
+        raise MigrationInterrupted(
+            managed_backup_path=(
+                None if backup_path is None else str(backup_path)
+            )
+        ) from None
+
     if not result.compatible:
         raise MigrationFailedError(managed_backup_path=str(backup_path))
     return SchemaStatus(

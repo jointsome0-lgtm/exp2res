@@ -11,9 +11,10 @@ import pytest
 from typer.testing import CliRunner
 
 from exp2res.cli import app
-from exp2res.errors import MigrationFailedError
+from exp2res.errors import MigrationFailedError, MigrationInterrupted
 from exp2res.services.capture import capture_daily
 from exp2res.services.logs import show_log
+from exp2res.storage.schema import LLM_CALLS_SQL, PROCESSING_RUNS_SQL
 from exp2res.storage.workspace import (
     inspect_workspace,
     initialize_workspace,
@@ -44,6 +45,29 @@ def v1_workspace(tmp_path: Path) -> tuple[Path, str, str]:
             (FIXED_NOW.isoformat(), "0.1.0-v1-fixture"),
         )
     return root, bundle.raw_log.id, raw_text
+
+
+def _shape_rows(
+    connection: sqlite3.Connection, table: str
+) -> list[tuple[object, ...]]:
+    return [
+        tuple(row[index] for index in range(1, 6))
+        for row in connection.execute(f"PRAGMA table_info({table})")
+    ]
+
+
+def table_shape(database: Path, table: str) -> list[tuple[object, ...]]:
+    with sqlite3.connect(database) as connection:
+        return _shape_rows(connection, table)
+
+
+def normative_shape(ddl: str, table: str) -> list[tuple[object, ...]]:
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute(ddl)
+        return _shape_rows(connection, table)
+    finally:
+        connection.close()
 
 
 def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
@@ -126,6 +150,28 @@ def test_cli_reports_a_rolled_back_migration_as_integrity_class_7(
     assert envelope["result"]["schema"]["stored_version"] == 1
 
 
+def test_cli_reports_migration_interrupt_as_cancelled_class_9(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rules 4/6: a service interrupt keeps cancellation precedence."""
+
+    import exp2res.cli as cli_module
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def interrupted_migration(_workspace: Path):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_module, "migrate_workspace", interrupted_migration)
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 9
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "cancelled"
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert envelope["result"] is None
+
+
 def test_migration_failure_rolls_back_ddl_and_version_but_retains_backup(
     tmp_path: Path,
 ) -> None:
@@ -166,3 +212,311 @@ def test_migration_failure_rolls_back_ddl_and_version_but_retains_backup(
     assert "llm_calls" not in tables
     assert stored_text == raw_text
     assert inspect_workspace(workspace).stored_version == 1
+
+
+def test_migration_interrupt_rolls_back_and_propagates_with_backup_retained(
+    tmp_path: Path,
+) -> None:
+    """§12.14/§14.14: Ctrl-C rolls back unchanged and is not class 7."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE processing_runs (id TEXT PRIMARY KEY)")
+    stale_shape = table_shape(database, "processing_runs")
+
+    def interrupt_after_ddl(point: str) -> None:
+        if point == "after_ddl":
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt) as interrupt_info:
+        migrate_workspace(
+            workspace,
+            clock=lambda: FIXED_NOW.replace(day=16),
+            failure_injector=interrupt_after_ddl,
+        )
+
+    assert inspect_workspace(workspace).stored_version == 1
+    assert table_shape(database, "processing_runs") == stale_shape
+    assert table_shape(database, "llm_calls") == []
+    backups = list((workspace / ".exp2res" / "backup").iterdir())
+    assert len(backups) == 1
+    assert backups[0].is_file()
+    # §14.14 rule 4: the committed effect rides along for the cancelled
+    # envelope instead of being dropped with a bare re-raise.
+    assert isinstance(interrupt_info.value, MigrationInterrupted)
+    assert interrupt_info.value.managed_backup_path == str(backups[0])
+
+
+def test_cli_pre_backup_interrupt_keeps_the_generic_null_result_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: no committed effect means the generic cancel shape."""
+
+    import exp2res.cli as cli_module
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def interrupted_before_backup(_target: Path):
+        raise MigrationInterrupted(managed_backup_path=None)
+
+    monkeypatch.setattr(cli_module, "migrate_workspace", interrupted_before_backup)
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 9
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "cancelled"
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert envelope["result"] is None
+
+
+def test_post_commit_interrupt_reports_backup_and_leaves_durable_v2(
+    tmp_path: Path,
+) -> None:
+    """§14.14 rule 4: a post-commit interrupt still reports both effects."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def interrupt_after_commit(point: str) -> None:
+        if point == "after_commit":
+            raise KeyboardInterrupt
+
+    with pytest.raises(MigrationInterrupted) as interrupt_info:
+        migrate_workspace(
+            workspace,
+            clock=lambda: FIXED_NOW.replace(day=16),
+            failure_injector=interrupt_after_commit,
+        )
+
+    backups = list((workspace / ".exp2res" / "backup").iterdir())
+    assert len(backups) == 1
+    assert interrupt_info.value.managed_backup_path == str(backups[0])
+    after = inspect_workspace(workspace)
+    assert after.stored_version == 2
+    assert after.compatible is True
+
+
+def test_cli_post_commit_interrupt_envelope_reports_durable_v2_and_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: the cancelled envelope shows the committed migration."""
+
+    import exp2res.cli as cli_module
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def interrupt_after_commit(point: str) -> None:
+        if point == "after_commit":
+            raise KeyboardInterrupt
+
+    def interrupted_migration(target: Path):
+        return migrate_workspace(
+            target,
+            clock=lambda: FIXED_NOW.replace(day=16),
+            failure_injector=interrupt_after_commit,
+        )
+
+    monkeypatch.setattr(cli_module, "migrate_workspace", interrupted_migration)
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 9
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "cancelled"
+    assert envelope["result"]["schema"]["stored_version"] == 2
+    assert envelope["result"]["schema"]["compatible"] is True
+    backup = Path(envelope["result"]["schema"]["managed_backup_path"])
+    assert backup.is_file()
+
+
+def test_cli_reports_retained_backup_in_the_cancelled_migration_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: cancellation still reports the retained backup path."""
+
+    import exp2res.cli as cli_module
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def interrupt_before_validation(point: str) -> None:
+        if point == "before_validation":
+            raise KeyboardInterrupt
+
+    def interrupted_migration(target: Path):
+        return migrate_workspace(
+            target,
+            clock=lambda: FIXED_NOW.replace(day=16),
+            failure_injector=interrupt_before_validation,
+        )
+
+    monkeypatch.setattr(cli_module, "migrate_workspace", interrupted_migration)
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 9
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "cancelled"
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert envelope["result"]["schema"]["stored_version"] == 1
+    backup = Path(envelope["result"]["schema"]["managed_backup_path"])
+    assert backup.is_file()
+
+
+@pytest.mark.parametrize("table", ["processing_runs", "llm_calls"])
+def test_extra_trigger_on_exact_telemetry_table_fails_migration(
+    tmp_path: Path, table: str
+) -> None:
+    """§12.13/§12.15: a rider trigger on an exact table fails validation."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    ddl = PROCESSING_RUNS_SQL if table == "processing_runs" else LLM_CALLS_SQL
+    with sqlite3.connect(database) as connection:
+        connection.execute(ddl)
+        connection.execute(
+            f"""
+            CREATE TRIGGER stale_rider_guard
+            BEFORE INSERT ON {table}
+            BEGIN
+                SELECT RAISE(ABORT, 'stale rider');
+            END
+            """
+        )
+
+    with pytest.raises(MigrationFailedError):
+        migrate_workspace(workspace, clock=lambda: FIXED_NOW.replace(day=16))
+
+    assert inspect_workspace(workspace).stored_version == 1
+    with sqlite3.connect(database) as connection:
+        rider = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            " AND name = 'stale_rider_guard'"
+        ).fetchone()
+    assert rider is not None
+
+
+@pytest.mark.parametrize("table", ["processing_runs", "llm_calls"])
+def test_cli_rejects_wrong_shaped_preexisting_telemetry_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, table: str
+) -> None:
+    """§12.14: stale telemetry DDL fails validation and rolls back v1."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        if table == "processing_runs":
+            connection.execute("CREATE TABLE processing_runs (id TEXT PRIMARY KEY)")
+        else:
+            connection.execute(
+                """
+                CREATE TABLE llm_calls (
+                    run_id TEXT NOT NULL,
+                    call_index INTEGER NOT NULL,
+                    PRIMARY KEY (run_id, call_index)
+                )
+                """
+            )
+    stale_shape = table_shape(database, table)
+
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 7
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "failed"
+    assert envelope["diagnostic_class"] == "migration_failed"
+    backup = Path(envelope["result"]["schema"]["managed_backup_path"])
+    assert backup.is_file()
+    assert envelope["result"]["schema"]["stored_version"] == 1
+    assert table_shape(database, table) == stale_shape
+
+
+@pytest.mark.parametrize(
+    ("table", "stale_ddl", "normative_ddl"),
+    [
+        (
+            "processing_runs",
+            """
+            CREATE TABLE processing_runs (
+                id TEXT PRIMARY KEY,
+                stage TEXT NOT NULL,
+                parent_run_id TEXT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                status TEXT NOT NULL,
+                provider TEXT,
+                model TEXT,
+                prompt_policy_hash TEXT,
+                failure_code TEXT,
+                input_ids_json TEXT NOT NULL DEFAULT '[]',
+                output_ids_json TEXT NOT NULL DEFAULT '[]',
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """,
+            PROCESSING_RUNS_SQL,
+        ),
+        (
+            "llm_calls",
+            """
+            CREATE TABLE llm_calls (
+                run_id TEXT NOT NULL,
+                call_index INTEGER NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                status TEXT NOT NULL,
+                input_hash TEXT,
+                output_hash TEXT,
+                provider_request_id TEXT,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                reported_cost TEXT,
+                transport_retries INTEGER,
+                schema_retries INTEGER,
+                failure_code TEXT,
+
+                PRIMARY KEY (run_id, call_index)
+            )
+            """,
+            LLM_CALLS_SQL,
+        ),
+    ],
+)
+def test_constraint_free_same_column_telemetry_table_fails_migration(
+    tmp_path: Path, table: str, stale_ddl: str, normative_ddl: str
+) -> None:
+    """§12.13/§12.15: missing REFERENCES/CHECK constraints fail validation."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute(stale_ddl)
+    # The stale table is indistinguishable from the normative shape by
+    # PRAGMA table_info alone; only its constraint clauses differ.
+    assert table_shape(database, table) == normative_shape(normative_ddl, table)
+
+    with pytest.raises(MigrationFailedError):
+        migrate_workspace(workspace, clock=lambda: FIXED_NOW.replace(day=16))
+
+    assert inspect_workspace(workspace).stored_version == 1
+    assert table_shape(database, table) == normative_shape(normative_ddl, table)
+
+
+@pytest.mark.parametrize(
+    ("table", "ddl"),
+    [("processing_runs", PROCESSING_RUNS_SQL), ("llm_calls", LLM_CALLS_SQL)],
+)
+def test_exact_shape_preexisting_telemetry_table_migrates(
+    tmp_path: Path, table: str, ddl: str
+) -> None:
+    """§12.13/§12.15: an exact normative pre-existing shape is accepted."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute(ddl)
+    expected_shape = table_shape(database, table)
+
+    migrated = migrate_workspace(
+        workspace, clock=lambda: FIXED_NOW.replace(day=16)
+    )
+
+    assert migrated.stored_version == 2
+    assert migrated.compatible is True
+    assert table_shape(database, table) == expected_shape
