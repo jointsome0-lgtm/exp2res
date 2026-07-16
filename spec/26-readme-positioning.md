@@ -24,6 +24,6 @@ Evidence-backed self-assessment and verifier-gated, job-targeted bullet packs fr
 
 ## §26.1 License and Policy Positioning
 
-The repository is licensed under MIT (see `LICENSE`), chosen for consistency across the selfos ecosystem and because code will land in this repository. The public README must state the design-specification stage plainly — no code has shipped — and must not promise more than the SDD specifies. Until code lands, the README defers the security policy to the selfos umbrella repository by link; the security and privacy design itself remains §29.
+The repository is licensed under MIT (see `LICENSE`), chosen for consistency across the selfos ecosystem and because code lands in this repository. The public README must state the current implementation stage plainly — per §22's phase progress — and must not promise more than the SDD specifies or than merged code delivers. Until a release ships, the README defers the security policy to the selfos umbrella repository by link; the security and privacy design itself remains §29.
 
 ---
