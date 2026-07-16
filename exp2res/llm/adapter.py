@@ -53,6 +53,7 @@ REQUIRED_FLAGS = frozenset(
         "--output-last-message",
         "--ephemeral",
         "--ignore-user-config",
+        "--ignore-rules",
         "-C",
         "--skip-git-repo-check",
     }

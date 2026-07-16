@@ -352,6 +352,7 @@ def test_real_runner_workspace_has_only_declared_retry_files(
     for flag in (
         "--ephemeral",
         "--ignore-user-config",
+        "--ignore-rules",
         "--skip-git-repo-check",
         "-C",
         "-s",
