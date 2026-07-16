@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-import hashlib
 import json
 import sqlite3
 from typing import Iterable
@@ -14,10 +13,10 @@ from exp2res.errors import IntegrityFailureError
 TERMINAL_STATUSES = frozenset({"completed", "failed"})
 
 
-def hash_bytes(value: bytes) -> str:
-    """Return the lowercase SHA-256 digest for exact boundary bytes."""
-
-    return hashlib.sha256(value).hexdigest()
+def _is_hash(value: str) -> bool:
+    return len(value) == 64 and all(
+        character in "0123456789abcdef" for character in value
+    )
 
 
 def _iso(value: datetime) -> str:
@@ -98,12 +97,12 @@ def create_llm_call(
     run_id: str,
     call_index: int,
     started_at: datetime,
-    input_bytes: bytes,
+    input_hash: str,
     provider_request_id: str,
 ) -> None:
     """Create the single row for one planned logical invocation."""
 
-    if call_index < 1 or not provider_request_id:
+    if call_index < 1 or not provider_request_id or not _is_hash(input_hash):
         raise ValueError("invalid call telemetry identity")
     existing = connection.execute(
         "SELECT COUNT(*) FROM llm_calls WHERE run_id = ?", (run_id,)
@@ -122,7 +121,7 @@ def create_llm_call(
                 run_id,
                 call_index,
                 _iso(started_at),
-                hash_bytes(input_bytes),
+                input_hash,
                 provider_request_id,
             ),
         )
@@ -225,7 +224,7 @@ def finish_llm_call(
     call_index: int,
     finished_at: datetime,
     status: str,
-    output_bytes: bytes | None = None,
+    output_hash: str | None = None,
     failure_code: str | None = None,
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
@@ -237,8 +236,10 @@ def finish_llm_call(
         raise ValueError("call status must be terminal")
     if (status == "completed") != (failure_code is None):
         raise ValueError("call failure code disagrees with status")
-    if status == "completed" and output_bytes is None:
-        raise ValueError("completed call requires validated output bytes")
+    if status == "completed" and output_hash is None:
+        raise ValueError("completed call requires validated output hash")
+    if output_hash is not None and not _is_hash(output_hash):
+        raise ValueError("output hash must be lowercase SHA-256 hexadecimal")
     cursor = connection.execute(
         """
         UPDATE llm_calls
@@ -249,7 +250,7 @@ def finish_llm_call(
         (
             _iso(finished_at),
             status,
-            None if output_bytes is None else hash_bytes(output_bytes),
+            output_hash,
             failure_code,
             prompt_tokens,
             completion_tokens,

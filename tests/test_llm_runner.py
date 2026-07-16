@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
 import json
@@ -15,6 +15,10 @@ import time
 import pytest
 from pydantic import Field
 
+from exp2res.domain.canonical import (
+    canonical_hash,
+    canonical_model_hash,
+)
 from exp2res.domain.models import StrictModel
 from exp2res.errors import LLMCancelledError, LLMInvocationError
 from exp2res.llm.adapter import invoke_contract
@@ -49,6 +53,10 @@ class SampleContractOutput(StrictModel):
     warnings: list[ContractWarning] = Field(default_factory=list)
 
 
+class SampleContractInput(StrictModel):
+    subject: str
+
+
 CONTRACT = ContractDefinition(
     contract_id="test-only-vera-example",
     output_model=SampleContractOutput,
@@ -57,6 +65,7 @@ CONTRACT = ContractDefinition(
     service_owned_fields=frozenset({"service_id"}),
 )
 INPUT = b'{"subject":"Vera Example synthetic input"}'
+INPUT_PAYLOAD = SampleContractInput(subject="Vera Example synthetic input")
 VALID = b'{"value":"Vera Example validated","warnings":[]}'
 
 
@@ -98,7 +107,7 @@ def invoke(
         workspace=workspace,
         runner=fake,
         contract=CONTRACT,
-        serialized_input=INPUT,
+        input_payload=INPUT_PAYLOAD,
         model_id="gpt-test-vera-example",
         budgets=call_budgets or budgets(),
         run_id=run_id,
@@ -145,8 +154,12 @@ def test_fake_runner_valid_round_trip_persists_content_free_exact_hashes(
     assert run["provider"] == "codex-cli"
     assert run["model"] == "gpt-test-vera-example"
     assert run["prompt_policy_hash"]
-    assert call["input_hash"] == hashlib.sha256(INPUT).hexdigest()
-    assert call["output_hash"] == hashlib.sha256(VALID).hexdigest()
+    assert call["input_hash"] == canonical_hash(
+        INPUT_PAYLOAD.model_dump(mode="python")
+    )
+    assert call["output_hash"] == canonical_hash(
+        result.output.model_dump(mode="python")
+    )
     assert call["transport_retries"] == call["schema_retries"] == 0
     metadata = json.loads(run["metadata_json"])
     assert metadata["call_1_exit_code"] == "0"
@@ -199,7 +212,7 @@ def test_datetime_outputs_validate_through_the_json_boundary(
         workspace=workspace,
         runner=FakeContractRunner([timed_valid]),
         contract=timed_contract,
-        serialized_input=INPUT,
+        input_payload=INPUT_PAYLOAD,
         model_id="gpt-test-vera-example",
         budgets=budgets(),
         run_id="run_vera_timed",
@@ -240,7 +253,7 @@ def test_persist_and_terminal_telemetry_are_one_atomic_unit(
             workspace=workspace,
             runner=FakeContractRunner([VALID]),
             contract=CONTRACT,
-            serialized_input=INPUT,
+            input_payload=INPUT_PAYLOAD,
             model_id="gpt-test-vera-example",
             budgets=budgets(),
             run_id="run_vera_atomic",
@@ -257,7 +270,13 @@ def test_persist_and_terminal_telemetry_are_one_atomic_unit(
     assert run["status"] == "failed"
     assert run["failure_code"] == "business_commit_failed"
     assert call["status"] == "completed"
-    assert call["output_hash"] == hashlib.sha256(VALID).hexdigest()
+    assert call["output_hash"] == canonical_hash(
+        SampleContractOutput(
+            service_id="svc_vera_example",
+            value="Vera Example validated",
+            warnings=[],
+        ).model_dump(mode="python")
+    )
     with sqlite3.connect(database) as connection:
         rows = connection.execute("SELECT COUNT(*) FROM test_business_rows").fetchone()
     assert rows[0] == 0
@@ -272,7 +291,7 @@ def test_persist_and_terminal_telemetry_are_one_atomic_unit(
         workspace=workspace,
         runner=FakeContractRunner([VALID]),
         contract=CONTRACT,
-        serialized_input=INPUT,
+        input_payload=INPUT_PAYLOAD,
         model_id="gpt-test-vera-example",
         budgets=budgets(),
         run_id="run_vera_atomic_ok",
@@ -495,7 +514,7 @@ def test_enrich_reference_invalidity_stays_in_the_validation_retry_class(
         workspace=workspace,
         runner=fake,
         contract=CONTRACT,
-        serialized_input=INPUT,
+        input_payload=INPUT_PAYLOAD,
         model_id="gpt-test-vera-example",
         budgets=budgets(),
         run_id="run_vera_enrich_reference",
@@ -512,6 +531,99 @@ def test_enrich_reference_invalidity_stays_in_the_validation_retry_class(
     assert call["schema_retries"] == 1
     assert call["status"] == "completed"
     assert result.output.value == "Vera Example validated"
+
+
+def test_canonical_hashes_ignore_response_formatting_and_exist_before_transport(
+    workspace: Path,
+) -> None:
+    """Issue #105 item 3: hashes identify typed payloads, not boundary bytes."""
+
+    transport_input = INPUT_PAYLOAD.model_dump_json().encode("utf-8")
+    expected_input_hash = canonical_model_hash(INPUT_PAYLOAD)
+
+    def observe_created_call(call: PreparedCall) -> RawResult:
+        assert call.serialized_input == transport_input
+        _run, stored_call = telemetry(workspace, "run_vera_hash_ordered")
+        assert stored_call["status"] == "running"
+        assert stored_call["input_hash"] == expected_input_hash
+        return RawResult(
+            final_message_bytes=VALID,
+            exit_code=0,
+            duration_seconds=0.01,
+            attempts=(AttemptTelemetry(1, 0, 0.01),),
+        )
+
+    invoke(
+        workspace,
+        FakeContractRunner([observe_created_call]),
+        run_id="run_vera_hash_ordered",
+    )
+    differently_formatted = (
+        b'{  "warnings" : [  ], "value" : "Vera Example validated" }'
+    )
+    invoke(
+        workspace,
+        FakeContractRunner([differently_formatted]),
+        run_id="run_vera_hash_formatted",
+    )
+    _run, ordered_call = telemetry(workspace, "run_vera_hash_ordered")
+    _run, formatted_call = telemetry(workspace, "run_vera_hash_formatted")
+    assert ordered_call["output_hash"] == formatted_call["output_hash"]
+
+
+def test_transport_input_preserves_offsets_while_hash_normalizes(
+    workspace: Path,
+) -> None:
+    """PR #113 r1: §11 datetime normalization governs hash bytes only."""
+
+    class TimedContractInput(StrictModel):
+        subject: str
+        recorded_at: datetime
+
+    offsetful = TimedContractInput(
+        subject="Vera Example offset input",
+        recorded_at=datetime(
+            2026, 7, 11, 0, 0, 0, tzinfo=timezone(timedelta(hours=2))
+        ),
+    )
+    expected_input_hash = canonical_model_hash(offsetful)
+
+    def observe_created_call(call: PreparedCall) -> RawResult:
+        # The provider sees the declared typed input with its offset — the
+        # +02:00 day boundary is not collapsed to the previous UTC day.
+        assert b"2026-07-11T00:00:00+02:00" in call.serialized_input
+        assert b"2026-07-10" not in call.serialized_input
+        _run, stored_call = telemetry(workspace, "run_vera_offset")
+        assert stored_call["input_hash"] == expected_input_hash
+        return RawResult(
+            final_message_bytes=VALID,
+            exit_code=0,
+            duration_seconds=0.01,
+            attempts=(AttemptTelemetry(1, 0, 0.01),),
+        )
+
+    invoke_contract(
+        workspace=workspace,
+        runner=FakeContractRunner([observe_created_call]),
+        contract=CONTRACT,
+        input_payload=offsetful,
+        model_id="gpt-test-vera-example",
+        budgets=budgets(),
+        run_id="run_vera_offset",
+        stage="13.test",
+        enrich=enrich,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    # The hash covers the §11 canonical byte form, in which the +02:00
+    # instant is UTC-normalized; equal instants under different offsets
+    # therefore hash identically without touching the transported value.
+    utc_equal = TimedContractInput(
+        subject="Vera Example offset input",
+        recorded_at=datetime(2026, 7, 10, 22, 0, 0, tzinfo=timezone.utc),
+    )
+    assert canonical_model_hash(utc_equal) == expected_input_hash
 
 
 def test_timeout_retries_same_call_and_cancellation_is_terminal(
@@ -568,7 +680,7 @@ def test_interrupt_during_business_commit_records_cancelled_terminals(
             workspace=workspace,
             runner=FakeContractRunner([VALID]),
             contract=CONTRACT,
-            serialized_input=INPUT,
+            input_payload=INPUT_PAYLOAD,
             model_id="gpt-test-vera-example",
             budgets=budgets(),
             run_id="run_vera_commit_interrupt",
@@ -610,7 +722,7 @@ def test_interrupt_during_backoff_records_cancelled_terminals(
             workspace=workspace,
             runner=FakeContractRunner([timed_out, VALID]),
             contract=CONTRACT,
-            serialized_input=INPUT,
+            input_payload=INPUT_PAYLOAD,
             model_id="gpt-test-vera-example",
             budgets=budgets(backoff_lower_seconds=0.01, backoff_upper_seconds=0.01),
             run_id="run_vera_backoff_interrupt",
@@ -805,7 +917,7 @@ def test_multi_call_stage_shares_one_held_writer_connection(
                 workspace=workspace,
                 runner=FakeContractRunner([VALID]),
                 contract=CONTRACT,
-                serialized_input=INPUT,
+                input_payload=INPUT_PAYLOAD,
                 model_id="gpt-test-vera-example",
                 budgets=budgets(planned_call_count=2),
                 run_id="run_vera_held",
@@ -847,7 +959,7 @@ def multi_invoke(
         workspace=workspace,
         runner=fake,
         contract=CONTRACT,
-        serialized_input=INPUT,
+        input_payload=INPUT_PAYLOAD,
         model_id=model_id,
         budgets=budgets(planned_call_count=2),
         run_id=run_id,
