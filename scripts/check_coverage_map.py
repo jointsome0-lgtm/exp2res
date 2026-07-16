@@ -8,7 +8,9 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from typing import Any
+import xml.etree.ElementTree as ET
 
 try:  # Python 3.11+
     import tomllib  # type: ignore[attr-defined]
@@ -47,9 +49,12 @@ def read_coverage_map() -> tuple[dict[str, Any], list[str]]:
     return parsed, []
 
 
-def collect_test_nodes() -> tuple[set[str], list[str]]:
+def collect_test_nodes(*, include_all_markers: bool) -> tuple[set[str], list[str]]:
+    command = [sys.executable, "-m", "pytest", "--collect-only", "-q"]
+    if include_all_markers:
+        command.extend(["-m", ""])
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-m", ""],
+        command,
         cwd=REPOSITORY_ROOT,
         capture_output=True,
         text=True,
@@ -66,7 +71,12 @@ def collect_test_nodes() -> tuple[set[str], list[str]]:
     return nodes, []
 
 
-def validate_entry(key: str, entry: Any, collected: set[str]) -> list[str]:
+def validate_entry(
+    key: str,
+    entry: Any,
+    collected: set[str],
+    ci_collected: set[str],
+) -> list[str]:
     if not isinstance(entry, dict):
         return [f"{key}: entry must be a TOML table"]
 
@@ -100,10 +110,104 @@ def validate_entry(key: str, entry: Any, collected: set[str]) -> list[str]:
     if status == "partial" and (not isinstance(note, str) or not note.strip()):
         errors.append(f"{key}: partial requires note")
 
+    gated = entry.get("environment_gated")
+    if "environment_gated" in entry:
+        valid_gated = isinstance(gated, list) and all(
+            isinstance(node, str) and node for node in gated
+        )
+        if not valid_gated:
+            errors.append(
+                f"{key}: environment_gated must be a list of non-empty pytest node IDs"
+            )
+        elif status != "partial":
+            errors.append(
+                f"{key}: environment_gated is allowed only on partial rows; "
+                "covered rows admit no runtime-skip exception"
+            )
+        elif not valid_nodes or not set(gated) <= set(nodes):
+            errors.append(
+                f"{key}: environment_gated must be a subset of the row's nodes"
+            )
+
     if status in {"covered", "partial"} and valid_nodes:
         for node in nodes:
             if node not in collected:
                 errors.append(f"{key}: test node does not exist: {node}")
+            elif node not in ci_collected:
+                errors.append(
+                    f"{key}: {status} test is not selected by required CI: {node}"
+                )
+    return errors
+
+
+def junit_identity(node: str) -> tuple[str, str]:
+    parts = node.split("::")
+    module = parts[0].removesuffix(".py").replace("/", ".")
+    return ".".join([module, *parts[1:-1]]), parts[-1]
+
+
+def execute_evidence_nodes(nodes: set[str], skip_allowed: set[str]) -> list[str]:
+    if not nodes:
+        return []
+
+    ordered_nodes = sorted(nodes)
+    with tempfile.TemporaryDirectory(prefix="exp2res-coverage-") as temporary:
+        report_path = Path(temporary) / "pytest.xml"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "--tb=no",
+                f"--junitxml={report_path}",
+                *ordered_nodes,
+            ],
+            cwd=REPOSITORY_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        try:
+            root = ET.parse(report_path).getroot()
+        except (OSError, ET.ParseError) as exc:
+            detail_lines = [
+                line.strip()
+                for line in (result.stderr + result.stdout).splitlines()
+                if line.strip()
+            ]
+            detail = detail_lines[-1] if detail_lines else str(exc)
+            return [f"evidence-test execution produced no readable JUnit report: {detail}"]
+
+    outcomes: dict[tuple[str, str], str] = {}
+    for case in root.iter("testcase"):
+        identity = (case.get("classname", ""), case.get("name", ""))
+        outcome = "passed"
+        for state in ("failure", "error", "skipped"):
+            if case.find(state) is not None:
+                outcome = state
+                break
+        outcomes[identity] = outcome
+
+    errors: list[str] = []
+    for node in ordered_nodes:
+        outcome = outcomes.get(junit_identity(node), "not reported")
+        if outcome == "passed":
+            continue
+        if outcome == "skipped" and node in skip_allowed:
+            continue
+        errors.append(
+            f"evidence test did not pass in required CI ({outcome}): {node}"
+        )
+    if result.returncode != 0 and not errors:
+        detail_lines = [
+            line.strip()
+            for line in (result.stderr + result.stdout).splitlines()
+            if line.strip()
+        ]
+        detail = detail_lines[-1] if detail_lines else "no pytest diagnostic"
+        errors.append(
+            f"evidence-test execution failed (exit {result.returncode}): {detail}"
+        )
     return errors
 
 
@@ -133,11 +237,43 @@ def main() -> int:
         for key in sorted(map_keys - headers, key=requirement_sort_key)
     )
 
-    collected, collection_errors = collect_test_nodes()
+    collected, collection_errors = collect_test_nodes(include_all_markers=True)
     errors.extend(collection_errors)
-    if not collection_errors:
+    ci_collected, ci_collection_errors = collect_test_nodes(include_all_markers=False)
+    errors.extend(ci_collection_errors)
+    if not collection_errors and not ci_collection_errors:
         for key in sorted(map_keys, key=requirement_sort_key):
-            errors.extend(validate_entry(key, coverage_map[key], collected))
+            errors.extend(
+                validate_entry(key, coverage_map[key], collected, ci_collected)
+            )
+
+        evidence_nodes = {
+            node
+            for entry in coverage_map.values()
+            if isinstance(entry, dict) and entry.get("status") in {"covered", "partial"}
+            for node in entry.get("nodes", [])
+            if isinstance(node, str)
+        }
+        skip_allowed = {
+            node
+            for entry in coverage_map.values()
+            if isinstance(entry, dict) and entry.get("status") == "partial"
+            for node in entry.get("environment_gated", [])
+            if isinstance(node, str)
+        }
+        covered_only_nodes = {
+            node
+            for entry in coverage_map.values()
+            if isinstance(entry, dict) and entry.get("status") == "covered"
+            for node in entry.get("nodes", [])
+            if isinstance(node, str)
+        }
+        errors.extend(
+            "environment_gated node is also evidence for a covered row, "
+            f"which admits no skip exception: {node}"
+            for node in sorted(skip_allowed & covered_only_nodes)
+        )
+        errors.extend(execute_evidence_nodes(evidence_nodes, skip_allowed - covered_only_nodes))
 
     if errors:
         for error in errors:
@@ -148,7 +284,8 @@ def main() -> int:
     print(
         f"OK: coverage map covers {len(headers)} §21 items "
         f"({counts['covered']} covered, {counts['partial']} partial, "
-        f"{counts['pending']} pending); {len(collected)} test nodes collected"
+        f"{counts['pending']} pending); {len(collected)} test nodes collected, "
+        f"{len(ci_collected)} selected by required CI"
     )
     return 0
 
