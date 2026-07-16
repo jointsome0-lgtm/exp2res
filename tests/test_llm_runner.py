@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import time
 
@@ -27,6 +28,7 @@ from exp2res.llm.contracts import (
     ContractWarning,
     strict_output_schema,
 )
+from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import (
     AttemptTelemetry,
     CallBudgets,
@@ -108,7 +110,7 @@ def invoke(
         runner=fake,
         contract=CONTRACT,
         input_payload=INPUT_PAYLOAD,
-        model_id="gpt-test-vera-example",
+        selection=LLMSelection("codex-cli", "gpt-test-vera-example"),
         budgets=call_budgets or budgets(),
         run_id=run_id,
         stage="13.test",
@@ -161,6 +163,8 @@ def test_fake_runner_valid_round_trip_persists_content_free_exact_hashes(
         result.output.model_dump(mode="python")
     )
     assert call["transport_retries"] == call["schema_retries"] == 0
+    assert re.fullmatch(r"logical_[0-9a-f]{32}", call["provider_request_id"])
+    assert not call["provider_request_id"].startswith("req_")
     metadata = json.loads(run["metadata_json"])
     assert metadata["call_1_exit_code"] == "0"
     assert metadata["call_1_duration_ms"] == "10"
@@ -182,6 +186,44 @@ def test_fake_runner_valid_round_trip_persists_content_free_exact_hashes(
                 every_object_is_closed(child)
 
     every_object_is_closed(schema)
+
+
+def test_loaded_selection_drives_fake_runner_processing_identity(
+    workspace: Path,
+) -> None:
+    """Issue #110: telemetry identity comes from loaded config at the seam."""
+
+    from exp2res.config import load_workspace_config
+
+    config_path = workspace / ".exp2res" / "config.toml"
+    config_path.write_text(
+        '[workspace]\ntimezone = "Etc/UTC"\n\n'
+        '[llm]\nadapter = "codex-cli"\nmodel = "Vera-Example-selected"\n\n'
+        "[privacy]\nignore_paths = []\n",
+        encoding="utf-8",
+    )
+    config = load_workspace_config(workspace).llm
+    fake = FakeContractRunner([VALID])
+    invoke_contract(
+        workspace=workspace,
+        runner=fake,
+        contract=CONTRACT,
+        input_payload=INPUT_PAYLOAD,
+        selection=config.selection,
+        budgets=budgets(),
+        run_id="run_vera_config_identity",
+        stage="13.test",
+        enrich=enrich,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    run, _call = telemetry(workspace, "run_vera_config_identity")
+    assert (run["provider"], run["model"]) == (
+        "codex-cli",
+        "Vera-Example-selected",
+    )
+    assert fake.calls[0].model_id == "Vera-Example-selected"
 
 
 def test_datetime_outputs_validate_through_the_json_boundary(
@@ -213,7 +255,7 @@ def test_datetime_outputs_validate_through_the_json_boundary(
         runner=FakeContractRunner([timed_valid]),
         contract=timed_contract,
         input_payload=INPUT_PAYLOAD,
-        model_id="gpt-test-vera-example",
+        selection=LLMSelection("codex-cli", "gpt-test-vera-example"),
         budgets=budgets(),
         run_id="run_vera_timed",
         stage="13.test",
@@ -254,7 +296,7 @@ def test_persist_and_terminal_telemetry_are_one_atomic_unit(
             runner=FakeContractRunner([VALID]),
             contract=CONTRACT,
             input_payload=INPUT_PAYLOAD,
-            model_id="gpt-test-vera-example",
+            selection=LLMSelection("codex-cli", "gpt-test-vera-example"),
             budgets=budgets(),
             run_id="run_vera_atomic",
             stage="13.test",
@@ -292,7 +334,7 @@ def test_persist_and_terminal_telemetry_are_one_atomic_unit(
         runner=FakeContractRunner([VALID]),
         contract=CONTRACT,
         input_payload=INPUT_PAYLOAD,
-        model_id="gpt-test-vera-example",
+        selection=LLMSelection("codex-cli", "gpt-test-vera-example"),
         budgets=budgets(),
         run_id="run_vera_atomic_ok",
         stage="13.test",
@@ -515,7 +557,7 @@ def test_enrich_reference_invalidity_stays_in_the_validation_retry_class(
         runner=fake,
         contract=CONTRACT,
         input_payload=INPUT_PAYLOAD,
-        model_id="gpt-test-vera-example",
+        selection=LLMSelection("codex-cli", "gpt-test-vera-example"),
         budgets=budgets(),
         run_id="run_vera_enrich_reference",
         stage="13.test",
@@ -607,7 +649,7 @@ def test_transport_input_preserves_offsets_while_hash_normalizes(
         runner=FakeContractRunner([observe_created_call]),
         contract=CONTRACT,
         input_payload=offsetful,
-        model_id="gpt-test-vera-example",
+        selection=LLMSelection("codex-cli", "gpt-test-vera-example"),
         budgets=budgets(),
         run_id="run_vera_offset",
         stage="13.test",
@@ -681,7 +723,7 @@ def test_interrupt_during_business_commit_records_cancelled_terminals(
             runner=FakeContractRunner([VALID]),
             contract=CONTRACT,
             input_payload=INPUT_PAYLOAD,
-            model_id="gpt-test-vera-example",
+            selection=LLMSelection("codex-cli", "gpt-test-vera-example"),
             budgets=budgets(),
             run_id="run_vera_commit_interrupt",
             stage="13.test",
@@ -723,7 +765,7 @@ def test_interrupt_during_backoff_records_cancelled_terminals(
             runner=FakeContractRunner([timed_out, VALID]),
             contract=CONTRACT,
             input_payload=INPUT_PAYLOAD,
-            model_id="gpt-test-vera-example",
+            selection=LLMSelection("codex-cli", "gpt-test-vera-example"),
             budgets=budgets(backoff_lower_seconds=0.01, backoff_upper_seconds=0.01),
             run_id="run_vera_backoff_interrupt",
             stage="13.test",
@@ -918,7 +960,7 @@ def test_multi_call_stage_shares_one_held_writer_connection(
                 runner=FakeContractRunner([VALID]),
                 contract=CONTRACT,
                 input_payload=INPUT_PAYLOAD,
-                model_id="gpt-test-vera-example",
+                selection=LLMSelection("codex-cli", "gpt-test-vera-example"),
                 budgets=budgets(planned_call_count=2),
                 run_id="run_vera_held",
                 stage="13.test",
@@ -960,7 +1002,7 @@ def multi_invoke(
         runner=fake,
         contract=CONTRACT,
         input_payload=INPUT_PAYLOAD,
-        model_id=model_id,
+        selection=LLMSelection("codex-cli", model_id),
         budgets=budgets(planned_call_count=2),
         run_id=run_id,
         stage="13.test",

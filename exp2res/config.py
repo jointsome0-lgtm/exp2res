@@ -1,4 +1,4 @@
-"""Narrow, secret-safe Phase 0 configuration loading."""
+"""Narrow, secret-safe workspace configuration loading."""
 
 from __future__ import annotations
 
@@ -12,7 +12,14 @@ import stat
 from typing import Any
 
 from .domain.models import validate_structural
-from .errors import ConfigurationError, InvalidInputError
+from .errors import (
+    ConfigurationError,
+    InvalidInputError,
+    LLMInvocationError,
+    LLMSelectionMissingError,
+    UnknownLLMConfigKeyError,
+)
+from .llm.registry import LLMSelection, resolve_selection
 from .llm.preflight import (
     CODEX_TOKEN_PATTERNS,
     looks_like_literal_credential,
@@ -28,7 +35,7 @@ except ImportError:  # exercised by the supported Python 3.10 test environment
 
 @dataclass(frozen=True)
 class LLMConfig:
-    runner: str
+    adapter: str | None
     model: str | None
     codex_home_env: str
     transport_attempt_cap: int
@@ -42,6 +49,16 @@ class LLMConfig:
     per_invocation_cost_ceiling: Decimal | None
     per_run_cost_ceiling: Decimal | None
 
+    @property
+    def selection(self) -> LLMSelection:
+        # §29.2: the adapter and model must be selected explicitly in [llm]
+        # before the first outward call — the fresh-init template value is
+        # owner-editable configuration, never a call-time fallback, so an
+        # absent selection fails the LLM use closed here.
+        if self.adapter is None or self.model is None:
+            raise LLMSelectionMissingError()
+        return LLMSelection(adapter=self.adapter, model=self.model)
+
 
 @dataclass(frozen=True)
 class WorkspaceConfig:
@@ -51,7 +68,10 @@ class WorkspaceConfig:
 
 
 DEFAULT_LLM_CONFIG = LLMConfig(
-    runner="codex-cli",
+    # No built-in selection default: §14.1's fresh init writes the §15.13
+    # default into config.toml, and a workspace that later drops the keys
+    # has no selection rather than a silent revert (§29.2).
+    adapter=None,
     model=None,
     codex_home_env="CODEX_HOME",
     transport_attempt_cap=2,
@@ -192,22 +212,46 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
             raise ConfigurationError()
         return result
 
-    runner = llm_section.get("runner", DEFAULT_LLM_CONFIG.runner)
-    model = llm_section.get("model", "")
+    allowed_llm_keys = {
+        "adapter",
+        "model",
+        "codex_home_env",
+        "transport_attempt_cap",
+        "backoff_lower_seconds",
+        "backoff_upper_seconds",
+        "invocation_deadline_seconds",
+        "max_input_bytes",
+        "input_token_budget",
+        "output_token_budget",
+        "per_run_call_ceiling",
+        "per_invocation_cost_ceiling",
+        "per_run_cost_ceiling",
+    }
+    if not set(llm_section).issubset(allowed_llm_keys):
+        raise UnknownLLMConfigKeyError()
+
+    adapter = llm_section.get("adapter")
+    model = llm_section.get("model")
     codex_home_env = llm_section.get(
         "codex_home_env", DEFAULT_LLM_CONFIG.codex_home_env
     )
-    if not isinstance(runner, str) or runner != "codex-cli":
+    if not isinstance(codex_home_env, str):
         raise ConfigurationError()
-    if not isinstance(model, str) or not isinstance(codex_home_env, str):
-        raise ConfigurationError()
-    if model:
+    # §29.2: no built-in selection default and no silent revert — a config
+    # with neither key simply carries no selection, and dropping one key of
+    # a selection is a configuration error rather than a partial fallback.
+    if (adapter is None) != (model is None):
+        raise LLMSelectionMissingError()
+    selected_adapter: str | None = None
+    selected_model: str | None = None
+    if adapter is not None:
+        selection = resolve_selection(adapter, model)
         try:
-            validate_structural(model)
+            validate_structural(selection.model)
         except ValueError as error:
             raise ConfigurationError() from error
-    else:
-        model = None
+        selected_adapter = selection.adapter
+        selected_model = selection.model
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", codex_home_env) is None:
         raise ConfigurationError()
 
@@ -224,8 +268,8 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
     if upper < lower:
         raise ConfigurationError()
     llm = LLMConfig(
-        runner=runner,
-        model=model,
+        adapter=selected_adapter,
+        model=selected_model,
         codex_home_env=codex_home_env,
         transport_attempt_cap=integer(
             "transport_attempt_cap", DEFAULT_LLM_CONFIG.transport_attempt_cap
@@ -270,13 +314,13 @@ def resolve_codex_home(config: LLMConfig) -> Path:
 
     value = os.environ.get(config.codex_home_env)
     if not value:
-        raise ConfigurationError()
+        raise LLMInvocationError("transport_auth_failed")
     try:
         path = Path(value).expanduser().resolve(strict=True)
     except OSError as error:
-        raise ConfigurationError() from error
+        raise LLMInvocationError("transport_auth_failed") from error
     if not path.is_dir():
-        raise ConfigurationError()
+        raise LLMInvocationError("transport_auth_failed")
     return path
 
 

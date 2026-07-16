@@ -332,7 +332,14 @@ issues = ["#69", "PR #101", "PR #107"]
 note = "The shipped Codex runner canary proves structural read confinement for that adapter; ambient and parent-environment isolation, final-message-only completion paths, full preflight declarations, and parity across every shipped agent-backed adapter remain"
 
 ["24.54"]
-status = "pending"
+status = "partial"
 phases = ["0", "1", "2", "3", "4"]
 evals = []
 issues = ["#110"]
+nodes = [
+  "tests/test_llm_preflight.py::test_fresh_config_exposes_adapter_model_home_reference_and_all_budgets",
+  "tests/test_llm_preflight.py::test_known_but_unregistered_adapter_fails_with_distinct_diagnostic[claude-agent-sdk]",
+  "tests/test_llm_preflight.py::test_known_but_unregistered_adapter_fails_with_distinct_diagnostic[openai-compat]",
+  "tests/test_llm_runner.py::test_loaded_selection_drives_fake_runner_processing_identity",
+]
+note = "Config-only Codex selection, injected processing identity, and fail-closed known-but-unregistered adapter choices are proven; the Agent SDK and OpenAI-compatible transports remain unimplemented"

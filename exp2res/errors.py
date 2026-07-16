@@ -104,6 +104,35 @@ class ConfigurationError(IntegrityFailureError):
     public_message = "Workspace configuration is invalid."
 
 
+class UnknownLLMConfigKeyError(ConfigurationError):
+    diagnostic_class = "llm_config_key_unknown"
+    public_message = "The LLM configuration contains an unknown key."
+
+
+class UnknownLLMAdapterError(ConfigurationError):
+    diagnostic_class = "llm_adapter_unknown"
+    public_message = "The selected LLM adapter identifier is unknown."
+
+
+class LLMAdapterNotRegisteredError(ConfigurationError):
+    diagnostic_class = "llm_adapter_not_registered"
+    public_message = "The selected LLM adapter is not registered in this build."
+
+
+class LLMModelInvalidError(ConfigurationError):
+    diagnostic_class = "llm_model_invalid"
+    public_message = "The selected LLM model identifier is invalid."
+
+
+class LLMSelectionMissingError(ConfigurationError):
+    """§29.2: explicit [llm] selection is never replaced by a fallback."""
+
+    diagnostic_class = "llm_selection_missing"
+    public_message = (
+        "Select [llm].adapter and [llm].model explicitly before LLM use."
+    )
+
+
 class LLMInvocationError(Exp2ResError):
     """Privacy-safe §15 failure carrying only a stable machine code."""
 
