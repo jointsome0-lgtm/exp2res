@@ -13,7 +13,7 @@
 
 Section numbers are stable: issues and the Decision Log cite them as `§13` / `§13.2`. Never renumber. New sections take the next free number or a sub-number; update this index when sections change. Retired numbers are never reused: §12.1–§12.3, §12.5, §12.6, §12.9, §12.12 (2026-07-04, derivable tables replaced by §12's derivation rules from §11); §12.7, §12.8, §12.10, §12.11 (2026-07-04, issue #2 — Contradiction, GapQuestion, JobDescription, ResumeBranch got §11 models, their DDL is now derived); §13.2, §13.9 (2026-07-11, issue #19 — evidence recording folded into §13.1 and relevance matching into §13.10).
 
-Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file name starts with the § number); the Decision Log lives in `DECISION-LOG.md`. Point reads: open the § file. Full pass: read `spec/` files in index order.
+Layout: this file is the map. Each top-level § lives in `spec/NN-slug.md` (file name starts with the § number); a § may own an authored canon artifact beside its file (for example `spec/21-evals-cases.toml`) — normative spec text linked from the § file and named in its map line; the Decision Log lives in `DECISION-LOG.md`. Point reads: open the § file plus every canon artifact it links. Full pass: read `spec/` files in index order, including authored canon artifacts.
 
 - §0 Historical Change Note — recentering: mirror first, resume is a secondary export
 - §1 Executive Summary — evidence → facts → signals → assessment → single-pass verifier gates → optional verified-bullet-pack export, with a full resume document deferred post-mirror
