@@ -127,7 +127,7 @@ def junit_identity(node: str) -> tuple[str, str]:
     return ".".join([module, *parts[1:-1]]), parts[-1]
 
 
-def execute_covered_nodes(nodes: set[str]) -> list[str]:
+def execute_evidence_nodes(nodes: set[str]) -> list[str]:
     if not nodes:
         return []
 
@@ -157,7 +157,7 @@ def execute_covered_nodes(nodes: set[str]) -> list[str]:
                 if line.strip()
             ]
             detail = detail_lines[-1] if detail_lines else str(exc)
-            return [f"covered-test execution produced no readable JUnit report: {detail}"]
+            return [f"evidence-test execution produced no readable JUnit report: {detail}"]
 
     outcomes: dict[tuple[str, str], str] = {}
     for case in root.iter("testcase"):
@@ -174,7 +174,7 @@ def execute_covered_nodes(nodes: set[str]) -> list[str]:
         outcome = outcomes.get(junit_identity(node), "not reported")
         if outcome != "passed":
             errors.append(
-                f"covered test did not pass in required CI ({outcome}): {node}"
+                f"evidence test did not pass in required CI ({outcome}): {node}"
             )
     if result.returncode != 0 and not errors:
         detail_lines = [
@@ -184,7 +184,7 @@ def execute_covered_nodes(nodes: set[str]) -> list[str]:
         ]
         detail = detail_lines[-1] if detail_lines else "no pytest diagnostic"
         errors.append(
-            f"covered-test execution failed (exit {result.returncode}): {detail}"
+            f"evidence-test execution failed (exit {result.returncode}): {detail}"
         )
     return errors
 
@@ -225,14 +225,14 @@ def main() -> int:
                 validate_entry(key, coverage_map[key], collected, ci_collected)
             )
 
-        covered_nodes = {
+        evidence_nodes = {
             node
             for entry in coverage_map.values()
-            if isinstance(entry, dict) and entry.get("status") == "covered"
+            if isinstance(entry, dict) and entry.get("status") in {"covered", "partial"}
             for node in entry.get("nodes", [])
             if isinstance(node, str)
         }
-        errors.extend(execute_covered_nodes(covered_nodes))
+        errors.extend(execute_evidence_nodes(evidence_nodes))
 
     if errors:
         for error in errors:
