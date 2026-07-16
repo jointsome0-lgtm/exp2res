@@ -1701,7 +1701,7 @@ And the contract workspace is deleted on every completion path and no session st
 And a simulated hard crash leaves at most one inert owner-only-mode prefix-recognizable directory in the system temporary location, which the next-writer preamble does not reconcile
 And a runtime completion whose final-message file is missing or unreadable fails as transport_provider_error under §15.10 with no prose fallback
 
-Given an installed runtime that does not declare a required §15.12 control — schema-constrained final output, final-message file, ephemerality, ambient-configuration disable, or working-directory selection — or declares a runner-protocol version the build does not support, or a host whose sandbox mechanism is absent or whose canary fails
+Given an installed runtime that does not declare a required §15.12 control — schema-constrained final output, final-message file, ephemerality, ambient-configuration disable, working-directory selection, or tool-disable for a declared agent affordance — or declares a runner-protocol version the build does not support, or a host whose sandbox mechanism is absent or whose canary fails
 When the two-half preflight runs
 Then the invocation fails with capability_mismatch before any provider transport
 And the diagnostic names the failing half without payload content
