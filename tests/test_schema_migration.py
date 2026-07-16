@@ -47,12 +47,27 @@ def v1_workspace(tmp_path: Path) -> tuple[Path, str, str]:
     return root, bundle.raw_log.id, raw_text
 
 
+def _shape_rows(
+    connection: sqlite3.Connection, table: str
+) -> list[tuple[object, ...]]:
+    return [
+        tuple(row[index] for index in range(1, 6))
+        for row in connection.execute(f"PRAGMA table_info({table})")
+    ]
+
+
 def table_shape(database: Path, table: str) -> list[tuple[object, ...]]:
     with sqlite3.connect(database) as connection:
-        return [
-            tuple(row[index] for index in range(1, 6))
-            for row in connection.execute(f"PRAGMA table_info({table})")
-        ]
+        return _shape_rows(connection, table)
+
+
+def normative_shape(ddl: str, table: str) -> list[tuple[object, ...]]:
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute(ddl)
+        return _shape_rows(connection, table)
+    finally:
+        connection.close()
 
 
 def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
@@ -262,6 +277,76 @@ def test_cli_rejects_wrong_shaped_preexisting_telemetry_table(
     assert backup.is_file()
     assert envelope["result"]["schema"]["stored_version"] == 1
     assert table_shape(database, table) == stale_shape
+
+
+@pytest.mark.parametrize(
+    ("table", "stale_ddl", "normative_ddl"),
+    [
+        (
+            "processing_runs",
+            """
+            CREATE TABLE processing_runs (
+                id TEXT PRIMARY KEY,
+                stage TEXT NOT NULL,
+                parent_run_id TEXT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                status TEXT NOT NULL,
+                provider TEXT,
+                model TEXT,
+                prompt_policy_hash TEXT,
+                failure_code TEXT,
+                input_ids_json TEXT NOT NULL DEFAULT '[]',
+                output_ids_json TEXT NOT NULL DEFAULT '[]',
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """,
+            PROCESSING_RUNS_SQL,
+        ),
+        (
+            "llm_calls",
+            """
+            CREATE TABLE llm_calls (
+                run_id TEXT NOT NULL,
+                call_index INTEGER NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                status TEXT NOT NULL,
+                input_hash TEXT,
+                output_hash TEXT,
+                provider_request_id TEXT,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                reported_cost TEXT,
+                transport_retries INTEGER,
+                schema_retries INTEGER,
+                failure_code TEXT,
+
+                PRIMARY KEY (run_id, call_index)
+            )
+            """,
+            LLM_CALLS_SQL,
+        ),
+    ],
+)
+def test_constraint_free_same_column_telemetry_table_fails_migration(
+    tmp_path: Path, table: str, stale_ddl: str, normative_ddl: str
+) -> None:
+    """§12.13/§12.15: missing REFERENCES/CHECK constraints fail validation."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute(stale_ddl)
+    # The stale table is indistinguishable from the normative shape by
+    # PRAGMA table_info alone; only its constraint clauses differ.
+    assert table_shape(database, table) == normative_shape(normative_ddl, table)
+
+    with pytest.raises(MigrationFailedError):
+        migrate_workspace(workspace, clock=lambda: FIXED_NOW.replace(day=16))
+
+    assert inspect_workspace(workspace).stored_version == 1
+    assert table_shape(database, table) == normative_shape(normative_ddl, table)
 
 
 @pytest.mark.parametrize(

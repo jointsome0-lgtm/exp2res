@@ -432,27 +432,31 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
     if not status.compatible:
         raise sqlite3.DatabaseError("migration target is incompatible")
 
-    def column_shape(
-        database: sqlite3.Connection, table: str
-    ) -> list[tuple[object, ...]]:
-        return [
-            tuple(row[index] for index in range(1, 6))
-            for row in database.execute(f"PRAGMA table_info({table})")
-        ]
+    # SQLite stores each table's complete CREATE statement (constraints
+    # included, `IF NOT EXISTS` stripped), so comparing it against a scratch
+    # table created from the unchanged normative DDL rejects any pre-existing
+    # shape PRAGMA table_info cannot distinguish — a missing REFERENCES or
+    # CHECK clause, not only a column mismatch.
+    def stored_sql(database: sqlite3.Connection, table: str) -> object:
+        row = database.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        return None if row is None else row[0]
 
     scratch = sqlite3.connect(":memory:")
     try:
         scratch.execute(PROCESSING_RUNS_SQL)
         scratch.execute(LLM_CALLS_SQL)
-        expected_shapes = {
-            table: column_shape(scratch, table)
+        expected_sql = {
+            table: stored_sql(scratch, table)
             for table in ("processing_runs", "llm_calls")
         }
     finally:
         scratch.close()
 
-    for table, expected_shape in expected_shapes.items():
-        if column_shape(connection, table) != expected_shape:
+    for table, expected in expected_sql.items():
+        if expected is None or stored_sql(connection, table) != expected:
             raise sqlite3.DatabaseError(
                 "migration target telemetry table shape mismatch"
             )
