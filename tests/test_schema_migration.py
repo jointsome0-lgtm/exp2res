@@ -248,6 +248,64 @@ def test_migration_interrupt_rolls_back_and_propagates_with_backup_retained(
     assert interrupt_info.value.managed_backup_path == str(backups[0])
 
 
+def test_post_commit_interrupt_reports_backup_and_leaves_durable_v2(
+    tmp_path: Path,
+) -> None:
+    """§14.14 rule 4: a post-commit interrupt still reports both effects."""
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def interrupt_after_commit(point: str) -> None:
+        if point == "after_commit":
+            raise KeyboardInterrupt
+
+    with pytest.raises(MigrationInterrupted) as interrupt_info:
+        migrate_workspace(
+            workspace,
+            clock=lambda: FIXED_NOW.replace(day=16),
+            failure_injector=interrupt_after_commit,
+        )
+
+    backups = list((workspace / ".exp2res" / "backup").iterdir())
+    assert len(backups) == 1
+    assert interrupt_info.value.managed_backup_path == str(backups[0])
+    after = inspect_workspace(workspace)
+    assert after.stored_version == 2
+    assert after.compatible is True
+
+
+def test_cli_post_commit_interrupt_envelope_reports_durable_v2_and_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: the cancelled envelope shows the committed migration."""
+
+    import exp2res.cli as cli_module
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def interrupt_after_commit(point: str) -> None:
+        if point == "after_commit":
+            raise KeyboardInterrupt
+
+    def interrupted_migration(target: Path):
+        return migrate_workspace(
+            target,
+            clock=lambda: FIXED_NOW.replace(day=16),
+            failure_injector=interrupt_after_commit,
+        )
+
+    monkeypatch.setattr(cli_module, "migrate_workspace", interrupted_migration)
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 9
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "cancelled"
+    assert envelope["result"]["schema"]["stored_version"] == 2
+    assert envelope["result"]["schema"]["compatible"] is True
+    backup = Path(envelope["result"]["schema"]["managed_backup_path"])
+    assert backup.is_file()
+
+
 def test_cli_reports_retained_backup_in_the_cancelled_migration_envelope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -488,63 +488,74 @@ def migrate_workspace(
         raise SchemaCompatibilityError()
 
     backup_path: Path | None = None
-    with writer_lock(workspace, timeout_ms=timeout_ms):
-        connection = connect_database(
-            workspace / ".exp2res" / "exp2res.sqlite",
-            readonly=False,
-            busy_timeout_ms=timeout_ms,
-        )
-        try:
-            locked_status = inspect_schema(connection)
-            if (
-                locked_status.stored_version != initial.stored_version
-                or not migration_available(locked_status.stored_version)
-            ):
-                raise SchemaCompatibilityError()
-            now = _migration_time(clock)
-            backup_path = _create_verified_backup(
-                connection,
-                workspace=workspace,
-                from_version=locked_status.stored_version,
-                now=now,
+    try:
+        with writer_lock(workspace, timeout_ms=timeout_ms):
+            connection = connect_database(
+                workspace / ".exp2res" / "exp2res.sqlite",
+                readonly=False,
+                busy_timeout_ms=timeout_ms,
             )
             try:
-                connection.execute("BEGIN IMMEDIATE")
-                apply_migration_1_to_2(connection)
-                if failure_injector is not None:
-                    failure_injector("after_ddl")
-                connection.execute(
-                    """
-                    INSERT INTO schema_meta(version, applied_at, app_version)
-                    VALUES (?, ?, ?)
-                    """,
-                    (CURRENT_SCHEMA_VERSION, now.isoformat(), __version__),
+                locked_status = inspect_schema(connection)
+                if (
+                    locked_status.stored_version != initial.stored_version
+                    or not migration_available(locked_status.stored_version)
+                ):
+                    raise SchemaCompatibilityError()
+                now = _migration_time(clock)
+                backup_path = _create_verified_backup(
+                    connection,
+                    workspace=workspace,
+                    from_version=locked_status.stored_version,
+                    now=now,
                 )
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    apply_migration_1_to_2(connection)
+                    if failure_injector is not None:
+                        failure_injector("after_ddl")
+                    connection.execute(
+                        """
+                        INSERT INTO schema_meta(version, applied_at, app_version)
+                        VALUES (?, ?, ?)
+                        """,
+                        (CURRENT_SCHEMA_VERSION, now.isoformat(), __version__),
+                    )
+                    if failure_injector is not None:
+                        failure_injector("before_validation")
+                    _validate_migration_target(connection)
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
                 if failure_injector is not None:
-                    failure_injector("before_validation")
-                _validate_migration_target(connection)
-                connection.commit()
-            except BaseException:
-                connection.rollback()
+                    failure_injector("after_commit")
+            except KeyboardInterrupt:
                 raise
-        except KeyboardInterrupt:
-            raise MigrationInterrupted(
-                managed_backup_path=(
-                    None if backup_path is None else str(backup_path)
-                )
-            ) from None
-        except (SchemaCompatibilityError, WorkspaceBusyError):
-            raise
-        except BaseException as error:
-            raise MigrationFailedError(
-                managed_backup_path=(
-                    None if backup_path is None else str(backup_path)
-                )
-            ) from error
-        finally:
-            connection.close()
+            except (SchemaCompatibilityError, WorkspaceBusyError):
+                raise
+            except BaseException as error:
+                raise MigrationFailedError(
+                    managed_backup_path=(
+                        None if backup_path is None else str(backup_path)
+                    )
+                ) from error
+            finally:
+                connection.close()
 
-    result = inspect_workspace(workspace)
+        result = inspect_workspace(workspace)
+    except KeyboardInterrupt:
+        # An interrupt anywhere in the migrate flow — transaction, backup,
+        # connection close, lock release, or the final status inspection —
+        # keeps §14.14 rule 4's code-9 precedence while still reporting the
+        # committed effects: the retained verified backup and, after commit,
+        # the durable v2 schema surface through the cancelled envelope.
+        raise MigrationInterrupted(
+            managed_backup_path=(
+                None if backup_path is None else str(backup_path)
+            )
+        ) from None
+
     if not result.compatible:
         raise MigrationFailedError(managed_backup_path=str(backup_path))
     return SchemaStatus(
