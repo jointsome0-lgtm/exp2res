@@ -20,7 +20,7 @@ import uuid
 
 from pydantic import BaseModel
 
-from exp2res.domain.canonical import canonical_model_bytes_and_hash
+from exp2res.domain.canonical import canonical_model_hash
 from exp2res.errors import LLMCancelledError, LLMInvocationError
 from exp2res.storage.telemetry import (
     create_llm_call,
@@ -384,7 +384,11 @@ def invoke_contract(
             )
 
     writer = connection
-    serialized_input, input_hash = canonical_model_bytes_and_hash(input_payload)
+    # §11's datetime normalization governs hash bytes only: the provider
+    # sees the declared typed input with its offsets preserved, while the
+    # §12.15 hashes stay canonical for exact-recomputation identity.
+    serialized_input = input_payload.model_dump_json().encode("utf-8")
+    input_hash = canonical_model_hash(input_payload)
     now = clock or (lambda: datetime.now(timezone.utc))
     random_jitter = jitter or random.SystemRandom().uniform
     registered_patterns = tuple(token_patterns)
@@ -585,7 +589,7 @@ def invoke_contract(
                 raise LLMInvocationError("deterministic_enrichment_failed") from None
 
             output = result.final_message_bytes
-            _, output_hash = canonical_model_bytes_and_hash(validated)
+            output_hash = canonical_model_hash(validated)
             committed_output_ids = list(output_ids)
 
             def complete(connection: object) -> None:

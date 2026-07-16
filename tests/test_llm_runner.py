@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
 import json
@@ -17,7 +17,7 @@ from pydantic import Field
 
 from exp2res.domain.canonical import (
     canonical_hash,
-    canonical_model_bytes_and_hash,
+    canonical_model_hash,
 )
 from exp2res.domain.models import StrictModel
 from exp2res.errors import LLMCancelledError, LLMInvocationError
@@ -538,12 +538,11 @@ def test_canonical_hashes_ignore_response_formatting_and_exist_before_transport(
 ) -> None:
     """Issue #105 item 3: hashes identify typed payloads, not boundary bytes."""
 
-    canonical_input, expected_input_hash = canonical_model_bytes_and_hash(
-        INPUT_PAYLOAD
-    )
+    transport_input = INPUT_PAYLOAD.model_dump_json().encode("utf-8")
+    expected_input_hash = canonical_model_hash(INPUT_PAYLOAD)
 
     def observe_created_call(call: PreparedCall) -> RawResult:
-        assert call.serialized_input == canonical_input
+        assert call.serialized_input == transport_input
         _run, stored_call = telemetry(workspace, "run_vera_hash_ordered")
         assert stored_call["status"] == "running"
         assert stored_call["input_hash"] == expected_input_hash
@@ -570,6 +569,61 @@ def test_canonical_hashes_ignore_response_formatting_and_exist_before_transport(
     _run, ordered_call = telemetry(workspace, "run_vera_hash_ordered")
     _run, formatted_call = telemetry(workspace, "run_vera_hash_formatted")
     assert ordered_call["output_hash"] == formatted_call["output_hash"]
+
+
+def test_transport_input_preserves_offsets_while_hash_normalizes(
+    workspace: Path,
+) -> None:
+    """PR #113 r1: §11 datetime normalization governs hash bytes only."""
+
+    class TimedContractInput(StrictModel):
+        subject: str
+        recorded_at: datetime
+
+    offsetful = TimedContractInput(
+        subject="Vera Example offset input",
+        recorded_at=datetime(
+            2026, 7, 11, 0, 0, 0, tzinfo=timezone(timedelta(hours=2))
+        ),
+    )
+    expected_input_hash = canonical_model_hash(offsetful)
+
+    def observe_created_call(call: PreparedCall) -> RawResult:
+        # The provider sees the declared typed input with its offset — the
+        # +02:00 day boundary is not collapsed to the previous UTC day.
+        assert b"2026-07-11T00:00:00+02:00" in call.serialized_input
+        assert b"2026-07-10" not in call.serialized_input
+        _run, stored_call = telemetry(workspace, "run_vera_offset")
+        assert stored_call["input_hash"] == expected_input_hash
+        return RawResult(
+            final_message_bytes=VALID,
+            exit_code=0,
+            duration_seconds=0.01,
+            attempts=(AttemptTelemetry(1, 0, 0.01),),
+        )
+
+    invoke_contract(
+        workspace=workspace,
+        runner=FakeContractRunner([observe_created_call]),
+        contract=CONTRACT,
+        input_payload=offsetful,
+        model_id="gpt-test-vera-example",
+        budgets=budgets(),
+        run_id="run_vera_offset",
+        stage="13.test",
+        enrich=enrich,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    # The hash covers the §11 canonical byte form, in which the +02:00
+    # instant is UTC-normalized; equal instants under different offsets
+    # therefore hash identically without touching the transported value.
+    utc_equal = TimedContractInput(
+        subject="Vera Example offset input",
+        recorded_at=datetime(2026, 7, 10, 22, 0, 0, tzinfo=timezone.utc),
+    )
+    assert canonical_model_hash(utc_equal) == expected_input_hash
 
 
 def test_timeout_retries_same_call_and_cancellation_is_terminal(

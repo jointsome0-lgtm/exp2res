@@ -82,8 +82,12 @@ def canonical_hash(value: object) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
-def canonical_model_bytes_and_hash(value: BaseModel) -> tuple[bytes, str]:
-    """Canonically serialize and hash one validated Pydantic model."""
+def canonical_model_hash(value: BaseModel) -> str:
+    """Hash one validated Pydantic model through the §11 canonical byte form.
 
-    serialized = canonical_json_bytes(value.model_dump(mode="python"))
-    return serialized, hashlib.sha256(serialized).hexdigest()
+    The §11 datetime normalization governs hash bytes only: callers that
+    transmit or store the model keep their own offset-preserving
+    serialization and never reuse these bytes.
+    """
+
+    return canonical_hash(value.model_dump(mode="python"))
