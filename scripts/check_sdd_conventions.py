@@ -35,7 +35,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.0.1"
 
 DEFAULT_TEMPLATE = Path(__file__).resolve().parent.parent / "conventions" / "SDD-CONVENTIONS.md"
 TEMPLATE_HEADER_RE = re.compile(r"^<!-- sdd-conventions-template v(\d+\.\d+\.\d+) -->$")
@@ -52,9 +52,13 @@ def body_digest(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def read_text(path: Path, role: str) -> str:
+def read_text(path: Path, role: str, *, preserve_newlines: bool = False) -> str:
+    # preserve_newlines=True skips universal-newline translation: sync must
+    # splice a CRLF/mixed-endings target byte-for-byte, or content outside
+    # the markers gets rewritten on the way through read → write.
     try:
-        return path.read_text(encoding="utf-8")
+        with path.open(encoding="utf-8", newline="" if preserve_newlines else None) as handle:
+            return handle.read()
     except FileNotFoundError:
         raise ConventionsError(f"{path}: {role} does not exist")
     except (OSError, UnicodeError) as exc:
@@ -142,7 +146,7 @@ def cmd_sync(target: Path, template_path: Path | None) -> int:
         print(f"Created {target} with conventions block v{version}.")
         return 0
 
-    text = read_text(target, "target")
+    text = read_text(target, "target", preserve_newlines=True)
     lines = text.splitlines()
     has_any_marker = any(
         line.startswith(BEGIN_PREFIX) or line.strip() == END_MARKER for line in lines
@@ -152,8 +156,11 @@ def cmd_sync(target: Path, template_path: Path | None) -> int:
         updated = prefix + "\n" + block if prefix.strip() else block
     else:
         begin, end, _, _ = find_block(lines, str(target))
-        updated_lines = lines[:begin] + block.splitlines() + lines[end + 1 :]
-        updated = "\n".join(updated_lines) + "\n"
+        # splice into the marker span only: splitlines(keepends=True) yields
+        # the same indices as splitlines() while keeping every line ending
+        # outside the block exactly as it was on disk
+        kept = text.splitlines(keepends=True)
+        updated = "".join(kept[:begin]) + block + "".join(kept[end + 1 :])
 
     if updated == text:
         print(f"{target} is already up to date (conventions block v{version}).")
