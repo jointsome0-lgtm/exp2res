@@ -543,6 +543,45 @@ def test_timeout_retries_same_call_and_cancellation_is_terminal(
     assert cancelled_call["output_hash"] is None
 
 
+def test_interrupt_during_business_commit_records_cancelled_terminals(
+    workspace: Path,
+) -> None:
+    """§15.10 rule 8: Ctrl-C in the commit phase rolls back and cancels rows."""
+
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE test_commit_rows (id TEXT PRIMARY KEY)")
+
+    def persist_then_interrupt(_validated, connection):
+        connection.execute("INSERT INTO test_commit_rows(id) VALUES ('row_vera')")
+        raise KeyboardInterrupt()
+
+    with pytest.raises(LLMCancelledError):
+        invoke_contract(
+            workspace=workspace,
+            runner=FakeContractRunner([VALID]),
+            contract=CONTRACT,
+            serialized_input=INPUT,
+            model_id="gpt-test-vera-example",
+            budgets=budgets(),
+            run_id="run_vera_commit_interrupt",
+            stage="13.test",
+            cli_version="0.144.4-test",
+            enrich=enrich,
+            persist_validated=persist_then_interrupt,
+            clock=lambda: FIXED_NOW,
+            sleeper=lambda _seconds: None,
+            jitter=lambda lower, _upper: lower,
+        )
+    run, call = telemetry(workspace, "run_vera_commit_interrupt")
+    assert run["status"] == call["status"] == "failed"
+    assert run["failure_code"] == call["failure_code"] == "cancelled"
+    assert run["finished_at"] and call["finished_at"]
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute("SELECT COUNT(*) FROM test_commit_rows").fetchone()
+    assert rows[0] == 0
+
+
 def test_interrupt_during_backoff_records_cancelled_terminals(
     workspace: Path,
 ) -> None:

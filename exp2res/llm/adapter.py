@@ -471,162 +471,123 @@ def invoke_contract(
 
         _transaction(writer, finish)
 
-    try:
-        if capability_check is not None:
-            capability_check()
-        preflight_call(
-            prepared,
-            token_patterns=registered_patterns,
-            resolved_credentials=credential_values,
-        )
-    except LLMInvocationError as error:
-        fail(error.failure_code)
-        if error.failure_code == "cancelled":
-            raise LLMCancelledError() from None
-        raise
+    def run_rounds() -> InvocationResult:
+        nonlocal total_duration, last_exit_code, prepared
 
-    deadline = monotonic() + budgets.invocation_deadline_seconds
-    validation_round = 0
-    while validation_round < 2:
-        physical_attempt = 0
-        result: RawResult | None = None
-        while physical_attempt < budgets.transport_attempt_cap:
-            remaining = deadline - monotonic()
-            if remaining <= 0:
-                fail("transport_timeout")
-                raise LLMInvocationError("transport_timeout")
-            attempt_call = replace(prepared, timeout_seconds=remaining)
-            try:
-                preflight_call(
-                    attempt_call,
-                    token_patterns=registered_patterns,
-                    resolved_credentials=credential_values,
-                )
-                result = runner.run_contract(attempt_call)
-            except KeyboardInterrupt:
-                fail("cancelled")
+        try:
+            if capability_check is not None:
+                capability_check()
+            preflight_call(
+                prepared,
+                token_patterns=registered_patterns,
+                resolved_credentials=credential_values,
+            )
+        except LLMInvocationError as error:
+            fail(error.failure_code)
+            if error.failure_code == "cancelled":
                 raise LLMCancelledError() from None
-            except LLMInvocationError as error:
-                fail(error.failure_code)
-                raise
-            except OSError:
-                result = RawResult(
-                    None, None, 0.0, (), b"connection failure", False, False
-                )
-            physical_attempt += 1
-            total_duration += result.duration_seconds
-            last_exit_code = result.exit_code
-            code, retryable = _failure_from_result(result)
-            if code is None:
-                break
-            if code == "cancelled":
+            raise
+
+        deadline = monotonic() + budgets.invocation_deadline_seconds
+        validation_round = 0
+        while validation_round < 2:
+            physical_attempt = 0
+            result: RawResult | None = None
+            while physical_attempt < budgets.transport_attempt_cap:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    fail("transport_timeout")
+                    raise LLMInvocationError("transport_timeout")
+                attempt_call = replace(prepared, timeout_seconds=remaining)
+                try:
+                    preflight_call(
+                        attempt_call,
+                        token_patterns=registered_patterns,
+                        resolved_credentials=credential_values,
+                    )
+                    result = runner.run_contract(attempt_call)
+                except LLMInvocationError as error:
+                    fail(error.failure_code)
+                    raise
+                except OSError:
+                    result = RawResult(
+                        None, None, 0.0, (), b"connection failure", False, False
+                    )
+                physical_attempt += 1
+                total_duration += result.duration_seconds
+                last_exit_code = result.exit_code
+                code, retryable = _failure_from_result(result)
+                if code is None:
+                    break
+                if code == "cancelled":
+                    fail(code)
+                    raise LLMCancelledError() from None
+                if retryable and physical_attempt < budgets.transport_attempt_cap:
+                    _transaction(
+                        writer,
+                        lambda connection: increment_call_retry(
+                            connection,  # type: ignore[arg-type]
+                            run_id=run_id,
+                            call_index=call_index,
+                            retry_kind="transport",
+                        ),
+                    )
+                    delay = random_jitter(
+                        budgets.backoff_lower_seconds, budgets.backoff_upper_seconds
+                    )
+                    if monotonic() + delay >= deadline:
+                        fail("transport_timeout")
+                        raise LLMInvocationError("transport_timeout")
+                    sleeper(delay)
+                    continue
                 fail(code)
-                raise LLMCancelledError() from None
-            if retryable and physical_attempt < budgets.transport_attempt_cap:
+                raise LLMInvocationError(code)
+
+            if result is None or result.final_message_bytes is None:
+                fail("transport_provider_error")
+                raise LLMInvocationError("transport_provider_error")
+            try:
+                validated = validate_output(
+                    contract,
+                    result.final_message_bytes,
+                    enrich=enrich,  # type: ignore[arg-type]
+                )
+            except ContractValidationError as error:
+                if validation_round == 1:
+                    fail("response_validation_failed")
+                    raise LLMInvocationError("response_validation_failed") from None
                 _transaction(
                     writer,
                     lambda connection: increment_call_retry(
                         connection,  # type: ignore[arg-type]
                         run_id=run_id,
                         call_index=call_index,
-                        retry_kind="transport",
+                        retry_kind="schema",
                     ),
                 )
-                delay = random_jitter(
-                    budgets.backoff_lower_seconds, budgets.backoff_upper_seconds
+                validation_round = 1
+                prepared = replace(
+                    prepared,
+                    validation_errors=error.diagnostics,
+                    validation_round=1,
                 )
-                if monotonic() + delay >= deadline:
-                    fail("transport_timeout")
-                    raise LLMInvocationError("transport_timeout")
-                try:
-                    sleeper(delay)
-                except KeyboardInterrupt:
-                    # §15.10 rule 8: an owner interrupt during backoff is a
-                    # handled cancellation and records its terminal rows.
-                    fail("cancelled")
-                    raise LLMCancelledError() from None
                 continue
-            fail(code)
-            raise LLMInvocationError(code)
+            except ServiceEnrichmentError:
+                fail("deterministic_enrichment_failed")
+                raise LLMInvocationError("deterministic_enrichment_failed") from None
 
-        if result is None or result.final_message_bytes is None:
-            fail("transport_provider_error")
-            raise LLMInvocationError("transport_provider_error")
-        try:
-            validated = validate_output(
-                contract,
-                result.final_message_bytes,
-                enrich=enrich,  # type: ignore[arg-type]
-            )
-        except ContractValidationError as error:
-            if validation_round == 1:
-                fail("response_validation_failed")
-                raise LLMInvocationError("response_validation_failed") from None
-            _transaction(
-                writer,
-                lambda connection: increment_call_retry(
-                    connection,  # type: ignore[arg-type]
-                    run_id=run_id,
-                    call_index=call_index,
-                    retry_kind="schema",
-                ),
-            )
-            validation_round = 1
-            prepared = replace(
-                prepared,
-                validation_errors=error.diagnostics,
-                validation_round=1,
-            )
-            continue
-        except ServiceEnrichmentError:
-            fail("deterministic_enrichment_failed")
-            raise LLMInvocationError("deterministic_enrichment_failed") from None
+            output = result.final_message_bytes
+            committed_output_ids = list(output_ids)
 
-        output = result.final_message_bytes
-        committed_output_ids = list(output_ids)
-
-        def complete(connection: object) -> None:
-            # §15.10 rule 7: validated business persistence and this call's
-            # terminal telemetry commit or roll back as one unit, so a later
-            # failed row can never leave an earlier row durable.
-            if persist_validated is not None:
-                committed_output_ids[:] = persist_validated(
-                    validated,
-                    connection,  # type: ignore[arg-type]
-                )
-            finish_llm_call(
-                connection,  # type: ignore[arg-type]
-                run_id=run_id,
-                call_index=call_index,
-                finished_at=now(),
-                status="completed",
-                output_bytes=output,
-                prompt_tokens=estimate_tokens(serialized_input),
-                completion_tokens=estimate_tokens(output),
-            )
-            if finish_run:
-                finish_processing_run(
-                    connection,  # type: ignore[arg-type]
-                    run_id=run_id,
-                    finished_at=now(),
-                    status="completed",
-                    output_ids=committed_output_ids,
-                    metadata=terminal_metadata(),
-                )
-            else:
-                # §15.10 rule 7: a multi-call stage finishes its one run only
-                # after every planned invocation validates; this call records
-                # its telemetry and leaves the run running.
-                merge_run_metadata(
-                    connection,  # type: ignore[arg-type]
-                    run_id=run_id,
-                    metadata=terminal_metadata(),
-                )
-
-        try:
-            _transaction(writer, complete)
-        except Exception:
-            def fail_business(connection: object) -> None:
+            def complete(connection: object) -> None:
+                # §15.10 rule 7: validated business persistence and this call's
+                # terminal telemetry commit or roll back as one unit, so a later
+                # failed row can never leave an earlier row durable.
+                if persist_validated is not None:
+                    committed_output_ids[:] = persist_validated(
+                        validated,
+                        connection,  # type: ignore[arg-type]
+                    )
                 finish_llm_call(
                     connection,  # type: ignore[arg-type]
                     run_id=run_id,
@@ -637,16 +598,63 @@ def invoke_contract(
                     prompt_tokens=estimate_tokens(serialized_input),
                     completion_tokens=estimate_tokens(output),
                 )
-                finish_processing_run(
-                    connection,  # type: ignore[arg-type]
-                    run_id=run_id,
-                    finished_at=now(),
-                    status="failed",
-                    failure_code="business_commit_failed",
-                    metadata=terminal_metadata(),
-                )
+                if finish_run:
+                    finish_processing_run(
+                        connection,  # type: ignore[arg-type]
+                        run_id=run_id,
+                        finished_at=now(),
+                        status="completed",
+                        output_ids=committed_output_ids,
+                        metadata=terminal_metadata(),
+                    )
+                else:
+                    # §15.10 rule 7: a multi-call stage finishes its one run only
+                    # after every planned invocation validates; this call records
+                    # its telemetry and leaves the run running.
+                    merge_run_metadata(
+                        connection,  # type: ignore[arg-type]
+                        run_id=run_id,
+                        metadata=terminal_metadata(),
+                    )
 
-            _transaction(writer, fail_business)
-            raise LLMInvocationError("business_commit_failed") from None
-        return InvocationResult(validated, output, run_id, call_index)
-    raise AssertionError("unreachable validation loop")
+            try:
+                _transaction(writer, complete)
+            except Exception:
+                def fail_business(connection: object) -> None:
+                    finish_llm_call(
+                        connection,  # type: ignore[arg-type]
+                        run_id=run_id,
+                        call_index=call_index,
+                        finished_at=now(),
+                        status="completed",
+                        output_bytes=output,
+                        prompt_tokens=estimate_tokens(serialized_input),
+                        completion_tokens=estimate_tokens(output),
+                    )
+                    finish_processing_run(
+                        connection,  # type: ignore[arg-type]
+                        run_id=run_id,
+                        finished_at=now(),
+                        status="failed",
+                        failure_code="business_commit_failed",
+                        metadata=terminal_metadata(),
+                    )
+
+                _transaction(writer, fail_business)
+                raise LLMInvocationError("business_commit_failed") from None
+            return InvocationResult(validated, output, run_id, call_index)
+        raise AssertionError("unreachable validation loop")
+
+    try:
+        return run_rounds()
+    except KeyboardInterrupt:
+        # §15.10 rule 8: an owner interrupt anywhere in the foreground
+        # invocation — transport, backoff, validation, or the business
+        # commit phase — records cancelled terminal rows before exit.
+        try:
+            fail("cancelled")
+        except Exception:
+            # Best effort under a second interrupt or already-terminal
+            # rows; next-writer reconciliation remains the backstop.
+            pass
+        raise LLMCancelledError() from None
