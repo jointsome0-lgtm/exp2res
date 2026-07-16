@@ -45,7 +45,7 @@ from exp2res.services.capture import (
     capture_retro,
     validate_project_label,
 )
-from exp2res.services.extraction import run_extract
+from exp2res.services.extraction import run_extract, validate_extract_selection
 from exp2res.services.facts import list_facts, show_fact
 from exp2res.services.logs import delete_log, list_logs, show_log
 from exp2res.services.time_input import parse_occurred, workspace_zone
@@ -213,6 +213,10 @@ def _run_command(
         outcome = Outcome(
             exit_code=error.exit_code,
             diagnostic_class=error.diagnostic_class,
+            # §14.14 rule 5: a failed §15 invocation still reports the
+            # committed processing runs it created (LLMInvocationError
+            # carries them; other error classes leave the default empty).
+            run_ids=list(getattr(error, "run_ids", ()) or ()),
         )
         typer.echo(error.public_message, err=True)
     except Exception:
@@ -443,6 +447,9 @@ def extract_command(
     log_id: str | None = typer.Option(None, "--log-id"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
+        # §14.14 rule 3, in `logs delete` order: the selector must resolve
+        # before consent is requested and before any adapter construction.
+        validate_extract_selection(workspace, log_id=log_id)
         # §14.14 rule 3: extraction is cost-bearing — explicit --yes when
         # non-interactive, a TTY confirmation otherwise.
         if not controls.yes:

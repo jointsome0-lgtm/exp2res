@@ -203,6 +203,10 @@ def test_vera_e1_cli_replay_preserves_provenance_and_one_current_generation(
     e1_clock = parse_clock(e1["clock"])
 
     def deterministic_stage3(selected_workspace: Path, **kwargs):
+        # run_extract supplies its own run-tracking id_factory; the replay
+        # pins ids and the clock instead, so drop the conflicting keys.
+        kwargs.pop("id_factory", None)
+        kwargs.pop("clock", None)
         return real_run_fact_extraction(
             selected_workspace,
             **kwargs,

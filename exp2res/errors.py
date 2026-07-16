@@ -170,6 +170,9 @@ class LLMInvocationError(Exp2ResError):
         self.diagnostic_class = failure_code
         if failure_code in self._VALIDATION_FAILURE_CODES:
             self.exit_code = 7
+        # §14.14 rule 5: the command boundary reports the committed
+        # processing runs a failed or cancelled invocation leaves behind.
+        self.run_ids: tuple[str, ...] = ()
 
 
 class LLMCancelledError(LLMInvocationError):

@@ -162,17 +162,25 @@ def test_extract_success_reports_standard_fields_and_contract_warnings(
 def test_extract_unknown_selector_has_no_run_row(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§14.6: an unknown stored-record selector is class 2 before telemetry."""
+    """§14.6/§14.14 rule 3: selector failure precedes consent and preflight."""
 
-    fake = FakeContractRunner([])
-    install_fake_execution(monkeypatch, fake)
+    def refuse_build(_workspace: Path):
+        raise AssertionError("adapter preflight ran for an invalid selector")
+
+    monkeypatch.setattr(extraction_service, "build_llm_execution", refuse_build)
     result, envelope = invoke_json(
         workspace, ["--yes", "extract", "--log-id", "log_vera_missing"]
     )
     assert result.exit_code == 2
     assert envelope["diagnostic_class"] == "selector_not_found"
     assert envelope["run_ids"] == []
-    assert fake.calls == []
+    # In `logs delete` order, the selector resolves before consent: a
+    # non-interactive call without --yes still reports the selector class.
+    unconsented, unconsented_envelope = invoke_json(
+        workspace, ["extract", "--log-id", "log_vera_missing"]
+    )
+    assert unconsented.exit_code == 2
+    assert unconsented_envelope["diagnostic_class"] == "selector_not_found"
     with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
         assert (
             connection.execute("SELECT COUNT(*) FROM processing_runs").fetchone()[0]
@@ -194,13 +202,15 @@ def test_extract_invalid_after_retry_reports_failure_and_durable_telemetry(
     assert result.exit_code == 7
     assert envelope["status"] == "failed"
     assert envelope["diagnostic_class"] == "response_validation_failed"
-    assert envelope["run_ids"] == []
     with read_database(workspace) as connection:
         assert list_experience_facts(connection) == ()
         run = connection.execute(
-            "SELECT status, failure_code FROM processing_runs"
+            "SELECT id, status, failure_code FROM processing_runs"
         ).fetchone()
-    assert tuple(run) == ("failed", "response_validation_failed")
+    assert tuple(run[1:]) == ("failed", "response_validation_failed")
+    # §14.14 rule 5: the failed run's durable telemetry stays addressable —
+    # the envelope carries the committed processing-run ID for `runs show`.
+    assert envelope["run_ids"] == [run[0]]
 
 
 def test_facts_list_show_round_trip_complete_values_via_read_seam(
@@ -247,6 +257,37 @@ def test_facts_list_show_round_trip_complete_values_via_read_seam(
     assert missing_envelope["diagnostic_class"] == "selector_not_found"
 
 
+def test_facts_show_rejects_superseded_fact_ids(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 7: current-facts inspection never browses history."""
+
+    evidence_id = seed_lineage(workspace, "history")
+    install_fake_execution(
+        monkeypatch,
+        FakeContractRunner(
+            [fact_response([evidence_id]), fact_response([evidence_id])]
+        ),
+    )
+    first, first_envelope = invoke_json(workspace, ["--yes", "extract"])
+    assert first.exit_code == 0
+    superseded_id = first_envelope["affected_ids"]["created"][0]["ids"][0]
+    second, second_envelope = invoke_json(workspace, ["--yes", "extract"])
+    assert second.exit_code == 0
+    current_id = second_envelope["affected_ids"]["created"][0]["ids"][0]
+
+    shown, _ = invoke_json(workspace, ["facts", "show", "--fact-id", current_id])
+    assert shown.exit_code == 0
+    stale, stale_envelope = invoke_json(
+        workspace, ["facts", "show", "--fact-id", superseded_id]
+    )
+    assert stale.exit_code == 2
+    assert stale_envelope["diagnostic_class"] == "selector_not_found"
+    listed, list_envelope = invoke_json(workspace, ["facts", "list"])
+    assert listed.exit_code == 0
+    assert [fact["id"] for fact in list_envelope["result"]["facts"]] == [current_id]
+
+
 def test_extract_interrupt_is_cancelled_without_partial_facts(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -263,10 +304,12 @@ def test_extract_interrupt_is_cancelled_without_partial_facts(
     assert result.exit_code == 9
     assert envelope["status"] == "cancelled"
     assert envelope["diagnostic_class"] == "cancelled"
-    assert envelope["run_ids"] == []
     with read_database(workspace) as connection:
         assert list_experience_facts(connection) == ()
         run = connection.execute(
-            "SELECT status, failure_code FROM processing_runs"
+            "SELECT id, status, failure_code FROM processing_runs"
         ).fetchone()
-    assert tuple(run) == ("failed", "cancelled")
+    assert tuple(run[1:]) == ("failed", "cancelled")
+    # §14.14 rules 5/6: the committed cancellation telemetry is reported in
+    # the cancelled envelope rather than dropped.
+    assert envelope["run_ids"] == [run[0]]

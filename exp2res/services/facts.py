@@ -25,6 +25,9 @@ def show_fact(
 ) -> ExperienceFact:
     with read_database(workspace, timeout_ms=timeout_ms) as connection:
         fact = get_experience_fact(connection, fact_id)
-        if fact is None:
+        # §14.14 rule 7: the §14.6 surface inspects current facts only —
+        # historical-generation browsing beyond `runs show` is deferred, so
+        # a superseded row is not addressable here.
+        if fact is None or fact.superseded_at is not None:
             raise SelectorNotFoundError()
         return fact
