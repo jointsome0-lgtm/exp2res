@@ -55,6 +55,23 @@ def test_cli_daily_demo_lists_only_raw_text_free_projection(workspace: Path) -> 
     assert "external_ref" not in listed.stdout
 
 
+def test_file_capture_rejects_blank_project_with_stable_input_diagnostic(
+    workspace: Path,
+) -> None:
+    """§11 policy/§14.2: blank-canonicalizing --project is exit class 2."""
+
+    source = VERA_CORPUS / "logs" / "daily-2026-06-09.md"
+    result, envelope = invoke_json(
+        workspace,
+        ["log", "today", "--file", str(source), "--project", "   "],
+    )
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] == "blank_project_label"
+    listed, listed_envelope = invoke_json(workspace, ["logs", "list"])
+    assert listed.exit_code == 0
+    assert listed_envelope["result"]["logs"] == []
+
+
 def test_noninteractive_capture_and_delete_never_prompt_or_block(workspace: Path) -> None:
     """§21.41; §24.44: missing prompts/consent fail with exit class 2."""
     daily, daily_envelope = invoke_json(workspace, ["--no-input", "log", "today"])

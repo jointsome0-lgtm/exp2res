@@ -28,6 +28,7 @@ from exp2res.storage.workspace import (
 class DeleteOutcome:
     selected_log: RawLog
     evidence_item_ids: tuple[str, ...]
+    purged_fact_ids: tuple[str, ...]
     residual_paths: tuple[str, ...]
 
 
@@ -104,7 +105,17 @@ def delete_log(
             evidence_ids = tuple(
                 item.id for item in get_evidence_for_log(connection, log_id)
             )
+            purged_fact_ids = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM experience_facts ORDER BY CAST(id AS BLOB)"
+                )
+            )
             residual_paths.extend(_remove_managed_backups(workspace))
+            connection.execute("DELETE FROM experience_facts")
+            connection.execute(
+                "UPDATE llm_calls SET input_hash = NULL, output_hash = NULL"
+            )
             connection.execute("DELETE FROM raw_logs WHERE id = ?", (log_id,))
             connection.commit()
         except sqlite3.OperationalError as error:
@@ -127,5 +138,6 @@ def delete_log(
     return DeleteOutcome(
         selected_log=selected,
         evidence_item_ids=evidence_ids,
+        purged_fact_ids=purged_fact_ids,
         residual_paths=tuple(sorted(set(residual_paths))),
     )

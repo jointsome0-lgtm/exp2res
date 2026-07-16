@@ -16,7 +16,7 @@ status = "partial"
 phases = ["0", "1", "2", "3", "4"]
 evals = ["21.11", "21.14"]
 issues = ["#81", "PR #95"]
-note = "Phase 0 proves automation cannot mutate raw rows and owner deletion is not FK-blocked; deletion-time rebuild and all later derived/export cleanup remain"
+note = "Current tests prove automation cannot mutate raw rows, owner deletion is not FK-blocked, every current and historical ExperienceFact/fact_sources row is globally purged, and every retained LLM call loses both content hashes; the deletion-time Stage 3-5 rebuild and all later derived/export cleanup remain"
 
 ["24.4"]
 status = "pending"
@@ -102,7 +102,7 @@ status = "partial"
 phases = ["0", "1", "2", "3", "4"]
 evals = ["21.14"]
 issues = ["#81", "PR #95"]
-note = "Phase 0 proves committed owner deletion, raw/evidence purge, secure path handling, and residual-path reporting; derived-history purge, Stage 1-5 rebuild, view reporting, and managed exports remain"
+note = "Current tests prove committed owner deletion, raw/evidence purge, global current-and-historical ExperienceFact/fact_sources purge, global LLM-call hash redaction, secure path handling, and residual-path reporting; the Stage 3-5 rebuild, later derived tables, view reporting, and managed exports remain"
 
 ["24.18"]
 status = "partial"
@@ -231,7 +231,7 @@ status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.35"]
 issues = ["#81", "PR #95"]
-note = "Phase 0 proves retained RawLog and EvidenceItem collision retry/failure without duplication; every later entity table, immutable non-reuse, wrong-table references, and imported identities remain"
+note = "Current tests prove retained RawLog and EvidenceItem collision retry/failure plus ExperienceFact primary-key collision failure without duplication; immutable non-reuse after purge, every later entity table, wrong-table polymorphic references, and imported identities remain"
 
 ["24.39"]
 status = "partial"
@@ -259,7 +259,7 @@ status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.39"]
 issues = ["#81", "PR #95", "#69", "PR #101"]
-note = "Current capture and runner boundaries prove strict temporal construction, bounded acquisition, closed output fields, JSON datetime parsing, and service-owned-field rejection; all remaining §11, §15, §19, and hydration shapes and identical limit enforcement remain"
+note = "Current tests prove strict temporal construction, bounded acquisition, closed runner output fields, JSON datetime parsing, service-owned-field rejection, ExperienceFact strict timestamps/list/project/metadata shapes, derived-source hydration, and raw/fact project-key drift rejection; all remaining §11, §15, §19, and hydration shapes and identical limit enforcement remain"
 
 ["24.43"]
 status = "pending"

@@ -1,4 +1,4 @@
-"""Strict §11 models implemented by the Phase 0 slice."""
+"""Strict §11 models implemented through the current Stage 3 schema slice."""
 
 from __future__ import annotations
 
@@ -6,13 +6,18 @@ from datetime import datetime
 import json
 from pathlib import PurePosixPath
 import re
+import unicodedata
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .enums import (
+    ActivityContext,
+    ClaimKind,
+    Confidence,
     EntryType,
     EvidenceStrength,
+    OwnershipLevel,
     SourceType,
     TemporalConfidence,
     TemporalPrecision,
@@ -23,6 +28,12 @@ STRING_LIMIT = 16_384
 METADATA_LIMIT = 4_096
 METADATA_KEY = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def canonical_project_key(label: str) -> str:
+    """Return §12 rule 14's one canonical project comparison identity."""
+
+    return unicodedata.normalize("NFC", label).strip().casefold()
 
 
 def _utf8_size(value: str) -> int:
@@ -160,6 +171,13 @@ class RawLog(StrictModel):
     def structural_fields(cls, value: Optional[str]) -> Optional[str]:
         return None if value is None else validate_structural(value)
 
+    @field_validator("project")
+    @classmethod
+    def project_is_not_canonical_blank(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not canonical_project_key(value):
+            raise ValueError("project label canonicalizes to blank")
+        return value
+
     @field_validator("recorded_at")
     @classmethod
     def recorded_at_is_aware(cls, value: datetime) -> datetime:
@@ -210,6 +228,88 @@ class EvidenceItem(StrictModel):
     @classmethod
     def path_policy(cls, value: Optional[str]) -> Optional[str]:
         return None if value is None else validate_posix_path(value)
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_metadata(value)
+
+
+class ExperienceFact(StrictModel):
+    id: str
+    created_at: datetime
+    superseded_at: Optional[datetime] = None
+    claim: str
+    claim_kind: ClaimKind = "observed_fact"
+
+    project: Optional[str] = None
+    role: Optional[str] = None
+    company: Optional[str] = None
+    context: ActivityContext
+    ownership_level: OwnershipLevel
+
+    action: Optional[str] = None
+    object: Optional[str] = None
+    outcome: Optional[str] = None
+
+    skills: list[str] = Field(default_factory=list, max_length=1_000)
+    technologies: list[str] = Field(default_factory=list, max_length=1_000)
+    themes: list[str] = Field(default_factory=list, max_length=1_000)
+
+    occurred: OccurredAt
+    source_log_ids: list[str] = Field(min_length=1, max_length=1_000)
+    evidence_item_ids: list[str] = Field(min_length=1, max_length=1_000)
+
+    confidence: Confidence
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("id")
+    @classmethod
+    def structural_id(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("created_at", "superseded_at")
+    @classmethod
+    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("datetime must carry an offset")
+        return value
+
+    @field_validator("claim")
+    @classmethod
+    def claim_policy(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True)
+
+    @field_validator("project")
+    @classmethod
+    def project_policy(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        validate_structural(value)
+        if not canonical_project_key(value):
+            raise ValueError("project label canonicalizes to blank")
+        return value
+
+    @field_validator("role", "company", "action", "object", "outcome")
+    @classmethod
+    def optional_text_policy(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else validate_free_text(value, nonempty=True)
+
+    @field_validator("skills", "technologies", "themes")
+    @classmethod
+    def text_list_policy(cls, value: list[str]) -> list[str]:
+        for member in value:
+            validate_free_text(member, nonempty=True)
+        return value
+
+    @field_validator("source_log_ids", "evidence_item_ids")
+    @classmethod
+    def typed_id_list_policy(cls, value: list[str]) -> list[str]:
+        for member in value:
+            validate_structural(member)
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate typed ID")
+        return value
 
     @field_validator("metadata")
     @classmethod

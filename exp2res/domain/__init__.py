@@ -1,5 +1,5 @@
-"""Canonical Phase 0 domain models."""
+"""Canonical implemented domain models."""
 
-from .models import EvidenceItem, OccurredAt, RawLog
+from .models import EvidenceItem, ExperienceFact, OccurredAt, RawLog
 
-__all__ = ["EvidenceItem", "OccurredAt", "RawLog"]
+__all__ = ["EvidenceItem", "ExperienceFact", "OccurredAt", "RawLog"]

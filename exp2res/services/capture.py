@@ -10,8 +10,13 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from exp2res.config import load_workspace_config, require_timezone
-from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
-from exp2res.errors import IdCollisionError, InvalidInputError
+from exp2res.domain.models import (
+    EvidenceItem,
+    OccurredAt,
+    RawLog,
+    canonical_project_key,
+)
+from exp2res.errors import BlankProjectLabelError, IdCollisionError, InvalidInputError
 from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.time_input import today_occurred, workspace_zone
@@ -35,6 +40,13 @@ def _invalid_capture(error: BaseException) -> InvalidInputError:
     return failure
 
 
+def validate_project_label(project: str | None) -> None:
+    """Reject §12 rule 14's invalid non-null blank identity at acquisition."""
+
+    if project is not None and not canonical_project_key(project):
+        raise BlankProjectLabelError()
+
+
 def capture_manual(
     workspace: Path,
     *,
@@ -49,6 +61,7 @@ def capture_manual(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
+    validate_project_label(project)
     recorded_at = (clock or (lambda: datetime.now(timezone.utc)))()
     last_collision: IdCollisionError | None = None
     for _attempt in range(3):
@@ -106,6 +119,7 @@ def capture_daily(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
+    validate_project_label(project)
     # Fail closed before reading configuration or owner content (§12.14).
     require_compatible(workspace)
     now = (clock or (lambda: datetime.now(timezone.utc)))()
@@ -136,6 +150,7 @@ def capture_daily_file(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
+    validate_project_label(project)
     # Fail closed before acquiring the private source file (§12.14, §22);
     # the local-time contract gates source acquisition too (§14.14).
     require_compatible(workspace)
@@ -165,6 +180,7 @@ def capture_retro(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
+    validate_project_label(project)
     require_compatible(workspace)
     return capture_manual(
         workspace,
