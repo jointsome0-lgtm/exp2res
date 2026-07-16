@@ -47,6 +47,8 @@ from .sandbox import discover_bwrap, probe_isolation
 
 
 RUNNER_ID = "codex-cli"
+RUNNER_PROTOCOL_VERSION = 1
+SANDBOX_MECHANISM = "bwrap"
 REQUIRED_FLAGS = frozenset(
     {
         "--output-schema",
@@ -400,6 +402,8 @@ def invoke_contract(
         "cli_version": cli_version,
         "contract_id": contract.contract_id,
         "runner_id": RUNNER_ID,
+        "runner_protocol_version": RUNNER_PROTOCOL_VERSION,
+        "sandbox_mechanism": SANDBOX_MECHANISM,
         "schema_hash": hashlib.sha256(schema).hexdigest(),
     }
 
