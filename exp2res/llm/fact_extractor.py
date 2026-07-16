@@ -56,28 +56,31 @@ class FactExtractorInput(StrictModel):
 
 
 class FactCandidate(StrictModel):
-    """Only the model-authored fields of one §15.2 fact."""
+    """Only the model-authored fields of one §15.2 fact.
+
+    Every field is required on the wire: an explicit ``null``/``[]`` is an
+    authored conservative decision, while an omitted key is a missing model
+    judgment and must enter the §15.1 retry/fail-closed path — a default
+    would silently conflate the two.
+    """
 
     claim: str
-    # Required on the wire: a default would let an omitted model judgment
-    # validate and silently persist as the stronger observed_fact instead of
-    # entering the §15.1 retry/fail-closed path.
     claim_kind: Literal["observed_fact", "inferred_fact"]
 
-    role: Optional[str] = None
-    company: Optional[str] = None
+    role: Optional[str]
+    company: Optional[str]
     context: ActivityContext
     ownership_level: OwnershipLevel
 
-    action: Optional[str] = None
-    object: Optional[str] = None
-    outcome: Optional[str] = None
+    action: Optional[str]
+    object: Optional[str]
+    outcome: Optional[str]
 
-    skills: list[str] = Field(default_factory=list, max_length=1_000)
-    technologies: list[str] = Field(default_factory=list, max_length=1_000)
-    themes: list[str] = Field(default_factory=list, max_length=1_000)
+    skills: list[str] = Field(max_length=1_000)
+    technologies: list[str] = Field(max_length=1_000)
+    themes: list[str] = Field(max_length=1_000)
 
-    occurred: Optional[OccurredAt] = None
+    occurred: Optional[OccurredAt]
     evidence_item_ids: list[str] = Field(min_length=1, max_length=1_000)
     confidence: Confidence
 

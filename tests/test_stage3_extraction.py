@@ -446,7 +446,13 @@ def test_displacement_projection_excludes_prose_and_manual_item(
 @pytest.mark.invariant
 @pytest.mark.parametrize(
     "invalid_kind",
-    ["descriptor_only", "out_of_context", "service_owned", "omitted_claim_kind"],
+    [
+        "descriptor_only",
+        "out_of_context",
+        "service_owned",
+        "omitted_claim_kind",
+        "omitted_occurred",
+    ],
 )
 def test_reference_and_service_authorship_invalidity_retry_once(
     workspace: Path, invalid_kind: str
@@ -463,6 +469,12 @@ def test_reference_and_service_authorship_invalidity_retry_once(
         # validate into the stronger observed_fact.
         invalid = fact_response(
             [correction_items[0].id], drop_fact_fields=("claim_kind",)
+        )
+    elif invalid_kind == "omitted_occurred":
+        # Only an explicit null is the authored inherit-governing decision;
+        # a missing key is an absent temporal judgment.
+        invalid = fact_response(
+            [correction_items[0].id], drop_fact_fields=("occurred",)
         )
     else:
         invalid = fact_response(
