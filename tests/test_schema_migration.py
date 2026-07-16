@@ -248,6 +248,28 @@ def test_migration_interrupt_rolls_back_and_propagates_with_backup_retained(
     assert interrupt_info.value.managed_backup_path == str(backups[0])
 
 
+def test_cli_pre_backup_interrupt_keeps_the_generic_null_result_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: no committed effect means the generic cancel shape."""
+
+    import exp2res.cli as cli_module
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def interrupted_before_backup(_target: Path):
+        raise MigrationInterrupted(managed_backup_path=None)
+
+    monkeypatch.setattr(cli_module, "migrate_workspace", interrupted_before_backup)
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 9
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "cancelled"
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert envelope["result"] is None
+
+
 def test_post_commit_interrupt_reports_backup_and_leaves_durable_v2(
     tmp_path: Path,
 ) -> None:

@@ -302,7 +302,11 @@ def db_migrate(context: typer.Context) -> None:
             except MigrationInterrupted as interrupt:
                 # §14.14 rule 4: cancellation keeps code-9 precedence while
                 # the committed effect — the retained verified backup —
-                # remains reported in the cancelled envelope.
+                # remains reported in the cancelled envelope. Before the
+                # backup exists there is no committed effect, so the generic
+                # interrupt envelope (null result) applies.
+                if interrupt.managed_backup_path is None:
+                    return Outcome(exit_code=9, diagnostic_class="cancelled")
                 after = inspect_workspace(workspace)
                 return Outcome(
                     exit_code=9,
