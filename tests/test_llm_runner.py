@@ -168,6 +168,129 @@ def test_fake_runner_valid_round_trip_persists_content_free_exact_hashes(
     every_object_is_closed(schema)
 
 
+def test_datetime_outputs_validate_through_the_json_boundary(
+    workspace: Path,
+) -> None:
+    """§11: ISO offset datetimes in model JSON validate under strict types."""
+
+    from datetime import timedelta
+
+    class TimedContractOutput(StrictModel):
+        service_id: str
+        value: str
+        occurred_start: datetime
+        warnings: list[ContractWarning] = Field(default_factory=list)
+
+    timed_contract = ContractDefinition(
+        contract_id="test-only-vera-timed",
+        output_model=TimedContractOutput,
+        fixed_instructions="Return the timed test-only fields.",
+        schema_revision="test-v1",
+        service_owned_fields=frozenset({"service_id"}),
+    )
+    timed_valid = (
+        b'{"value":"Vera Example timed","occurred_start":'
+        b'"2026-07-01T09:30:00+02:00","warnings":[]}'
+    )
+    result = invoke_contract(
+        workspace=workspace,
+        runner=FakeContractRunner([timed_valid]),
+        contract=timed_contract,
+        serialized_input=INPUT,
+        model_id="gpt-test-vera-example",
+        budgets=budgets(),
+        run_id="run_vera_timed",
+        stage="13.test",
+        cli_version="0.144.4-test",
+        enrich=enrich,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    assert result.output.occurred_start == datetime(
+        2026, 7, 1, 9, 30, tzinfo=timezone(timedelta(hours=2))
+    )
+    _run, call = telemetry(workspace, "run_vera_timed")
+    assert call["status"] == "completed"
+    assert call["schema_retries"] == 0
+
+
+def test_persist_and_terminal_telemetry_are_one_atomic_unit(
+    workspace: Path,
+) -> None:
+    """§15.10 rule 7: a later failed business row rolls back earlier rows."""
+
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE test_business_rows (id TEXT PRIMARY KEY)"
+        )
+
+    def persist_two_rows_then_fail(_validated, connection):
+        connection.execute(
+            "INSERT INTO test_business_rows(id) VALUES ('row_vera_1')"
+        )
+        raise RuntimeError("Vera Example injected persistence failure")
+
+    with pytest.raises(LLMInvocationError) as caught:
+        invoke_contract(
+            workspace=workspace,
+            runner=FakeContractRunner([VALID]),
+            contract=CONTRACT,
+            serialized_input=INPUT,
+            model_id="gpt-test-vera-example",
+            budgets=budgets(),
+            run_id="run_vera_atomic",
+            stage="13.test",
+            cli_version="0.144.4-test",
+            enrich=enrich,
+            persist_validated=persist_two_rows_then_fail,
+            clock=lambda: FIXED_NOW,
+            sleeper=lambda _seconds: None,
+            jitter=lambda lower, _upper: lower,
+        )
+    assert caught.value.failure_code == "business_commit_failed"
+    run, call = telemetry(workspace, "run_vera_atomic")
+    assert run["status"] == "failed"
+    assert run["failure_code"] == "business_commit_failed"
+    assert call["status"] == "completed"
+    assert call["output_hash"] == hashlib.sha256(VALID).hexdigest()
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute("SELECT COUNT(*) FROM test_business_rows").fetchone()
+    assert rows[0] == 0
+
+    def persist_one_row(_validated, connection):
+        connection.execute(
+            "INSERT INTO test_business_rows(id) VALUES ('row_vera_ok')"
+        )
+        return ("row_vera_ok",)
+
+    invoke_contract(
+        workspace=workspace,
+        runner=FakeContractRunner([VALID]),
+        contract=CONTRACT,
+        serialized_input=INPUT,
+        model_id="gpt-test-vera-example",
+        budgets=budgets(),
+        run_id="run_vera_atomic_ok",
+        stage="13.test",
+        cli_version="0.144.4-test",
+        enrich=enrich,
+        persist_validated=persist_one_row,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    ok_run, _ok_call = telemetry(workspace, "run_vera_atomic_ok")
+    assert ok_run["status"] == "completed"
+    assert json.loads(ok_run["output_ids_json"]) == ["row_vera_ok"]
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute(
+            "SELECT id FROM test_business_rows"
+        ).fetchall()
+    assert rows == [("row_vera_ok",)]
+
+
 def test_real_runner_workspace_has_only_declared_retry_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -477,6 +600,30 @@ def test_process_timeout_kills_the_child_process_group(tmp_path: Path) -> None:
     while Path(f"/proc/{child_pid}").exists() and time.monotonic() < deadline:
         time.sleep(0.02)
     assert not Path(f"/proc/{child_pid}").exists()
+
+
+def test_group_kill_reaches_a_descendant_that_outlives_the_leader(
+    tmp_path: Path,
+) -> None:
+    """Issue #69: a leader exiting on SIGTERM never shields a slow descendant."""
+
+    pid_path = tmp_path / "Vera Example survivor.pid"
+    command = [
+        "/usr/bin/sh",
+        "-c",
+        # The descendant ignores SIGTERM; the leader exits on it immediately,
+        # so only the unconditional group SIGKILL can end the survivor.
+        "/usr/bin/sh -c 'trap \"\" TERM; sleep 30' & child=$!; "
+        f"echo $child > '{pid_path}'; "
+        'trap "exit 0" TERM; wait',
+    ]
+    outcome = run_subprocess(command, timeout_seconds=0.1)
+    assert outcome.timed_out is True
+    survivor_pid = int(pid_path.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 2
+    while Path(f"/proc/{survivor_pid}").exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not Path(f"/proc/{survivor_pid}").exists()
 
 
 def _plant_abandoned_run(workspace: Path, run_id: str) -> None:

@@ -91,19 +91,21 @@ class ProcessOutcome:
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    # The group is always SIGKILLed after the grace period: a leader that
+    # exits first must not shield a slow or TERM-ignoring descendant from
+    # the foreground deadline/cancellation guarantee.
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
-        return
+        pass
     try:
         process.wait(timeout=0.5)
-        return
     except subprocess.TimeoutExpired:
         pass
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
-        return
+        pass
     try:
         process.wait(timeout=1)
     except subprocess.TimeoutExpired:

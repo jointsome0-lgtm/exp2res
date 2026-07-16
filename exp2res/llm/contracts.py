@@ -244,7 +244,17 @@ def validate_output(
         raise
     except Exception:
         raise ServiceEnrichmentError() from None
+    # Validate through Pydantic's JSON path: §11 accepts offset-aware
+    # datetimes at the JSON boundary as ISO strings, which strict
+    # Python-dict validation would reject. Enrichment must therefore add
+    # JSON-representable values only.
     try:
-        return contract.output_model.model_validate(candidate)
+        reserialized = json.dumps(
+            candidate, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        raise ServiceEnrichmentError() from None
+    try:
+        return contract.output_model.model_validate_json(reserialized)
     except ValidationError as error:
         raise ContractValidationError(_diagnostics(error.errors(), declared)) from None

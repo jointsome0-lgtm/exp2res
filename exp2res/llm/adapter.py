@@ -326,7 +326,9 @@ def invoke_contract(
     input_ids: Iterable[str] = (),
     output_ids: Iterable[str] = (),
     enrich: Callable[[dict[str, object]], dict[str, object]] | None = None,
-    persist_validated: Callable[[BaseModel], Iterable[str]] | None = None,
+    persist_validated: (
+        Callable[[BaseModel, sqlite3.Connection], Iterable[str]] | None
+    ) = None,
     capability_check: Callable[[], None] | None = None,
     clock: Callable[[], datetime] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
@@ -575,36 +577,17 @@ def invoke_contract(
             raise LLMInvocationError("deterministic_enrichment_failed") from None
 
         output = result.final_message_bytes
-        committed_output_ids = output_ids
-        if persist_validated is not None:
-            try:
-                committed_output_ids = tuple(persist_validated(validated))
-            except Exception:
-                def fail_business(connection: object) -> None:
-                    finish_llm_call(
-                        connection,  # type: ignore[arg-type]
-                        run_id=run_id,
-                        call_index=call_index,
-                        finished_at=now(),
-                        status="completed",
-                        output_bytes=output,
-                        prompt_tokens=estimate_tokens(serialized_input),
-                        completion_tokens=estimate_tokens(output),
-                    )
-                    finish_processing_run(
-                        connection,  # type: ignore[arg-type]
-                        run_id=run_id,
-                        finished_at=now(),
-                        status="failed",
-                        failure_code="business_commit_failed",
-                        metadata=terminal_metadata(),
-                    )
-
-                _transaction(writer, fail_business)
-                raise LLMInvocationError("business_commit_failed") from None
+        committed_output_ids = list(output_ids)
 
         def complete(connection: object) -> None:
-            completion_tokens = estimate_tokens(output)
+            # §15.10 rule 7: validated business persistence and this call's
+            # terminal telemetry commit or roll back as one unit, so a later
+            # failed row can never leave an earlier row durable.
+            if persist_validated is not None:
+                committed_output_ids[:] = persist_validated(
+                    validated,
+                    connection,  # type: ignore[arg-type]
+                )
             finish_llm_call(
                 connection,  # type: ignore[arg-type]
                 run_id=run_id,
@@ -613,7 +596,7 @@ def invoke_contract(
                 status="completed",
                 output_bytes=output,
                 prompt_tokens=estimate_tokens(serialized_input),
-                completion_tokens=completion_tokens,
+                completion_tokens=estimate_tokens(output),
             )
             if finish_run:
                 finish_processing_run(
@@ -634,6 +617,30 @@ def invoke_contract(
                     metadata=terminal_metadata(),
                 )
 
-        _transaction(writer, complete)
+        try:
+            _transaction(writer, complete)
+        except Exception:
+            def fail_business(connection: object) -> None:
+                finish_llm_call(
+                    connection,  # type: ignore[arg-type]
+                    run_id=run_id,
+                    call_index=call_index,
+                    finished_at=now(),
+                    status="completed",
+                    output_bytes=output,
+                    prompt_tokens=estimate_tokens(serialized_input),
+                    completion_tokens=estimate_tokens(output),
+                )
+                finish_processing_run(
+                    connection,  # type: ignore[arg-type]
+                    run_id=run_id,
+                    finished_at=now(),
+                    status="failed",
+                    failure_code="business_commit_failed",
+                    metadata=terminal_metadata(),
+                )
+
+            _transaction(writer, fail_business)
+            raise LLMInvocationError("business_commit_failed") from None
         return InvocationResult(validated, output, run_id, call_index)
     raise AssertionError("unreachable validation loop")
