@@ -15,6 +15,8 @@ All LLM calls must:
 9. Before any provider call, deterministically preflight the fully serialized payload against §11's boundary limits alongside §29.4's credential preflight; a failure is local and fail-closed and reports only a non-secret diagnostic.
 10. Emit every generated natural-language output under the V1 language scope in §16.13.
 
+Every §15 call crosses the service-owned isolated-runner boundary. A fresh system-temp workspace starts with only the fully serialized typed input and its JSON Schema; a §15.1 retry adds only content-free `validation_errors.json`. The CLI's native schema-constrained final-output mechanism supplies the response — fenced JSON parsed from agent prose is forbidden. The CLI isolates user rules and ambient configuration, while the OS-sandbox wrapper supplies read confinement to that workspace, auth material, and TLS/DNS essentials. Before any transport, a fail-closed two-half capability preflight validates both the declared CLI feature set and wrapper effectiveness through the provider-free canary in §21.50.
+
 §15.10 owns transport attempts, provider capability checks, runtime budgets, context-overflow refusal, and cancellation. Its transport retry does not widen the response-validation retry below, which remains limited to schema and reference invalidity.
 
 Under §11's field-authorship policy, a model response that sets a service-owned persisted field instead of its declared model-authored transition result, or sets any undeclared field, is invalid structured output.

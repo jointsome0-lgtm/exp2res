@@ -1676,4 +1676,21 @@ And any rendered source-voice excerpt remains an exact referenced value or conti
 And when a correction displaces a source record, §13.3 rule 10's prose-free descriptor projection excludes its source prose without mutating the retained source bytes
 ```
 
+## §21.50 Isolated Runner Read Confinement Is Effective
+
+Test (enforces §15.1 and §29.4):
+
+```text
+Given a provider-free fixture with an empty per-call workspace containing a readable /work canary
+And planted files at the repository map, .env, .exp2res database, an unrelated source module, outside the per-call workspace, and the user Codex rules path
+When the same bubblewrap namespace assembly used by the Codex runner executes the cat-based effectiveness probe
+Then the child can read /work
+And it cannot read the repository, .env, .exp2res, unrelated source files, the outside-workspace canary, or user Codex rules
+And the probe invokes no model and uses no network request, so it is safe for offline CI
+Given CI cannot create the required user namespace or bubblewrap is unavailable
+When the eval runs
+Then it is skipped with an explicit unavailability reason
+And the runtime's wrapper preflight still fails closed with capability_mismatch before transport, so skipping the eval never weakens the gate
+```
+
 ---

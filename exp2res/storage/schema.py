@@ -1,11 +1,11 @@
-"""Phase 0 schema derived from §11 RawLog and EvidenceItem."""
+"""Phase 0 schema plus the §12.13/§12.15 execution telemetry."""
 
 from __future__ import annotations
 
 from sqlite3 import Connection
 
 
-SCHEMA_SQL = """
+SCHEMA_V1_SQL = """
 CREATE TABLE schema_meta (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL,
@@ -96,11 +96,71 @@ END;
 """
 
 
+# §12.13 and §12.15 are normative DDL. Keep these strings in lockstep with
+# the specification instead of adding implementation-only columns or defaults.
+PROCESSING_RUNS_SQL = """
+CREATE TABLE IF NOT EXISTS processing_runs (
+    id TEXT PRIMARY KEY,
+    stage TEXT NOT NULL,
+    parent_run_id TEXT REFERENCES processing_runs(id),
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    provider TEXT,
+    model TEXT,
+    prompt_policy_hash TEXT,
+    failure_code TEXT,
+    input_ids_json TEXT NOT NULL DEFAULT '[]',
+    output_ids_json TEXT NOT NULL DEFAULT '[]',
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+"""
+
+LLM_CALLS_SQL = """
+CREATE TABLE IF NOT EXISTS llm_calls (
+    run_id TEXT NOT NULL REFERENCES processing_runs(id),
+    call_index INTEGER NOT NULL CHECK (call_index >= 1),
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    input_hash TEXT,
+    output_hash TEXT,
+    provider_request_id TEXT,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    reported_cost TEXT,
+    transport_retries INTEGER,
+    schema_retries INTEGER,
+    failure_code TEXT,
+
+    PRIMARY KEY (run_id, call_index)
+);
+"""
+
+SCHEMA_V2_SQL = (
+    SCHEMA_V1_SQL
+    + "\n"
+    + PROCESSING_RUNS_SQL
+    + "\n"
+    + LLM_CALLS_SQL
+    + "\n"
+)
+
+
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_SQL)
+    if version != 2:
+        raise ValueError("fresh workspaces must use schema version 2")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V2_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
     )
+
+
+def apply_migration_1_to_2(connection: Connection) -> None:
+    """Apply only the additive DDL owned by schema migration 1→2."""
+
+    connection.execute(PROCESSING_RUNS_SQL)
+    connection.execute(LLM_CALLS_SQL)
