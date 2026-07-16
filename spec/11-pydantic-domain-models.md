@@ -1,16 +1,16 @@
 ## §11. Pydantic Domain Models
 
-§11 defines every persisted §9.1 ontology entity. `VerificationFinding` (§11.14) is append-only verifier-attempt history; denormalized verification fields on its targets remain the operational state. Storage-only artifacts (join tables, telemetry, and recomputable-row production provenance) have no models here; their DDL and derivation are normative in §12.
+§11 defines every persisted §9.1 ontology entity. `VerificationFinding` (§11.14) is append-only verifier-attempt history. Storage-only artifacts (join tables, telemetry, and recomputable-row production provenance) have no models here; their DDL and derivation are normative in §12.
 
-Every top-level entity `id` is a service-assigned, opaque, non-empty value that is immutable for the lifetime of the workspace, unique within its entity table, and never reused in that table, including after supersession or owner deletion (§12 rule 11). No producer contract may let a model author an entity ID; for an LLM-backed producer, the service assigns it only after a valid model response as deterministic enrichment under §15.1. This per-table contract does not weaken the stronger global uniqueness of embedded `JDRequirement.id` (§11.13).
+Every top-level entity `id` follows §12 rule 11's identity contract: service-assigned only — never model-authored — opaque, immutable, unique, and never reused within its entity table; embedded `JDRequirement.id` keeps its stronger global uniqueness (§11.13).
 
 Every persisted entity model below other than `RawLog` carries a system-assigned `created_at: datetime`, set when the entity is first persisted. `RawLog.recorded_at` retains its §5.4 meaning as the time the raw record entered Exp2Res. A creation timestamp does not substitute for the production provenance defined below.
 
 Every recomputable entity — `ExperienceFact`, `SelfSignal`, `SelfClaim`, `AssessmentSnapshot`, `ResumeBullet`, `Contradiction`, `GapQuestion`, and `ResumeBranch` — also carries `superseded_at: Optional[datetime] = None`. `None` means the row belongs to the one current generation for its replacement identity — the correction lineage for facts, the global Stage 4 generation for gaps and contradictions, the global Stage 5 generation for signals, the assessment view (§11.7) for claims and snapshots, and the case-folded branch name (§14.10) for branches and bullets; a timestamp makes it historical. A normal rerun or correction sets this field once instead of rewriting payload or provenance. New stages, verification, generation, and export use only current rows. `JobDescription` is retained context, not a recomputed interpretation. Owner deletion is the privacy exception: §13.13 purges current and historical recomputable rows rather than retaining superseded copies.
 
-Production provenance for those eight recomputable entities is storage-level under §12 rule 13: `produced_by_run_id` and `generation_id` have no §11 model counterpart and are hydrated only by inspection surfaces. Every §15 LLM-contract input is drawn from §11 shapes exactly as the receiving contract declares it — a complete persisted shape, or a declared narrower projection such as the §15.6/§15.7 parsed job-description view (never `JobDescription.raw_text`) or a §13.3 rule 10 displaced-record support descriptor. A declared projection may not be widened toward the complete entity, and because every transmitted shape is a §11 shape or a projection of one, no §15 contract ever sees or sets either storage-only value.
+Production provenance for those eight recomputable entities — `produced_by_run_id` and `generation_id` — is storage-level under §12 rule 13. Every §15 LLM-contract input is drawn from §11 shapes exactly as the receiving contract declares it — a complete persisted shape, or a declared narrower projection such as the §15.6/§15.7 parsed job-description view (never `JobDescription.raw_text`) or a §13.3 rule 10 displaced-record support descriptor. A declared projection may not be widened toward the complete entity, and because every transmitted shape is a §11 shape or a projection of one, no §15 contract ever sees or sets either storage-only value.
 
-An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule. `SelfClaim`, `AssessmentSnapshot`, and `ResumeBullet` are the only entities whose denormalized `VerificationStatus` is operational state; `VerificationFinding.status` is inspect-only history, and §16.11 defines the meanings and consumer gates.
+An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule. Operational verification state and finding-history semantics are defined in §11.14 and §16.11.
 
 ### Model validation policy
 
@@ -139,7 +139,7 @@ class ExperienceFact(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-`source_log_ids` and `evidence_item_ids` are non-empty, duplicate-free views hydrated from §12.4 rather than stored on `experience_facts`. Every selected evidence item belongs to a raw log in `source_log_ids`, and every listed source log is represented by at least one selected evidence item. The two views must agree with the `fact_sources → evidence_items` relation exactly.
+`source_log_ids` and `evidence_item_ids` are hydrated views under §12 rule 8, agreeing exactly with §12.4's `fact_sources → evidence_items` relation.
 
 ## §11.5 SelfSignal
 
@@ -200,15 +200,15 @@ class AssessmentSnapshot(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-`contradiction_ids` is the complete duplicate-free set of current Stage 4 contradictions at this snapshot's synthesis boundary. Stage 6 does not scope-filter that set. There is no contradiction-status filter; §12 rule 10 rejects duplicate, missing, or superseded IDs.
+`contradiction_ids` is populated under §13.6's complete, unfiltered contradiction-set rule.
 
-For `scope = "project"`, `scope_target` is required and is the canonical §14.9 `--project` value — Unicode NFC, leading/trailing whitespace trimmed, non-blank — persisted before case folding; the assessment writer cannot author or normalize it. For `global` it is `None`. A (`scope`, case-folded canonical `scope_target`) pair is an assessment view, the snapshot replacement identity under §13.6: one snapshot is current per view, and distinct views — `global` and each project target — are simultaneously current. The target remains a user-supplied scope label, not an entity reference; renaming a project starts a new view rather than migrating an old one. `title` is service-derived under §13.6's deterministic rule from the snapshot's own persisted (`scope`, `scope_target`) values — the pre-fold selector, not the folded view identity, so folded-equal generations may carry differently cased titles exactly as they carry differently cased selectors; no writer output, owner flag, or configuration participates.
+For `scope = "project"`, `scope_target` is required and is the canonical §14.9 `--project` value — Unicode NFC, leading/trailing whitespace trimmed, non-blank — persisted before case folding; the assessment writer cannot author or normalize it. For `global` it is `None`. A (`scope`, case-folded canonical `scope_target`) pair is an assessment view, the snapshot replacement identity under §13.6: one snapshot is current per view, and distinct views — `global` and each project target — are simultaneously current. The target remains a user-supplied scope label, not an entity reference; renaming a project starts a new view rather than migrating an old one. `title` is service-derived under §13.6's deterministic rule.
 
-`gap_question_ids` is the duplicate-free complete set of current unanswered (`answered = false`) Stage 4 gaps at the snapshot's synthesis boundary; Stage 6 service-populates it from the exact gap set supplied to the §15.4 writer (§15.11). Stage 6 does not scope-filter or omit an open gap; an answered current row is deliberately excluded because it is no longer an unknown even before Stage 4 regeneration. The field carries references only: the stored unknown content remains the referenced current `GapQuestion.question`, `reason`, `priority`, and target; known-gap assertions belong to §13.6's status-bearing claim output. At the Stage 6 transaction boundary, missing, duplicate, superseded, answered, or omitted gap references fail under §12 rule 10 and the Stage 6 transaction checks.
+`gap_question_ids` is service-populated under §13.6's exact unanswered-set rule. The field carries references only: the stored unknown content remains the referenced current `GapQuestion.question`, `reason`, `priority`, and target; known-gap assertions belong to §13.6's status-bearing claim output. At the Stage 6 transaction boundary, missing, duplicate, superseded, answered, or omitted gap references fail under §12 rule 10 and the Stage 6 transaction checks.
 
 A later `gaps answer` on a referenced question is normal owner activity, not snapshot corruption: `gap_question_ids` remains the honest record of what was unknown at synthesis. §14.7 owns the answer transaction's no-supersession and stale-export semantics, §17 renders the answered-since-synthesis state, and the next Stage 6 generation excludes the answered row. Read-time consumers re-validate reference integrity — resolvable, duplicate-free, current rows — but never fail a current snapshot because a referenced gap was answered after synthesis.
 
-Exactly one claim in `self_claim_ids` has `claim_kind = "narrative_summary"`; Stage 6 service-copies its `claim` into `AssessmentSnapshot.summary` (§13.6, §15.11), so the summary is ordinary verified claim prose, not an unverified snapshot-level escape hatch.
+The exactly-one `narrative_summary` member claim and the service-copied `summary` follow §13.6.
 
 ## §11.8 ResumeBullet
 
@@ -230,11 +230,11 @@ class ResumeBullet(BaseModel):
     verifier_reason: Optional[str] = None
 ```
 
-Stage 6 initializes new `SelfClaim.verification_status` and `AssessmentSnapshot.verification_status` values; Stage 7 owns their verifier transitions. Stage 10 initializes `ResumeBullet.verification_status`; Stage 11 owns its verifier transition. The exact initial value and all consumer permissions are defined in §13.6–§13.11 and §16.11.
+The initial `verification_status` values, their owning verifier transitions, and all consumer permissions are defined in §13.6–§13.11 and §16.11.
 
-`source_self_claim_ids` follows the exact-use contract in §13.10/§15.6: Stage 10 service-sets it to the duplicate-free exact set of self-claims passed to the writer for that bullet, and it is empty iff the bullet was generated from facts alone.
+`source_self_claim_ids` follows the exact-use contract in §13.10/§15.6.
 
-Every `matched_jd_requirements` entry is a stable `JDRequirement.id` from the exact `ParsedJD` supplied to Stage 10. The list is duplicate-free and is validated under §12 rule 10 plus the Stage 10 selected-job-description check; free-form requirement labels are invalid in this field.
+`matched_jd_requirements` production and validation follow §13.10 and §12 rule 10.
 
 ## §11.9 Contradiction
 
@@ -254,7 +254,7 @@ class Contradiction(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-A current `Contradiction` is an immutable conflict detection owned by Stage 4, not a workflow item with an in-place verdict; §13.4's retain-or-replace rule owns the current set's retention, replacement, and omission. Prior rows become superseded inspect-only history; owner deletion may purge them under §13.13.
+A current `Contradiction`'s retention, replacement, omission, and absence of any in-place verdict are owned by §13.4's retain-or-replace rule. Prior rows become superseded inspect-only history; owner deletion may purge them under §13.13.
 
 ## §11.10 GapQuestion
 
@@ -302,11 +302,11 @@ class ResumeBranch(BaseModel):
     metadata: dict = Field(default_factory=dict)
 ```
 
-`assessment_snapshot_id` is the required exact anchor selected under the canonical resume rule in §18. It has no implicit-latest or absent state.
+`assessment_snapshot_id` follows the canonical snapshot-anchor rule in §18.
 
-`job_description_id` is the required exact §14.10 `--jd` selection copied by Stage 10; verification and export recover the typed requirements through that persisted ID. It has no implicit or absent state.
+`job_description_id` follows §13.10's exact `--jd` association rule.
 
-`name` keeps the owner's spelling; replacement identity and `--branch` selection use its NFC case-folded form (§14.10), and no two current branches fold equal.
+`name` storage and its NFC case-folded replacement/selection identity are defined in §14.10.
 
 ## §11.13 Parsed Job Description
 

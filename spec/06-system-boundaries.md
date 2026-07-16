@@ -12,7 +12,7 @@ verbal work notes
 focus and time aggregates
 ```
 
-The selfos-side adapter maps Tick-like exports into the source-agnostic activity record accepted by §19.1; Exp2Res does not accept or encode Tick-like's wire schema. A learning event is not imported directly as knowledge state: its knowledge aspect arrives only through the Atlas snapshot in §6.2/§19.2, while its time or activity aspect may be mapped into §19.1 as ordinary activity evidence. Each accepted activity record persists as a `RawLog` plus linked `EvidenceItem` and creates no `SelfSignal` directly.
+The selfos-side adapter maps Tick-like exports into the source-agnostic activity record accepted by §19.1; Exp2Res does not accept or encode Tick-like's wire schema. A learning event is not imported directly as knowledge state: its knowledge aspect arrives only through the Atlas snapshot in §6.2/§19.2, while its time or activity aspect may be mapped into §19.1 as ordinary activity evidence. Accepted records persist under §13.1 with no direct promotion.
 
 But Tick-like events do not automatically become strong experience facts.
 
@@ -45,7 +45,7 @@ knowledge-state context
 frontier context
 ```
 
-The V1 Exp2Res importer accepts the §19.2 knowledge-state snapshot: knowledge state expressed on Atlas's own scales, trail segments, and evidence references. The selfos-side adapter owns the exact Atlas-to-snapshot mapping; Exp2Res neither embeds Atlas's internal schema nor interprets an Atlas scale as an Exp2Res confidence, ownership level, signal, or claim.
+The V1 Exp2Res importer accepts the §19.2 knowledge-state snapshot. The selfos-side adapter owns the exact Atlas-to-snapshot mapping; Exp2Res neither embeds Atlas's internal schema nor interprets an Atlas scale as an Exp2Res confidence, ownership level, signal, or claim.
 
 But Atlas does not decide career/self claims.
 

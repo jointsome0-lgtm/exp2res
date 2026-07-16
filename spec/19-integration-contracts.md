@@ -90,7 +90,7 @@ The adapter-supplied `text` is the authoritative complete source rendering of th
 
 `path` and `content_digest` are required nullable members: omission is invalid, `path = null` requires `content_digest = null`, and a non-null path may carry either a non-null §19.4 digest or `null`. The path identifies the single source snapshot document represented by the linked `EvidenceItem`, not one member of `evidence_references`; those references are inert logical source IDs and never path or fetch authority. The path/digest pair follows §19.4 rule 6 and maps only to `EvidenceItem.path` and its named digest metadata. Required nullable members give omission and explicit absence one body shape before §19.4 hashing.
 
-The `knowledge_state_snapshot` strength is high only within §9.4's stated knowledge-attribution scope: it can support a narrow studied/learning-grade fact but grants no automatic `Confidence = "high"`, implementation, built/production, outcome, ownership, or mastery conclusion. Under §5.10 and §25.5, the importer creates no `ExperienceFact`, `SelfSignal`, or `SelfClaim`; Exp2Res Stages 3–6 derive those layers through their ordinary contracts.
+The `knowledge_state_snapshot` strength is high only within §9.4's stated knowledge-attribution scope.
 
 Import behavior:
 

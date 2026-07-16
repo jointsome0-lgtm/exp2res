@@ -25,14 +25,14 @@ out/
 
 SQLite is the only managed store for raw logs and evidence items. Source files remain at their supplied paths as provenance references (§14.2, §14.5); `out/` is reserved for Stage 12 exports (§13.12) published and managed only through §13.14.
 
-A fresh initialization creates the build's current §12.14 schema and inserts its version row. If the workspace already exists at that current version, `init` succeeds as an idempotent no-op, reports the version, and changes no database row or managed path. At any other recognized version it fails closed, reports the mismatch, and points at `db status` plus the `db migrate` or application-upgrade recovery required by §12.14. An unrecognized existing database fails closed. A partially initialized target — including an existing `.exp2res/` without `exp2res.sqlite` or a database without readable `schema_meta` — is unrecognized: `init` fails closed and never completes, overwrites, or repairs it implicitly. A pre-existing non-empty `out/` is inert content: initialization neither reads, changes, nor removes anything beneath it, but before accepting the directory as the managed export namespace it restores the §29.2 owner-only mode on the `out/` directory entry itself, so managed path structure is not listable by other local users; if that permission change fails, `init` fails closed. `init` never re-creates, overwrites, or deletes existing workspace data.
+If the workspace already exists at that current version, `init` succeeds as an idempotent no-op, reports the version, and changes no database row or managed path. At any other recognized version it fails closed, reports the mismatch, and points at `db status` plus the `db migrate` or application-upgrade recovery required by §12.14. An unrecognized existing database fails closed. A partially initialized target — including an existing `.exp2res/` without `exp2res.sqlite` or a database without readable `schema_meta` — is unrecognized: `init` fails closed and never completes, overwrites, or repairs it implicitly. A pre-existing non-empty `out/` is inert content: initialization neither reads, changes, nor removes anything beneath it, but before accepting the directory as the managed export namespace it restores the §29.2 owner-only mode on the `out/` directory entry itself, so managed path structure is not listable by other local users; if that permission change fails, `init` fails closed. `init` never re-creates, overwrites, or deletes existing workspace data.
 
 ```bash
 exp2res db status
 exp2res db migrate
 ```
 
-Every command's first workspace connection applies the §12.14 compatibility gate before business I/O. `db status` reports compatibility and registered-path availability without writing; `db migrate` is the sole migration trigger. No other command migrates or rewrites the workspace as an on-open side effect.
+`db status` reports compatibility and registered-path availability without writing; `db migrate` is the sole migration trigger (§12.14).
 
 ## §14.2 Add Daily Log
 
@@ -70,7 +70,7 @@ exp2res correction add --log-id log_001
 
 `--log-id` must resolve to an existing raw record. The command requires self-contained correction text. Under §13.3 rule 10, a correction displaces the target record's interpretation as a whole. Its text must therefore restate whatever from the target remains true, because displaced content it omits is not re-extracted; the copied `OccurredAt` and `project` mechanics below preserve placement and project provenance unless the owner explicitly changes them. Its temporal prompt starts from the target's `OccurredAt`; unless the owner explicitly replaces that placement, the correction copies it exactly, so every correction stores an effective temporal value without silently increasing precision. `project` follows the same capture rule: the prompt starts from the target's `project`, and unless the owner explicitly replaces or clears it, the correction copies it exactly — a text-only correction can never silently strip or change the label the §13.6 project views select by (§13.3 rule 13).
 
-In one database transaction, the command stores `RawLog(entry_type=correction, source_type=manual_entry, corrects_log_id=log_001)` plus its linked `EvidenceItem(strength=manual_claim)` while invalidating the exact current layers listed in §13.13. It attempts to remove managed exports before invoking the selected-lineage recompute in §14.12, which rebuilds through Stage 5; the command reports every invalidated assessment view and branch with the regeneration guidance of §13.13 rule 9. The target raw record remains unchanged as stored. If invalidation cleanup or recomputation fails, the correction remains stored, stale derivations stay unavailable, residual managed paths are reported, and the command exits unsuccessfully with `exp2res recompute --log-id log_001` as the retry.
+In one database transaction, the command stores `RawLog(entry_type=correction, source_type=manual_entry, corrects_log_id=log_001)` plus its linked `EvidenceItem(strength=manual_claim)` while invalidating the exact current layers listed in §13.13. Managed-export removal, the selected-lineage recompute, and invalidation reporting follow §13.13 rules 4 and 9 via §14.12. The target raw record remains unchanged as stored. If invalidation cleanup or recomputation fails, §13.13 rule 4's failure semantics apply, with the §14.12 `--log-id` form as the documented retry.
 
 ## §14.5 Import Evidence
 
@@ -105,7 +105,7 @@ exp2res facts list
 exp2res facts show --fact-id fact_001
 ```
 
-Extraction follows the correction-lineage replacement and current-generation rules in §13.3. Re-running it never appends a second current fact generation; if facts change, higher current generations are invalidated and reported with the §13.13 rule 9 view/branch regeneration guidance — §14.12 rebuilds Stages 4–5, while assessment views and resume branches require their owning §14.9/§14.10 generation commands (§13.13).
+Extraction follows the correction-lineage replacement and current-generation rules in §13.3; invalidation and regeneration reporting follow §13.3 rule 12 and §13.13 rule 9.
 
 ## §14.7 Generate Detections; Inspect and Answer Gaps and Contradictions
 
@@ -117,7 +117,7 @@ exp2res contradictions list
 exp2res contradictions show --contradiction-id contradiction_001
 ```
 
-`detections generate` is the sole direct detection-generation command; Stage 4 also runs inside the §14.12 lifecycle flow (§13.4). Either path performs one complete §15.8 call whose result atomically retains or replaces the complete gap and contradiction generations together under §13.4's content-equivalence rule — never one half. Its help and command output must make the both-sets replacement side effect unmistakable and report both complete result sets, every invalidated artifact class, and the §13.13 rule 9 view/branch regeneration guidance, or state that the generation was retained unchanged.
+`detections generate` is the sole direct detection-generation command; Stage 4 also runs inside the §14.12 lifecycle flow (§13.4). Either path follows §13.4's whole-generation retain-or-replace lifecycle. Its help and command output must make the both-sets replacement side effect unmistakable and report both complete result sets, every invalidated artifact class, and the §13.13 rule 9 view/branch regeneration guidance, or state that the generation was retained unchanged.
 
 `gaps answer` persists `RawLog(entry_type=gap_answer, source_type=manual_entry)` plus a linked `EvidenceItem(strength=manual_claim)`, then assigns the new raw-log ID to `GapQuestion.answer_log_id` and sets `GapQuestion.answered = true` in the same transaction; `answered` is true iff `answer_log_id` is set. That transaction supersedes no current `AssessmentSnapshot`, branch, or bullet referencing the question: the answer is new raw evidence that reaches derived state only through extraction and regeneration (§13.5 via Stage 3, §13.6), while §17 renders the question's answered state on the still-current snapshot and §13.12 keeps that snapshot exportable. It is the gap-answer trigger of §13's stale-export invalidation rule: while any current snapshot references the answered question, the affected sets are that snapshot's `out/assessment/<snapshot-id>/` set and every `out/branch/<branch-id>/` set whose branch anchors it — with complete unfiltered gap sets, that is every current assessment view. The snapshot and branches stay immediately re-exportable with the answered-since-synthesis rendering.
 
@@ -149,13 +149,13 @@ exp2res export assessment --snapshot snapshot_001
 
 `assess list` reports every current snapshot — ID, scope, scope target, verification status, creation time — as the discovery surface for explicit `--snapshot` selectors across simultaneously current views; it generates nothing.
 
-`assess verify` is required before assessment export. `export assessment` rejects `unverified` and every other snapshot status outside the assessment-export allowlist in §16.11.
+`assess verify` is required before assessment export: `export assessment` applies §16.11's assessment-export allowlist.
 
 On success, `export assessment` publishes the selected snapshot only at its §13.14 ID-keyed path and returns only the manifest-validated §14.14 export result. Scope and scope-target values remain identity and display data; neither becomes a path component.
 
 V1 defines no claim-confirm, dispute, or override command. `assess verify` is the system verifier gate defined by §5.10, not an owner verdict stored on a regenerated claim.
 
-`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion follows §11.14's inspect-only advisory lifecycle, and verification never invokes `assess generate`. The owner may add or correct raw evidence and request a new assessment generation; any changed claim wording belongs to that new Stage 6 generation.
+`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion follows the §13.7 advisory-rewrite lifecycle; revised claim wording belongs to a later explicit `assess generate` generation.
 
 ## §14.10 Verified Bullet-Pack Flow
 
@@ -168,15 +168,15 @@ exp2res bullets export --branch agent-engineer
 
 `jd add` remains the Stage 8 creation command owned by this bullet-pack flow; §14.15 owns job-description inspection and deletion. The internal `ResumeBranch` and `ResumeBullet` entity names retain “resume” because a branch models targeting for a vacancy; renaming those persisted/internal contracts would be a §12.14 schema change, while the product-facing artifact and command group are the verified bullet pack and `bullets`.
 
-`--snapshot` is a required stored-record selector for the exact assessment anchor governed by §18. It has no latest-snapshot default. A missing, superseded, `unverified`, or otherwise Stage-10-ineligible snapshot fails before a branch or bullet is inserted; the persisted branch records exactly the selected ID.
+`--snapshot` is a required stored-record selector governed by §18's canonical snapshot-anchor rule.
 
-`--jd` must resolve to a persisted typed `JobDescription`; Stage 10 copies that exact ID into the candidate `ResumeBranch.job_description_id` so verification and export can resolve every matched requirement. A Stage 10 candidate that omits or changes the selected ID fails atomically.
+`--jd` must resolve to a persisted typed `JobDescription`; §13.10's exact-copy association rule governs the candidate branch.
 
 `--branch` is a non-blank display name that must pass §11 structural-string hygiene; its exact owner spelling is stored in `ResumeBranch.name`. It has no path semantics: `/`, `\`, leading or trailing whitespace or `.`, dot-segment spellings, and the name `assessment` receive no path-specific rejection or reservation because §13.14 publishes only under `out/branch/<branch-id>/` and carries the name in `manifest.json`. Branch replacement identity remains the name's locale-independent case fold after Unicode NFC normalization: `--branch` selectors resolve a current branch by that folded identity, generating a name that folds equal to a current branch's supersedes exactly that branch (§13.10), and two current branches can never fold equal. The identity rule controls replacement and selection only; it never derives or aliases a managed path.
 
 On success, `bullets export` publishes the selected current branch only at its §13.14 ID-keyed path and returns only the manifest-validated §14.14 export result.
 
-`bullets verify` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values. A suggestion follows §11.14's inspect-only advisory lifecycle, and verification never invokes `bullets generate`; changed bullet wording requires a later explicit `bullets generate` command and a replacement branch generation (§13.11). Under `--json`, all three forms report their canonical `bullets generate`, `bullets verify`, or `bullets export` command path through §14.14; generation and verification use the standard envelope fields with `result = null`, while export uses the closed manifest-path result below.
+`bullets verify` performs the one Stage 11 semantic pass and presents its complete findings, including advisory `suggested_rewrite` values. A suggestion follows the §13.11 advisory-rewrite lifecycle; revised bullet wording requires a later explicit `bullets generate` replacement generation. Under `--json`, all three forms report their canonical `bullets generate`, `bullets verify`, or `bullets export` command path through §14.14; generation and verification use the standard envelope fields with `result = null`, while export uses the closed manifest-path result below.
 
 ## §14.11 Manage Raw Logs
 
@@ -186,7 +186,7 @@ exp2res logs delete --log-id log_001
 exp2res logs delete --log-id log_001 --yes
 ```
 
-`logs delete` is the owner's per-raw-record destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 5; the purged assessment views and branches are reported with the regeneration guidance of §13.13 rule 9 as command output only. It deletes only Exp2Res-managed database records, `out/`, and the managed migration backups covered by §13.13; it does not delete a supplied source file or export copied elsewhere. Raw database deletion remains committed if managed-path removal or rebuilding fails; residual managed paths are reported as `deletion_incomplete`, never as success. Job-description deletion and whole-workspace purge are the distinct §14.15 and §14.16 privacy operations.
+`logs delete` is the owner's per-raw-record destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 5; the purged assessment views and branches are reported with the regeneration guidance of §13.13 rule 9 as command output only. Its deletion boundary, commit-despite-cleanup-failure, and residual-path semantics follow §13.13 rules 6 and 8. Job-description deletion and whole-workspace purge are the distinct §14.15 and §14.16 privacy operations.
 
 ## §14.12 Recompute Derived State
 
@@ -195,9 +195,9 @@ exp2res recompute
 exp2res recompute --log-id log_001
 ```
 
-The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global Stage 4–5 regeneration. This command orchestrates the existing Stage 3–5 triggers under §13.13 and creates the one legal `processing_runs(stage = "13.13")` orchestration row for that flow; it remains not a pipeline stage.
+The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global Stage 4–5 regeneration. Recompute orchestration and its `13.13` telemetry row are defined in §13.13; it remains not a pipeline stage.
 
-Lifecycle recomputation ends at Stage 5 and performs no Stage 6 or Stage 7 call, so it presents no verifier findings. `recompute`, and the correction and deletion commands that invoke the same flow, report every invalidated assessment view and branch with the regeneration guidance of §13.13 rule 9; a retry that finds no current view reports that state instead of inferring a desired view set.
+Recompute completion at the Stage 5 endpoint and every invalidation report follow §13.13 rules 1 and 9 for this command and for the correction and deletion commands that invoke the same flow.
 
 ## §14.13 Inspect Processing Runs and Verification History
 
@@ -293,9 +293,9 @@ exp2res jd show --jd jd_001
 exp2res jd delete --jd jd_001
 ```
 
-`jd list` and `jd show` are read-only local inspection. The list reports each retained job description's ID, title, company, and creation time. Show reports those fields plus the complete parsed §11.13 value, including its typed requirements, and never exposes `JobDescription.raw_text`; the exact machine-readable projections are §14.14 rule 5. Neither command invokes a provider or serializes content into a prompt.
+`jd list` and `jd show` are read-only local inspection. Their exact projections, which never expose `JobDescription.raw_text`, are §14.14 rule 5's rows. Neither command invokes a provider or serializes content into a prompt.
 
-`jd delete` is the owner's per-job-description destructive privacy operation and uses §14.14 rule 3 confirmation semantics: `--yes` supplies consent, otherwise a TTY confirmation is required and non-interactive use fails closed. It invokes §13.13 rule 10, which hard-deletes the selected job description and every current or historical dependent branch, bullet, and bullet finding without FK blocking, removes each dependent ID-keyed `out/branch/<branch-id>/` set and the managed migration backups, globally redacts retained call-content hashes, leaves assessment views untouched, and performs no recompute. The command reports the selected deleted job description, every purged branch with its ID and name, and every removed managed path through the closed result in §14.14 rule 5. Any residual managed path is also reported in `residual_paths` with `deletion_incomplete`, never success; the database deletion remains committed under §13.13 rule 6.
+`jd delete` is the owner's per-job-description destructive privacy operation and uses §14.14 rule 3 confirmation semantics: `--yes` supplies consent, otherwise a TTY confirmation is required and non-interactive use fails closed. It invokes §13.13 rule 10's dependent purge. The command reports the selected deleted job description, every purged branch with its ID and name, and every removed managed path through the closed result in §14.14 rule 5. Any residual managed path is also reported in `residual_paths` with `deletion_incomplete`, never success; the database deletion remains committed under §13.13 rule 6.
 
 ## §14.16 Purge Workspace
 

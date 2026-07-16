@@ -25,7 +25,7 @@ A system that says “I don’t know” is more trustworthy than one that invent
 
 Raw records are immutable to automation while retained: importers, extractors, verifiers, and every other system operation may append records but may never update or delete an existing `RawLog`.
 
-The owner may hard-delete any raw record. This privacy override is not a contradiction of append-only operation: append-only protects the trail from the system, not from its owner. Owner deletion uses §14.11 and the privacy-first reset in §13.13, which — with §12 rule 6 — keeps it unblockable by provenance foreign keys or a failed rebuild.
+The owner may hard-delete any raw record. This privacy override is not a contradiction of append-only operation: append-only protects the trail from the system, not from its owner. Owner deletion uses §14.11 and the privacy-first reset in §13.13.
 
 The owner's deletion authority also extends to a selected job description through §14.15 and to the whole-workspace privacy operation in §14.16. §13.13 owns the point-deletion semantics; neither authority is weakened by derived dependencies.
 
@@ -64,7 +64,7 @@ unless stronger evidence exists.
 
 Ownership comparisons use the normative weak-to-strong `OwnershipLevel` order in §10. `unknown` is the weakest level and cannot authorize a stronger ownership claim.
 
-The system may preserve or lower `ownership_level`; it must not raise it without stronger evidence. General claim `confidence` is a separate axis and cannot compensate for unsupported ownership.
+The system may preserve or lower `ownership_level`; it must not raise it without stronger evidence (§16.4).
 
 ## §5.7 Experience Is Not Resume
 
@@ -128,6 +128,6 @@ Atlas artifact reference ≠ Exp2Res skill claim
 Tick-like event ≠ self-assessment conclusion
 ```
 
-Every promotion must be explicit and traceable. In V1, review means verification at the externally consumable projections: Stage 7 verifies assessment claims and derives the snapshot gate before assessment export or Stage 10 bullet generation, and Stage 11 verifies generated bullets before verified-bullet-pack export. Intermediate facts and signals do not carry an owner confirmation, dispute, or override state, and V1 has no owner-verdict workflow on regenerated claims or bullets.
+Every promotion must be explicit and traceable. In V1, review means verification at the externally consumable projections under §16.11's consumer gates. Intermediate facts and signals do not carry an owner confirmation, dispute, or override state, and V1 has no owner-verdict workflow on regenerated claims or bullets.
 
 ---

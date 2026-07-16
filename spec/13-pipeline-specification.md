@@ -4,21 +4,21 @@ A pipeline stage exists only when it has at least one CLI trigger in §14 and pr
 
 §14 is the sole canonical home of command forms. Each stage below points to its §14 trigger instead of restating shell syntax.
 
-Unless a stage explicitly says otherwise, its inputs and outputs are current rows (`superseded_at IS NULL`) under §11–§12. Historical rows are inspectable but never implicit processing inputs.
+Unless a stage explicitly says otherwise, its inputs and outputs are current rows under §12 rule 9.
 
-Every stage validates its typed output references under §12 rule 10 before committing business rows. Missing, wrong-type, superseded, or duplicate targets fail the producing run atomically; JSON representation is not an integrity exception.
+Every stage validates its typed output references under §12 rule 10 before committing business rows.
 
-Every atomic business replacement follows §12 rule 13's one-swap/one-`generation_id` allocation: Stage 3 partitions by correction lineage, while each Stage 4, Stage 5, Stage 6 view, or Stage 10 branch swap has its own shared generation.
+Every atomic business replacement follows §12 rule 13's one-swap/one-`generation_id` allocation.
 
 Every persisted recomputable business row and completed verifier finding resolves to the stage run that produced it through §12 rule 13 or §11.14, and a failed run owns no business rows or finding rows (§12.13).
 
-Whenever a status-bearing row is offered to Stage 10 bullet generation or either export, the consumer applies the canonical `VerificationStatus` allowlists in §16.11. No consumer may replace those allowlists with a denylist or treat an unnamed status as passing.
+Whenever a status-bearing row is offered to Stage 10 bullet generation or either export, the consumer applies the canonical `VerificationStatus` allowlists in §16.11.
 
-Every §13 business-state mutation and all coupled managed-output work, including enumeration, writes, removal, and residual-path handling, run while the §8.1 workspace writer lock is held.
+Every §13 business-state mutation and its coupled managed-output work run under the §8.1 writer-lock boundary.
 
 **Stale-export invalidation rule.** Exactly three trigger classes make a retained managed export stale: any transition that supersedes a current `AssessmentSnapshot`, `ResumeBranch`, or `ResumeBullet`; a completed Stage 7 or Stage 11 verifier pass that changes any current claim, snapshot, or bullet verification field (§13.7, §13.11); and a `gaps answer` whose answered state the dependent exports no longer reflect, which supersedes no row (§14.7). The triggering operation enumerates every affected manifest-backed set and attempts removal through §13.14; database state remains committed if cleanup fails, every residual path is reported as an unsuccessful invalidation, and no command may report the stale files as current output. The trigger sites name their trigger and affected sets while this rule owns the shared mechanics; privacy deletions remove managed sets under §13.13 and §14.16 rather than through this rule.
 
-Before any writer begins its business operation, while it holds the §8.1 workspace lock, it applies §13.14's managed-output preamble; §13.14 rule 5 owns abandoned-sibling identification and disposition and the boundary that an unreconciled residual stops managed-output publication without blocking a database mutation, invalidation, owner deletion, or workspace purge.
+The writer preamble and abandoned-sibling disposition follow §8.1 and §13.14 rule 5.
 
 ## §13.1 Stage 1 — Raw Capture and Evidence Recording
 
@@ -274,14 +274,14 @@ Verifier checks:
 
 1. Every self-claim has sources.
 2. Each `SelfClaim.confidence` is justified under §9.4's judgment frame by the strength and scope of its supporting facts' linked evidence; confidence and evidence strength remain separate axes (§9.3).
-3. Counterevidence is not hidden — inside the closure or by omission: a contrary `scope_signals` or `scope_facts` member absent from the claim's account grounds a non-passing status and may persist as a typed counterevidence reference to that member.
+3. Counterevidence is not hidden — inside the closure or by omission; §15.5 defines the omitted-member consequence.
 4. Identity claims are not over-broad.
 5. Self-assessment does not become motivational fiction.
 6. No clinical/diagnostic claims are generated.
 7. No resume-style overclaiming leaks into mirror mode.
-8. Every verified claim and snapshot is current and all of its referenced current entities resolve; superseded historical snapshots are inspect-only.
+8. Every verified claim and snapshot satisfies §16.1's current-chain rule; superseded snapshots are inspect-only (§11).
 9. The snapshot preserves the complete current Stage 4 contradiction set; verification cannot hide one by scope filtering, relabeling, or omission.
-10. Exactly one member claim has `claim_kind = "narrative_summary"`, and its claim text equals `AssessmentSnapshot.summary`.
+10. The §16.11 narrative-summary gate holds.
 11. Each claim stays within the snapshot's scope and scope target supplied as §15.5 structural context; a scoped claim that generalizes beyond its subject receives a non-passing status.
 
 For each claim, Stage 7 assembles exactly the §15.5 input closure from current rows, plus the view context — `scope_signals` and `scope_facts`, the snapshot view's complete deterministic §13.6 selection re-derived from current rows — so writer omission of a contrary signal or fact stays visible to check 3 while only the closure deepens into evidence context. The service serializes that closure through §13.3 rule 10's displaced-record support descriptor projection. A required post-projection bundle member that is missing, wrong-type, superseded, duplicated, or otherwise unresolvable fails the Stage 7 run closed before any provider call, and the prior complete verifier state is retained. The exactness and no-narrowing/no-widening rule applies to this displacement-aware bundle: omitting a descriptor, cited signal's counter fact, or other required member would obtain a more permissive verdict from a narrower graph; serializing a complete displaced item, a displaced `RawLog` object, or any row outside the bundle would widen the declared §29.3 transmission surface. The projection-required absence of a displaced `RawLog` object is not a missing member.
