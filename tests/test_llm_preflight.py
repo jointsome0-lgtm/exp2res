@@ -238,6 +238,31 @@ def test_normalized_literal_credential_fields_in_config_fail_closed(
         load_workspace_config(workspace)
 
 
+@pytest.mark.parametrize(
+    "llm_lines",
+    [
+        'items = [{api_key = "Vera Example literal credential"}]',
+        'notes = ["sk-VeraExampleTokenValue0123456789"]',
+        'nested = [[{password = "Vera Example literal credential"}]]',
+    ],
+    ids=["inline-table-array", "token-string-array", "nested-array-table"],
+)
+def test_credential_values_inside_config_arrays_fail_closed(
+    workspace: Path, llm_lines: str
+) -> None:
+    """§29.2/§29.4: the config boundary reaches values nested in TOML arrays."""
+
+    config = workspace / ".exp2res" / "config.toml"
+    config.write_text(
+        '[workspace]\ntimezone = "Etc/UTC"\n\n'
+        "[privacy]\nignore_paths = []\n\n"
+        f"[llm]\n{llm_lines}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError):
+        load_workspace_config(workspace)
+
+
 def test_canary_proves_closed_read_namespace_or_skips_explicitly(
     tmp_path: Path,
 ) -> None:

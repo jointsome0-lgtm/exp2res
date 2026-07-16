@@ -276,7 +276,7 @@ def db_status(context: typer.Context) -> None:
 
 @db_app.command("migrate")
 def db_migrate(context: typer.Context) -> None:
-    def operation(workspace: Path, _controls: Controls) -> Outcome:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
         status = inspect_workspace(workspace)
         if status.compatible:
             return Outcome(
@@ -284,6 +284,18 @@ def db_migrate(context: typer.Context) -> None:
                 human_result="No migration is required.",
             )
         if status.migration_path_available:
+            # §14.14 rule 3: db migrate is in the confirmation set — explicit
+            # --yes when non-interactive, a TTY confirmation otherwise.
+            if not controls.yes:
+                if _noninteractive(controls):
+                    raise NonInteractiveInputRequired()
+                if not typer.confirm(
+                    f"Migrate workspace schema from version "
+                    f"{status.stored_version} to {status.supported_version} "
+                    "(a verified backup is created first)?",
+                    err=True,
+                ):
+                    return Outcome(exit_code=9, diagnostic_class="cancelled")
             migrated = migrate_workspace(workspace)
             return Outcome(
                 result=_schema_result(migrated),

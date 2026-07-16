@@ -52,15 +52,6 @@ class SchemaCompatibilityError(Exp2ResError):
     public_message = "The workspace schema is incompatible or unrecognized."
 
 
-class MigrationFailedError(SchemaCompatibilityError):
-    diagnostic_class = "migration_failed"
-    public_message = "The workspace migration failed and was rolled back."
-
-    def __init__(self, *, managed_backup_path: str | None = None) -> None:
-        super().__init__()
-        self.managed_backup_path = managed_backup_path
-
-
 class WorkspaceBusyError(Exp2ResError):
     exit_code = 5
     diagnostic_class = "workspace_busy"
@@ -71,6 +62,17 @@ class IntegrityFailureError(Exp2ResError):
     exit_code = 7
     diagnostic_class = "integrity_failure"
     public_message = "Validation or storage integrity failed."
+
+
+class MigrationFailedError(IntegrityFailureError):
+    """A rolled-back migration is §14.14 class 7, not schema class 4."""
+
+    diagnostic_class = "migration_failed"
+    public_message = "The workspace migration failed and was rolled back."
+
+    def __init__(self, *, managed_backup_path: str | None = None) -> None:
+        super().__init__()
+        self.managed_backup_path = managed_backup_path
 
 
 class IdCollisionError(IntegrityFailureError):

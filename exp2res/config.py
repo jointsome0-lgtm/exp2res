@@ -93,6 +93,20 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
     except (OSError, UnicodeError, ValueError, TypeError) as error:
         raise ConfigurationError() from error
 
+    def reject_credential_value(value: Any) -> None:
+        if isinstance(value, str):
+            if looks_like_literal_credential(
+                value, token_patterns=CODEX_TOKEN_PATTERNS
+            ):
+                raise ConfigurationError()
+        elif isinstance(value, dict):
+            reject_literal_credentials(value)
+        elif isinstance(value, list):
+            # TOML arrays may nest inline tables and further arrays; the
+            # fail-closed boundary covers every reachable value.
+            for item in value:
+                reject_credential_value(item)
+
     def reject_literal_credentials(section: dict[str, Any]) -> None:
         for key, value in section.items():
             if normalize_credential_field(key) in {
@@ -104,12 +118,7 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
                 "authorization",
             } and value:
                 raise ConfigurationError()
-            if isinstance(value, str) and looks_like_literal_credential(
-                value, token_patterns=CODEX_TOKEN_PATTERNS
-            ):
-                raise ConfigurationError()
-            if isinstance(value, dict):
-                reject_literal_credentials(value)
+            reject_credential_value(value)
 
     for section in parsed.values():
         if not isinstance(section, dict):

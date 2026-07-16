@@ -57,7 +57,16 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     assert before.migration_path_available is True
 
     monkeypatch.chdir(workspace)
-    result = runner.invoke(app, ["--json", "db", "migrate"])
+    # §14.14 rule 3: db migrate is in the confirmation set — a non-interactive
+    # invocation without --yes fails closed before any mutation.
+    refused = runner.invoke(app, ["--json", "db", "migrate"])
+    assert refused.exit_code == 2
+    refused_envelope = json.loads(refused.stdout)
+    assert refused_envelope["diagnostic_class"] == "input_required"
+    assert inspect_workspace(workspace).stored_version == 1
+    assert not (workspace / ".exp2res" / "backup").exists()
+
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
     assert result.exit_code == 0, result.stderr
     envelope = json.loads(result.stdout)
     schema = envelope["result"]["schema"]
@@ -88,6 +97,32 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
         }
     assert {"processing_runs", "llm_calls"}.issubset(tables)
     assert show_log(workspace, log_id=log_id).raw_log.raw_text == raw_text
+
+
+def test_cli_reports_a_rolled_back_migration_as_integrity_class_7(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14: a failed migration is class 7 migration_failed, never class 4."""
+
+    import exp2res.cli as cli_module
+
+    workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+
+    def failing_migration(_workspace: Path):
+        raise MigrationFailedError(
+            managed_backup_path="/tmp/Vera Example backup.sqlite"
+        )
+
+    monkeypatch.setattr(cli_module, "migrate_workspace", failing_migration)
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    assert result.exit_code == 7
+    envelope = json.loads(result.stdout)
+    assert envelope["diagnostic_class"] == "migration_failed"
+    assert envelope["result"]["schema"]["managed_backup_path"] == (
+        "/tmp/Vera Example backup.sqlite"
+    )
+    assert envelope["result"]["schema"]["stored_version"] == 1
 
 
 def test_migration_failure_rolls_back_ddl_and_version_but_retains_backup(

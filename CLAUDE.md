@@ -52,9 +52,11 @@ How to apply:
 - Mechanics: gpt-5.6 is only reachable through the Codex CLI — `codex exec` /
   `codex review` (my `~/.codex/config.toml` defaults to `gpt-5.6-sol` at xhigh
   effort). Always run `codex exec` directly via Bash
-  with a self-contained prompt you wrote: `-s read-only` for
-  investigation/analysis/verification, drop the sandbox flag only when codex
-  must edit files. Health check: `codex --version` plus a trivial exec.
+  with a self-contained prompt you wrote: `-s read-only` for pure
+  reading/analysis; `-s workspace-write` when it must edit files OR run
+  tests/builds — test runs write caches and temp state, so read-only makes
+  them fail or stall (this produced a false "verify.py hangs" finding once).
+  Health check: `codex --version` plus a trivial exec.
 - Claude models (sonnet-5, opus-4.8, fable-5) run via the Agent/Workflow model
   parameter.
 
