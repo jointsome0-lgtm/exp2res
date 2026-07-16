@@ -28,7 +28,17 @@ Clock = Callable[[], datetime]
 
 
 def new_id(kind: str) -> str:
-    prefix = "log" if kind == "raw_log" else "evi"
+    prefixes = {
+        "raw_log": "log",
+        "evidence_item": "evi",
+        "fact": "fact",
+        "run": "run",
+        "gen": "gen",
+    }
+    try:
+        prefix = prefixes[kind]
+    except KeyError:
+        raise ValueError("unknown entity ID kind") from None
     return f"{prefix}_{uuid4().hex}"
 
 
