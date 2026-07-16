@@ -26,6 +26,8 @@ from exp2res.storage.telemetry import (
     finish_llm_call,
     finish_processing_run,
     increment_call_retry,
+    merge_run_metadata,
+    require_running_run,
 )
 from exp2res.storage.workspace import writer_database
 
@@ -248,7 +250,9 @@ def preflight_adapter(
 
 
 def _transaction(workspace: Path, operation: Callable[[object], None]) -> None:
-    with writer_database(workspace) as connection:
+    # reconcile=False: a run's own telemetry transactions must not trip the
+    # §15.10 rule 8 abandoned-row sweep against the run they belong to.
+    with writer_database(workspace, reconcile=False) as connection:
         try:
             connection.execute("BEGIN IMMEDIATE")
             operation(connection)
@@ -311,6 +315,7 @@ def invoke_contract(
     run_id: str,
     stage: str,
     call_index: int = 1,
+    finish_run: bool = True,
     cli_version: str = "test-double",
     input_ids: Iterable[str] = (),
     output_ids: Iterable[str] = (),
@@ -350,17 +355,29 @@ def invoke_contract(
     }
 
     def create_rows(connection: object) -> None:
-        create_processing_run(
-            connection,  # type: ignore[arg-type]
-            run_id=run_id,
-            stage=stage,
-            started_at=started_at,
-            provider=RUNNER_ID,
-            model=model_id,
-            prompt_policy_hash=policy_hash,
-            input_ids=input_ids,
-            metadata=initial_metadata,
-        )
+        if call_index == 1:
+            create_processing_run(
+                connection,  # type: ignore[arg-type]
+                run_id=run_id,
+                stage=stage,
+                started_at=started_at,
+                provider=RUNNER_ID,
+                model=model_id,
+                prompt_policy_hash=policy_hash,
+                input_ids=input_ids,
+                metadata=initial_metadata,
+            )
+        else:
+            # §12.15: every call in a run shares one execution configuration;
+            # a later index appends to the existing running run, never a
+            # second processing_runs row.
+            require_running_run(
+                connection,  # type: ignore[arg-type]
+                run_id=run_id,
+                provider=RUNNER_ID,
+                model=model_id,
+                prompt_policy_hash=policy_hash,
+            )
         create_llm_call(
             connection,  # type: ignore[arg-type]
             run_id=run_id,
@@ -552,14 +569,24 @@ def invoke_contract(
                 prompt_tokens=estimate_tokens(serialized_input),
                 completion_tokens=completion_tokens,
             )
-            finish_processing_run(
-                connection,  # type: ignore[arg-type]
-                run_id=run_id,
-                finished_at=now(),
-                status="completed",
-                output_ids=committed_output_ids,
-                metadata=terminal_metadata(),
-            )
+            if finish_run:
+                finish_processing_run(
+                    connection,  # type: ignore[arg-type]
+                    run_id=run_id,
+                    finished_at=now(),
+                    status="completed",
+                    output_ids=committed_output_ids,
+                    metadata=terminal_metadata(),
+                )
+            else:
+                # §15.10 rule 7: a multi-call stage finishes its one run only
+                # after every planned invocation validates; this call records
+                # its telemetry and leaves the run running.
+                merge_run_metadata(
+                    connection,  # type: ignore[arg-type]
+                    run_id=run_id,
+                    metadata=terminal_metadata(),
+                )
 
         _transaction(workspace, complete)
         return InvocationResult(validated, output, run_id, call_index)

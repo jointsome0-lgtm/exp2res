@@ -553,6 +553,7 @@ def writer_database(
     *,
     owner_delete: bool = False,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    reconcile: bool = True,
 ) -> Iterator[sqlite3.Connection]:
     # The first compatibility gate precedes lock acquisition and write I/O.
     require_compatible(workspace)
@@ -569,6 +570,22 @@ def writer_database(
             status = inspect_schema(connection)
             if not status.compatible:
                 raise SchemaCompatibilityError()
+            if reconcile:
+                # §15.10 rule 8: the next compatible writer marks abandoned
+                # LLM telemetry before its business operation. Telemetry
+                # transactions inside a live invocation pass reconcile=False
+                # so a running run cannot cancel itself.
+                from .telemetry import reconcile_abandoned_telemetry
+
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    reconcile_abandoned_telemetry(
+                        connection, finished_at=datetime.now(timezone.utc)
+                    )
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
             yield connection
         finally:
             connection.close()

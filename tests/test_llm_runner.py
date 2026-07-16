@@ -478,35 +478,37 @@ def test_process_timeout_kills_the_child_process_group(tmp_path: Path) -> None:
     assert not Path(f"/proc/{child_pid}").exists()
 
 
-def test_next_writer_reconciles_only_nonterminal_telemetry(workspace: Path) -> None:
-    """§15.10 rule 8: crash leftovers fail as cancelled; terminals stay exact."""
-
-    fake = FakeContractRunner([VALID])
-    invoke(workspace, fake, run_id="run_vera_terminal")
+def _plant_abandoned_run(workspace: Path, run_id: str) -> None:
     database = workspace / ".exp2res" / "exp2res.sqlite"
     with sqlite3.connect(database) as connection:
         connection.execute(
             """
             INSERT INTO processing_runs(id, stage, started_at, status)
-            VALUES ('run_vera_abandoned', '13.test', ?, 'running')
+            VALUES (?, '13.test', ?, 'running')
             """,
-            (FIXED_NOW.isoformat(),),
+            (run_id, FIXED_NOW.isoformat()),
         )
         connection.execute(
             """
             INSERT INTO llm_calls(
                 run_id, call_index, started_at, status,
                 transport_retries, schema_retries
-            ) VALUES ('run_vera_abandoned', 1, ?, 'running', 0, 0)
+            ) VALUES (?, 1, ?, 'running', 0, 0)
             """,
-            (FIXED_NOW.isoformat(),),
+            (run_id, FIXED_NOW.isoformat()),
         )
-    with writer_database(workspace) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        assert reconcile_abandoned_telemetry(
-            connection, finished_at=datetime(2026, 7, 16, tzinfo=timezone.utc)
-        ) == (1, 1)
-        connection.commit()
+
+
+def test_next_writer_reconciles_only_nonterminal_telemetry(workspace: Path) -> None:
+    """§15.10 rule 8: crash leftovers fail as cancelled; terminals stay exact."""
+
+    fake = FakeContractRunner([VALID])
+    invoke(workspace, fake, run_id="run_vera_terminal")
+    _plant_abandoned_run(workspace, "run_vera_abandoned")
+    # The production wiring: every business writer_database entry sweeps
+    # abandoned rows before its business operation.
+    with writer_database(workspace):
+        pass
     terminal_run, terminal_call = telemetry(workspace, "run_vera_terminal")
     abandoned_run, abandoned_call = telemetry(workspace, "run_vera_abandoned")
     assert terminal_run["status"] == terminal_call["status"] == "completed"
@@ -514,3 +516,178 @@ def test_next_writer_reconciles_only_nonterminal_telemetry(workspace: Path) -> N
     assert abandoned_run["status"] == abandoned_call["status"] == "failed"
     assert abandoned_run["failure_code"] == abandoned_call["failure_code"] == "cancelled"
     assert abandoned_run["finished_at"] and abandoned_call["finished_at"]
+
+
+def test_live_run_telemetry_transactions_do_not_cancel_their_own_run(
+    workspace: Path,
+) -> None:
+    """§15.10 rule 8 sweeps abandoned rows, never the invoking run itself."""
+
+    _plant_abandoned_run(workspace, "run_vera_live")
+    with writer_database(workspace, reconcile=False) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        assert reconcile_abandoned_telemetry(
+            connection, finished_at=datetime(2026, 7, 16, tzinfo=timezone.utc)
+        ) == (1, 1)
+        connection.rollback()
+    run, call = telemetry(workspace, "run_vera_live")
+    assert run["status"] == call["status"] == "running"
+
+    # A full invocation's internal telemetry transactions leave the planted
+    # running row untouched because they never reconcile.
+    fake = FakeContractRunner([VALID])
+    invoke(workspace, fake, run_id="run_vera_second")
+    run, call = telemetry(workspace, "run_vera_live")
+    assert run["status"] == call["status"] == "running"
+
+
+def multi_invoke(
+    workspace: Path,
+    fake: FakeContractRunner,
+    *,
+    run_id: str,
+    call_index: int,
+    finish_run: bool,
+    model_id: str = "gpt-test-vera-example",
+):
+    return invoke_contract(
+        workspace=workspace,
+        runner=fake,
+        contract=CONTRACT,
+        serialized_input=INPUT,
+        model_id=model_id,
+        budgets=budgets(planned_call_count=2),
+        run_id=run_id,
+        stage="13.test",
+        call_index=call_index,
+        finish_run=finish_run,
+        cli_version="0.144.4-test",
+        enrich=enrich,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+
+
+def test_multi_call_run_appends_contiguous_calls_and_caller_finishes(
+    workspace: Path,
+) -> None:
+    """§12.15/§15.10 rule 7: one run owns call_index 1..N; the stage finishes it."""
+
+    multi_invoke(
+        workspace,
+        FakeContractRunner([VALID]),
+        run_id="run_vera_multi",
+        call_index=1,
+        finish_run=False,
+    )
+    run, call = telemetry(workspace, "run_vera_multi")
+    assert run["status"] == "running"
+    assert call["status"] == "completed"
+
+    multi_invoke(
+        workspace,
+        FakeContractRunner([VALID]),
+        run_id="run_vera_multi",
+        call_index=2,
+        finish_run=False,
+    )
+    connection = sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite")
+    connection.row_factory = sqlite3.Row
+    try:
+        runs = connection.execute(
+            "SELECT * FROM processing_runs WHERE id = 'run_vera_multi'"
+        ).fetchall()
+        calls = connection.execute(
+            "SELECT * FROM llm_calls WHERE run_id = 'run_vera_multi' ORDER BY call_index"
+        ).fetchall()
+    finally:
+        connection.close()
+    assert len(runs) == 1
+    assert [row["call_index"] for row in calls] == [1, 2]
+    assert all(row["status"] == "completed" for row in calls)
+    assert runs[0]["status"] == "running"
+    metadata = json.loads(runs[0]["metadata_json"])
+    assert "call_1_exit_code" in metadata and "call_2_exit_code" in metadata
+
+    from exp2res.storage.telemetry import finish_processing_run
+
+    with writer_database(workspace, reconcile=False) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        finish_processing_run(
+            connection,
+            run_id="run_vera_multi",
+            finished_at=FIXED_NOW,
+            status="completed",
+            output_ids=("fact_vera",),
+        )
+        connection.commit()
+    run, _call = telemetry(workspace, "run_vera_multi")
+    assert run["status"] == "completed"
+    assert json.loads(run["output_ids_json"]) == ["fact_vera"]
+    merged = json.loads(run["metadata_json"])
+    assert "call_1_exit_code" in merged and "call_2_exit_code" in merged
+
+
+def test_later_call_index_requires_the_same_running_configuration(
+    workspace: Path,
+) -> None:
+    """§12.15: mid-run configuration change or a finished run fails closed."""
+
+    from exp2res.errors import IntegrityFailureError
+
+    invoke(workspace, FakeContractRunner([VALID]), run_id="run_vera_single")
+    with pytest.raises(IntegrityFailureError):
+        multi_invoke(
+            workspace,
+            FakeContractRunner([VALID]),
+            run_id="run_vera_single",
+            call_index=2,
+            finish_run=False,
+        )
+
+    multi_invoke(
+        workspace,
+        FakeContractRunner([VALID]),
+        run_id="run_vera_config",
+        call_index=1,
+        finish_run=False,
+    )
+    with pytest.raises(IntegrityFailureError):
+        multi_invoke(
+            workspace,
+            FakeContractRunner([VALID]),
+            run_id="run_vera_config",
+            call_index=2,
+            finish_run=False,
+            model_id="gpt-test-vera-other-model",
+        )
+    _run, call = telemetry(workspace, "run_vera_config")
+    assert call["call_index"] == 1  # no second call row was recorded
+
+
+def test_call_failure_in_a_multi_call_run_fails_the_whole_run(
+    workspace: Path,
+) -> None:
+    """§15.10 rule 7: a failed planned invocation fails its run terminally."""
+
+    invalid = b'{"value":"Vera Example","warnings":[],"extra":"denied"}'
+    multi_invoke(
+        workspace,
+        FakeContractRunner([VALID]),
+        run_id="run_vera_partial",
+        call_index=1,
+        finish_run=False,
+    )
+    with pytest.raises(LLMInvocationError):
+        multi_invoke(
+            workspace,
+            FakeContractRunner([invalid, invalid]),
+            run_id="run_vera_partial",
+            call_index=2,
+            finish_run=False,
+        )
+    run, _call = telemetry(workspace, "run_vera_partial")
+    assert run["status"] == "failed"
+    assert run["failure_code"] == "response_validation_failed"
+    assert json.loads(run["output_ids_json"]) == []

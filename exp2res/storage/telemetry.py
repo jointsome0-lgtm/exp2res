@@ -157,6 +157,67 @@ def increment_call_retry(
         raise IntegrityFailureError()
 
 
+def require_running_run(
+    connection: sqlite3.Connection,
+    *,
+    run_id: str,
+    provider: str,
+    model: str,
+    prompt_policy_hash: str,
+) -> None:
+    """Gate a later call index on the run's single execution configuration."""
+
+    row = connection.execute(
+        """
+        SELECT status, provider, model, prompt_policy_hash
+        FROM processing_runs WHERE id = ?
+        """,
+        (run_id,),
+    ).fetchone()
+    if row is None or row[0] != "running":
+        raise IntegrityFailureError()
+    if (row[1], row[2], row[3]) != (provider, model, prompt_policy_hash):
+        raise IntegrityFailureError()
+
+
+def _stored_metadata(connection: sqlite3.Connection, run_id: str) -> dict[str, str]:
+    row = connection.execute(
+        "SELECT metadata_json FROM processing_runs WHERE id = ?", (run_id,)
+    ).fetchone()
+    if row is None:
+        raise IntegrityFailureError()
+    try:
+        stored = json.loads(row[0])
+    except (TypeError, ValueError) as error:
+        raise IntegrityFailureError() from error
+    if not isinstance(stored, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in stored.items()
+    ):
+        raise IntegrityFailureError()
+    return stored
+
+
+def merge_run_metadata(
+    connection: sqlite3.Connection,
+    *,
+    run_id: str,
+    metadata: dict[str, str],
+) -> None:
+    """Fold per-call keys into a still-running run without finishing it."""
+
+    merged = {**_stored_metadata(connection, run_id), **metadata}
+    cursor = connection.execute(
+        """
+        UPDATE processing_runs SET metadata_json = ?
+        WHERE id = ? AND status NOT IN ('completed', 'failed')
+        """,
+        (_metadata(merged), run_id),
+    )
+    if cursor.rowcount != 1:
+        raise IntegrityFailureError()
+
+
 def finish_llm_call(
     connection: sqlite3.Connection,
     *,
@@ -218,6 +279,8 @@ def finish_processing_run(
     if (status == "completed") != (failure_code is None):
         raise ValueError("run failure code disagrees with status")
     ids_json = _ids(output_ids) if status == "completed" else "[]"
+    merged = {**_stored_metadata(connection, run_id), **(metadata or {})}
+    metadata = merged
     cursor = connection.execute(
         """
         UPDATE processing_runs
