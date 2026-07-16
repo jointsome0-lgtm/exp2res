@@ -21,7 +21,7 @@ from exp2res.domain.temporal import (
     confidence_exceeds,
     interval_contains,
     occurred_interval,
-    strength_exceeds_support,
+    placement_supports,
 )
 from exp2res.errors import HydrationFailureError, IdCollisionError, IntegrityFailureError
 
@@ -212,6 +212,10 @@ def insert_experience_fact(
 ) -> None:
     if not produced_by_run_id or not generation_id:
         raise IntegrityFailureError()
+    # §15.11: `superseded_at` is service-owned lifecycle state — a fact row
+    # is born current and only §13.3 rule 11 supersession may close it.
+    if fact.superseded_at is not None:
+        raise IntegrityFailureError()
     if len(fact.evidence_item_ids) != len(set(fact.evidence_item_ids)):
         raise IntegrityFailureError()
     # §12 rule 10 with §13.3 rules 6/10/13: resolve every selected item,
@@ -270,9 +274,13 @@ def insert_experience_fact(
     if project_key != expected_key or (fact.project is not None and not expected_key):
         raise IntegrityFailureError()
     # §13.3 rule 2 / §15.2 / §16.7 at the commit boundary: the persisted
-    # placement never widens beyond the governing window, never exceeds the
-    # strongest placement among the fact's selected effective records, and
-    # never raises temporal confidence above the governing record's.
+    # placement never widens beyond the governing window, never raises
+    # temporal confidence above the governing record's, and must be entailed
+    # by some selected effective placement — the governing copy trivially
+    # satisfies this via the governing record itself, while a narrowing needs
+    # a selected record asserting an interval inside it at equal-or-stronger
+    # §16.7 strength, so equal-width relocation (July 5 support, July 10
+    # claim) fails alongside width upgrades.
     def stored_occurred(row: sqlite3.Row) -> OccurredAt:
         try:
             return OccurredAt(
@@ -303,8 +311,8 @@ def insert_experience_fact(
         raise IntegrityFailureError()
     if confidence_exceeds(fact.occurred.confidence, governing_occurred.confidence):
         raise IntegrityFailureError()
-    if strength_exceeds_support(
-        fact.occurred, tuple(stored_occurred(row) for row in effective)
+    if not any(
+        placement_supports(fact.occurred, stored_occurred(row)) for row in effective
     ):
         raise IntegrityFailureError()
     try:

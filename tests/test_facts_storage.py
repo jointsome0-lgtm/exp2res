@@ -778,6 +778,138 @@ def test_fact_insert_accepts_narrowing_supported_by_a_selected_effective_record(
     assert stored[0] == "exact_day"
 
 
+def test_fact_insert_rejects_placements_no_selected_record_entails(
+    workspace: Path,
+) -> None:
+    """§13.3 rule 2: support must entail the placement, not merely its width."""
+
+    utc = timezone.utc
+    month = OccurredAt(
+        start=datetime(2026, 7, 1, tzinfo=utc),
+        end=None,
+        precision="month",
+        confidence="medium",
+    )
+    _month_lineage_log(workspace, log_id="log_vera_entail_root", occurred=month)
+    day_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_entail_day",
+        occurred=OccurredAt(
+            start=datetime(2026, 7, 5, tzinfo=utc),
+            end=None,
+            precision="exact_day",
+            confidence="medium",
+        ),
+        corrects_log_id="log_vera_entail_root",
+        recorded_at=FIXED_NOW.replace(hour=13),
+    )
+    month_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_entail_month",
+        occurred=month,
+        corrects_log_id="log_vera_entail_root",
+        recorded_at=FIXED_NOW.replace(hour=14),
+    )
+    approx = OccurredAt(
+        start=datetime(2026, 7, 1, tzinfo=utc),
+        end=datetime(2026, 8, 1, tzinfo=utc),
+        precision="approximate_range",
+        confidence="medium",
+    )
+    _month_lineage_log(workspace, log_id="log_vera_entail_soft", occurred=approx)
+    # July 5 is the only day-precision support: an equal-width claim on
+    # July 10 is a relocation no selected record asserts, and hardening the
+    # soft governing bounds into a date_range is an exactness upgrade.
+    relocated = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=sorted(
+                ["log_vera_entail_day", "log_vera_entail_month"],
+                key=lambda value: value.encode("utf-8"),
+            ),
+            evidence_item_ids=sorted(
+                [day_item, month_item], key=lambda value: value.encode("utf-8")
+            ),
+            occurred=OccurredAt(
+                start=datetime(2026, 7, 10, tzinfo=utc),
+                end=None,
+                precision="exact_day",
+                confidence="medium",
+            ),
+        )
+    )
+    hardened = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=["log_vera_entail_soft"],
+            evidence_item_ids=["evi_log_vera_entail_soft"],
+            occurred=approx.model_copy(update={"precision": "date_range"}),
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        for candidate in (relocated, hardened):
+            with pytest.raises(IntegrityFailureError):
+                insert_experience_fact(
+                    connection,
+                    candidate,
+                    produced_by_run_id=RUN_A,
+                    generation_id=GEN_A,
+                )
+        connection.rollback()
+
+
+def test_fact_insert_rejects_caller_set_superseded_at(workspace: Path) -> None:
+    """§15.11: fact rows are born current; supersession is lifecycle-owned."""
+
+    month = OccurredAt(
+        start=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        end=None,
+        precision="month",
+        confidence="medium",
+    )
+    item_id = _month_lineage_log(
+        workspace, log_id="log_vera_preclosed", occurred=month
+    )
+    preclosed = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=["log_vera_preclosed"],
+            evidence_item_ids=[item_id],
+            occurred=month,
+            superseded_at=FIXED_NOW,
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        with pytest.raises(IntegrityFailureError):
+            insert_experience_fact(
+                connection,
+                preclosed,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        connection.rollback()
+
+
 def test_fact_insert_rejects_non_extractor_claim_kinds(workspace: Path) -> None:
     """§15.2: SelfClaim-only ClaimKind members never persist as facts."""
 

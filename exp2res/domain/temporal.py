@@ -127,6 +127,21 @@ def strength_exceeds_support(
     )
 
 
+def placement_supports(candidate: OccurredAt, support: OccurredAt) -> bool:
+    """§13.3 rule 2: does this selected placement entail the candidate?
+
+    A record asserting occurrence within `support` explicitly supports the
+    candidate placement exactly when its anchored interval lies inside the
+    candidate's and it is at least as strong under §16.7 — so a placement
+    can only restate or weaken what some selected record asserts, never
+    sharpen it (a July 5 exact day never licenses July 10).
+    """
+
+    return interval_contains(
+        occurred_interval(candidate), occurred_interval(support)
+    ) and not strength_exceeds_support(candidate, (support,))
+
+
 def confidence_exceeds(candidate: str, ceiling: str) -> bool:
     """Compare two §10 weak-to-strong ordered confidence values."""
 
