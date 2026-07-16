@@ -34,6 +34,14 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 
     These fields have no §11 model counterpart because neither value may cross the LLM boundary: every §15 input is a §11 shape or a contract-declared projection of one (§11), and adding model fields would widen every §29.3 transmission row for no semantic gain. They are service-owned inspection/provenance state, like `fact_sources`, and are hydrated only by inspection surfaces.
 
+14. `raw_logs` and `experience_facts` — the tables storing copied project provenance — additionally derive one service-set storage column:
+
+    ```sql
+    project_key TEXT
+    ```
+
+    `project_key` is `NULL` if and only if the row's `project` is `NULL`. The value is computed by the one service-owned canonical project-key function — Unicode NFC normalization, then leading/trailing Unicode-whitespace trim, then locale-independent Unicode Default Case Folding (§11's comparison identity, §14.9's canonicalization) — applied to the row's exact persisted `project` value, which itself remains untransformed provenance. Capture and import compute the key when the row is persisted; Stage 3 copies `project` and `project_key` together from each fact's governing record (§13.3 rule 13). A non-null `project` that canonicalizes to blank is invalid under §11's Model validation policy, so every stored key is non-empty. Hydration of a row carrying the column re-validates that the stored key equals that function applied to the stored label and fails closed on disagreement (rule 2). Project-view subject selection and every other project-identity comparison consume the stored key against the case-folded canonical selector (§13.6); no comparison site re-implements normalization over labels. Like rule 13's columns, `project_key` has no §11 model counterpart and never crosses the LLM boundary (§11, §15.11): it is service-owned comparison identity, not provenance, display, or export content — owner-facing output renders `project`, and the key may appear only in diagnostics. V1 has no project-label registry and no Project entity.
+
 | Typed reference fields | Required current target |
 |---|---|
 | `SelfSignal.supporting_fact_ids`, `counter_fact_ids` | `experience_facts` |

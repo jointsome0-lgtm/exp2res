@@ -1,0 +1,1013 @@
+"""§11.4/§12 fact model, persistence, hydration, and lifecycle tests."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
+import sqlite3
+
+from pydantic import ValidationError
+import pytest
+
+from exp2res.domain.models import (
+    EvidenceItem,
+    ExperienceFact,
+    OccurredAt,
+    RawLog,
+    canonical_project_key,
+)
+from exp2res.errors import (
+    HydrationFailureError,
+    IdCollisionError,
+    IntegrityFailureError,
+)
+from exp2res.services.capture import capture_daily
+from exp2res.services.logs import show_log
+from exp2res.storage.repository import (
+    RawLogBundle,
+    get_experience_fact,
+    insert_evidence_item,
+    insert_experience_fact,
+    insert_raw_log,
+    list_experience_facts,
+    mark_facts_superseded,
+)
+from exp2res.storage.telemetry import create_processing_run, finish_processing_run
+from exp2res.storage.workspace import read_database, writer_database
+
+from conftest import FIXED_NOW
+
+
+pytestmark = [pytest.mark.unit, pytest.mark.lifecycle]
+
+FACT_A = "fact_" + "a" * 32
+FACT_B = "fact_" + "b" * 32
+RUN_A = "run_" + "a" * 32
+RUN_B = "run_" + "b" * 32
+GEN_A = "gen_" + "a" * 32
+
+
+def fact_values(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "id": FACT_A,
+        "created_at": FIXED_NOW,
+        "superseded_at": None,
+        "claim": "Vera Example built an offline provenance store.",
+        "claim_kind": "observed_fact",
+        "project": " Exp2Res ",
+        "role": "Engineer",
+        "company": None,
+        "context": "independent_project",
+        "ownership_level": "built",
+        "action": "Built",
+        "object": "an offline provenance store",
+        "outcome": "Strict local persistence",
+        "skills": ["Schema design"],
+        "technologies": ["SQLite"],
+        "themes": ["Local-first"],
+        # Anchored like the capture fixtures' governing records: exact_day
+        # placements anchor at the day start (§11.1), and §13.3 rule 2's
+        # copy/containment checks compare against that governing window.
+        "occurred": OccurredAt(
+            start=FIXED_NOW.replace(hour=0, minute=0),
+            end=None,
+            precision="exact_day",
+            confidence="high",
+        ),
+        "source_log_ids": ["log_" + "a" * 32],
+        "evidence_item_ids": ["evi_" + "a" * 32],
+        "confidence": "high",
+        "metadata": {},
+    }
+    values.update(overrides)
+    return values
+
+
+def make_fact(*, raw_log_id: str, evidence_item_id: str, **overrides: object) -> ExperienceFact:
+    return ExperienceFact(
+        **fact_values(
+            source_log_ids=[raw_log_id],
+            evidence_item_ids=[evidence_item_id],
+            **overrides,
+        )
+    )
+
+
+def persist_fact(
+    workspace: Path,
+    fact: ExperienceFact,
+    *,
+    run_id: str = RUN_A,
+    generation_id: str = GEN_A,
+) -> None:
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=run_id,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+            input_ids=fact.source_log_ids,
+        )
+        insert_experience_fact(
+            connection,
+            fact,
+            produced_by_run_id=run_id,
+            generation_id=generation_id,
+        )
+        finish_processing_run(
+            connection,
+            run_id=run_id,
+            finished_at=FIXED_NOW,
+            status="completed",
+            output_ids=[fact.id],
+        )
+        connection.commit()
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (" Exp2Res ", "exp2res"),
+        ("Exp2Re\u0301s", "Exp2Rés"),
+        ("Straße", "STRASSE"),
+    ],
+)
+@pytest.mark.invariant
+def test_canonical_project_key_equivalence_and_idempotence(
+    left: str, right: str
+) -> None:
+    """§12 rule 14: project identity is NFC, trimmed, case-folded once."""
+
+    key = canonical_project_key(left)
+    assert key == canonical_project_key(right)
+    assert canonical_project_key(key) == key
+    assert canonical_project_key(" \t\n ") == ""
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"created_at": datetime(2026, 7, 15, 12, 30)},
+        {"superseded_at": datetime(2026, 7, 15, 12, 30)},
+        {"source_log_ids": []},
+        {"evidence_item_ids": []},
+        {"source_log_ids": ["log_a", "log_a"]},
+        {"evidence_item_ids": ["evi_a", "evi_a"]},
+        {"project": "   "},
+        {"skills": [""]},
+        {"technologies": ["x"] * 1_001},
+        {"metadata": {"note": "x" * 4_097}},
+    ],
+    ids=(
+        "naive-created",
+        "naive-superseded",
+        "empty-source-logs",
+        "empty-evidence-items",
+        "duplicate-source-logs",
+        "duplicate-evidence-items",
+        "blank-project",
+        "empty-string-list-member",
+        "oversize-string-list",
+        "oversize-metadata",
+    ),
+)
+@pytest.mark.invariant
+def test_experience_fact_rejects_strict_shape_and_limit_violations(
+    overrides: dict[str, object]
+) -> None:
+    """§11.4 model policy: fact timestamps, lists, project, and metadata are strict."""
+
+    with pytest.raises(ValidationError):
+        ExperienceFact(**fact_values(**overrides))
+
+
+def test_experience_fact_json_hydration_rejects_invalid_occurred_shape() -> None:
+    """§11.1/§11.4: embedded OccurredAt keeps its discriminator rules."""
+
+    payload = ExperienceFact(**fact_values()).model_dump(mode="json")
+    payload["occurred"] = {
+        "start": FIXED_NOW.isoformat(),
+        "end": FIXED_NOW.isoformat(),
+        "precision": "exact_day",
+        "confidence": "high",
+    }
+    with pytest.raises(ValidationError):
+        ExperienceFact.model_validate_json(json.dumps(payload))
+
+
+def test_raw_log_model_rejects_blank_canonical_project_label() -> None:
+    """§11 model policy: RawLog.project shares the non-blank label boundary."""
+
+    with pytest.raises(ValidationError):
+        RawLog(
+            id="log_" + "a" * 32,
+            recorded_at=FIXED_NOW,
+            entry_type="manual_daily",
+            source_type="manual_entry",
+            occurred=fact_values()["occurred"],
+            raw_text="Vera Example invalid project record",
+            project=" \t ",
+        )
+
+
+def correction_lineage(
+    workspace: Path,
+    *,
+    root_project: str | None,
+    correction_project: str | None,
+) -> tuple[RawLogBundle, RawLog, EvidenceItem, EvidenceItem]:
+    """Build one §13.3 rule 10 lineage: root displaced by one correction.
+
+    Returns the root bundle, the correction, the correction's manual item,
+    and a non-manual root item that stays selectable as displaced support.
+    """
+
+    root = capture_daily(
+        workspace,
+        raw_text="Vera Example corrected lineage root",
+        project=root_project,
+        clock=lambda: FIXED_NOW,
+    )
+    correction = RawLog(
+        id="log_vera_lineage_correction",
+        recorded_at=FIXED_NOW.replace(hour=13),
+        entry_type="correction",
+        source_type="manual_entry",
+        occurred=root.raw_log.occurred,
+        raw_text="Vera Example self-contained corrected restatement",
+        project=correction_project,
+        corrects_log_id=root.raw_log.id,
+    )
+    correction_item = EvidenceItem(
+        id="evi_vera_lineage_correction",
+        created_at=correction.recorded_at,
+        raw_log_id=correction.id,
+        summary="Owner-authored corrected restatement.",
+        strength="manual_claim",
+    )
+    root_doc_item = EvidenceItem(
+        id="evi_vera_lineage_rootdoc",
+        created_at=root.raw_log.recorded_at,
+        raw_log_id=root.raw_log.id,
+        summary="Imported design artifact linked to the displaced root.",
+        strength="design_doc",
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        insert_raw_log(connection, correction)
+        insert_evidence_item(connection, correction_item)
+        insert_evidence_item(connection, root_doc_item)
+        connection.commit()
+    return root, correction, correction_item, root_doc_item
+
+
+def test_fact_round_trip_derives_ordered_sources_and_preserves_production_identity(
+    workspace: Path,
+) -> None:
+    """§12 rules 8/13/14: fact hydration derives sources and keeps run identity."""
+
+    root, correction, correction_item, root_doc_item = correction_lineage(
+        workspace, root_project="Straße", correction_project="Straße"
+    )
+    evidence_ids = sorted(
+        [correction_item.id, root_doc_item.id],
+        key=lambda value: value.encode("utf-8"),
+    )
+    source_ids = sorted(
+        [root.raw_log.id, correction.id],
+        key=lambda value: value.encode("utf-8"),
+    )
+    fact = ExperienceFact(
+        **fact_values(
+            project="Straße",
+            source_log_ids=source_ids,
+            evidence_item_ids=evidence_ids,
+        )
+    )
+    persist_fact(workspace, fact)
+
+    with read_database(workspace) as connection:
+        assert get_experience_fact(connection, fact.id) == fact
+        assert list_experience_facts(connection) == (fact,)
+        stored = connection.execute(
+            """
+            SELECT project_key, produced_by_run_id, generation_id
+            FROM experience_facts WHERE id = ?
+            """,
+            (fact.id,),
+        ).fetchone()
+        sources = connection.execute(
+            "SELECT evidence_item_id, support_type FROM fact_sources WHERE fact_id = ?",
+            (fact.id,),
+        ).fetchall()
+    assert tuple(stored) == ("strasse", RUN_A, GEN_A)
+    assert sorted(tuple(row) for row in sources) == sorted(
+        (item, "direct") for item in evidence_ids
+    )
+
+
+def test_fact_listing_orders_by_utc_instant_then_id_bytes(workspace: Path) -> None:
+    """§12 rule 3: inspection ordering never compares stored offset text."""
+
+    first = capture_daily(
+        workspace,
+        raw_text="Vera Example earlier UTC fact source",
+        clock=lambda: FIXED_NOW,
+    )
+    second = capture_daily(
+        workspace,
+        raw_text="Vera Example later UTC fact source",
+        clock=lambda: FIXED_NOW.replace(hour=13),
+    )
+    earlier = make_fact(
+        raw_log_id=first.raw_log.id,
+        evidence_item_id=first.evidence_items[0].id,
+        id=FACT_A,
+        created_at=datetime(
+            2026, 7, 15, 14, 0, tzinfo=timezone(timedelta(hours=2))
+        ),
+        project=None,
+    )
+    later = make_fact(
+        raw_log_id=second.raw_log.id,
+        evidence_item_id=second.evidence_items[0].id,
+        id=FACT_B,
+        created_at=FIXED_NOW,
+        project=None,
+    )
+    persist_fact(workspace, later, run_id=RUN_B, generation_id="gen_" + "b" * 32)
+    persist_fact(workspace, earlier)
+    with read_database(workspace) as connection:
+        assert [fact.id for fact in list_experience_facts(connection)] == [
+            FACT_A,
+            FACT_B,
+        ]
+
+
+def test_fact_hydration_fails_closed_on_project_key_drift_and_zero_sources(
+    workspace: Path,
+) -> None:
+    """§12 rules 2/8/14: corrupt comparison identity or provenance never hydrates."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example hydration corruption source",
+        project="Exp2Res",
+        clock=lambda: FIXED_NOW,
+    )
+    fact = make_fact(
+        raw_log_id=bundle.raw_log.id,
+        evidence_item_id=bundle.evidence_items[0].id,
+        project="Exp2Res",
+    )
+    persist_fact(workspace, fact)
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("DROP TRIGGER experience_facts_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE experience_facts SET project_key = 'drift' WHERE id = ?",
+            (fact.id,),
+        )
+        connection.commit()
+    with read_database(workspace) as connection:
+        with pytest.raises(HydrationFailureError):
+            get_experience_fact(connection, fact.id)
+
+    second = capture_daily(
+        workspace,
+        raw_text="Vera Example zero-source fact",
+        clock=lambda: FIXED_NOW.replace(hour=14),
+    )
+    second_fact = make_fact(
+        raw_log_id=second.raw_log.id,
+        evidence_item_id=second.evidence_items[0].id,
+        id=FACT_B,
+        project=None,
+    )
+    persist_fact(workspace, second_fact, run_id=RUN_B)
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("DELETE FROM fact_sources WHERE fact_id = ?", (FACT_B,))
+        connection.commit()
+    with read_database(workspace) as connection:
+        with pytest.raises(HydrationFailureError):
+            get_experience_fact(connection, FACT_B)
+
+
+def test_raw_log_hydration_fails_closed_on_stored_project_key_drift(
+    workspace: Path,
+) -> None:
+    """§12 rule 14: raw-log project provenance and stored identity agree."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example raw project-key drift source",
+        project="Exp2Res",
+        clock=lambda: FIXED_NOW,
+    )
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE raw_logs SET project_key = 'drift' WHERE id = ?",
+            (bundle.raw_log.id,),
+        )
+        connection.commit()
+    with pytest.raises(HydrationFailureError):
+        show_log(workspace, log_id=bundle.raw_log.id)
+
+
+def test_fact_lifecycle_guards_allow_only_one_supersession_and_owner_purge(
+    workspace: Path,
+) -> None:
+    """§11 lifecycle/§12 guards: payload is immutable and cascaded purge is owner-only."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example fact lifecycle source",
+        clock=lambda: FIXED_NOW,
+    )
+    fact = make_fact(
+        raw_log_id=bundle.raw_log.id,
+        evidence_item_id=bundle.evidence_items[0].id,
+        project=None,
+    )
+    persist_fact(workspace, fact)
+
+    with writer_database(workspace) as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="experience_fact_lifecycle_only"):
+            connection.execute(
+                "UPDATE experience_facts SET claim = 'Vera Example rewrite' WHERE id = ?",
+                (fact.id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="experience_fact_owner_purge_required"):
+            connection.execute("DELETE FROM experience_facts WHERE id = ?", (fact.id,))
+
+    superseded_at = FIXED_NOW.replace(hour=15)
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        mark_facts_superseded(connection, [fact.id], superseded_at)
+        connection.commit()
+    with read_database(workspace) as connection:
+        assert list_experience_facts(connection) == ()
+        historical = list_experience_facts(connection, current_only=False)
+        assert historical[0].superseded_at == superseded_at
+        production = connection.execute(
+            "SELECT produced_by_run_id, generation_id FROM experience_facts WHERE id = ?",
+            (fact.id,),
+        ).fetchone()
+    assert tuple(production) == (RUN_A, GEN_A)
+
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        with pytest.raises(IntegrityFailureError):
+            mark_facts_superseded(connection, [fact.id], superseded_at)
+        connection.rollback()
+
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        with pytest.raises(sqlite3.IntegrityError, match="fact_source_immutable"):
+            connection.execute(
+                "UPDATE fact_sources SET support_type = 'corroborating' WHERE fact_id = ?",
+                (fact.id,),
+            )
+        connection.execute("DELETE FROM experience_facts WHERE id = ?", (fact.id,))
+        connection.commit()
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM fact_sources WHERE fact_id = ?", (fact.id,)
+        ).fetchone()[0] == 0
+
+
+def test_fact_insert_requires_valid_run_and_maps_identity_collision(
+    workspace: Path,
+) -> None:
+    """§12 rules 10/11/13: run FK is mandatory and fact IDs never overwrite."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example fact identity source",
+        clock=lambda: FIXED_NOW,
+    )
+    fact = make_fact(
+        raw_log_id=bundle.raw_log.id,
+        evidence_item_id=bundle.evidence_items[0].id,
+        project=None,
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        with pytest.raises(IntegrityFailureError):
+            insert_experience_fact(
+                connection,
+                fact,
+                produced_by_run_id="run_" + "f" * 32,
+                generation_id=GEN_A,
+            )
+        connection.rollback()
+
+    persist_fact(workspace, fact)
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        # An internally consistent label/key pair still fails when it does
+        # not match the governing record's stored project provenance.
+        misfiled = make_fact(
+            raw_log_id=bundle.raw_log.id,
+            evidence_item_id=bundle.evidence_items[0].id,
+            id=FACT_B,
+            project="Beta",
+        )
+        with pytest.raises(IntegrityFailureError):
+            insert_experience_fact(
+                connection,
+                misfiled,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        with pytest.raises(IdCollisionError):
+            insert_experience_fact(
+                connection,
+                fact,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        connection.rollback()
+
+
+def test_fact_insert_copies_project_from_the_governing_record(
+    workspace: Path,
+) -> None:
+    """§12 rules 10/14, §13.3 rules 6/10/13: governing provenance, not caller input."""
+
+    root, correction, correction_item, root_doc_item = correction_lineage(
+        workspace, root_project="Alpha", correction_project="Beta"
+    )
+    evidence_ids = sorted(
+        [correction_item.id, root_doc_item.id],
+        key=lambda value: value.encode("utf-8"),
+    )
+    source_ids = sorted(
+        [root.raw_log.id, correction.id],
+        key=lambda value: value.encode("utf-8"),
+    )
+    misfiled = ExperienceFact(
+        **fact_values(
+            project="Alpha",
+            source_log_ids=source_ids,
+            evidence_item_ids=evidence_ids,
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+            input_ids=misfiled.source_log_ids,
+        )
+        # The displaced root's label is not the governing record's label.
+        with pytest.raises(IntegrityFailureError):
+            insert_experience_fact(
+                connection,
+                misfiled,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        governed = ExperienceFact(
+            **fact_values(
+                project="Beta",
+                source_log_ids=source_ids,
+                evidence_item_ids=evidence_ids,
+            )
+        )
+        insert_experience_fact(
+            connection,
+            governed,
+            produced_by_run_id=RUN_A,
+            generation_id=GEN_A,
+        )
+        stored = connection.execute(
+            "SELECT project, project_key FROM experience_facts WHERE id = ?",
+            (governed.id,),
+        ).fetchone()
+        connection.rollback()
+    assert tuple(stored) == ("Beta", "beta")
+
+
+def _month_lineage_log(
+    workspace: Path,
+    *,
+    log_id: str,
+    occurred: OccurredAt,
+    corrects_log_id: str | None = None,
+    recorded_at: datetime | None = None,
+) -> str:
+    """Insert one raw log with a manual item and return the item id."""
+
+    raw_log = RawLog(
+        id=log_id,
+        recorded_at=recorded_at or FIXED_NOW,
+        entry_type="manual_retro" if corrects_log_id is None else "correction",
+        source_type="user_memory" if corrects_log_id is None else "manual_entry",
+        occurred=occurred,
+        raw_text=f"Vera Example temporal fixture {log_id}",
+        corrects_log_id=corrects_log_id,
+    )
+    item = EvidenceItem(
+        id=f"evi_{log_id}",
+        created_at=raw_log.recorded_at,
+        raw_log_id=log_id,
+        summary="Owner-authored temporal fixture entry.",
+        strength="manual_claim",
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        insert_raw_log(connection, raw_log)
+        insert_evidence_item(connection, item)
+        connection.commit()
+    return item.id
+
+
+def test_fact_insert_enforces_governing_temporal_provenance(workspace: Path) -> None:
+    """§13.3 rule 2, §15.2, §16.7 at commit: no widening, upgrade, or raise."""
+
+    utc = timezone.utc
+    month = OccurredAt(
+        start=datetime(2026, 7, 1, tzinfo=utc),
+        end=None,
+        precision="month",
+        confidence="medium",
+    )
+    item_id = _month_lineage_log(workspace, log_id="log_vera_month", occurred=month)
+    base = {
+        "project": None,
+        "source_log_ids": ["log_vera_month"],
+        "evidence_item_ids": [item_id],
+    }
+    widened = ExperienceFact(
+        **fact_values(
+            **base,
+            occurred=OccurredAt(
+                start=datetime(2026, 6, 20, tzinfo=utc),
+                end=datetime(2026, 7, 10, tzinfo=utc),
+                precision="date_range",
+                confidence="medium",
+            ),
+        )
+    )
+    upgraded = ExperienceFact(
+        **fact_values(
+            **base,
+            occurred=OccurredAt(
+                start=datetime(2026, 7, 5, tzinfo=utc),
+                end=None,
+                precision="exact_day",
+                confidence="medium",
+            ),
+        )
+    )
+    raised = ExperienceFact(
+        **fact_values(**base, occurred=month.model_copy(update={"confidence": "high"}))
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        for candidate in (widened, upgraded, raised):
+            with pytest.raises(IntegrityFailureError):
+                insert_experience_fact(
+                    connection,
+                    candidate,
+                    produced_by_run_id=RUN_A,
+                    generation_id=GEN_A,
+                )
+        copied = ExperienceFact(**fact_values(**base, occurred=month))
+        insert_experience_fact(
+            connection,
+            copied,
+            produced_by_run_id=RUN_A,
+            generation_id=GEN_A,
+        )
+        connection.rollback()
+
+
+def test_fact_insert_accepts_narrowing_supported_by_a_selected_effective_record(
+    workspace: Path,
+) -> None:
+    """§13.3 rules 2/10: a sibling correction's placement supports narrowing."""
+
+    utc = timezone.utc
+    month = OccurredAt(
+        start=datetime(2026, 7, 1, tzinfo=utc),
+        end=None,
+        precision="month",
+        confidence="medium",
+    )
+    day = OccurredAt(
+        start=datetime(2026, 7, 5, tzinfo=utc),
+        end=None,
+        precision="exact_day",
+        confidence="medium",
+    )
+    _month_lineage_log(workspace, log_id="log_vera_narrow_root", occurred=month)
+    day_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_narrow_day",
+        occurred=day,
+        corrects_log_id="log_vera_narrow_root",
+        recorded_at=FIXED_NOW.replace(hour=13),
+    )
+    month_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_narrow_month",
+        occurred=month,
+        corrects_log_id="log_vera_narrow_root",
+        recorded_at=FIXED_NOW.replace(hour=14),
+    )
+    narrowed = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=sorted(
+                ["log_vera_narrow_day", "log_vera_narrow_month"],
+                key=lambda value: value.encode("utf-8"),
+            ),
+            evidence_item_ids=sorted(
+                [day_item, month_item], key=lambda value: value.encode("utf-8")
+            ),
+            occurred=day,
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        # The governing record is the later month-precision sibling; the
+        # earlier sibling's day placement supplies the §16.7 support.
+        insert_experience_fact(
+            connection,
+            narrowed,
+            produced_by_run_id=RUN_A,
+            generation_id=GEN_A,
+        )
+        stored = connection.execute(
+            "SELECT temporal_precision FROM experience_facts WHERE id = ?",
+            (narrowed.id,),
+        ).fetchone()
+        connection.rollback()
+    assert stored[0] == "exact_day"
+
+
+def test_fact_insert_rejects_placements_no_selected_record_entails(
+    workspace: Path,
+) -> None:
+    """§13.3 rule 2: support must entail the placement, not merely its width."""
+
+    utc = timezone.utc
+    month = OccurredAt(
+        start=datetime(2026, 7, 1, tzinfo=utc),
+        end=None,
+        precision="month",
+        confidence="medium",
+    )
+    _month_lineage_log(workspace, log_id="log_vera_entail_root", occurred=month)
+    day_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_entail_day",
+        occurred=OccurredAt(
+            start=datetime(2026, 7, 5, tzinfo=utc),
+            end=None,
+            precision="exact_day",
+            confidence="medium",
+        ),
+        corrects_log_id="log_vera_entail_root",
+        recorded_at=FIXED_NOW.replace(hour=13),
+    )
+    month_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_entail_month",
+        occurred=month,
+        corrects_log_id="log_vera_entail_root",
+        recorded_at=FIXED_NOW.replace(hour=14),
+    )
+    approx = OccurredAt(
+        start=datetime(2026, 7, 1, tzinfo=utc),
+        end=datetime(2026, 8, 1, tzinfo=utc),
+        precision="approximate_range",
+        confidence="medium",
+    )
+    _month_lineage_log(workspace, log_id="log_vera_entail_soft", occurred=approx)
+    # July 5 is the only day-precision support: an equal-width claim on
+    # July 10 is a relocation no selected record asserts, and hardening the
+    # soft governing bounds into a date_range is an exactness upgrade.
+    relocated = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=sorted(
+                ["log_vera_entail_day", "log_vera_entail_month"],
+                key=lambda value: value.encode("utf-8"),
+            ),
+            evidence_item_ids=sorted(
+                [day_item, month_item], key=lambda value: value.encode("utf-8")
+            ),
+            occurred=OccurredAt(
+                start=datetime(2026, 7, 10, tzinfo=utc),
+                end=None,
+                precision="exact_day",
+                confidence="medium",
+            ),
+        )
+    )
+    hardened = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=["log_vera_entail_soft"],
+            evidence_item_ids=["evi_log_vera_entail_soft"],
+            occurred=approx.model_copy(update={"precision": "date_range"}),
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        for candidate in (relocated, hardened):
+            with pytest.raises(IntegrityFailureError):
+                insert_experience_fact(
+                    connection,
+                    candidate,
+                    produced_by_run_id=RUN_A,
+                    generation_id=GEN_A,
+                )
+        connection.rollback()
+
+
+def test_fact_insert_rejects_caller_set_superseded_at(workspace: Path) -> None:
+    """§15.11: fact rows are born current; supersession is lifecycle-owned."""
+
+    month = OccurredAt(
+        start=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        end=None,
+        precision="month",
+        confidence="medium",
+    )
+    item_id = _month_lineage_log(
+        workspace, log_id="log_vera_preclosed", occurred=month
+    )
+    preclosed = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=["log_vera_preclosed"],
+            evidence_item_ids=[item_id],
+            occurred=month,
+            superseded_at=FIXED_NOW,
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        with pytest.raises(IntegrityFailureError):
+            insert_experience_fact(
+                connection,
+                preclosed,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        connection.rollback()
+
+
+def test_fact_insert_rejects_non_extractor_claim_kinds(workspace: Path) -> None:
+    """§15.2: SelfClaim-only ClaimKind members never persist as facts."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example claim-kind boundary source",
+        clock=lambda: FIXED_NOW,
+    )
+    summary_fact = make_fact(
+        raw_log_id=bundle.raw_log.id,
+        evidence_item_id=bundle.evidence_items[0].id,
+        project=None,
+        claim_kind="narrative_summary",
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        with pytest.raises(IntegrityFailureError):
+            insert_experience_fact(
+                connection,
+                summary_fact,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        connection.rollback()
+
+
+def test_fact_insert_enforces_the_retained_rows_selectability_predicate(
+    workspace: Path,
+) -> None:
+    """§12 rule 10, §13.3 rule 6: displaced/manual/cross-lineage selections fail."""
+
+    root, correction, correction_item, root_doc_item = correction_lineage(
+        workspace, root_project=None, correction_project=None
+    )
+    unrelated = capture_daily(
+        workspace,
+        raw_text="Vera Example unrelated lineage source",
+        clock=lambda: FIXED_NOW.replace(hour=14),
+    )
+    displaced_only = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=[root.raw_log.id],
+            evidence_item_ids=[root_doc_item.id],
+        )
+    )
+    displaced_manual = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=sorted(
+                [root.raw_log.id, correction.id],
+                key=lambda value: value.encode("utf-8"),
+            ),
+            evidence_item_ids=sorted(
+                [root.evidence_items[0].id, correction_item.id],
+                key=lambda value: value.encode("utf-8"),
+            ),
+        )
+    )
+    cross_lineage = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=sorted(
+                [correction.id, unrelated.raw_log.id],
+                key=lambda value: value.encode("utf-8"),
+            ),
+            evidence_item_ids=sorted(
+                [correction_item.id, unrelated.evidence_items[0].id],
+                key=lambda value: value.encode("utf-8"),
+            ),
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        for candidate in (displaced_only, displaced_manual, cross_lineage):
+            with pytest.raises(IntegrityFailureError):
+                insert_experience_fact(
+                    connection,
+                    candidate,
+                    produced_by_run_id=RUN_A,
+                    generation_id=GEN_A,
+                )
+        connection.rollback()

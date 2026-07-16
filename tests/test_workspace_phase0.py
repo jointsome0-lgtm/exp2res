@@ -41,7 +41,10 @@ def test_fresh_init_and_idempotent_reopen_are_private_and_versioned(
     root.mkdir()
     _, first_status, created = initialize_workspace(root, clock=lambda: FIXED_NOW)
     assert created is True
+    assert CURRENT_SCHEMA_VERSION == 3
     assert first_status.stored_version == CURRENT_SCHEMA_VERSION
+    assert first_status.supported_version == 3
+    assert first_status.compatible is True
 
     database = root / ".exp2res" / "exp2res.sqlite"
     with sqlite3.connect(database) as connection:
@@ -52,6 +55,21 @@ def test_fresh_init_and_idempotent_reopen_are_private_and_versioned(
     assert rows_before[0][1] == FIXED_NOW.isoformat()
     assert rows_before[0][2]
     assert journal_mode.lower() == "wal"
+
+    status_result = runner.invoke(
+        app,
+        ["--json", "--workspace", str(root), "db", "status"],
+    )
+    status_envelope = json.loads(status_result.stdout)
+    assert status_result.exit_code == 0
+    assert status_envelope["result"]["schema"] == {
+        "compatible": True,
+        "managed_backup_path": None,
+        "migration_path_available": None,
+        "recognized": True,
+        "stored_version": 3,
+        "supported_version": 3,
+    }
 
     sentinel = root / "out" / "Vera Example - inert.txt"
     sentinel.write_text("Vera Example\n", encoding="utf-8")
@@ -106,7 +124,7 @@ def test_incompatible_schema_blocks_business_io_but_status_reports(
     with sqlite3.connect(database) as connection:
         connection.execute(
             "INSERT INTO schema_meta VALUES (?, ?, ?)",
-            (3, FIXED_NOW.isoformat(), "future-build"),
+                (4, FIXED_NOW.isoformat(), "future-build"),
         )
 
     with pytest.raises(SchemaCompatibilityError):
@@ -119,7 +137,7 @@ def test_incompatible_schema_blocks_business_io_but_status_reports(
     envelope = json.loads(result.stdout)
     assert result.exit_code == 4
     assert envelope["diagnostic_class"] == "schema_incompatible"
-    assert envelope["result"]["schema"]["stored_version"] == 3
+    assert envelope["result"]["schema"]["stored_version"] == 4
     assert original.raw_log.raw_text not in result.stdout
     assert original.raw_log.raw_text not in result.stderr
 
@@ -230,7 +248,7 @@ def test_incompatible_workspace_blocks_file_capture_before_source_read(
     database = workspace / ".exp2res" / "exp2res.sqlite"
     connection = sqlite3.connect(database)
     connection.execute(
-        "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (3, ?, ?)",
+        "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (4, ?, ?)",
         (FIXED_NOW.isoformat(), "future"),
     )
     connection.commit()

@@ -15,6 +15,11 @@ class InvalidInputError(Exp2ResError):
     public_message = "The supplied input is invalid."
 
 
+class BlankProjectLabelError(InvalidInputError):
+    diagnostic_class = "blank_project_label"
+    public_message = "A project label must not canonicalize to blank."
+
+
 class NonInteractiveInputRequired(InvalidInputError):
     diagnostic_class = "input_required"
     public_message = "Required input was not supplied in non-interactive mode."
@@ -70,9 +75,20 @@ class MigrationFailedError(IntegrityFailureError):
     diagnostic_class = "migration_failed"
     public_message = "The workspace migration failed and was rolled back."
 
-    def __init__(self, *, managed_backup_path: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        managed_backup_path: str | None = None,
+        failure_code: str | None = None,
+    ) -> None:
         super().__init__()
         self.managed_backup_path = managed_backup_path
+        self.failure_code = failure_code
+        if failure_code is not None:
+            self.public_message = (
+                "The workspace migration failed and was rolled back "
+                f"({failure_code})."
+            )
 
 
 class MigrationInterrupted(KeyboardInterrupt):

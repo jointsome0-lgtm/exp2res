@@ -1,10 +1,14 @@
-"""Phase 0 schema plus the §12.13/§12.15 execution telemetry."""
+"""Versioned §12 SQLite DDL and registered schema transformations."""
 
 from __future__ import annotations
 
 from sqlite3 import Connection
 
+from exp2res.domain.models import canonical_project_key
 
+
+# These historical full-schema strings remain public test fixtures for building
+# recognized older workspaces. Do not rewrite them to the current schema.
 SCHEMA_V1_SQL = """
 CREATE TABLE schema_meta (
     version INTEGER PRIMARY KEY,
@@ -137,22 +141,290 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 );
 """
 
-SCHEMA_V2_SQL = (
-    SCHEMA_V1_SQL
-    + "\n"
-    + PROCESSING_RUNS_SQL
-    + "\n"
-    + LLM_CALLS_SQL
-    + "\n"
+SCHEMA_V2_SQL = SCHEMA_V1_SQL + "\n" + PROCESSING_RUNS_SQL + "\n" + LLM_CALLS_SQL + "\n"
+
+
+# SQLite stores the renamed table name quoted after the registered 12-step
+# rebuild. Fresh v3 uses that same spelling so sqlite_master is shape-identical.
+RAW_LOGS_V3_SQL = """
+CREATE TABLE "raw_logs" (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    recorded_at TEXT NOT NULL,
+    entry_type TEXT NOT NULL CHECK (entry_type IN (
+        'manual_daily', 'manual_retro', 'gap_answer', 'correction',
+        'ephemeris_event', 'atlas_snapshot', 'github_commit', 'design_doc'
+    )),
+    source_type TEXT NOT NULL CHECK (source_type IN (
+        'manual_entry', 'user_memory', 'imported_artifact', 'imported_event'
+    )),
+    occurred_start TEXT,
+    occurred_end TEXT,
+    temporal_precision TEXT NOT NULL CHECK (temporal_precision IN (
+        'exact_datetime', 'exact_day', 'week', 'month', 'quarter', 'year',
+        'date_range', 'approximate_range', 'unknown'
+    )),
+    temporal_confidence TEXT NOT NULL CHECK (
+        temporal_confidence IN ('low', 'medium', 'high', 'unknown')
+    ),
+    raw_text TEXT NOT NULL CHECK (raw_text <> ''),
+    project TEXT,
+    project_key TEXT,
+    external_ref TEXT,
+    corrects_log_id TEXT REFERENCES raw_logs(id) ON DELETE SET NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    CHECK ((project IS NULL) = (project_key IS NULL)),
+    CHECK (project_key IS NULL OR project_key <> ''),
+    CHECK (
+        (temporal_precision = 'unknown' AND occurred_start IS NULL AND occurred_end IS NULL)
+        OR
+        (temporal_precision IN ('date_range', 'approximate_range')
+            AND occurred_start IS NOT NULL AND occurred_end IS NOT NULL)
+        OR
+        (temporal_precision IN (
+            'exact_datetime', 'exact_day', 'week', 'month', 'quarter', 'year'
+        ) AND occurred_start IS NOT NULL AND occurred_end IS NULL)
+    )
+);
+"""
+
+RAW_LOGS_V3_NEW_SQL = RAW_LOGS_V3_SQL.replace(
+    'CREATE TABLE "raw_logs"', "CREATE TABLE raw_logs_new", 1
+)
+
+EVIDENCE_ITEMS_SQL = """
+CREATE TABLE evidence_items (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    created_at TEXT NOT NULL,
+    raw_log_id TEXT NOT NULL REFERENCES raw_logs(id) ON DELETE CASCADE,
+    title TEXT,
+    summary TEXT NOT NULL,
+    uri TEXT,
+    path TEXT,
+    strength TEXT NOT NULL CHECK (strength IN (
+        'manual_claim', 'imported_activity_event', 'knowledge_state_snapshot',
+        'artifact_reference', 'commit_or_pr', 'design_doc'
+    )),
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+"""
+
+RAW_LOGS_INDEX_SQL = "CREATE INDEX raw_logs_recorded_at_idx ON raw_logs(recorded_at);"
+EVIDENCE_ITEMS_INDEX_SQL = (
+    "CREATE INDEX evidence_items_raw_log_id_idx ON evidence_items(raw_log_id);"
+)
+
+RAW_LOGS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER raw_logs_automation_update_guard
+BEFORE UPDATE ON raw_logs
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'raw_log_immutable');
+END;
+"""
+
+RAW_LOGS_DELETE_GUARD_SQL = """
+CREATE TRIGGER raw_logs_automation_delete_guard
+BEFORE DELETE ON raw_logs
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'raw_log_owner_delete_required');
+END;
+"""
+
+EVIDENCE_ITEMS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER evidence_items_automation_update_guard
+BEFORE UPDATE ON evidence_items
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'evidence_item_immutable');
+END;
+"""
+
+EVIDENCE_ITEMS_DELETE_GUARD_SQL = """
+CREATE TRIGGER evidence_items_automation_delete_guard
+BEFORE DELETE ON evidence_items
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'evidence_item_owner_delete_required');
+END;
+"""
+
+EXPERIENCE_FACTS_SQL = """
+CREATE TABLE experience_facts (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,
+    claim TEXT NOT NULL CHECK (claim <> ''),
+    -- §15.2: only these two ClaimKind members are valid fact-extractor
+    -- outputs; the remaining §10 members belong to SelfClaim producers.
+    claim_kind TEXT NOT NULL CHECK (claim_kind IN ('observed_fact', 'inferred_fact')),
+    project TEXT,
+    project_key TEXT,
+    role TEXT,
+    company TEXT,
+    context TEXT NOT NULL CHECK (context IN (
+        'employment', 'contract', 'freelance', 'independent_project',
+        'open_source', 'competition', 'research', 'learning',
+        'personal_system', 'unknown'
+    )),
+    ownership_level TEXT NOT NULL CHECK (ownership_level IN (
+        'unknown', 'observed', 'studied', 'participated', 'experimented',
+        'contributed', 'implemented', 'built', 'designed', 'owned', 'led'
+    )),
+    action TEXT,
+    object TEXT,
+    outcome TEXT,
+    skills_json TEXT NOT NULL DEFAULT '[]',
+    technologies_json TEXT NOT NULL DEFAULT '[]',
+    themes_json TEXT NOT NULL DEFAULT '[]',
+    occurred_start TEXT,
+    occurred_end TEXT,
+    temporal_precision TEXT NOT NULL CHECK (temporal_precision IN (
+        'exact_datetime', 'exact_day', 'week', 'month', 'quarter', 'year',
+        'date_range', 'approximate_range', 'unknown'
+    )),
+    temporal_confidence TEXT NOT NULL CHECK (
+        temporal_confidence IN ('low', 'medium', 'high', 'unknown')
+    ),
+    confidence TEXT NOT NULL CHECK (
+        confidence IN ('low', 'medium', 'high', 'unknown')
+    ),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
+    generation_id TEXT NOT NULL CHECK (generation_id <> ''),
+    CHECK ((project IS NULL) = (project_key IS NULL)),
+    CHECK (project_key IS NULL OR project_key <> ''),
+    CHECK (
+        (temporal_precision = 'unknown' AND occurred_start IS NULL AND occurred_end IS NULL)
+        OR
+        (temporal_precision IN ('date_range', 'approximate_range')
+            AND occurred_start IS NOT NULL AND occurred_end IS NOT NULL)
+        OR
+        (temporal_precision IN (
+            'exact_datetime', 'exact_day', 'week', 'month', 'quarter', 'year'
+        ) AND occurred_start IS NOT NULL AND occurred_end IS NULL)
+    )
+);
+"""
+
+# §12.4 normative DDL, including the required IF NOT EXISTS spelling.
+FACT_SOURCES_SQL = """
+CREATE TABLE IF NOT EXISTS fact_sources (
+    fact_id TEXT NOT NULL,
+    evidence_item_id TEXT NOT NULL,
+    support_type TEXT NOT NULL CHECK (support_type IN ('direct', 'corroborating')),
+
+    PRIMARY KEY (fact_id, evidence_item_id),
+
+    FOREIGN KEY (fact_id) REFERENCES experience_facts(id) ON DELETE CASCADE,
+    FOREIGN KEY (evidence_item_id) REFERENCES evidence_items(id) ON DELETE CASCADE
+);
+"""
+
+FACT_SOURCES_INDEX_SQL = (
+    "CREATE INDEX fact_sources_evidence_item_id_idx ON fact_sources(evidence_item_id);"
+)
+
+EXPERIENCE_FACTS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER experience_facts_lifecycle_update_guard
+BEFORE UPDATE ON experience_facts
+WHEN NOT (
+    OLD.superseded_at IS NULL
+    AND NEW.superseded_at IS NOT NULL
+    AND NEW.id IS OLD.id
+    AND NEW.created_at IS OLD.created_at
+    AND NEW.claim IS OLD.claim
+    AND NEW.claim_kind IS OLD.claim_kind
+    AND NEW.project IS OLD.project
+    AND NEW.project_key IS OLD.project_key
+    AND NEW.role IS OLD.role
+    AND NEW.company IS OLD.company
+    AND NEW.context IS OLD.context
+    AND NEW.ownership_level IS OLD.ownership_level
+    AND NEW.action IS OLD.action
+    AND NEW.object IS OLD.object
+    AND NEW.outcome IS OLD.outcome
+    AND NEW.skills_json IS OLD.skills_json
+    AND NEW.technologies_json IS OLD.technologies_json
+    AND NEW.themes_json IS OLD.themes_json
+    AND NEW.occurred_start IS OLD.occurred_start
+    AND NEW.occurred_end IS OLD.occurred_end
+    AND NEW.temporal_precision IS OLD.temporal_precision
+    AND NEW.temporal_confidence IS OLD.temporal_confidence
+    AND NEW.confidence IS OLD.confidence
+    AND NEW.metadata_json IS OLD.metadata_json
+    AND NEW.produced_by_run_id IS OLD.produced_by_run_id
+    AND NEW.generation_id IS OLD.generation_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'experience_fact_lifecycle_only');
+END;
+"""
+
+EXPERIENCE_FACTS_DELETE_GUARD_SQL = """
+CREATE TRIGGER experience_facts_owner_delete_guard
+BEFORE DELETE ON experience_facts
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'experience_fact_owner_purge_required');
+END;
+"""
+
+FACT_SOURCES_UPDATE_GUARD_SQL = """
+CREATE TRIGGER fact_sources_update_guard
+BEFORE UPDATE ON fact_sources
+BEGIN
+    SELECT RAISE(ABORT, 'fact_source_immutable');
+END;
+"""
+
+FACT_SOURCES_DELETE_GUARD_SQL = """
+CREATE TRIGGER fact_sources_owner_delete_guard
+BEFORE DELETE ON fact_sources
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'fact_source_owner_purge_required');
+END;
+"""
+
+SCHEMA_META_SQL = """
+CREATE TABLE schema_meta (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL,
+    app_version TEXT NOT NULL
+);
+"""
+
+SCHEMA_V3_SQL = "\n".join(
+    (
+        SCHEMA_META_SQL,
+        RAW_LOGS_V3_SQL,
+        EVIDENCE_ITEMS_SQL,
+        EVIDENCE_ITEMS_INDEX_SQL,
+        RAW_LOGS_INDEX_SQL,
+        RAW_LOGS_UPDATE_GUARD_SQL,
+        RAW_LOGS_DELETE_GUARD_SQL,
+        EVIDENCE_ITEMS_UPDATE_GUARD_SQL,
+        EVIDENCE_ITEMS_DELETE_GUARD_SQL,
+        PROCESSING_RUNS_SQL,
+        LLM_CALLS_SQL,
+        EXPERIENCE_FACTS_SQL,
+        FACT_SOURCES_SQL,
+        FACT_SOURCES_INDEX_SQL,
+        EXPERIENCE_FACTS_UPDATE_GUARD_SQL,
+        EXPERIENCE_FACTS_DELETE_GUARD_SQL,
+        FACT_SOURCES_UPDATE_GUARD_SQL,
+        FACT_SOURCES_DELETE_GUARD_SQL,
+    )
 )
 
 
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    if version != 2:
-        raise ValueError("fresh workspaces must use schema version 2")
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V2_SQL)
+    if version != 3:
+        raise ValueError("fresh workspaces must use schema version 3")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V3_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
@@ -164,3 +436,58 @@ def apply_migration_1_to_2(connection: Connection) -> None:
 
     connection.execute(PROCESSING_RUNS_SQL)
     connection.execute(LLM_CALLS_SQL)
+
+
+def apply_migration_2_to_3(connection: Connection) -> None:
+    """Create fact storage and rebuild raw_logs with canonical project keys."""
+
+    for statement in (
+        EXPERIENCE_FACTS_SQL,
+        FACT_SOURCES_SQL,
+        FACT_SOURCES_INDEX_SQL,
+        EXPERIENCE_FACTS_UPDATE_GUARD_SQL,
+        EXPERIENCE_FACTS_DELETE_GUARD_SQL,
+        FACT_SOURCES_UPDATE_GUARD_SQL,
+        FACT_SOURCES_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+    old_rows = connection.execute(
+        """
+        SELECT id, recorded_at, entry_type, source_type, occurred_start,
+               occurred_end, temporal_precision, temporal_confidence, raw_text,
+               project, external_ref, corrects_log_id, metadata_json
+        FROM raw_logs
+        """
+    ).fetchall()
+    transformed: list[tuple[object, ...]] = []
+    for row in old_rows:
+        project = row[9]
+        project_key = None
+        if project is not None:
+            if not isinstance(project, str):
+                raise ValueError("raw_log_project_label_type")
+            project_key = canonical_project_key(project)
+            if not project_key:
+                raise ValueError("raw_log_project_label_blank")
+        transformed.append((*row[:10], project_key, *row[10:]))
+
+    connection.execute(RAW_LOGS_V3_NEW_SQL)
+    connection.executemany(
+        """
+        INSERT INTO raw_logs_new(
+            id, recorded_at, entry_type, source_type, occurred_start,
+            occurred_end, temporal_precision, temporal_confidence, raw_text,
+            project, project_key, external_ref, corrects_log_id, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        transformed,
+    )
+    connection.execute("DROP TABLE raw_logs")
+    connection.execute("ALTER TABLE raw_logs_new RENAME TO raw_logs")
+    for statement in (
+        RAW_LOGS_INDEX_SQL,
+        RAW_LOGS_UPDATE_GUARD_SQL,
+        RAW_LOGS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)

@@ -40,6 +40,7 @@ from exp2res.services.capture import (
     capture_daily,
     capture_daily_file,
     capture_retro,
+    validate_project_label,
 )
 from exp2res.services.logs import delete_log, list_logs, show_log
 from exp2res.services.time_input import parse_occurred, workspace_zone
@@ -395,6 +396,7 @@ def log_retro(context: typer.Context) -> None:
         precision_value = typer.prompt("How precise is this?", err=True)
         confidence_value = typer.prompt("How confident are you?", err=True)
         project = typer.prompt("Project/activity?", default="", err=True) or None
+        validate_project_label(project)
         raw_text = typer.prompt("Describe what you remember.", err=True)
         occurred = parse_occurred(
             period=period,
@@ -466,13 +468,30 @@ def logs_delete(
             affected_ids=AffectedIds(
                 created=[],
                 superseded=[],
-                deleted=[
-                    EntityIdGroup(
-                        entity_type="evidence_item",
-                        ids=list(deleted.evidence_item_ids),
-                    ),
-                    EntityIdGroup(entity_type="raw_log", ids=[deleted.selected_log.id]),
-                ],
+                deleted=(
+                    [
+                        EntityIdGroup(
+                            entity_type="evidence_item",
+                            ids=list(deleted.evidence_item_ids),
+                        )
+                    ]
+                    + (
+                        [
+                            EntityIdGroup(
+                                entity_type="experience_fact",
+                                ids=list(deleted.purged_fact_ids),
+                            )
+                        ]
+                        if deleted.purged_fact_ids
+                        else []
+                    )
+                    + [
+                        EntityIdGroup(
+                            entity_type="raw_log",
+                            ids=[deleted.selected_log.id],
+                        )
+                    ]
+                ),
             ),
             residual_paths=list(deleted.residual_paths),
             result=result,

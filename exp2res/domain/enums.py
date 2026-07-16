@@ -13,6 +13,7 @@ TemporalPrecision = Literal[
 ]
 
 TemporalConfidence = Literal["low", "medium", "high", "unknown"]
+Confidence = Literal["low", "medium", "high", "unknown"]
 
 EntryType = Literal[
     "manual_daily",
@@ -39,6 +40,41 @@ EvidenceStrength = Literal[
     "artifact_reference",
     "commit_or_pr",
     "design_doc",
+]
+
+OwnershipLevel = Literal[
+    "unknown",
+    "observed",
+    "studied",
+    "participated",
+    "experimented",
+    "contributed",
+    "implemented",
+    "built",
+    "designed",
+    "owned",
+    "led",
+]
+
+ActivityContext = Literal[
+    "employment",
+    "contract",
+    "freelance",
+    "independent_project",
+    "open_source",
+    "competition",
+    "research",
+    "learning",
+    "personal_system",
+    "unknown",
+]
+
+ClaimKind = Literal[
+    "observed_fact",
+    "inferred_fact",
+    "pattern_signal",
+    "hypothesis",
+    "narrative_summary",
 ]
 
 CLIResultStatus = Literal["ok", "blocked", "failed", "cancelled"]

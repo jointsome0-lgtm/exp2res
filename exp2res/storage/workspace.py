@@ -26,13 +26,13 @@ from exp2res.errors import (
 )
 
 from .schema import (
-    LLM_CALLS_SQL,
-    PROCESSING_RUNS_SQL,
+    SCHEMA_V3_SQL,
     apply_migration_1_to_2,
+    apply_migration_2_to_3,
     create_schema,
 )
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 CONFIG_TEMPLATE = """[workspace]
 timezone = ""
@@ -65,6 +65,20 @@ class SchemaStatus:
     compatible: bool
     migration_path_available: bool | None
     managed_backup_path: str | None = None
+
+
+@dataclass(frozen=True)
+class MigrationStep:
+    from_version: int
+    to_version: int
+    apply: Callable[[sqlite3.Connection], None]
+    requires_foreign_keys_off: bool = False
+
+
+MIGRATION_REGISTRY = (
+    MigrationStep(1, 2, apply_migration_1_to_2),
+    MigrationStep(2, 3, apply_migration_2_to_3, requires_foreign_keys_off=True),
+)
 
 
 def _entry_kind(path: Path) -> int | None:
@@ -204,12 +218,24 @@ def inspect_schema(connection: sqlite3.Connection) -> SchemaStatus:
 
 
 def _migration_path_available(stored_version: int) -> bool:
+    return _migration_path(stored_version) is not None
+
+
+def _migration_path(stored_version: int) -> tuple[MigrationStep, ...] | None:
     version = stored_version
+    path: list[MigrationStep] = []
     while version < CURRENT_SCHEMA_VERSION:
-        if version != 1:
-            return False
-        version = 2
-    return version == CURRENT_SCHEMA_VERSION
+        matches = [
+            step for step in MIGRATION_REGISTRY if step.from_version == version
+        ]
+        if len(matches) != 1:
+            return None
+        step = matches[0]
+        if step.to_version <= step.from_version:
+            return None
+        path.append(step)
+        version = step.to_version
+    return tuple(path) if version == CURRENT_SCHEMA_VERSION else None
 
 
 def migration_available(stored_version: int) -> bool:
@@ -421,51 +447,57 @@ def _create_verified_backup(
 
 
 def _validate_migration_target(connection: sqlite3.Connection) -> None:
-    from .repository import hydrate_evidence_item, hydrate_raw_log
+    from .repository import (
+        hydrate_evidence_item,
+        hydrate_experience_fact,
+        hydrate_raw_log,
+    )
 
     for row in connection.execute("SELECT * FROM raw_logs"):
         hydrate_raw_log(row)
     for row in connection.execute("SELECT * FROM evidence_items"):
         hydrate_evidence_item(row)
+    for row in connection.execute("SELECT * FROM experience_facts"):
+        source_rows = connection.execute(
+            """
+            SELECT fs.fact_id, fs.evidence_item_id, fs.support_type,
+                   ei.raw_log_id
+            FROM fact_sources AS fs
+            JOIN evidence_items AS ei ON ei.id = fs.evidence_item_id
+            WHERE fs.fact_id = ?
+            """,
+            (row["id"],),
+        ).fetchall()
+        hydrate_experience_fact(row, source_rows)
     if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
         raise sqlite3.IntegrityError("foreign key validation failed")
     status = inspect_schema(connection)
     if not status.compatible:
         raise sqlite3.DatabaseError("migration target is incompatible")
 
-    # SQLite stores each schema object's complete CREATE statement
-    # (constraints included, `IF NOT EXISTS` stripped), so comparing every
-    # sqlite_master entry attached to a telemetry table against a scratch
-    # database created from the unchanged normative DDL rejects what PRAGMA
-    # table_info cannot distinguish — a missing REFERENCES or CHECK clause —
-    # and any extra trigger or index riding on the table.
-    def table_entries(
-        database: sqlite3.Connection, table: str
-    ) -> list[tuple[object, ...]]:
+    # Compare every table, index, and trigger entry, including implicit
+    # sqlite_autoindex rows whose SQL is NULL. The owning CREATE TABLE SQL also
+    # pins every constraint that caused those implicit indexes to exist.
+    def schema_entries(database: sqlite3.Connection) -> list[tuple[object, ...]]:
         return sorted(
             (row[0], row[1], row[2])
             for row in database.execute(
-                "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ?",
-                (table,),
+                """
+                SELECT type, name, sql FROM sqlite_master
+                WHERE type IN ('table', 'index', 'trigger')
+                """
             )
         )
 
     scratch = sqlite3.connect(":memory:")
     try:
-        scratch.execute(PROCESSING_RUNS_SQL)
-        scratch.execute(LLM_CALLS_SQL)
-        expected_entries = {
-            table: table_entries(scratch, table)
-            for table in ("processing_runs", "llm_calls")
-        }
+        scratch.executescript(SCHEMA_V3_SQL)
+        expected_entries = schema_entries(scratch)
     finally:
         scratch.close()
 
-    for table, expected in expected_entries.items():
-        if not expected or table_entries(connection, table) != expected:
-            raise sqlite3.DatabaseError(
-                "migration target telemetry table shape mismatch"
-            )
+    if not expected_entries or schema_entries(connection) != expected_entries:
+        raise sqlite3.DatabaseError("migration target full schema shape mismatch")
 
 
 def migrate_workspace(
@@ -475,7 +507,7 @@ def migrate_workspace(
     failure_injector: Callable[[str], None] | None = None,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
 ) -> SchemaStatus:
-    """Upgrade a recognized v1 workspace to v2 after a verified local backup."""
+    """Apply every pending registered migration after one verified backup."""
 
     initial = inspect_workspace(workspace)
     if not initial.recognized:
@@ -488,6 +520,7 @@ def migrate_workspace(
         raise SchemaCompatibilityError()
 
     backup_path: Path | None = None
+    failure_code = "backup_verification"
     try:
         with writer_lock(workspace, timeout_ms=timeout_ms):
             connection = connect_database(
@@ -502,6 +535,9 @@ def migrate_workspace(
                     or not migration_available(locked_status.stored_version)
                 ):
                     raise SchemaCompatibilityError()
+                path = _migration_path(locked_status.stored_version)
+                if not path:
+                    raise SchemaCompatibilityError()
                 now = _migration_time(clock)
                 backup_path = _create_verified_backup(
                     connection,
@@ -510,17 +546,39 @@ def migrate_workspace(
                     now=now,
                 )
                 try:
+                    foreign_keys_disabled = any(
+                        step.requires_foreign_keys_off for step in path
+                    )
+                    if foreign_keys_disabled:
+                        connection.execute("PRAGMA foreign_keys = OFF")
+                        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
+                            raise sqlite3.DatabaseError(
+                                "migration foreign key suspension failed"
+                            )
                     connection.execute("BEGIN IMMEDIATE")
-                    apply_migration_1_to_2(connection)
+                    for step in path:
+                        failure_code = (
+                            f"migration_{step.from_version}_to_{step.to_version}"
+                        )
+                        if failure_injector is not None:
+                            failure_injector(
+                                f"before_migration_{step.from_version}_to_{step.to_version}"
+                            )
+                        step.apply(connection)
+                        connection.execute(
+                            """
+                            INSERT INTO schema_meta(version, applied_at, app_version)
+                            VALUES (?, ?, ?)
+                            """,
+                            (step.to_version, now.isoformat(), __version__),
+                        )
+                        if failure_injector is not None:
+                            failure_injector(
+                                f"after_migration_{step.from_version}_to_{step.to_version}"
+                            )
                     if failure_injector is not None:
                         failure_injector("after_ddl")
-                    connection.execute(
-                        """
-                        INSERT INTO schema_meta(version, applied_at, app_version)
-                        VALUES (?, ?, ?)
-                        """,
-                        (CURRENT_SCHEMA_VERSION, now.isoformat(), __version__),
-                    )
+                    failure_code = "final_validation"
                     if failure_injector is not None:
                         failure_injector("before_validation")
                     _validate_migration_target(connection)
@@ -528,6 +586,15 @@ def migrate_workspace(
                 except BaseException:
                     connection.rollback()
                     raise
+                finally:
+                    if connection.in_transaction:
+                        connection.rollback()
+                    connection.execute("PRAGMA foreign_keys = ON")
+                    if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                        raise sqlite3.DatabaseError(
+                            "migration foreign key restoration failed"
+                        )
+                failure_code = "post_commit"
                 if failure_injector is not None:
                     failure_injector("after_commit")
             except KeyboardInterrupt:
@@ -535,10 +602,25 @@ def migrate_workspace(
             except (SchemaCompatibilityError, WorkspaceBusyError):
                 raise
             except BaseException as error:
+                safe_detail = (
+                    str(error)
+                    if isinstance(error, ValueError)
+                    and str(error)
+                    in {
+                        "raw_log_project_label_type",
+                        "raw_log_project_label_blank",
+                    }
+                    else None
+                )
                 raise MigrationFailedError(
                     managed_backup_path=(
                         None if backup_path is None else str(backup_path)
-                    )
+                    ),
+                    failure_code=(
+                        failure_code
+                        if safe_detail is None
+                        else f"{failure_code}:{safe_detail}"
+                    ),
                 ) from error
             finally:
                 connection.close()
@@ -549,7 +631,7 @@ def migrate_workspace(
         # connection close, lock release, or the final status inspection —
         # keeps §14.14 rule 4's code-9 precedence while still reporting the
         # committed effects: the retained verified backup and, after commit,
-        # the durable v2 schema surface through the cancelled envelope.
+        # the durable migrated schema surface through the cancelled envelope.
         raise MigrationInterrupted(
             managed_backup_path=(
                 None if backup_path is None else str(backup_path)

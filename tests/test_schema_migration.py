@@ -1,9 +1,8 @@
-"""Schema v1→v2 backup, migration, and rollback acceptance tests."""
+"""Schema v1→v2→v3 backup, migration, and rollback acceptance tests."""
 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import sqlite3
 
@@ -12,9 +11,13 @@ from typer.testing import CliRunner
 
 from exp2res.cli import app
 from exp2res.errors import MigrationFailedError, MigrationInterrupted
-from exp2res.services.capture import capture_daily
 from exp2res.services.logs import show_log
-from exp2res.storage.schema import LLM_CALLS_SQL, PROCESSING_RUNS_SQL
+from exp2res.storage.schema import (
+    LLM_CALLS_SQL,
+    PROCESSING_RUNS_SQL,
+    SCHEMA_V1_SQL,
+    SCHEMA_V2_SQL,
+)
 from exp2res.storage.workspace import (
     inspect_workspace,
     initialize_workspace,
@@ -31,20 +34,103 @@ pytestmark = pytest.mark.lifecycle
 def v1_workspace(tmp_path: Path) -> tuple[Path, str, str]:
     root = tmp_path / "v1-workspace"
     root.mkdir()
-    initialize_workspace(root, clock=lambda: FIXED_NOW)
+    (root / ".exp2res").mkdir(mode=0o700)
+    (root / ".exp2res" / "lock").touch(mode=0o600)
+    (root / "out").mkdir(mode=0o700)
     configure_timezone(root)
     raw_text = "Vera Example v1 record preserved byte for byte"
-    bundle = capture_daily(root, raw_text=raw_text, clock=lambda: FIXED_NOW)
+    log_id = "log_vera_v1"
     database = root / ".exp2res" / "exp2res.sqlite"
     with sqlite3.connect(database) as connection:
-        connection.execute("DROP TABLE llm_calls")
-        connection.execute("DROP TABLE processing_runs")
-        connection.execute("DELETE FROM schema_meta")
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.executescript(SCHEMA_V1_SQL)
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (1, ?, ?)",
             (FIXED_NOW.isoformat(), "0.1.0-v1-fixture"),
         )
-    return root, bundle.raw_log.id, raw_text
+        connection.execute(
+            """
+            INSERT INTO raw_logs(
+                id, recorded_at, entry_type, source_type, occurred_start,
+                occurred_end, temporal_precision, temporal_confidence, raw_text,
+                project, external_ref, corrects_log_id, metadata_json
+            ) VALUES (?, ?, 'manual_daily', 'manual_entry', ?, NULL,
+                      'exact_day', 'high', ?, NULL, NULL, NULL, '{}')
+            """,
+            (log_id, FIXED_NOW.isoformat(), FIXED_NOW.isoformat(), raw_text),
+        )
+        connection.execute(
+            """
+            INSERT INTO evidence_items(
+                id, created_at, raw_log_id, title, summary, uri, path,
+                strength, metadata_json
+            ) VALUES ('evi_vera_v1', ?, ?, NULL, 'Owner-authored manual claim.',
+                      NULL, NULL, 'manual_claim', '{}')
+            """,
+            (FIXED_NOW.isoformat(), log_id),
+        )
+    database.chmod(0o600)
+    return root, log_id, raw_text
+
+
+def v2_workspace(
+    tmp_path: Path,
+    *,
+    projects: tuple[tuple[str, str | None], ...] = (),
+    name: str = "v2-workspace",
+) -> Path:
+    root = tmp_path / name
+    root.mkdir()
+    (root / ".exp2res").mkdir(mode=0o700)
+    (root / ".exp2res" / "lock").touch(mode=0o600)
+    (root / "out").mkdir(mode=0o700)
+    configure_timezone(root)
+    database = root / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.executescript(SCHEMA_V2_SQL)
+        connection.executemany(
+            "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
+            (
+                (1, FIXED_NOW.isoformat(), "0.1.0-v1-fixture"),
+                (2, FIXED_NOW.isoformat(), "0.1.0-v2-fixture"),
+            ),
+        )
+        for log_id, project in projects:
+            connection.execute(
+                """
+                INSERT INTO raw_logs(
+                    id, recorded_at, entry_type, source_type, occurred_start,
+                    occurred_end, temporal_precision, temporal_confidence,
+                    raw_text, project, external_ref, corrects_log_id,
+                    metadata_json
+                ) VALUES (?, ?, 'manual_daily', 'manual_entry', ?, NULL,
+                          'exact_day', 'high', ?, ?, NULL, NULL, '{}')
+                """,
+                (
+                    log_id,
+                    FIXED_NOW.isoformat(),
+                    FIXED_NOW.isoformat(),
+                    f"Vera Example migration record {log_id}",
+                    project,
+                ),
+            )
+    database.chmod(0o600)
+    return root
+
+
+def sqlite_master_shape(database: Path) -> list[tuple[object, ...]]:
+    with sqlite3.connect(database) as connection:
+        return sorted(
+            connection.execute(
+                """
+                SELECT type, name, sql FROM sqlite_master
+                WHERE type IN ('table', 'index', 'trigger')
+                """
+            ).fetchall()
+        )
 
 
 def _shape_rows(
@@ -95,7 +181,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     assert result.exit_code == 0, result.stderr
     envelope = json.loads(result.stdout)
     schema = envelope["result"]["schema"]
-    assert schema["stored_version"] == 2
+    assert schema["stored_version"] == 3
     assert schema["compatible"] is True
     backup = Path(schema["managed_backup_path"])
     assert backup.is_file()
@@ -113,15 +199,136 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     with sqlite3.connect(database) as connection:
         assert [
             row[0] for row in connection.execute("SELECT version FROM schema_meta ORDER BY version")
-        ] == [1, 2]
+        ] == [1, 2, 3]
         tables = {
             row[0]
             for row in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-    assert {"processing_runs", "llm_calls"}.issubset(tables)
+    assert {
+        "processing_runs",
+        "llm_calls",
+        "experience_facts",
+        "fact_sources",
+    }.issubset(tables)
     assert show_log(workspace, log_id=log_id).raw_log.raw_text == raw_text
+
+
+def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
+    tmp_path: Path,
+) -> None:
+    """§12 rule 14/§12.14: v2 labels receive deterministic stored keys."""
+
+    workspace = v2_workspace(
+        tmp_path,
+        projects=(
+            ("log_ascii", " Exp2Res "),
+            ("log_unicode", "Exp2Re\u0301s"),
+            ("log_none", None),
+        ),
+    )
+    migrated = migrate_workspace(
+        workspace, clock=lambda: FIXED_NOW.replace(day=16)
+    )
+    assert migrated.stored_version == 3
+    backup = Path(migrated.managed_backup_path or "")
+    assert backup.is_file()
+    assert "exp2res-v2-" in backup.name
+    with sqlite3.connect(backup) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0] == 2
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT id, project, project_key FROM raw_logs ORDER BY id"
+        ).fetchall() == [
+            ("log_ascii", " Exp2Res ", "exp2res"),
+            ("log_none", None, None),
+            ("log_unicode", "Exp2Re\u0301s", "exp2rés"),
+        ]
+        assert connection.execute(
+            "SELECT version FROM schema_meta ORDER BY version"
+        ).fetchall() == [(1,), (2,), (3,)]
+
+
+def test_fresh_and_migrated_v3_have_identical_complete_sqlite_master_shape(
+    tmp_path: Path,
+) -> None:
+    """§12.14: every authored v3 table, index, and trigger has exact parity."""
+
+    migrated = v2_workspace(tmp_path)
+    migrate_workspace(migrated, clock=lambda: FIXED_NOW.replace(day=16))
+    fresh = tmp_path / "fresh-v3"
+    fresh.mkdir()
+    initialize_workspace(fresh, clock=lambda: FIXED_NOW.replace(day=16))
+    assert sqlite_master_shape(
+        migrated / ".exp2res" / "exp2res.sqlite"
+    ) == sqlite_master_shape(fresh / ".exp2res" / "exp2res.sqlite")
+
+
+@pytest.mark.parametrize(
+    ("start_version", "failure_point"),
+    [
+        (1, "after_migration_1_to_2"),
+        (1, "after_migration_2_to_3"),
+        (2, "after_migration_2_to_3"),
+    ],
+)
+def test_each_registered_step_failure_rolls_back_to_the_original_version(
+    tmp_path: Path, start_version: int, failure_point: str
+) -> None:
+    """§12.14: every pending step shares one rollback boundary."""
+
+    if start_version == 1:
+        workspace, _log_id, _raw_text = v1_workspace(tmp_path)
+    else:
+        workspace = v2_workspace(tmp_path)
+
+    def inject(point: str) -> None:
+        if point == failure_point:
+            raise RuntimeError("Vera Example registered-step failure")
+
+    with pytest.raises(MigrationFailedError) as caught:
+        migrate_workspace(
+            workspace,
+            clock=lambda: FIXED_NOW.replace(day=16),
+            failure_injector=inject,
+        )
+    backup = Path(caught.value.managed_backup_path or "")
+    assert backup.is_file()
+    assert f"exp2res-v{start_version}-" in backup.name
+    assert inspect_workspace(workspace).stored_version == start_version
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0] == start_version
+
+
+def test_blank_project_backfill_fails_closed_and_leaves_v2_usable(
+    tmp_path: Path,
+) -> None:
+    """§11 policy/§12 rule 14: non-transformable retained labels abort v3."""
+
+    workspace = v2_workspace(
+        tmp_path, projects=(("log_blank_project", "   "),)
+    )
+    with pytest.raises(MigrationFailedError) as caught:
+        migrate_workspace(workspace, clock=lambda: FIXED_NOW.replace(day=16))
+    assert Path(caught.value.managed_backup_path or "").is_file()
+    assert caught.value.failure_code == (
+        "migration_2_to_3:raw_log_project_label_blank"
+    )
+    assert inspect_workspace(workspace).stored_version == 2
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value.__cause__) == "raw_log_project_label_blank"
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert connection.execute(
+            "SELECT project FROM raw_logs WHERE id = 'log_blank_project'"
+        ).fetchone()[0] == "   "
+        assert connection.execute(
+            "SELECT 1 FROM pragma_table_info('raw_logs') WHERE name = 'project_key'"
+        ).fetchone() is None
 
 
 def test_cli_reports_a_rolled_back_migration_as_integrity_class_7(
@@ -175,7 +382,7 @@ def test_cli_reports_migration_interrupt_as_cancelled_class_9(
 def test_migration_failure_rolls_back_ddl_and_version_but_retains_backup(
     tmp_path: Path,
 ) -> None:
-    """§12.14: an injected target-validation failure exposes no partial v2."""
+    """§12.14: an injected target-validation failure exposes no partial v3."""
 
     workspace, log_id, raw_text = v1_workspace(tmp_path)
 
@@ -270,7 +477,7 @@ def test_cli_pre_backup_interrupt_keeps_the_generic_null_result_envelope(
     assert envelope["result"] is None
 
 
-def test_post_commit_interrupt_reports_backup_and_leaves_durable_v2(
+def test_post_commit_interrupt_reports_backup_and_leaves_durable_v3(
     tmp_path: Path,
 ) -> None:
     """§14.14 rule 4: a post-commit interrupt still reports both effects."""
@@ -292,11 +499,11 @@ def test_post_commit_interrupt_reports_backup_and_leaves_durable_v2(
     assert len(backups) == 1
     assert interrupt_info.value.managed_backup_path == str(backups[0])
     after = inspect_workspace(workspace)
-    assert after.stored_version == 2
+    assert after.stored_version == 3
     assert after.compatible is True
 
 
-def test_cli_post_commit_interrupt_envelope_reports_durable_v2_and_backup(
+def test_cli_post_commit_interrupt_envelope_reports_durable_v3_and_backup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """§14.14 rule 4: the cancelled envelope shows the committed migration."""
@@ -322,7 +529,7 @@ def test_cli_post_commit_interrupt_envelope_reports_durable_v2_and_backup(
     assert result.exit_code == 9
     envelope = json.loads(result.stdout)
     assert envelope["status"] == "cancelled"
-    assert envelope["result"]["schema"]["stored_version"] == 2
+    assert envelope["result"]["schema"]["stored_version"] == 3
     assert envelope["result"]["schema"]["compatible"] is True
     backup = Path(envelope["result"]["schema"]["managed_backup_path"])
     assert backup.is_file()
@@ -517,6 +724,6 @@ def test_exact_shape_preexisting_telemetry_table_migrates(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
 
-    assert migrated.stored_version == 2
+    assert migrated.stored_version == 3
     assert migrated.compatible is True
     assert table_shape(database, table) == expected_shape
