@@ -20,6 +20,7 @@ from exp2res.llm.contracts import runner_instruction, schema_bytes
 from exp2res.llm.registry import ADAPTER_REGISTRY, AdapterRegistration, LLMSelection
 from exp2res.llm.runner import ContractRunner, PreparedCall, ProcessOutcome, RawResult
 from exp2res.llm.sandbox import (
+    PROXY_ENVIRONMENT_NAMES,
     SandboxLayout,
     build_bwrap_command,
     discover_bwrap,
@@ -415,6 +416,43 @@ def test_conformance_parent_environment_is_absent_from_real_sandbox_child(
     assert sentinel_name.encode("ascii") not in output
     assert sentinel_value.encode("ascii") not in output
     assert b"HOME=/work" in output
+
+
+@pytest.mark.parametrize(
+    "target", CONFORMANCE_TARGETS, ids=lambda target: target.registration.adapter_id
+)
+def test_conformance_proxy_transit_passes_and_other_parent_env_does_not(
+    target: ConformanceTarget,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§15.12 rule 4: proxy routing joins the explicit allowlist by name only."""
+
+    for name in PROXY_ENVIRONMENT_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    proxy_value = "http://proxy.vera.example:3128"
+    monkeypatch.setenv("HTTPS_PROXY", proxy_value)
+    monkeypatch.setenv("VERA_EXAMPLE_PARENT_SECRET", "VeraExampleMustNotPass")
+    commands: list[list[str]] = []
+
+    def execute(command: list[str]) -> ProcessOutcome:
+        commands.append(command)
+        (_workspace_from_command(command) / "output.json").write_bytes(VALID)
+        return ProcessOutcome(0, 0.01, b"", False, False)
+
+    target.install_executor(monkeypatch, execute)
+    runner = target.fake_runtime_factory(tmp_path, None)
+    assert (
+        runner.run_contract(_prepared(model_id=target.model_id)).final_message_bytes
+        == VALID
+    )
+    command = commands[0]
+    assert any(
+        command[index : index + 3] == ["--setenv", "HTTPS_PROXY", proxy_value]
+        for index in range(len(command) - 2)
+    )
+    assert "VERA_EXAMPLE_PARENT_SECRET" not in command
+    assert "VeraExampleMustNotPass" not in command
 
 
 def test_claude_conformance_fake_emulates_absent_session_envelope(

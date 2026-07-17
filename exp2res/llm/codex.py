@@ -30,7 +30,13 @@ from .runner import (
     _write_private,
     run_subprocess,
 )
-from .sandbox import SandboxLayout, build_bwrap_command, discover_bwrap, probe_isolation
+from .sandbox import (
+    SandboxLayout,
+    build_bwrap_command,
+    discover_bwrap,
+    probe_isolation,
+    proxy_environment,
+)
 
 if TYPE_CHECKING:
     from exp2res.config import LLMConfig
@@ -125,7 +131,10 @@ class CodexCLIRunner:
                         (self.codex_home / "auth.json", "/codex-home/auth.json"),
                     ),
                     top_dirs=("/codex-home", "/runner"),
-                    extra_env=(("CODEX_HOME", "/codex-home"),),
+                    extra_env=(
+                        ("CODEX_HOME", "/codex-home"),
+                        *proxy_environment(),
+                    ),
                 ),
                 codex_command,
             )

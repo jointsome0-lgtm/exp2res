@@ -26,6 +26,36 @@ class SandboxLayout:
     chdir: str | None = None
 
 
+PROXY_ENVIRONMENT_NAMES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "all_proxy",
+)
+
+
+def proxy_environment() -> tuple[tuple[str, str], ...]:
+    """Provider-transit proxy routing joins the explicit env allowlist.
+
+    §15.12 rule 4 clears the child environment and rebuilds it from an
+    explicit allowlist; a host whose provider route requires a proxy makes
+    these standard variables part of provider transit itself, so they pass
+    through by name — never wildcarded, never persisted, and a value is
+    exposed only to the same confined child that already carries the
+    adapter's authentication material.
+    """
+
+    return tuple(
+        (name, os.environ[name])
+        for name in PROXY_ENVIRONMENT_NAMES
+        if os.environ.get(name)
+    )
+
+
 @dataclass(frozen=True)
 class CanaryResult:
     available: bool

@@ -33,7 +33,11 @@ from exp2res.llm.contracts import ContractDefinition, runner_instruction, schema
 from exp2res.llm.preflight import preflight_call
 from exp2res.llm.registry import ADAPTER_REGISTRY
 from exp2res.llm.runner import PreparedCall, ProcessOutcome
-from exp2res.llm.sandbox import discover_bwrap, probe_isolation
+from exp2res.llm.sandbox import (
+    PROXY_ENVIRONMENT_NAMES,
+    discover_bwrap,
+    probe_isolation,
+)
 
 from conftest import FIXED_NOW, REPOSITORY_ROOT
 from test_llm_runner import (
@@ -262,6 +266,8 @@ def test_version_declaration_accepts_probed_version_and_rejects_drift() -> None:
 def test_sandbox_argv_has_exact_claude_controls_and_inline_schema(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    for name in PROXY_ENVIRONMENT_NAMES:
+        monkeypatch.delenv(name, raising=False)
     seen: list[tuple[list[str], bytes, bytes, set[str], Path]] = []
 
     def run(

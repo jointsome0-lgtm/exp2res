@@ -361,6 +361,8 @@ def test_real_runner_workspace_has_only_declared_retry_files(
 ) -> None:
     """Issue #69: W/W' contain only typed bytes, schema, and safe diagnostics."""
 
+    for name in sandbox_module.PROXY_ENVIRONMENT_NAMES:
+        monkeypatch.delenv(name, raising=False)
     codex = tmp_path / "codex"
     bwrap = tmp_path / "bwrap"
     codex_home = tmp_path / "codex-home"

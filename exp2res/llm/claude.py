@@ -36,6 +36,7 @@ from .sandbox import (
     build_bwrap_command,
     discover_bwrap,
     probe_isolation,
+    proxy_environment,
 )
 
 if TYPE_CHECKING:
@@ -227,6 +228,7 @@ class ClaudeAgentRunner:
                     extra_env=(
                         ("CLAUDE_CONFIG_DIR", "/claude-home"),
                         ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"),
+                        *proxy_environment(),
                     ),
                     chdir="/work",
                 ),
