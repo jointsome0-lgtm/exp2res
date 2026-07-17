@@ -214,8 +214,19 @@ def invoke_contract(
     last_exit_code: int | None = None
 
     def terminal_metadata() -> dict[str, str]:
+        # §15.12 rule 9: by terminal time a materialized runner knows the
+        # probed runtime version, which is the runner identity; the probe
+        # is non-materializing, so a run whose adapter build failed keeps
+        # its durable rows (§24.46) and the caller-supplied placeholder.
+        version_probe = getattr(runner, "runtime_version", None)
+        probed = version_probe() if callable(version_probe) else None
         return {
             **initial_metadata,
+            **(
+                {"cli_version": probed}
+                if isinstance(probed, str) and probed
+                else {}
+            ),
             f"call_{call_index}_duration_ms": str(
                 max(0, round(total_duration * 1000))
             ),

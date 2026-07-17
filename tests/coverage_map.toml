@@ -297,9 +297,29 @@ phase = "5"
 status = "partial"
 nodes = [
   "tests/test_llm_preflight.py::test_canary_proves_closed_read_namespace_or_skips_explicitly",
+  "tests/test_adapter_conformance.py::test_conformance_declared_controls_and_isolation_skeleton_are_assembled[codex-cli]",
+  "tests/test_adapter_conformance.py::test_conformance_declared_controls_and_isolation_skeleton_are_assembled[claude-agent-sdk]",
+  "tests/test_adapter_conformance.py::test_conformance_parent_environment_is_absent_from_real_sandbox_child[codex-cli]",
+  "tests/test_adapter_conformance.py::test_conformance_parent_environment_is_absent_from_real_sandbox_child[claude-agent-sdk]",
+  "tests/test_adapter_conformance.py::test_claude_conformance_fake_emulates_absent_session_envelope",
+  "tests/test_adapter_conformance.py::test_conformance_only_final_message_file_is_consumed[codex-cli]",
+  "tests/test_adapter_conformance.py::test_conformance_only_final_message_file_is_consumed[claude-agent-sdk]",
+  "tests/test_adapter_conformance.py::test_conformance_contract_workspace_is_deleted_on_every_terminal_path[success-codex-cli]",
+  "tests/test_adapter_conformance.py::test_conformance_contract_workspace_is_deleted_on_every_terminal_path[success-claude-agent-sdk]",
+  "tests/test_adapter_conformance.py::test_conformance_contract_workspace_is_deleted_on_every_terminal_path[transport-codex-cli]",
+  "tests/test_adapter_conformance.py::test_conformance_contract_workspace_is_deleted_on_every_terminal_path[transport-claude-agent-sdk]",
+  "tests/test_claude_adapter.py::test_success_extracts_only_the_envelope_result_string",
+  "tests/test_claude_adapter.py::test_envelope_extraction_fails_closed[is-error-beats-success-subtype]",
+  "tests/test_claude_adapter.py::test_sandbox_argv_has_exact_claude_controls_and_inline_schema",
+  "tests/test_claude_adapter.py::test_claude_patterns_include_generic_and_sk_ant_classifiers",
+  "tests/test_claude_adapter.py::test_fake_runtime_session_artifacts_die_with_sandbox",
 ]
 environment_gated = [
   "tests/test_llm_preflight.py::test_canary_proves_closed_read_namespace_or_skips_explicitly",
+  "tests/test_adapter_conformance.py::test_conformance_parent_environment_is_absent_from_real_sandbox_child[codex-cli]",
+  "tests/test_adapter_conformance.py::test_conformance_parent_environment_is_absent_from_real_sandbox_child[claude-agent-sdk]",
+  "tests/test_adapter_conformance.py::test_claude_conformance_fake_emulates_absent_session_envelope",
+  "tests/test_claude_adapter.py::test_fake_runtime_session_artifacts_die_with_sandbox",
 ]
 phase = "1"
-note = "The shipped canary probe proves read confinement for the Codex reference runner; the generalized §15.12 blocks — environment/ambient isolation sentinels, final-message-only result channel across completion paths, tool-disable and protocol-version preflight failures, and agent-backed adapter classification — land with the #102 adapter lineup"
+note = "Both shipped agent-backed adapters execute the shared control, workspace-lifecycle, final-result-channel, environment, and token-classifier conformance nodes; real bwrap/userns isolation and transient-artifact execution remain environment-gated, the Claude provider smoke remains double-opt-in, and simulated hard-crash residue, §21.49 undeclared-authority fixtures, explicit drifted-control/protocol-version preflight cases, and the openai-compat direct-adapter classification remain uncovered"

@@ -56,6 +56,17 @@ class LazyPreflightRunner:
     def run_contract(self, call: PreparedCall) -> RawResult:
         return self.materialize().run_contract(call)
 
+    def runtime_version(self) -> str | None:
+        """Non-materializing: report identity only once the build happened.
+
+        Materializing here would move adapter preflight ahead of the
+        run/call telemetry rows, making a missing session or absent
+        sandbox uninspectable via `runs show` (§24.46, §14.14 rule 5).
+        """
+
+        probe = getattr(self._runner, "runtime_version", None)
+        return probe() if callable(probe) else None
+
 
 def build_llm_execution(
     workspace: Path,

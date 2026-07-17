@@ -11,6 +11,9 @@ import ssl
 import subprocess
 import tempfile
 from typing import Sequence
+from urllib.parse import urlsplit
+
+from exp2res.errors import LLMInvocationError
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,48 @@ class SandboxLayout:
     tmpfs_mounts: tuple[str, ...] = ()
     top_dirs: tuple[str, ...] = ()
     extra_env: tuple[tuple[str, str], ...] = ()
+    chdir: str | None = None
+
+
+PROXY_ENVIRONMENT_NAMES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "all_proxy",
+)
+_PROXY_URL_NAMES = frozenset(
+    name for name in PROXY_ENVIRONMENT_NAMES if "no_proxy" not in name.casefold()
+)
+
+
+def proxy_environment() -> tuple[tuple[str, str], ...]:
+    """Provider-transit proxy routing joins the explicit env allowlist.
+
+    §15.12 rule 4 clears the child environment and rebuilds it from an
+    explicit allowlist; a host whose provider route requires a proxy makes
+    these standard variables part of provider transit itself, so they pass
+    through by name — never wildcarded, never persisted. A proxy URL that
+    embeds userinfo is credential material and must not become visible to
+    the agent runtime, so it fails the call closed with a non-secret
+    diagnostic instead of passing through: the owner points the runners at
+    a credential-free (for example local) proxy endpoint.
+    """
+
+    passed: list[tuple[str, str]] = []
+    for name in PROXY_ENVIRONMENT_NAMES:
+        value = os.environ.get(name)
+        if not value:
+            continue
+        if name in _PROXY_URL_NAMES:
+            parsed = urlsplit(value if "://" in value else f"http://{value}")
+            if parsed.username is not None or parsed.password is not None:
+                raise LLMInvocationError("credential_detected")
+        passed.append((name, value))
+    return tuple(passed)
 
 
 @dataclass(frozen=True)
@@ -120,6 +165,9 @@ def build_bwrap_command(
     )
     for name, value in layout.extra_env:
         result.extend(("--setenv", name, value))
+    if layout.chdir is not None:
+        if not layout.chdir.startswith("/"):
+            raise ValueError("sandbox working directory must be absolute")
     result.extend(
         (
             "--bind",
@@ -131,10 +179,12 @@ def build_bwrap_command(
             "/dev",
             "--tmpfs",
             "/tmp",
-            "--",
-            *command,
         )
     )
+    if layout.chdir is not None:
+        # Select cwd only after its host workspace bind is installed.
+        result.extend(("--chdir", layout.chdir))
+    result.extend(("--", *command))
     return result
 
 

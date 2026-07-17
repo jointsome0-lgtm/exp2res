@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import platform
-import re
 import shutil
 import stat
 import subprocess
@@ -15,7 +14,12 @@ from typing import Sequence, TYPE_CHECKING
 
 from exp2res.errors import LLMInvocationError
 
-from .capabilities import CLICapabilityDeclaration, CapabilityTestRange
+from .capabilities import (
+    CLICapabilityDeclaration,
+    CapabilityTestRange,
+    parse_cli_version,
+    validate_reasoning_effort,
+)
 from .preflight import CODEX_TOKEN_PATTERNS
 from .runner import (
     AttemptTelemetry,
@@ -26,7 +30,13 @@ from .runner import (
     _write_private,
     run_subprocess,
 )
-from .sandbox import SandboxLayout, build_bwrap_command, discover_bwrap, probe_isolation
+from .sandbox import (
+    SandboxLayout,
+    build_bwrap_command,
+    discover_bwrap,
+    probe_isolation,
+    proxy_environment,
+)
 
 if TYPE_CHECKING:
     from exp2res.config import LLMConfig
@@ -59,6 +69,7 @@ DEFAULT_DECLARATION = CodexCapabilityDeclaration(
         ),
     ),
     token_patterns=CODEX_TOKEN_PATTERNS,
+    reasoning_efforts=frozenset({"minimal", "low", "medium", "high", "xhigh"}),
 )
 
 
@@ -71,10 +82,19 @@ class CodexCLIRunner:
         codex_binary: Path,
         bwrap_binary: Path,
         codex_home: Path,
+        reasoning_effort: str = "high",
+        cli_version: str = "unversioned",
     ) -> None:
         self.codex_binary = codex_binary
         self.bwrap_binary = bwrap_binary
         self.codex_home = codex_home
+        self.reasoning_effort = reasoning_effort
+        self.cli_version = cli_version
+
+    def runtime_version(self) -> str:
+        """§15.12 rule 9: the probed runtime version is runner identity."""
+
+        return self.cli_version
 
     def run_contract(self, call: PreparedCall) -> RawResult:
         workspace = Path(tempfile.mkdtemp(prefix="exp2res-llm-"))
@@ -99,6 +119,8 @@ class CodexCLIRunner:
                 "read-only",
                 "-c",
                 'approval_policy="never"',
+                "-c",
+                f'model_reasoning_effort="{self.reasoning_effort}"',
                 "--output-schema",
                 "/work/schema.json",
                 "--output-last-message",
@@ -116,7 +138,10 @@ class CodexCLIRunner:
                         (self.codex_home / "auth.json", "/codex-home/auth.json"),
                     ),
                     top_dirs=("/codex-home", "/runner"),
-                    extra_env=(("CODEX_HOME", "/codex-home"),),
+                    extra_env=(
+                        ("CODEX_HOME", "/codex-home"),
+                        *proxy_environment(),
+                    ),
                 ),
                 codex_command,
             )
@@ -153,10 +178,7 @@ class CodexCLIRunner:
 
 
 def parse_codex_version(value: str) -> tuple[int, int, int]:
-    match = re.search(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)", value)
-    if match is None:
-        raise LLMInvocationError("capability_mismatch")
-    return tuple(int(item) for item in match.groups())  # type: ignore[return-value]
+    return parse_cli_version(value)
 
 
 def validate_cli_declaration(
@@ -171,6 +193,7 @@ def validate_cli_declaration(
         or not declaration.timeout_supported
         or not declaration.cancellation_supported
         or not declaration.token_patterns
+        or not declaration.reasoning_efforts
         or declaration.runner_protocol_version != RUNNER_PROTOCOL_VERSION
     ):
         raise LLMInvocationError("capability_mismatch")
@@ -326,6 +349,9 @@ def build_runner(config: LLMConfig, repository_root: Path) -> ContractRunner:
 
     from exp2res.config import resolve_codex_home
 
+    reasoning_effort = validate_reasoning_effort(
+        config.reasoning_effort, DEFAULT_DECLARATION
+    )
     codex_home = resolve_codex_home(config)
     runtime = preflight_adapter(
         repository_root=repository_root,
@@ -336,6 +362,8 @@ def build_runner(config: LLMConfig, repository_root: Path) -> ContractRunner:
         codex_binary=runtime.codex_binary,
         bwrap_binary=runtime.bwrap_binary,
         codex_home=runtime.codex_home,
+        reasoning_effort=reasoning_effort,
+        cli_version=runtime.cli_version,
     )
 
 
