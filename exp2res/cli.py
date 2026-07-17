@@ -481,7 +481,12 @@ def extract_command(
                 ),
                 deleted=[],
             ),
-            generation_ids=list(extracted.generation_ids),
+            # §14.14 rule 5: produced OR invalidated generation IDs,
+            # duplicate-free and deterministically ordered.
+            generation_ids=sorted(
+                {*extracted.generation_ids, *extracted.superseded_generation_ids},
+                key=lambda value: value.encode("utf-8"),
+            ),
             run_ids=[extracted.run_id],
             warnings=list(extracted.warnings),
             human_result=(

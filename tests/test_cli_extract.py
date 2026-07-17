@@ -111,10 +111,15 @@ def test_build_llm_execution_uses_workspace_selection_and_budget_defaults(
     assert resolved_budgets.planned_output_tokens == (
         DEFAULT_LLM_CONFIG.output_token_budget
     )
-    assert isinstance(selected_runner, CodexCLIRunner)
-    assert selected_runner.codex_binary == runtime.codex_binary
-    assert selected_runner.bwrap_binary == runtime.bwrap_binary
-    assert selected_runner.codex_home == runtime.codex_home
+    # Preflight is deferred to first use; materializing yields the
+    # registered runner over the preflighted runtime.
+    assert isinstance(selected_runner, extraction_service.LazyPreflightRunner)
+    materialized = selected_runner.materialize()
+    assert isinstance(materialized, CodexCLIRunner)
+    assert materialized.codex_binary == runtime.codex_binary
+    assert materialized.bwrap_binary == runtime.bwrap_binary
+    assert materialized.codex_home == runtime.codex_home
+    assert selected_runner.materialize() is materialized
 
 
 def test_extract_noninteractive_requires_yes_before_runner_construction(
@@ -257,6 +262,38 @@ def test_facts_list_show_round_trip_complete_values_via_read_seam(
     assert missing_envelope["diagnostic_class"] == "selector_not_found"
 
 
+def test_extract_on_empty_workspace_completes_without_adapter_preflight(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.6: a zero-lineage extraction never probes Codex/bwrap/auth."""
+
+    def refuse_preflight(**_kwargs):
+        raise AssertionError("adapter preflight ran for a zero-call extraction")
+
+    monkeypatch.setattr(extraction_service, "preflight_adapter", refuse_preflight)
+    # §29.2 selection stays required — only the environment probe is deferred.
+    config = workspace / ".exp2res" / "config.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + '\n[llm]\nadapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n'
+        'codex_home_env = "CODEX_HOME"\n',
+        encoding="utf-8",
+    )
+    result, envelope = invoke_json(workspace, ["--yes", "extract"])
+    assert result.exit_code == 0
+    assert envelope["status"] == "ok"
+    assert envelope["affected_ids"]["created"] == []
+    assert envelope["generation_ids"] == []
+    assert len(envelope["run_ids"]) == 1
+    with read_database(workspace) as connection:
+        run = connection.execute(
+            "SELECT id, status FROM processing_runs"
+        ).fetchone()
+        calls = connection.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0]
+    assert tuple(run) == (envelope["run_ids"][0], "completed")
+    assert calls == 0
+
+
 def test_facts_show_rejects_superseded_fact_ids(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -275,6 +312,12 @@ def test_facts_show_rejects_superseded_fact_ids(
     second, second_envelope = invoke_json(workspace, ["--yes", "extract"])
     assert second.exit_code == 0
     current_id = second_envelope["affected_ids"]["created"][0]["ids"][0]
+    # §14.14 rule 5: the rerun's envelope carries produced AND invalidated
+    # generation IDs, duplicate-free.
+    assert set(first_envelope["generation_ids"]) < set(
+        second_envelope["generation_ids"]
+    )
+    assert len(second_envelope["generation_ids"]) == 2
 
     shown, _ = invoke_json(workspace, ["facts", "show", "--fact-id", current_id])
     assert shown.exit_code == 0

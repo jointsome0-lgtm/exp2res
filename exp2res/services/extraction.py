@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from exp2res import __version__
 from exp2res.config import call_budgets, load_workspace_config, resolve_codex_home
 from exp2res.errors import LLMInvocationError, SelectorNotFoundError
 from exp2res.llm.adapter import preflight_adapter
 from exp2res.llm.registry import LLMSelection, registration_for, resolve_selection
-from exp2res.llm.runner import CallBudgets, ContractRunner
+from exp2res.llm.runner import CallBudgets, ContractRunner, PreparedCall, RawResult
 from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
 from exp2res.services.capture import new_id
 from exp2res.storage.repository import get_raw_log
@@ -33,10 +34,34 @@ def validate_extract_selection(workspace: Path, *, log_id: str | None) -> None:
             raise SelectorNotFoundError()
 
 
+class LazyPreflightRunner:
+    """Defer adapter preflight to the first physical request.
+
+    A zero-lineage extraction plans no calls and completes its empty run
+    without any provider invocation, so probing Codex/bwrap/auth up front
+    would fail a fresh workspace's `extract` as `capability_mismatch` for
+    an adapter it never needs. Building on the first `run_contract` keeps
+    the zero-call decision where it is made — under the writer lock after
+    lineage planning — so no pre-check can race a concurrent capture.
+    """
+
+    def __init__(self, build: Callable[[], ContractRunner]) -> None:
+        self._build = build
+        self._runner: ContractRunner | None = None
+
+    def materialize(self) -> ContractRunner:
+        if self._runner is None:
+            self._runner = self._build()
+        return self._runner
+
+    def run_contract(self, call: PreparedCall) -> RawResult:
+        return self.materialize().run_contract(call)
+
+
 def build_llm_execution(
     workspace: Path,
 ) -> tuple[LLMSelection, CallBudgets, ContractRunner]:
-    """Resolve config-owned bounds and construct this build's registered runner."""
+    """Resolve config-owned bounds and defer runner preflight to first use."""
 
     config = load_workspace_config(workspace).llm
     selected = config.selection
@@ -49,17 +74,20 @@ def build_llm_execution(
         model_max_output_tokens=config.output_token_budget,
     )
     registration = registration_for(selection)
-    runtime = preflight_adapter(
-        repository_root=Path(__file__).resolve().parents[2],
-        codex_home=resolve_codex_home(config),
-        declaration=registration.declaration,
-    )
-    runner = registration.runner_type(
-        codex_binary=runtime.codex_binary,
-        bwrap_binary=runtime.bwrap_binary,
-        codex_home=runtime.codex_home,
-    )
-    return selection, budgets, runner
+
+    def build_runner() -> ContractRunner:
+        runtime = preflight_adapter(
+            repository_root=Path(__file__).resolve().parents[2],
+            codex_home=resolve_codex_home(config),
+            declaration=registration.declaration,
+        )
+        return registration.runner_type(
+            codex_binary=runtime.codex_binary,
+            bwrap_binary=runtime.bwrap_binary,
+            codex_home=runtime.codex_home,
+        )
+
+    return selection, budgets, LazyPreflightRunner(build_runner)
 
 
 def _committed_runs(workspace: Path, run_ids: list[str]) -> tuple[str, ...]:
