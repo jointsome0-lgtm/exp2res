@@ -11,6 +11,9 @@ import ssl
 import subprocess
 import tempfile
 from typing import Sequence
+from urllib.parse import urlsplit
+
+from exp2res.errors import LLMInvocationError
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,9 @@ PROXY_ENVIRONMENT_NAMES = (
     "no_proxy",
     "all_proxy",
 )
+_PROXY_URL_NAMES = frozenset(
+    name for name in PROXY_ENVIRONMENT_NAMES if "no_proxy" not in name.casefold()
+)
 
 
 def proxy_environment() -> tuple[tuple[str, str], ...]:
@@ -44,16 +50,24 @@ def proxy_environment() -> tuple[tuple[str, str], ...]:
     §15.12 rule 4 clears the child environment and rebuilds it from an
     explicit allowlist; a host whose provider route requires a proxy makes
     these standard variables part of provider transit itself, so they pass
-    through by name — never wildcarded, never persisted, and a value is
-    exposed only to the same confined child that already carries the
-    adapter's authentication material.
+    through by name — never wildcarded, never persisted. A proxy URL that
+    embeds userinfo is credential material and must not become visible to
+    the agent runtime, so it fails the call closed with a non-secret
+    diagnostic instead of passing through: the owner points the runners at
+    a credential-free (for example local) proxy endpoint.
     """
 
-    return tuple(
-        (name, os.environ[name])
-        for name in PROXY_ENVIRONMENT_NAMES
-        if os.environ.get(name)
-    )
+    passed: list[tuple[str, str]] = []
+    for name in PROXY_ENVIRONMENT_NAMES:
+        value = os.environ.get(name)
+        if not value:
+            continue
+        if name in _PROXY_URL_NAMES:
+            parsed = urlsplit(value if "://" in value else f"http://{value}")
+            if parsed.username is not None or parsed.password is not None:
+                raise LLMInvocationError("credential_detected")
+        passed.append((name, value))
+    return tuple(passed)
 
 
 @dataclass(frozen=True)

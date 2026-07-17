@@ -53,12 +53,22 @@ REQUIRED_FLAGS = frozenset(
         "--output-format",
         "--json-schema",
         "--tools",
+        "--settings",
         "--strict-mcp-config",
         "--setting-sources",
         "--safe-mode",
         "--no-session-persistence",
         "--disable-slash-commands",
     }
+)
+# §15.12 rule 6: the granted Read authority is scoped away from the one
+# secret inside the visible set. The `//` absolute deny form is
+# probe-verified to block on the tested range while /work reads stay
+# allowed; print mode ignores invalid settings silently, so the tested
+# version range is what bounds a drifted-syntax residual, layered over
+# rule 6's already-accepted auth-material exposure.
+CLAUDE_PERMISSION_SETTINGS = (
+    '{"permissions":{"deny":["Read(//claude-home/**)"]}}'
 )
 CLAUDE_TOKEN_PATTERNS = (
     *CODEX_TOKEN_PATTERNS,
@@ -90,6 +100,8 @@ class _ClaudeEnvelope:
     result: object
     terminal_reason: str | None
     api_error_status: int | None
+    structured_output: object
+    has_structured_output: bool
 
 
 def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -135,7 +147,24 @@ def _read_envelope(path: Path) -> _ClaudeEnvelope | None:
         result=decoded.get("result"),
         terminal_reason=terminal_reason,
         api_error_status=api_error_status,
+        structured_output=decoded.get("structured_output"),
+        has_structured_output="structured_output" in decoded,
     )
+
+
+def _result_matches_structured_output(envelope: _ClaudeEnvelope) -> bool:
+    """Require the declared dual success shape: `result` bytes stay the one
+    §15.12 rule 7 channel, and the runtime's own `structured_output` echo must
+    agree with them — declared-semantics drift fails closed rather than being
+    silently adapted to (rule 8)."""
+
+    if not envelope.has_structured_output:
+        return False
+    try:
+        parsed = json.loads(envelope.result)  # type: ignore[arg-type]
+    except (json.JSONDecodeError, UnicodeError, TypeError, ValueError):
+        return False
+    return parsed == envelope.structured_output
 
 
 def _diagnostic_bytes(
@@ -205,6 +234,8 @@ class ClaudeAgentRunner:
                 inline_schema,
                 "--tools",
                 "Read",
+                "--settings",
+                CLAUDE_PERMISSION_SETTINGS,
                 "--strict-mcp-config",
                 "--setting-sources",
                 "",
@@ -264,6 +295,7 @@ class ClaudeAgentRunner:
                 and envelope is not None
                 and envelope.is_error is False
                 and isinstance(envelope.result, str)
+                and _result_matches_structured_output(envelope)
             ):
                 final_message = envelope.result.encode("utf-8")
             error_channel = (

@@ -129,9 +129,10 @@ def _claude_fake_runtime(tmp_path: Path, bwrap_binary: Path | None) -> ContractR
         "'Vera Example transient config')\n"
         "Path(os.environ['HOME'], 'session-artifact').write_text("
         "'Vera Example transient home')\n"
-        "print(json.dumps({'type':'result','is_error':False,'result':"
-        "'\\n'.join(f'{key}={value}' for key, value in "
-        "sorted(os.environ.items()))}))\n",
+        "env_text = '\\n'.join(f'{key}={value}' for key, value in "
+        "sorted(os.environ.items()))\n"
+        "print(json.dumps({'type':'result','is_error':False,"
+        "'result':json.dumps(env_text),'structured_output':env_text}))\n",
         encoding="utf-8",
     )
     claude.chmod(0o700)
@@ -168,7 +169,12 @@ def _install_claude_executor(
             output_path = _workspace_from_command(command) / "output.json"
             result = output_path.read_text(encoding="utf-8")
             envelope = json.dumps(
-                {"type": "result", "is_error": False, "result": result},
+                {
+                    "type": "result",
+                    "is_error": False,
+                    "result": result,
+                    "structured_output": json.loads(result),
+                },
                 separators=(",", ":"),
             ).encode("utf-8")
             os.lseek(stdout_descriptor, 0, os.SEEK_SET)
@@ -240,6 +246,7 @@ CONFORMANCE_TARGETS = (
             ("--effort", "high"),
             ("--permission-mode", "dontAsk"),
             ("--tools", "Read"),
+            ("--settings", claude_adapter.CLAUDE_PERMISSION_SETTINGS),
         ),
         precreated_output=True,
     ),

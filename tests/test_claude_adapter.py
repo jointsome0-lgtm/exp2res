@@ -110,7 +110,7 @@ def _json_envelope(**changes: object) -> bytes:
         "subtype": "success",
         "is_error": False,
         "result": VALID.decode("utf-8"),
-        "structured_output": {"ignored": "Vera Example"},
+        "structured_output": json.loads(VALID),
     }
     value.update(changes)
     return json.dumps(value, separators=(",", ":")).encode("utf-8")
@@ -305,6 +305,13 @@ def test_sandbox_argv_has_exact_claude_controls_and_inline_schema(
     assert command[command.index("--permission-mode") + 1] == "dontAsk"
     assert command[command.index("--output-format") + 1] == "json"
     assert command[command.index("--tools") + 1] == "Read"
+    assert (
+        command[command.index("--settings") + 1]
+        == claude_adapter.CLAUDE_PERMISSION_SETTINGS
+    )
+    assert '"deny":["Read(//claude-home/**)"]' in command[
+        command.index("--settings") + 1
+    ]
     assert command[command.index("--setting-sources") + 1] == ""
     assert "--bare" not in command
     assert "VERA_EXAMPLE_PARENT_CREDENTIAL_SENTINEL" not in command
@@ -432,7 +439,8 @@ def test_fake_runtime_session_artifacts_die_with_sandbox(
         "Path(os.environ['HOME'], 'session-artifact').write_text("
         "'Vera Example transient')\n"
         "print(json.dumps({'type':'result','is_error':False,'result':"
-        f"{VALID.decode('utf-8')!r}}}))\n",
+        f"{VALID.decode('utf-8')!r},'structured_output':"
+        f"json.loads({VALID.decode('utf-8')!r})}}))\n",
         encoding="utf-8",
     )
     runtime.chmod(0o700)
@@ -468,6 +476,48 @@ LIVE_CONTRACT = ContractDefinition(
     schema_revision="test-live-v1",
     service_owned_fields=frozenset(),
 )
+
+
+def test_success_requires_result_and_structured_output_to_agree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule 8: drifted dual-channel semantics fail closed, never adapt."""
+
+    runner = _runner(tmp_path)
+    mismatched = _json_envelope(structured_output={"value": "Vera Example drift"})
+    _emit_envelope(monkeypatch, mismatched)
+    result = runner.run_contract(_prepared())
+    assert result.final_message_bytes is None
+    assert classify_claude_failure(result) == ("transport_provider_error", False)
+
+    missing = json.loads(_json_envelope())
+    del missing["structured_output"]
+    _emit_envelope(
+        monkeypatch, json.dumps(missing, separators=(",", ":")).encode("utf-8")
+    )
+    result = runner.run_contract(_prepared())
+    assert result.final_message_bytes is None
+    assert classify_claude_failure(result) == ("transport_provider_error", False)
+
+
+def test_credentialed_proxy_value_fails_closed_before_transit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§15.12 rule 4: parent credential material never enters the child env."""
+
+    for name in PROXY_ENVIRONMENT_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    runner = _runner(tmp_path)
+    monkeypatch.setenv(
+        "HTTPS_PROXY", "http://vera-user:vera-secret@proxy.vera.example:3128"
+    )
+    with pytest.raises(LLMInvocationError) as caught:
+        runner.run_contract(_prepared())
+    assert caught.value.failure_code == "credential_detected"
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.vera.example:3128")
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
+    _emit_envelope(monkeypatch, _json_envelope())
+    assert runner.run_contract(_prepared()).final_message_bytes == VALID
 
 
 @pytest.mark.live
