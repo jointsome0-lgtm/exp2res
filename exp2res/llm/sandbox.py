@@ -19,8 +19,10 @@ class SandboxLayout:
 
     workspace: Path
     bwrap_binary: Path
-    codex_binary: Path | None = None
-    auth_file: Path | None = None
+    ro_binds: tuple[tuple[Path, str], ...] = ()
+    tmpfs_mounts: tuple[str, ...] = ()
+    top_dirs: tuple[str, ...] = ()
+    extra_env: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -75,9 +77,6 @@ def _runtime_binds() -> tuple[Path, ...]:
 def build_bwrap_command(
     layout: SandboxLayout,
     command: Sequence[str],
-    *,
-    bind_codex: bool,
-    bind_auth: bool,
 ) -> list[str]:
     """Build the closed namespace command; the canary proves effectiveness."""
 
@@ -99,21 +98,16 @@ def build_bwrap_command(
         "/tmp",
         "--dir",
         "/etc",
-        "--dir",
-        "/codex-home",
-        "--dir",
-        "/runner",
     ]
+    for sandbox_path in layout.top_dirs:
+        result.extend(("--dir", sandbox_path))
+    # A transient directory must exist before a file can be mounted inside it.
+    for sandbox_path in layout.tmpfs_mounts:
+        result.extend(("--tmpfs", sandbox_path))
     for host_path in _runtime_binds():
         result.extend(("--ro-bind", str(host_path), str(host_path)))
-    if bind_codex:
-        if layout.codex_binary is None:
-            raise ValueError("Codex binary is required")
-        result.extend(("--ro-bind", str(layout.codex_binary), "/runner/codex"))
-    if bind_auth:
-        if layout.auth_file is None:
-            raise ValueError("Codex auth file is required")
-        result.extend(("--ro-bind", str(layout.auth_file), "/codex-home/auth.json"))
+    for host_path, sandbox_path in layout.ro_binds:
+        result.extend(("--ro-bind", str(host_path), sandbox_path))
     result.extend(
         (
             "--setenv",
@@ -122,9 +116,12 @@ def build_bwrap_command(
             "--setenv",
             "HOME",
             "/work",
-            "--setenv",
-            "CODEX_HOME",
-            "/codex-home",
+        )
+    )
+    for name, value in layout.extra_env:
+        result.extend(("--setenv", name, value))
+    result.extend(
+        (
             "--bind",
             str(workspace),
             "/work",
@@ -161,7 +158,7 @@ def probe_isolation(
     *,
     repository_root: Path,
     bwrap_binary: Path | None = None,
-    user_rules_path: Path | None = None,
+    ambient_paths: Sequence[Path] = (),
 ) -> CanaryResult:
     """Prove `/work` is readable while planted and ambient files are not."""
 
@@ -182,8 +179,7 @@ def probe_isolation(
         outside.write_bytes(b"outside\n")
         outside.chmod(0o600)
         denied = [outside, *_repository_probe_files(repository_root.resolve(strict=True))]
-        if user_rules_path is not None:
-            denied.append(user_rules_path.resolve(strict=True))
+        denied.extend(path.resolve(strict=True) for path in ambient_paths)
         script = (
             "/usr/bin/cat /work/inside-canary >/dev/null || exit 41; "
             "for target do /usr/bin/cat \"$target\" >/dev/null 2>&1 && exit 42; done; "
@@ -192,8 +188,6 @@ def probe_isolation(
         command = build_bwrap_command(
             SandboxLayout(workspace=workspace, bwrap_binary=bwrap),
             [str(shell), "-c", script, "exp2res-canary", *(str(item) for item in denied)],
-            bind_codex=False,
-            bind_auth=False,
         )
         try:
             completed = subprocess.run(

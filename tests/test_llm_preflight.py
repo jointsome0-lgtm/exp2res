@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-import exp2res.llm.adapter as codex_adapter
+import exp2res.llm.codex as codex_adapter
 from exp2res.config import load_workspace_config, resolve_codex_home
 from exp2res.errors import (
     ConfigurationError,
@@ -20,7 +20,7 @@ from exp2res.errors import (
     UnknownLLMAdapterError,
     UnknownLLMConfigKeyError,
 )
-from exp2res.llm.adapter import (
+from exp2res.llm.codex import (
     CodexCapabilityDeclaration,
     REQUIRED_FLAGS,
     CLITestRange,
@@ -227,7 +227,7 @@ def test_missing_bwrap_fails_capability_before_any_canary_or_transport(
     (codex_home / "auth.json").write_text(
         '{"fixture":"Vera Example synthetic auth metadata"}', encoding="utf-8"
     )
-    monkeypatch.setattr("exp2res.llm.adapter._resolve_codex_binary", lambda _value: codex)
+    monkeypatch.setattr("exp2res.llm.codex._resolve_codex_binary", lambda _value: codex)
     with pytest.raises(LLMInvocationError) as caught:
         preflight_adapter(
             repository_root=Path(__file__).resolve().parent.parent,
@@ -421,7 +421,7 @@ def test_canary_proves_closed_read_namespace_or_skips_explicitly(
         )
     rules = tmp_path / "AGENTS.md"
     rules.write_text("Vera Example user Codex rules\n", encoding="utf-8")
-    result = probe_isolation(repository_root=repository, user_rules_path=rules)
+    result = probe_isolation(repository_root=repository, ambient_paths=(rules,))
     if not result.available:
         pytest.skip(
             f"bwrap/userns unavailable: {result.reason}; runtime preflight fails "

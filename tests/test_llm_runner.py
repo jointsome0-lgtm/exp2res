@@ -16,6 +16,7 @@ import time
 import pytest
 from pydantic import Field
 
+import exp2res.llm.sandbox as sandbox_module
 from exp2res.domain.canonical import (
     canonical_hash,
     canonical_model_hash,
@@ -23,6 +24,7 @@ from exp2res.domain.canonical import (
 from exp2res.domain.models import StrictModel
 from exp2res.errors import LLMCancelledError, LLMInvocationError
 from exp2res.llm.adapter import invoke_contract
+from exp2res.llm.codex import CodexCLIRunner
 from exp2res.llm.contracts import (
     ContractDefinition,
     ContractWarning,
@@ -32,7 +34,6 @@ from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import (
     AttemptTelemetry,
     CallBudgets,
-    CodexCLIRunner,
     PreparedCall,
     ProcessOutcome,
     RawResult,
@@ -43,7 +44,7 @@ from exp2res.storage.telemetry import reconcile_abandoned_telemetry
 from exp2res.storage.workspace import writer_database
 
 from conftest import FIXED_NOW
-from fakes import FakeContractRunner
+from fakes import FakeContractRunner, assert_timeout_kills_process_group
 
 
 pytestmark = pytest.mark.contract
@@ -383,7 +384,7 @@ def test_real_runner_workspace_has_only_declared_retry_files(
         (workspace_path / "output.json").write_bytes(VALID)
         return ProcessOutcome(0, 0.01, b"", False, False)
 
-    monkeypatch.setattr("exp2res.llm.runner.run_subprocess", inspect_workspace)
+    monkeypatch.setattr("exp2res.llm.codex.run_subprocess", inspect_workspace)
     runner = CodexCLIRunner(
         codex_binary=codex,
         bwrap_binary=bwrap,
@@ -425,6 +426,75 @@ def test_real_runner_workspace_has_only_declared_retry_files(
         assert flag in command
     assert 'approval_policy="never"' in command
     assert command[-1] == prepared.fixed_instruction
+    expected_runtime_binds = [
+        item
+        for host_path in sandbox_module._runtime_binds()
+        for item in ("--ro-bind", str(host_path), str(host_path))
+    ]
+    expected_command = [
+        str(bwrap),
+        "--unshare-all",
+        "--share-net",
+        "--die-with-parent",
+        "--new-session",
+        "--clearenv",
+        "--dir",
+        "/work",
+        "--dir",
+        "/tmp",
+        "--dir",
+        "/etc",
+        "--dir",
+        "/codex-home",
+        "--dir",
+        "/runner",
+        *expected_runtime_binds,
+        "--ro-bind",
+        str(codex),
+        "/runner/codex",
+        "--ro-bind",
+        str(codex_home / "auth.json"),
+        "/codex-home/auth.json",
+        "--setenv",
+        "PATH",
+        "/runner:/usr/local/bin:/usr/bin:/bin",
+        "--setenv",
+        "HOME",
+        "/work",
+        "--setenv",
+        "CODEX_HOME",
+        "/codex-home",
+        "--bind",
+        str(seen[1][3]),
+        "/work",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        "--",
+        "/runner/codex",
+        "exec",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--skip-git-repo-check",
+        "-C",
+        "/work",
+        "-s",
+        "read-only",
+        "-c",
+        'approval_policy="never"',
+        "--output-schema",
+        "/work/schema.json",
+        "--output-last-message",
+        "/work/output.json",
+        "--model",
+        prepared.model_id,
+        prepared.fixed_instruction,
+    ]
+    assert command == expected_command
     assert all(not workspace_path.exists() for *_rest, workspace_path in seen)
 
 
@@ -782,64 +852,10 @@ def test_interrupt_during_backoff_records_cancelled_terminals(
     assert call["transport_retries"] == 1
 
 
-@pytest.mark.invariant
-@pytest.mark.parametrize(
-    ("error_channel", "exit_code", "expected"),
-    [
-        (b"HTTP 408 request timeout", 1, "transport_timeout"),
-        (b"HTTP 429 rate limit", 1, "transport_rate_limited"),
-        (b"HTTP 401 authentication failed", 1, "transport_auth_failed"),
-        (b"ambiguous delivery lost response", 1, "transport_lost_response"),
-        (b"provider rejected request", 1, "transport_provider_error"),
-        (b"", 0, "transport_provider_error"),
-    ],
-    ids=["http-408", "rate-limit", "auth", "lost-response", "provider", "missing-output"],
-)
-def test_adapter_maps_terminal_error_channel_without_persisting_it(
-    workspace: Path, error_channel: bytes, exit_code: int, expected: str
-) -> None:
-    """§15.10 rule 10: CLI failure classes map deterministically and safely."""
-
-    raw = RawResult(
-        None,
-        exit_code,
-        0.01,
-        (AttemptTelemetry(1, exit_code, 0.01),),
-        error_channel=error_channel,
-    )
-    fake = FakeContractRunner([raw])
-    run_id = f"run_vera_{expected}_{exit_code}_{len(error_channel)}"
-    with pytest.raises(LLMInvocationError) as caught:
-        invoke(
-            workspace,
-            fake,
-            run_id=run_id,
-            call_budgets=budgets(transport_attempt_cap=1),
-        )
-    run, call = telemetry(workspace, run_id)
-    assert caught.value.failure_code == expected
-    assert run["failure_code"] == call["failure_code"] == expected
-    if error_channel:
-        assert error_channel.decode("ascii", errors="ignore") not in run["metadata_json"]
-
-
 def test_process_timeout_kills_the_child_process_group(tmp_path: Path) -> None:
     """Issue #69: a deadline kills the foreground group, including descendants."""
 
-    pid_path = tmp_path / "Vera Example child.pid"
-    command = [
-        "/usr/bin/sh",
-        "-c",
-        f"sleep 30 & child=$!; echo $child > '{pid_path}'; wait",
-    ]
-    outcome = run_subprocess(command, timeout_seconds=0.1)
-    assert outcome.timed_out is True
-    assert outcome.exit_code is None
-    child_pid = int(pid_path.read_text(encoding="utf-8"))
-    deadline = time.monotonic() + 1
-    while Path(f"/proc/{child_pid}").exists() and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert not Path(f"/proc/{child_pid}").exists()
+    assert_timeout_kills_process_group(tmp_path)
 
 
 def test_group_kill_reaches_a_descendant_that_outlives_the_leader(

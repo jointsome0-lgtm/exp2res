@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import json
 from pathlib import Path
+import re
 import sqlite3
 
 import pytest
@@ -17,7 +19,11 @@ from exp2res.errors import (
     LLMInvocationError,
     SelectorNotFoundError,
 )
-from exp2res.llm.registry import LLMSelection
+from exp2res.llm.registry import (
+    ADAPTER_REGISTRY,
+    AdapterRegistration,
+    LLMSelection,
+)
 from exp2res.llm.runner import CallBudgets, PreparedCall
 from exp2res.pipeline.lineage import plan_lineages
 from exp2res.pipeline.stage3 import run_fact_extraction
@@ -789,6 +795,46 @@ def test_per_run_call_ceiling_fails_before_transport(
     assert run["failure_code"] == calls[0]["failure_code"] == "budget_exceeded"
     with read_database(workspace) as connection:
         assert list_experience_facts(connection) == ()
+
+
+def test_stage_default_token_patterns_come_from_registration(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§29.4: stage paths derive secret classifiers from the selected registration."""
+
+    registered = ADAPTER_REGISTRY["codex-cli"]
+    doctored = dataclass_replace(
+        registered.declaration,
+        token_patterns=(
+            *registered.declaration.token_patterns,
+            re.compile(rb"VERA-EXAMPLE-ADAPTER-TOKEN-\d{6}"),
+        ),
+    )
+    monkeypatch.setitem(
+        ADAPTER_REGISTRY,
+        "codex-cli",
+        AdapterRegistration(
+            adapter_id=registered.adapter_id,
+            declaration=doctored,
+            build_runner=registered.build_runner,
+            classify_failure=registered.classify_failure,
+        ),
+    )
+    add_log(
+        workspace,
+        log_id="log_vera_secret",
+        recorded_at=FIXED_NOW - timedelta(hours=1),
+        raw_text="Deployed with VERA-EXAMPLE-ADAPTER-TOKEN-123456 in the pipeline.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_secret", "manual_claim"),),
+    )
+    fake = FakeContractRunner([empty_response()])
+    with pytest.raises(LLMInvocationError) as caught:
+        run_stage3(workspace, fake, TestIds())
+    assert caught.value.failure_code == "credential_detected"
+    assert fake.calls == []
+    run, calls = telemetry_rows(workspace, "run_vera_0001")
+    assert run["failure_code"] == calls[0]["failure_code"] == "credential_detected"
 
 
 @pytest.mark.lifecycle

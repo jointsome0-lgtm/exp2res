@@ -6,9 +6,8 @@ from pathlib import Path
 from typing import Callable
 
 from exp2res import __version__
-from exp2res.config import call_budgets, load_workspace_config, resolve_codex_home
+from exp2res.config import call_budgets, load_workspace_config
 from exp2res.errors import LLMInvocationError, SelectorNotFoundError
-from exp2res.llm.adapter import preflight_adapter
 from exp2res.llm.registry import LLMSelection, registration_for, resolve_selection
 from exp2res.llm.runner import CallBudgets, ContractRunner, PreparedCall, RawResult
 from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
@@ -76,15 +75,9 @@ def build_llm_execution(
     registration = registration_for(selection)
 
     def build_runner() -> ContractRunner:
-        runtime = preflight_adapter(
-            repository_root=Path(__file__).resolve().parents[2],
-            codex_home=resolve_codex_home(config),
-            declaration=registration.declaration,
-        )
-        return registration.runner_type(
-            codex_binary=runtime.codex_binary,
-            bwrap_binary=runtime.bwrap_binary,
-            codex_home=runtime.codex_home,
+        return registration.build_runner(
+            config,
+            Path(__file__).resolve().parents[2],
         )
 
     return selection, budgets, LazyPreflightRunner(build_runner)

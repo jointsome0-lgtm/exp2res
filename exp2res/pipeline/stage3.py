@@ -29,7 +29,6 @@ from exp2res.llm.fact_extractor import (
     FactCandidate,
     FactExtractorOutput,
 )
-from exp2res.llm.preflight import CODEX_TOKEN_PATTERNS
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
@@ -301,7 +300,7 @@ def run_fact_extraction(
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
     jitter: Callable[[float, float], float] | None = None,
-    token_patterns: Iterable[Pattern[bytes]] = CODEX_TOKEN_PATTERNS,
+    token_patterns: Iterable[Pattern[bytes]] | None = None,
     resolved_credentials: Iterable[bytes] = (),
 ) -> Stage3Result:
     """Run one complete Stage 3 replacement over the selected lineages."""

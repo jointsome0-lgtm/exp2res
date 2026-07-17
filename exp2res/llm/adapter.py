@@ -1,19 +1,13 @@
-"""Codex capability declaration, failure mapping, and §15.1 orchestration."""
+"""Provider-neutral §15.1 invocation orchestration and telemetry."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
-import os
 from pathlib import Path
-import platform
 import random
-import re
-import shutil
 import sqlite3
-import stat
-import subprocess
 import time
 from typing import Callable, Iterable, Pattern
 import uuid
@@ -42,29 +36,12 @@ from .contracts import (
     schema_bytes,
     validate_output,
 )
-from .preflight import CODEX_TOKEN_PATTERNS, estimate_tokens, preflight_call
-from .registry import (
-    CLITestRange,
-    CodexCapabilityDeclaration,
-    DEFAULT_DECLARATION,
-    LLMSelection,
-    REQUIRED_FLAGS,
-    registration_for,
-)
+from .preflight import estimate_tokens, preflight_call
+from .registry import LLMSelection, registration_for
 from .runner import CallBudgets, ContractRunner, PreparedCall, RawResult
-from .sandbox import discover_bwrap, probe_isolation
 
 
-RUNNER_PROTOCOL_VERSION = 1
 SANDBOX_MECHANISM = "bwrap"
-
-
-@dataclass(frozen=True)
-class AdapterRuntime:
-    codex_binary: Path
-    bwrap_binary: Path
-    codex_home: Path
-    cli_version: str
 
 
 @dataclass(frozen=True)
@@ -75,161 +52,10 @@ class InvocationResult:
     call_index: int
 
 
-def parse_codex_version(value: str) -> tuple[int, int, int]:
-    match = re.search(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)", value)
-    if match is None:
-        raise LLMInvocationError("capability_mismatch")
-    return tuple(int(item) for item in match.groups())  # type: ignore[return-value]
-
-
-def validate_cli_declaration(
-    version_output: str,
-    declaration: CodexCapabilityDeclaration = DEFAULT_DECLARATION,
-) -> str:
-    """Validate local CLI capability from version plus the tested-range table."""
-
-    if (
-        declaration.credential_form != "externally-managed-session"
-        or not declaration.structured_outputs_supported
-        or not declaration.timeout_supported
-        or not declaration.cancellation_supported
-        or not declaration.token_patterns
-        or declaration.runner_protocol_version != RUNNER_PROTOCOL_VERSION
-    ):
-        raise LLMInvocationError("capability_mismatch")
-    version = parse_codex_version(version_output)
-    for tested in declaration.tested_ranges:
-        if tested.minimum <= version < tested.maximum_exclusive:
-            if not declaration.required_flags.issubset(tested.supported_flags):
-                raise LLMInvocationError("capability_mismatch")
-            return ".".join(str(item) for item in version)
-    raise LLMInvocationError("capability_mismatch")
-
-
-def _resolve_executable(value: str | Path | None, fallback: str) -> Path:
-    candidate = str(value) if value is not None else shutil.which(fallback)
-    if candidate is None:
-        raise LLMInvocationError("capability_mismatch")
-    try:
-        resolved = Path(candidate).resolve(strict=True)
-    except OSError:
-        raise LLMInvocationError("capability_mismatch") from None
-    if not resolved.is_file() or not os.access(resolved, os.X_OK):
-        raise LLMInvocationError("capability_mismatch")
-    return resolved
-
-
-def _resolve_codex_binary(value: str | Path | None) -> Path:
-    """Resolve an npm launcher to its platform-native executable fail-closed."""
-
-    launcher = _resolve_executable(value, "codex")
-    try:
-        with launcher.open("rb") as stream:
-            header = stream.read(4)
-    except OSError:
-        raise LLMInvocationError("capability_mismatch") from None
-    if header == b"\x7fELF" or header in {
-        b"\xfe\xed\xfa\xce",
-        b"\xfe\xed\xfa\xcf",
-        b"\xcf\xfa\xed\xfe",
-        b"\xca\xfe\xba\xbe",
-    }:
-        return launcher
-    if launcher.name != "codex.js":
-        raise LLMInvocationError("capability_mismatch")
-    target = {
-        ("Linux", "x86_64"): ("codex-linux-x64", "x86_64-unknown-linux-musl"),
-        ("Linux", "aarch64"): ("codex-linux-arm64", "aarch64-unknown-linux-musl"),
-        ("Darwin", "x86_64"): ("codex-darwin-x64", "x86_64-apple-darwin"),
-        ("Darwin", "arm64"): ("codex-darwin-arm64", "aarch64-apple-darwin"),
-    }.get((platform.system(), platform.machine()))
-    if target is None:
-        raise LLMInvocationError("capability_mismatch")
-    package_name, target_triple = target
-    package_root = launcher.parent.parent
-    candidates = (
-        package_root
-        / "node_modules"
-        / "@openai"
-        / package_name
-        / "vendor"
-        / target_triple
-        / "bin"
-        / "codex",
-        package_root / "vendor" / target_triple / "bin" / "codex",
-    )
-    for candidate in candidates:
-        try:
-            native = candidate.resolve(strict=True)
-        except OSError:
-            continue
-        if native.is_file() and os.access(native, os.X_OK):
-            return native
-    raise LLMInvocationError("capability_mismatch")
-
-
-def _preflight_auth(codex_home: Path) -> None:
-    auth = codex_home / "auth.json"
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(auth, flags)
-        try:
-            metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size <= 0:
-                raise OSError("invalid auth file")
-        finally:
-            os.close(descriptor)
-        if auth.is_symlink():
-            raise OSError("auth file must not be a symlink")
-    except OSError:
-        raise LLMInvocationError("transport_auth_failed") from None
-
-
-def codex_logical_correlation() -> str:
+def logical_correlation() -> str:
     """Return adapter-owned logical metadata, not a provider request ID."""
 
     return f"logical_{uuid.uuid4().hex}"
-
-
-def preflight_adapter(
-    *,
-    repository_root: Path,
-    codex_home: Path,
-    codex_binary: str | Path | None = None,
-    bwrap_binary: str | Path | None = None,
-    declaration: CodexCapabilityDeclaration = DEFAULT_DECLARATION,
-    user_rules_path: Path | None = None,
-) -> AdapterRuntime:
-    """Fail closed on either the local CLI half or wrapper/canary half."""
-
-    codex = _resolve_codex_binary(codex_binary)
-    try:
-        version_process = subprocess.run(
-            [str(codex), "--version"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-            check=False,
-            text=True,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        raise LLMInvocationError("capability_mismatch") from None
-    if version_process.returncode != 0:
-        raise LLMInvocationError("capability_mismatch")
-    version = validate_cli_declaration(version_process.stdout, declaration)
-    bwrap = discover_bwrap(None if bwrap_binary is None else Path(bwrap_binary))
-    if bwrap is None:
-        raise LLMInvocationError("capability_mismatch")
-    canary = probe_isolation(
-        repository_root=repository_root,
-        bwrap_binary=bwrap,
-        user_rules_path=user_rules_path,
-    )
-    if not canary.available or not canary.effective:
-        raise LLMInvocationError("capability_mismatch")
-    _preflight_auth(codex_home)
-    return AdapterRuntime(codex, bwrap, codex_home, version)
 
 
 def _transaction(
@@ -242,54 +68,6 @@ def _transaction(
     except BaseException:
         connection.rollback()
         raise
-
-
-def _failure_from_result(result: RawResult) -> tuple[str | None, bool]:
-    if result.cancelled:
-        return "cancelled", False
-    if result.timed_out:
-        return "transport_timeout", True
-    if result.exit_code == 0 and result.final_message_bytes is not None:
-        return None, False
-    channel = result.error_channel.lower()
-    if any(
-        marker in channel
-        for marker in (b"408", b"request timeout", b"response timeout")
-    ):
-        # §15.10: HTTP 408 and response timeouts are retryable transport_timeout.
-        return "transport_timeout", True
-    if any(
-        marker in channel
-        for marker in (
-            b"429",
-            b"rate limit",
-            b"rate_limit",
-            b"too many requests",
-            b"usage limit",
-            b"quota exceeded",
-        )
-    ):
-        return "transport_rate_limited", True
-    if any(
-        marker in channel
-        for marker in (
-            b"401",
-            b"403",
-            b"unauthorized",
-            b"authentication",
-            b"not logged in",
-            b"login required",
-            b"invalid api key",
-        )
-    ):
-        return "transport_auth_failed", False
-    if any(marker in channel for marker in (b"lost response", b"ambiguous delivery")):
-        return "transport_lost_response", True
-    retryable = any(
-        marker in channel
-        for marker in (b"connection", b"tls", b"overload", b"http 5", b" 500")
-    )
-    return "transport_provider_error", retryable
 
 
 def invoke_contract(
@@ -316,7 +94,7 @@ def invoke_contract(
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
     jitter: Callable[[float, float], float] | None = None,
-    token_patterns: Iterable[Pattern[bytes]] = CODEX_TOKEN_PATTERNS,
+    token_patterns: Iterable[Pattern[bytes]] | None = None,
     resolved_credentials: Iterable[bytes] = (),
     connection: sqlite3.Connection | None = None,
 ) -> InvocationResult:
@@ -369,7 +147,11 @@ def invoke_contract(
     input_hash = canonical_model_hash(input_payload)
     now = clock or (lambda: datetime.now(timezone.utc))
     random_jitter = jitter or random.SystemRandom().uniform
-    registered_patterns = tuple(token_patterns)
+    registered_patterns = tuple(
+        registration.declaration.token_patterns
+        if token_patterns is None
+        else token_patterns
+    )
     credential_values = tuple(resolved_credentials)
     schema = schema_bytes(contract)
     policy_hash = prompt_policy_hash(contract)
@@ -381,7 +163,7 @@ def invoke_contract(
         fixed_instruction=runner_instruction(contract),
         budgets=budgets,
     )
-    provider_request_id = codex_logical_correlation()
+    provider_request_id = logical_correlation()
     started_at = now()
     initial_metadata = {
         "cli_version": cli_version,
@@ -508,7 +290,7 @@ def invoke_contract(
                 physical_attempt += 1
                 total_duration += result.duration_seconds
                 last_exit_code = result.exit_code
-                code, retryable = _failure_from_result(result)
+                code, retryable = registration.classify_failure(result)
                 if code is None:
                     break
                 if code == "cancelled":

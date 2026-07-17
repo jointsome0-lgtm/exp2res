@@ -6,15 +6,11 @@ from dataclasses import dataclass
 from decimal import Decimal
 import os
 from pathlib import Path
-import shutil
 import signal
 import stat
 import subprocess
-import tempfile
 import time
 from typing import Protocol, Sequence
-
-from .sandbox import SandboxLayout, build_bwrap_command
 
 
 @dataclass(frozen=True)
@@ -185,94 +181,6 @@ def _read_output(path: Path) -> bytes | None:
             os.close(descriptor)
     except OSError:
         return None
-
-
-class CodexCLIRunner:
-    """Run Codex in a fresh bubblewrap-confined workspace per attempt."""
-
-    def __init__(
-        self,
-        *,
-        codex_binary: Path,
-        bwrap_binary: Path,
-        codex_home: Path,
-    ) -> None:
-        self.codex_binary = codex_binary
-        self.bwrap_binary = bwrap_binary
-        self.codex_home = codex_home
-
-    def run_contract(self, call: PreparedCall) -> RawResult:
-        workspace = Path(tempfile.mkdtemp(prefix="exp2res-llm-"))
-        os.chmod(workspace, 0o700)
-        try:
-            _write_private(workspace / "input.json", call.serialized_input)
-            _write_private(workspace / "schema.json", call.json_schema)
-            if call.validation_errors is not None:
-                _write_private(
-                    workspace / "validation_errors.json", call.validation_errors
-                )
-            codex_command = [
-                "/runner/codex",
-                "exec",
-                "--ephemeral",
-                "--ignore-user-config",
-                "--ignore-rules",
-                "--skip-git-repo-check",
-                "-C",
-                "/work",
-                "-s",
-                "read-only",
-                "-c",
-                'approval_policy="never"',
-                "--output-schema",
-                "/work/schema.json",
-                "--output-last-message",
-                "/work/output.json",
-                "--model",
-                call.model_id,
-                call.fixed_instruction,
-            ]
-            command = build_bwrap_command(
-                SandboxLayout(
-                    workspace=workspace,
-                    bwrap_binary=self.bwrap_binary,
-                    codex_binary=self.codex_binary,
-                    auth_file=self.codex_home / "auth.json",
-                ),
-                codex_command,
-                bind_codex=True,
-                bind_auth=True,
-            )
-            timeout = (
-                call.budgets.invocation_deadline_seconds
-                if call.timeout_seconds is None
-                else call.timeout_seconds
-            )
-            outcome = run_subprocess(command, timeout_seconds=timeout)
-            output: bytes | None = None
-            if outcome.exit_code == 0:
-                output = _read_output(workspace / "output.json")
-            attempt = AttemptTelemetry(
-                attempt_index=1,
-                exit_code=outcome.exit_code,
-                duration_seconds=outcome.duration_seconds,
-                timed_out=outcome.timed_out,
-                cancelled=outcome.cancelled,
-            )
-            return RawResult(
-                final_message_bytes=output,
-                exit_code=outcome.exit_code,
-                duration_seconds=outcome.duration_seconds,
-                attempts=(attempt,),
-                error_channel=outcome.error_channel,
-                timed_out=outcome.timed_out,
-                cancelled=outcome.cancelled,
-            )
-        finally:
-            try:
-                shutil.rmtree(workspace)
-            except FileNotFoundError:
-                pass
 
 
 def run_contract(runner: ContractRunner, call: PreparedCall) -> RawResult:

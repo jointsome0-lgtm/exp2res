@@ -13,12 +13,11 @@ from typer.testing import CliRunner
 import exp2res.services.extraction as extraction_service
 import exp2res.services.facts as facts_service
 from exp2res.cli import app
-from exp2res.config import DEFAULT_LLM_CONFIG
+from exp2res.config import DEFAULT_LLM_CONFIG, load_workspace_config
 from exp2res.domain.models import ExperienceFact
 from exp2res.errors import LLMCancelledError, LLMInvocationError
-from exp2res.llm.adapter import AdapterRuntime
-from exp2res.llm.registry import LLMSelection
-from exp2res.llm.runner import CodexCLIRunner
+from exp2res.llm.codex import AdapterRuntime, CodexCLIRunner
+from exp2res.llm.registry import ADAPTER_REGISTRY, AdapterRegistration, LLMSelection
 from exp2res.storage.repository import list_experience_facts
 from exp2res.storage.workspace import read_database
 
@@ -87,11 +86,26 @@ def test_build_llm_execution_uses_workspace_selection_and_budget_defaults(
         codex_home=tmp_path / "codex-home",
         cli_version="0.144.4-test",
     )
-    monkeypatch.setattr(
-        extraction_service, "resolve_codex_home", lambda _config: runtime.codex_home
-    )
-    monkeypatch.setattr(
-        extraction_service, "preflight_adapter", lambda **_kwargs: runtime
+    registered = ADAPTER_REGISTRY["codex-cli"]
+    build_calls: list[tuple[object, Path]] = []
+
+    def build_runner(config, repository_root):
+        build_calls.append((config, repository_root))
+        return CodexCLIRunner(
+            codex_binary=runtime.codex_binary,
+            bwrap_binary=runtime.bwrap_binary,
+            codex_home=runtime.codex_home,
+        )
+
+    monkeypatch.setitem(
+        ADAPTER_REGISTRY,
+        "codex-cli",
+        AdapterRegistration(
+            adapter_id=registered.adapter_id,
+            declaration=registered.declaration,
+            build_runner=build_runner,
+            classify_failure=registered.classify_failure,
+        ),
     )
 
     selection, resolved_budgets, selected_runner = (
@@ -120,6 +134,9 @@ def test_build_llm_execution_uses_workspace_selection_and_budget_defaults(
     assert materialized.codex_binary == runtime.codex_binary
     assert materialized.bwrap_binary == runtime.bwrap_binary
     assert materialized.codex_home == runtime.codex_home
+    assert build_calls == [
+        (load_workspace_config(workspace).llm, Path(__file__).resolve().parent.parent)
+    ]
     assert selected_runner.materialize() is materialized
 
 
@@ -280,10 +297,20 @@ def test_extract_on_empty_workspace_completes_without_adapter_preflight(
 ) -> None:
     """§14.6: a zero-lineage extraction never probes Codex/bwrap/auth."""
 
-    def refuse_preflight(**_kwargs):
+    def refuse_preflight(*_args):
         raise AssertionError("adapter preflight ran for a zero-call extraction")
 
-    monkeypatch.setattr(extraction_service, "preflight_adapter", refuse_preflight)
+    registered = ADAPTER_REGISTRY["codex-cli"]
+    monkeypatch.setitem(
+        ADAPTER_REGISTRY,
+        "codex-cli",
+        AdapterRegistration(
+            adapter_id=registered.adapter_id,
+            declaration=registered.declaration,
+            build_runner=refuse_preflight,
+            classify_failure=registered.classify_failure,
+        ),
+    )
     # §29.2 selection stays required — only the environment probe is deferred.
     config = workspace / ".exp2res" / "config.toml"
     config.write_text(
