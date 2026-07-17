@@ -337,7 +337,17 @@ status = "partial"
 phases = ["1", "2", "3", "4"]
 evals = ["21.50"]
 issues = ["#69", "PR #101", "PR #107"]
-note = "The shipped Codex runner canary proves structural read confinement for that adapter; ambient and parent-environment isolation, final-message-only completion paths, full preflight declarations, and parity across every shipped agent-backed adapter remain"
+nodes = [
+  "tests/test_adapter_conformance.py::test_conformance_declared_controls_and_isolation_skeleton_are_assembled[codex-cli]",
+  "tests/test_adapter_conformance.py::test_conformance_declared_controls_and_isolation_skeleton_are_assembled[claude-agent-sdk]",
+  "tests/test_adapter_conformance.py::test_conformance_only_final_message_file_is_consumed[codex-cli]",
+  "tests/test_adapter_conformance.py::test_conformance_only_final_message_file_is_consumed[claude-agent-sdk]",
+  "tests/test_adapter_conformance.py::test_conformance_contract_workspace_is_deleted_on_every_terminal_path[success-codex-cli]",
+  "tests/test_adapter_conformance.py::test_conformance_contract_workspace_is_deleted_on_every_terminal_path[success-claude-agent-sdk]",
+  "tests/test_claude_adapter.py::test_sandbox_argv_has_exact_claude_controls_and_inline_schema",
+  "tests/test_claude_adapter.py::test_envelope_extraction_fails_closed[is-error-beats-success-subtype]",
+]
+note = "Codex and Claude are both shipped agent-backed adapters with declared V1 controls, cleared-environment sandbox assembly, final-result-only extraction, stable failure mapping, and terminal-path workspace deletion; real bwrap evidence remains host-gated, while simulated hard-crash residue, §21.49 authority fixtures, explicit drifted-control/protocol-version preflight cases, and direct-adapter classification remain"
 
 ["24.54"]
 status = "partial"
@@ -346,9 +356,11 @@ evals = []
 issues = ["#110", "#82", "PR #125"]
 nodes = [
   "tests/test_llm_preflight.py::test_fresh_config_exposes_adapter_model_home_reference_and_all_budgets",
-  "tests/test_llm_preflight.py::test_known_but_unregistered_adapter_fails_with_distinct_diagnostic[claude-agent-sdk]",
   "tests/test_llm_preflight.py::test_known_but_unregistered_adapter_fails_with_distinct_diagnostic[openai-compat]",
+  "tests/test_llm_preflight.py::test_this_build_registers_both_agent_backed_adapters",
+  "tests/test_claude_adapter.py::test_adapter_specific_effort_mismatch_fails_at_build_time[codex-cli-max-build_runner]",
+  "tests/test_claude_adapter.py::test_adapter_specific_effort_mismatch_fails_at_build_time[claude-agent-sdk-minimal-build_runner]",
   "tests/test_llm_runner.py::test_loaded_selection_drives_fake_runner_processing_identity",
   "tests/test_cli_extract.py::test_build_llm_execution_uses_workspace_selection_and_budget_defaults",
 ]
-note = "Config-only Codex selection now reaches the Stage 3 CLI execution builder and registered isolated runner, injected processing identity is proven, and known-but-unregistered choices fail closed; the Agent SDK and OpenAI-compatible transports remain unimplemented"
+note = "Config-only selection, model, and adapter-specific reasoning effort now reach both shipped agent-backed runners, including a double-opt-in Claude full-stack smoke; openai-compat remains the one unimplemented V1 adapter and keeps this criterion partial"

@@ -10,7 +10,7 @@ import signal
 import stat
 import subprocess
 import time
-from typing import Protocol, Sequence
+from typing import BinaryIO, Protocol, Sequence
 
 
 @dataclass(frozen=True)
@@ -70,6 +70,7 @@ class RawResult:
     error_channel: bytes = b""
     timed_out: bool = False
     cancelled: bool = False
+    api_error_status: int | None = None
 
 
 class ContractRunner(Protocol):
@@ -108,7 +109,12 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
         process.kill()
 
 
-def run_subprocess(command: Sequence[str], *, timeout_seconds: float) -> ProcessOutcome:
+def run_subprocess(
+    command: Sequence[str],
+    *,
+    timeout_seconds: float,
+    stdout_descriptor: int | BinaryIO | None = None,
+) -> ProcessOutcome:
     """Run one closed-stdin process group and kill the whole group on stop."""
 
     if timeout_seconds <= 0:
@@ -117,7 +123,11 @@ def run_subprocess(command: Sequence[str], *, timeout_seconds: float) -> Process
     process = subprocess.Popen(
         list(command),
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
+        stdout=(
+            subprocess.DEVNULL
+            if stdout_descriptor is None
+            else stdout_descriptor
+        ),
         stderr=subprocess.PIPE,
         start_new_session=True,
     )

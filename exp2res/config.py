@@ -19,9 +19,8 @@ from .errors import (
     LLMSelectionMissingError,
     UnknownLLMConfigKeyError,
 )
-from .llm.registry import LLMSelection, resolve_selection
+from .llm.registry import ADAPTER_REGISTRY, LLMSelection, resolve_selection
 from .llm.preflight import (
-    CODEX_TOKEN_PATTERNS,
     looks_like_literal_credential,
     normalize_credential_field,
 )
@@ -38,6 +37,8 @@ class LLMConfig:
     adapter: str | None
     model: str | None
     codex_home_env: str
+    claude_config_dir_env: str
+    reasoning_effort: str
     transport_attempt_cap: int
     backoff_lower_seconds: float
     backoff_upper_seconds: float
@@ -74,6 +75,8 @@ DEFAULT_LLM_CONFIG = LLMConfig(
     adapter=None,
     model=None,
     codex_home_env="CODEX_HOME",
+    claude_config_dir_env="CLAUDE_CONFIG_DIR",
+    reasoning_effort="high",
     transport_attempt_cap=2,
     backoff_lower_seconds=0.25,
     backoff_upper_seconds=2.0,
@@ -92,6 +95,11 @@ def _parse_toml(data: bytes) -> dict[str, Any]:
 
 
 def load_workspace_config(workspace: Path) -> WorkspaceConfig:
+    registered_token_patterns = tuple(
+        pattern
+        for registration in ADAPTER_REGISTRY.values()
+        for pattern in registration.declaration.token_patterns
+    )
     path = workspace / ".exp2res" / "config.toml"
     try:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -116,7 +124,7 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
     def reject_credential_value(value: Any) -> None:
         if isinstance(value, str):
             if looks_like_literal_credential(
-                value, token_patterns=CODEX_TOKEN_PATTERNS
+                value, token_patterns=registered_token_patterns
             ):
                 raise ConfigurationError()
         elif isinstance(value, dict):
@@ -216,6 +224,8 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
         "adapter",
         "model",
         "codex_home_env",
+        "claude_config_dir_env",
+        "reasoning_effort",
         "transport_attempt_cap",
         "backoff_lower_seconds",
         "backoff_upper_seconds",
@@ -235,7 +245,25 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
     codex_home_env = llm_section.get(
         "codex_home_env", DEFAULT_LLM_CONFIG.codex_home_env
     )
-    if not isinstance(codex_home_env, str):
+    claude_config_dir_env = llm_section.get(
+        "claude_config_dir_env", DEFAULT_LLM_CONFIG.claude_config_dir_env
+    )
+    reasoning_effort = llm_section.get(
+        "reasoning_effort", DEFAULT_LLM_CONFIG.reasoning_effort
+    )
+    if not isinstance(codex_home_env, str) or not isinstance(
+        claude_config_dir_env, str
+    ):
+        raise ConfigurationError()
+    declared_efforts = frozenset(
+        effort
+        for registration in ADAPTER_REGISTRY.values()
+        for effort in registration.declaration.reasoning_efforts
+    )
+    if (
+        not isinstance(reasoning_effort, str)
+        or reasoning_effort not in declared_efforts
+    ):
         raise ConfigurationError()
     # §29.2: no built-in selection default and no silent revert — a config
     # with neither key simply carries no selection, and dropping one key of
@@ -254,6 +282,8 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
         selected_model = selection.model
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", codex_home_env) is None:
         raise ConfigurationError()
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", claude_config_dir_env) is None:
+        raise ConfigurationError()
 
     lower = number(
         "backoff_lower_seconds",
@@ -271,6 +301,8 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
         adapter=selected_adapter,
         model=selected_model,
         codex_home_env=codex_home_env,
+        claude_config_dir_env=claude_config_dir_env,
+        reasoning_effort=reasoning_effort,
         transport_attempt_cap=integer(
             "transport_attempt_cap", DEFAULT_LLM_CONFIG.transport_attempt_cap
         ),
@@ -317,6 +349,22 @@ def resolve_codex_home(config: LLMConfig) -> Path:
         raise LLMInvocationError("transport_auth_failed")
     try:
         path = Path(value).expanduser().resolve(strict=True)
+    except OSError as error:
+        raise LLMInvocationError("transport_auth_failed") from error
+    if not path.is_dir():
+        raise LLMInvocationError("transport_auth_failed")
+    return path
+
+
+def resolve_claude_config_dir(config: LLMConfig) -> Path:
+    """Resolve Claude's configurable external-session directory fail-closed."""
+
+    configured = os.environ.get(config.claude_config_dir_env)
+    if configured == "":
+        raise LLMInvocationError("transport_auth_failed")
+    candidate = Path("~/.claude") if configured is None else Path(configured)
+    try:
+        path = candidate.expanduser().resolve(strict=True)
     except OSError as error:
         raise LLMInvocationError("transport_auth_failed") from error
     if not path.is_dir():

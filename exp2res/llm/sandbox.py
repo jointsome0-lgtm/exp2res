@@ -23,6 +23,7 @@ class SandboxLayout:
     tmpfs_mounts: tuple[str, ...] = ()
     top_dirs: tuple[str, ...] = ()
     extra_env: tuple[tuple[str, str], ...] = ()
+    chdir: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,9 @@ def build_bwrap_command(
     )
     for name, value in layout.extra_env:
         result.extend(("--setenv", name, value))
+    if layout.chdir is not None:
+        if not layout.chdir.startswith("/"):
+            raise ValueError("sandbox working directory must be absolute")
     result.extend(
         (
             "--bind",
@@ -131,10 +135,12 @@ def build_bwrap_command(
             "/dev",
             "--tmpfs",
             "/tmp",
-            "--",
-            *command,
         )
     )
+    if layout.chdir is not None:
+        # Select cwd only after its host workspace bind is installed.
+        result.extend(("--chdir", layout.chdir))
+    result.extend(("--", *command))
     return result
 
 

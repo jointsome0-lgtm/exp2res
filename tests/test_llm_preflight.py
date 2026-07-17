@@ -51,8 +51,8 @@ def prepared(input_bytes: bytes = INPUT, **budget_overrides: object) -> Prepared
     )
 
 
-def test_this_build_registers_only_the_codex_adapter() -> None:
-    assert tuple(ADAPTER_REGISTRY) == ("codex-cli",)
+def test_this_build_registers_both_agent_backed_adapters() -> None:
+    assert tuple(ADAPTER_REGISTRY) == ("codex-cli", "claude-agent-sdk")
 
 
 def test_cli_version_table_fails_closed_when_a_required_flag_is_undeclared() -> None:
@@ -68,6 +68,7 @@ def test_cli_version_table_fails_closed_when_a_required_flag_is_undeclared() -> 
             ),
         ),
         token_patterns=(re.compile(rb"\bsk-[A-Za-z0-9_-]{20,}\b"),),
+        reasoning_efforts=frozenset({"high"}),
     )
     with pytest.raises(LLMInvocationError) as caught:
         validate_cli_declaration("codex-cli 0.144.4", declaration)
@@ -85,12 +86,15 @@ def test_fresh_config_exposes_adapter_model_home_reference_and_all_budgets(
     text = (workspace / ".exp2res" / "config.toml").read_text(encoding="utf-8")
     assert 'adapter = "codex-cli"' in text
     assert 'model = "gpt-5.6-sol"' in text
+    assert 'reasoning_effort = "high"' in text
     assert "runner =" not in text
 
     config = load_workspace_config(workspace).llm
     assert config.adapter == "codex-cli"
     assert config.model == "gpt-5.6-sol"
     assert config.codex_home_env == "CODEX_HOME"
+    assert config.claude_config_dir_env == "CLAUDE_CONFIG_DIR"
+    assert config.reasoning_effort == "high"
     assert config.transport_attempt_cap > 0
     assert 0 <= config.backoff_lower_seconds <= config.backoff_upper_seconds
     assert config.invocation_deadline_seconds > 0
@@ -114,7 +118,7 @@ def write_llm_config(workspace: Path, llm_lines: str) -> None:
     )
 
 
-@pytest.mark.parametrize("adapter", ["claude-agent-sdk", "openai-compat"])
+@pytest.mark.parametrize("adapter", ["openai-compat"])
 def test_known_but_unregistered_adapter_fails_with_distinct_diagnostic(
     workspace: Path, adapter: str
 ) -> None:
@@ -148,8 +152,24 @@ def test_unknown_adapter_fails_distinct_from_unregistered(workspace: Path) -> No
         ),
         ('adapter = "codex-cli"\nmodel = ""', LLMModelInvalidError),
         ('adapter = "codex-cli"\nmodel = "bad model"', LLMModelInvalidError),
+        (
+            'adapter = "codex-cli"\nmodel = "gpt-5.6-sol"\nreasoning_effort = "ultra"',
+            ConfigurationError,
+        ),
+        (
+            'adapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n'
+            'claude_config_dir_env = "bad-name"',
+            ConfigurationError,
+        ),
     ],
-    ids=["legacy-runner", "unknown-key", "empty-model", "spaced-model"],
+    ids=[
+        "legacy-runner",
+        "unknown-key",
+        "empty-model",
+        "spaced-model",
+        "unknown-effort",
+        "bad-claude-env-name",
+    ],
 )
 def test_llm_config_is_closed_and_model_is_strict(
     workspace: Path, llm_lines: str, error_type: type[ConfigurationError]

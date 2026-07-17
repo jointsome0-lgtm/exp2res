@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import json
+import os
 from pathlib import Path
 from typing import Callable
 
 import pytest
 
 import exp2res.llm.codex as codex_adapter
+import exp2res.llm.claude as claude_adapter
 from exp2res.errors import LLMCancelledError, LLMInvocationError
 from exp2res.llm.adapter import invoke_contract
 from exp2res.llm.codex import CodexCLIRunner
+from exp2res.llm.claude import ClaudeAgentRunner
 from exp2res.llm.contracts import runner_instruction, schema_bytes
 from exp2res.llm.registry import ADAPTER_REGISTRY, AdapterRegistration, LLMSelection
 from exp2res.llm.runner import ContractRunner, PreparedCall, ProcessOutcome, RawResult
@@ -48,6 +51,7 @@ class FailureMarker:
     exit_code: int
     stable_code: str
     retryable: bool
+    api_error_status: int | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,8 @@ class ConformanceTarget:
     install_executor: Callable[[pytest.MonkeyPatch, Executor], None]
     failure_markers: tuple[FailureMarker, ...]
     expected_command_control_flags: frozenset[str]
+    expected_command_pairs: tuple[tuple[str, str], ...]
+    precreated_output: bool = False
 
 
 def _codex_fake_runtime(tmp_path: Path, bwrap_binary: Path | None) -> ContractRunner:
@@ -105,6 +111,73 @@ def _install_codex_executor(
     monkeypatch.setattr(codex_adapter, "run_subprocess", run)
 
 
+def _claude_fake_runtime(tmp_path: Path, bwrap_binary: Path | None) -> ContractRunner:
+    claude = tmp_path / "claude-vera-example"
+    claude.write_text(
+        "#!/usr/bin/python3\n"
+        "# Vera Example fake Claude runtime\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "if '--model' in sys.argv and sys.argv[sys.argv.index('--model') + 1] "
+        "== 'claude-error-vera-example':\n"
+        "    print(json.dumps({'type':'result','subtype':'success',"
+        "'is_error':True,'result':'Not logged in · Please run /login',"
+        "'terminal_reason':'api_error','api_error_status':None}))\n"
+        "    raise SystemExit(1)\n"
+        "Path(os.environ['CLAUDE_CONFIG_DIR'], 'session-artifact').write_text("
+        "'Vera Example transient config')\n"
+        "Path(os.environ['HOME'], 'session-artifact').write_text("
+        "'Vera Example transient home')\n"
+        "print(json.dumps({'type':'result','is_error':False,'result':"
+        "'\\n'.join(f'{key}={value}' for key, value in "
+        "sorted(os.environ.items()))}))\n",
+        encoding="utf-8",
+    )
+    claude.chmod(0o700)
+    claude_config_dir = tmp_path / "claude-home"
+    claude_config_dir.mkdir()
+    (claude_config_dir / ".credentials.json").write_text(
+        '{"fixture":"Vera Example synthetic external session"}',
+        encoding="utf-8",
+    )
+    bwrap = bwrap_binary or (tmp_path / "bwrap-vera-example-claude")
+    if bwrap_binary is None:
+        bwrap.write_text("Vera Example inert bwrap executable\n", encoding="utf-8")
+        bwrap.chmod(0o700)
+    return ClaudeAgentRunner(
+        claude_binary=claude,
+        bwrap_binary=bwrap,
+        claude_config_dir=claude_config_dir,
+    )
+
+
+def _install_claude_executor(
+    monkeypatch: pytest.MonkeyPatch, executor: Executor
+) -> None:
+    def run(
+        command: list[str],
+        *,
+        timeout_seconds: float,
+        stdout_descriptor=None,
+    ) -> ProcessOutcome:
+        _ = timeout_seconds
+        outcome = executor(command)
+        if outcome.exit_code == 0 and not outcome.timed_out and not outcome.cancelled:
+            assert isinstance(stdout_descriptor, int)
+            output_path = _workspace_from_command(command) / "output.json"
+            result = output_path.read_text(encoding="utf-8")
+            envelope = json.dumps(
+                {"type": "result", "is_error": False, "result": result},
+                separators=(",", ":"),
+            ).encode("utf-8")
+            os.lseek(stdout_descriptor, 0, os.SEEK_SET)
+            os.ftruncate(stdout_descriptor, 0)
+            os.write(stdout_descriptor, envelope)
+        return outcome
+
+    monkeypatch.setattr(claude_adapter, "run_subprocess", run)
+
+
 CODEX_FAILURE_MARKERS = (
     FailureMarker(b"HTTP 408 request timeout", 1, "transport_timeout", True),
     FailureMarker(b"HTTP 429 rate limit", 1, "transport_rate_limited", True),
@@ -120,6 +193,24 @@ CODEX_FAILURE_MARKERS = (
     FailureMarker(b"", 0, "transport_provider_error", False),
 )
 
+CLAUDE_FAILURE_MARKERS = (
+    FailureMarker(b"request timed out", 1, "transport_timeout", True),
+    FailureMarker(b"usage limit reached", 1, "transport_rate_limited", True),
+    FailureMarker(b"Please run /login", 1, "transport_auth_failed", False),
+    FailureMarker(
+        b"ambiguous delivery lost response", 1, "transport_lost_response", True
+    ),
+    FailureMarker(b"TLS connection failed", 1, "transport_provider_error", True),
+    FailureMarker(b"provider rejected request", 1, "transport_provider_error", False),
+    FailureMarker(b"", 1, "transport_timeout", True, 408),
+    FailureMarker(b"", 1, "transport_rate_limited", True, 429),
+    FailureMarker(b"", 1, "transport_auth_failed", False, 401),
+    FailureMarker(b"", 1, "transport_auth_failed", False, 403),
+    FailureMarker(b"", 1, "transport_provider_error", True, 503),
+    FailureMarker(b"", 1, "transport_provider_error", False, 422),
+    FailureMarker(b"", 0, "transport_provider_error", False),
+)
+
 
 CONFORMANCE_TARGETS = (
     ConformanceTarget(
@@ -130,6 +221,26 @@ CONFORMANCE_TARGETS = (
         install_executor=_install_codex_executor,
         failure_markers=CODEX_FAILURE_MARKERS,
         expected_command_control_flags=frozenset({"-s", "--model"}),
+        expected_command_pairs=(
+            ("--model", "gpt-test-vera-example"),
+            ("-c", 'model_reasoning_effort="high"'),
+        ),
+    ),
+    ConformanceTarget(
+        registration=ADAPTER_REGISTRY["claude-agent-sdk"],
+        model_id="claude-test-vera-example",
+        cli_version="2.1.212-test",
+        fake_runtime_factory=_claude_fake_runtime,
+        install_executor=_install_claude_executor,
+        failure_markers=CLAUDE_FAILURE_MARKERS,
+        expected_command_control_flags=frozenset({"--model", "--effort"}),
+        expected_command_pairs=(
+            ("--model", "claude-test-vera-example"),
+            ("--effort", "high"),
+            ("--permission-mode", "dontAsk"),
+            ("--tools", "Read"),
+        ),
+        precreated_output=True,
     ),
 )
 
@@ -222,12 +333,19 @@ def test_conformance_declared_controls_and_isolation_skeleton_are_assembled(
 
     target.install_executor(monkeypatch, execute)
     runner = target.fake_runtime_factory(tmp_path, None)
-    assert runner.run_contract(_prepared()).final_message_bytes == VALID
+    assert runner.run_contract(
+        _prepared(model_id=target.model_id)
+    ).final_message_bytes == VALID
     command = commands[0]
     for flag in target.registration.declaration.required_flags:
         assert flag in command
     for flag in target.expected_command_control_flags:
         assert flag in command
+    for flag, value in target.expected_command_pairs:
+        assert any(
+            command[index : index + 2] == [flag, value]
+            for index in range(len(command) - 1)
+        )
     for flag in (
         "--unshare-all",
         "--share-net",
@@ -262,8 +380,13 @@ def test_conformance_contract_workspace_has_only_protocol_files(
             validation_round=1,
         )
     )
-    assert seen[0][0] == {"input.json", "schema.json"}
-    assert seen[1][0] == {"input.json", "schema.json", "validation_errors.json"}
+    output = {"output.json"} if target.precreated_output else set()
+    assert seen[0][0] == {"input.json", "schema.json"} | output
+    assert seen[1][0] == {
+        "input.json",
+        "schema.json",
+        "validation_errors.json",
+    } | output
     assert all(not workspace.exists() for _names, workspace in seen)
 
 
@@ -292,6 +415,28 @@ def test_conformance_parent_environment_is_absent_from_real_sandbox_child(
     assert sentinel_name.encode("ascii") not in output
     assert sentinel_value.encode("ascii") not in output
     assert b"HOME=/work" in output
+
+
+def test_claude_conformance_fake_emulates_absent_session_envelope(
+    tmp_path: Path,
+) -> None:
+    bwrap = discover_bwrap()
+    result = probe_isolation(repository_root=REPOSITORY_ROOT, bwrap_binary=bwrap)
+    if not result.available:
+        pytest.skip(
+            f"bwrap/userns unavailable: {result.reason}; runtime preflight fails "
+            "closed with capability_mismatch"
+        )
+    assert result.effective is True, result.reason
+    runner = _claude_fake_runtime(tmp_path, bwrap)
+    raw = runner.run_contract(_prepared(model_id="claude-error-vera-example"))
+    assert raw.final_message_bytes is None
+    assert raw.exit_code == 1
+    assert b"not logged in" in raw.error_channel.lower()
+    assert claude_adapter.classify_claude_failure(raw) == (
+        "transport_auth_failed",
+        False,
+    )
 
 
 @pytest.mark.parametrize(
@@ -341,6 +486,7 @@ def test_conformance_failure_marker_table(
         0.01,
         (),
         error_channel=marker.error_channel,
+        api_error_status=marker.api_error_status,
     )
     assert target.registration.classify_failure(raw) == (
         marker.stable_code,

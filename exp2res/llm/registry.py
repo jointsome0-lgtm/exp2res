@@ -18,6 +18,11 @@ from .codex import (
     build_runner as build_codex_runner,
     classify_codex_failure,
 )
+from .claude import (
+    DEFAULT_DECLARATION as CLAUDE_DEFAULT_DECLARATION,
+    build_runner as build_claude_runner,
+    classify_claude_failure,
+)
 from .runner import ContractRunner, RawResult
 
 if TYPE_CHECKING:
@@ -43,16 +48,21 @@ class AdapterRegistration:
     classify_failure: Callable[[RawResult], tuple[str | None, bool]]
 
 
-# This build intentionally ships one runtime. The other two identifiers remain
-# stable product configuration values, but selection fails closed until their
-# implementations and declarations land.
+# OpenAI-compatible remains a stable product configuration value, but selection
+# fails closed until its implementation and declaration land.
 ADAPTER_REGISTRY: dict[str, AdapterRegistration] = {
     "codex-cli": AdapterRegistration(
         adapter_id="codex-cli",
         declaration=DEFAULT_DECLARATION,
         build_runner=build_codex_runner,
         classify_failure=classify_codex_failure,
-    )
+    ),
+    "claude-agent-sdk": AdapterRegistration(
+        adapter_id="claude-agent-sdk",
+        declaration=CLAUDE_DEFAULT_DECLARATION,
+        build_runner=build_claude_runner,
+        classify_failure=classify_claude_failure,
+    ),
 }
 
 

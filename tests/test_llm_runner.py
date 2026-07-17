@@ -486,6 +486,8 @@ def test_real_runner_workspace_has_only_declared_retry_files(
         "read-only",
         "-c",
         'approval_policy="never"',
+        "-c",
+        'model_reasoning_effort="high"',
         "--output-schema",
         "/work/schema.json",
         "--output-last-message",
