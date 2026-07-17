@@ -156,10 +156,29 @@ class LLMInvocationError(Exp2ResError):
     diagnostic_class = "transport_provider_error"
     public_message = "The model invocation failed."
 
+    # §14.14 rule 4 assigns local validation/integrity §15 codes to exit
+    # class 7: §15.1 invalid-after-retry, the §12 rule 10 commit-boundary
+    # failures surfaced as business_commit_failed, and deterministic
+    # service enrichment failing after a valid response — none of these is
+    # a provider fault. Transport, capability, and budget/context preflight
+    # codes stay in class 6.
+    _VALIDATION_FAILURE_CODES = frozenset(
+        {
+            "response_validation_failed",
+            "business_commit_failed",
+            "deterministic_enrichment_failed",
+        }
+    )
+
     def __init__(self, failure_code: str) -> None:
         super().__init__()
         self.failure_code = failure_code
         self.diagnostic_class = failure_code
+        if failure_code in self._VALIDATION_FAILURE_CODES:
+            self.exit_code = 7
+        # §14.14 rule 5: the command boundary reports the committed
+        # processing runs a failed or cancelled invocation leaves behind.
+        self.run_ids: tuple[str, ...] = ()
 
 
 class LLMCancelledError(LLMInvocationError):

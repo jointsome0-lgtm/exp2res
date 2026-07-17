@@ -12,6 +12,14 @@
     "invalid/github-commit-bad-hash.json": "f96f3e3a8d0db391520d7389f2973b657151afa6a327c54180e5633127d07b29",
     "jds/jd-docs-engineer-examplia.md": "50e73bf1b97d4a4587eeb6c0c35098075a14d5a5ee0e5ced12418528cc3e736c",
     "jds/jd-junior-backend-clouddocs.md": "7b7b1778eb49920a31b8aaea65f480017b34a8c8aba0efec6bf288cb972bc96c",
+    "llm/extract-call-01.json": "5515529820aed9a89428dcb0f47591f4bef9def78ec6d3d9a425a9aefdddee42",
+    "llm/extract-call-02.json": "2f6368b41f2ceafdbc37a0ba73840e74304ee45a4d912664859a2f2c53d40d41",
+    "llm/extract-call-03.json": "dc26c4ee1395748a994fcecbe488c160f80037918d3b6690503badef894a3025",
+    "llm/extract-call-04.json": "3bd0b7cc37ee6b433d07a945f0880c094aff421e0b17614d3121b4c54eedc824",
+    "llm/extract-call-05.json": "dc3d4ac919cae7ad7199af96c20427d1bd9921f9df3103b8fbe296cae99ff347",
+    "llm/extract-call-06.json": "70850113e88d9ef7bc2098a620b6f2d52f0783909d14510dd5e07d925aba8e7b",
+    "llm/extract-call-07.json": "ce43c02a503846a37292ba1932479201bff852304d8ce8d07d76f32a61188b31",
+    "llm/extract-call-08.json": "119f6faafe8019a6e2652f677b1f42ce301f948bb7cc562ae6874782bc2e98e0",
     "logs/correction-2026-07-03-k8s.json": "6af88ba765b7a9aa0fed5c3db03bbc2d080c0e3ada1bdf115e9d7e5cddbec1c4",
     "logs/daily-2026-06-02.md": "ca7b7dae698278397ed0570e424781d4db2f47ba459748b965ddb9f3aa25aeb8",
     "logs/daily-2026-06-09.md": "50d369cf4439c9d75e94002a27e857b67e696d7c33dbfeebc4d3d765aac66b0f",
@@ -21,10 +29,10 @@
     "logs/daily-2026-07-08.md": "e1e0c545e1640da568f69ca4636728fff98006867743c4bcaf8978907f3348ce",
     "logs/retro-2026-05-strength.json": "89a02739084ecf21c18b11ddac64c8bd4ce725808ede96d2cf9968198e801c16",
     "logs/retro-2026-06-k8s.json": "c92f84c5c5b058238892697dd5ee01f4c3fe0a054684f7488ac4183c23d303af",
-    "replay.json": "ba171094b0ba1c82394695175d2fc0fdea412e09b990e2d059407fd21d7be51e"
+    "replay.json": "178c895dcda1eac8f7a26f695709dadeb26a485ba68ce15b0828d95326812621"
   },
   "generator": "examples/vera/corpus.py",
   "persona": "Vera Example",
   "persona_source": "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md",
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

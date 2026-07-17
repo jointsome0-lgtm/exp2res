@@ -8,7 +8,9 @@ It turns owner-controlled experience evidence that automation cannot rewrite int
 
 ## Project stage: implementation-ready with controlled amendments
 
-SDD v0.3 is implementation-ready and remains the binding product contract. The manual-capture and private-workspace foundation is implemented, together with the initial isolated Codex runner substrate; current work proceeds phase by phase along the approved dependency frontier summarized in [`AGENTS.md`](AGENTS.md). This is not yet a complete Mirror, verified bullet-pack, or resume product. After [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implements and verifies the global Mirror, the first browser target is [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98): that Mirror plus unanswered Gap Questions on loopback. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
+SDD v0.3 is implementation-ready and remains the binding product contract. The manual-capture and private-workspace foundation is implemented, together with the isolated Codex runner substrate and Stage 3 fact extraction through the §14.6 CLI; current work proceeds phase by phase along the approved dependency frontier summarized in [`AGENTS.md`](AGENTS.md). This is not yet a complete Mirror, verified bullet-pack, or resume product. After [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implements and verifies the global Mirror, the first browser target is [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98): that Mirror plus unanswered Gap Questions on loopback. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
+
+§22 phase status: Phase 0 complete; Phase 1 complete through the fact-extraction CLI; Phases 2–5 not yet implemented.
 
 Exp2Res remains a public engine. Real owner data lives in a private workspace outside this repository, never in the public checkout.
 
@@ -17,7 +19,7 @@ Exp2Res remains a public engine. Real owner data lives in a private workspace ou
 - [`SDD.md`](SDD.md) — the map: a stable-numbered § index. Each section lives in its own file under [`spec/`](spec/) (`spec/NN-slug.md`).
 - [`spec/`](spec/) — the specification body: domain model, typed contracts, SQLite schema, pipeline stages, CLI, LLM contracts, verification rules, evals, and acceptance criteria.
 - [`DECISION-LOG.md`](DECISION-LOG.md) — dated one-line design decisions with rejected alternatives.
-- [`exp2res/`](exp2res/) — the implemented Python package, currently covering workspace management, manual capture, inspection, owner deletion, and the initial isolated Codex runner substrate.
+- [`exp2res/`](exp2res/) — the implemented Python package, currently covering workspace management, manual capture, owner deletion, the isolated Codex runner substrate, Stage 3 fact extraction, and raw-log/fact inspection.
 - [`tests/`](tests/) — offline tests for the implemented behavior.
 - [`scripts/`](scripts/) — repository-owned offline checks: public hygiene, the SDD-conventions and Decision Log linters vendored from selfos-skills with recorded versions, and the aggregate `scripts/check.py`; all validate in a fresh offline checkout.
 

@@ -1,0 +1,26 @@
+{
+  "facts": [
+    {
+      "action": "skipped",
+      "claim": "Vera Example skipped the rest of a training week after knee pain.",
+      "claim_kind": "observed_fact",
+      "company": null,
+      "confidence": "medium",
+      "context": "personal_system",
+      "evidence_item_ids": [
+        "evi_vera_0003"
+      ],
+      "object": "the rest of a training week",
+      "occurred": null,
+      "outcome": null,
+      "ownership_level": "observed",
+      "role": null,
+      "skills": [],
+      "technologies": [],
+      "themes": [
+        "strength training"
+      ]
+    }
+  ],
+  "warnings": []
+}

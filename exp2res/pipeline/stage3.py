@@ -49,6 +49,7 @@ class Stage3Result:
     created: tuple[str, ...]
     superseded: tuple[str, ...]
     generation_ids: tuple[str, ...]
+    superseded_generation_ids: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
 
 
@@ -327,6 +328,7 @@ def run_fact_extraction(
             for context, generation_id in zip(contexts, generation_ids)
         )
         superseded_ids: list[str] = []
+        superseded_generation_ids: set[str] = set()
 
         def commit(
             held: sqlite3.Connection, resolved: Sequence[object]
@@ -339,6 +341,19 @@ def run_fact_extraction(
                     held, swap.context.member_ids
                 )
                 if previous:
+                    # §14.14 rule 5: the replacement invalidates the prior
+                    # facts' generations, and the envelope reports produced
+                    # OR invalidated generation IDs — capture them before
+                    # the supersession closes the rows.
+                    placeholders = ",".join("?" for _ in previous)
+                    superseded_generation_ids.update(
+                        row[0]
+                        for row in held.execute(
+                            "SELECT DISTINCT generation_id FROM"
+                            f" experience_facts WHERE id IN ({placeholders})",
+                            previous,
+                        )
+                    )
                     mark_facts_superseded(held, previous, swap_time)
                     superseded_ids.extend(previous)
                 for fact in swap.facts:
@@ -379,6 +394,9 @@ def run_fact_extraction(
         superseded=tuple(superseded_ids),
         generation_ids=tuple(
             item.generation_id for item in resolved_lineages if item.facts
+        ),
+        superseded_generation_ids=tuple(
+            sorted(superseded_generation_ids, key=_id_key)
         ),
         warnings=tuple(
             warning

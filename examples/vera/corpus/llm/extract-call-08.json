@@ -1,0 +1,26 @@
+{
+  "facts": [
+    {
+      "action": "copied",
+      "claim": "Vera Example copied an instruction-like forum comment into a daily log.",
+      "claim_kind": "observed_fact",
+      "company": null,
+      "confidence": "medium",
+      "context": "unknown",
+      "evidence_item_ids": [
+        "evi_vera_0009"
+      ],
+      "object": "an instruction-like forum comment into a daily log",
+      "occurred": null,
+      "outcome": null,
+      "ownership_level": "observed",
+      "role": null,
+      "skills": [],
+      "technologies": [],
+      "themes": [
+        "untrusted source text"
+      ]
+    }
+  ],
+  "warnings": []
+}

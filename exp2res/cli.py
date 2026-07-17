@@ -1,4 +1,4 @@
-"""Typer CLI implementing the available §22 Phase 0 command surface."""
+"""Typer CLI implementing the available §22 command surface."""
 
 from __future__ import annotations
 
@@ -17,11 +17,13 @@ except ImportError:  # typer releases that depend on an external click
 
 from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
+from exp2res.domain.models import ExperienceFact
 from exp2res.domain.results import (
     AffectedIds,
     CLIEnvelope,
     CommandPath,
     EntityIdGroup,
+    FactsListResult,
     LogProjection,
     LogsDeleteResult,
     LogsListResult,
@@ -36,12 +38,15 @@ from exp2res.errors import (
     NonInteractiveInputRequired,
     OperationDeferredError,
 )
+from exp2res.llm.contracts import ContractWarning
 from exp2res.services.capture import (
     capture_daily,
     capture_daily_file,
     capture_retro,
     validate_project_label,
 )
+from exp2res.services.extraction import run_extract, validate_extract_selection
+from exp2res.services.facts import list_facts, show_fact
 from exp2res.services.logs import delete_log, list_logs, show_log
 from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.storage.workspace import (
@@ -64,10 +69,12 @@ db_app = typer.Typer(help="Inspect or migrate the workspace schema.")
 log_app = typer.Typer(help="Capture a manual record.")
 logs_app = typer.Typer(help="Inspect or owner-delete raw records.")
 correction_app = typer.Typer(help="Correction capture lifecycle.")
+facts_app = typer.Typer(help="Inspect current extracted facts.")
 app.add_typer(db_app, name="db")
 app.add_typer(log_app, name="log")
 app.add_typer(logs_app, name="logs")
 app.add_typer(correction_app, name="correction")
+app.add_typer(facts_app, name="facts")
 
 
 @dataclass(frozen=True)
@@ -85,8 +92,13 @@ class Outcome:
     exit_code: int = 0
     diagnostic_class: str | None = None
     affected_ids: AffectedIds = field(default_factory=AffectedIds)
+    generation_ids: list[str] = field(default_factory=list)
+    run_ids: list[str] = field(default_factory=list)
     residual_paths: list[str] = field(default_factory=list)
-    result: SchemaResult | LogsListResult | LogsDeleteResult | None = None
+    warnings: list[ContractWarning] = field(default_factory=list)
+    result: (
+        SchemaResult | LogsListResult | LogsDeleteResult | FactsListResult | None
+    ) = None
     human_result: str = ""
 
 
@@ -201,6 +213,10 @@ def _run_command(
         outcome = Outcome(
             exit_code=error.exit_code,
             diagnostic_class=error.diagnostic_class,
+            # §14.14 rule 5: a failed §15 invocation still reports the
+            # committed processing runs it created (LLMInvocationError
+            # carries them; other error classes leave the default empty).
+            run_ids=list(getattr(error, "run_ids", ()) or ()),
         )
         typer.echo(error.public_message, err=True)
     except Exception:
@@ -214,13 +230,13 @@ def _run_command(
         diagnostic_class=outcome.diagnostic_class,
         workspace=str(workspace) if workspace is not None else None,
         affected_ids=outcome.affected_ids,
-        generation_ids=[],
-        run_ids=[],
+        generation_ids=outcome.generation_ids,
+        run_ids=outcome.run_ids,
         invalidated_views=[],
         invalidated_branches=[],
         findings=[],
         residual_paths=outcome.residual_paths,
-        warnings=[],
+        warnings=outcome.warnings,
         retry=None,
         result=outcome.result,
     )
@@ -423,6 +439,96 @@ def correction_add(
         raise OperationDeferredError()
 
     _run_command(context, "correction add", operation)
+
+
+@app.command("extract")
+def extract_command(
+    context: typer.Context,
+    log_id: str | None = typer.Option(None, "--log-id"),
+) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        # §14.14 rule 3, in `logs delete` order: the selector must resolve
+        # before consent is requested and before any adapter construction.
+        validate_extract_selection(workspace, log_id=log_id)
+        # §14.14 rule 3: extraction is cost-bearing — explicit --yes when
+        # non-interactive, a TTY confirmation otherwise.
+        if not controls.yes:
+            if _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            if not typer.confirm(
+                "Run fact extraction with the configured model provider?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
+        extracted = run_extract(workspace, log_id=log_id)
+        created = list(extracted.created)
+        superseded = list(extracted.superseded)
+        return Outcome(
+            affected_ids=AffectedIds(
+                created=(
+                    [EntityIdGroup(entity_type="experience_fact", ids=created)]
+                    if created
+                    else []
+                ),
+                superseded=(
+                    [
+                        EntityIdGroup(
+                            entity_type="experience_fact", ids=superseded
+                        )
+                    ]
+                    if superseded
+                    else []
+                ),
+                deleted=[],
+            ),
+            # §14.14 rule 5: produced OR invalidated generation IDs,
+            # duplicate-free and deterministically ordered.
+            generation_ids=sorted(
+                {*extracted.generation_ids, *extracted.superseded_generation_ids},
+                key=lambda value: value.encode("utf-8"),
+            ),
+            run_ids=[extracted.run_id],
+            warnings=list(extracted.warnings),
+            human_result=(
+                f"Extracted {len(created)} facts ({len(superseded)} superseded)."
+            ),
+        )
+
+    _run_command(context, "extract", operation)
+
+
+def _fact_human_line(fact: ExperienceFact) -> str:
+    return f"{fact.id}\t{fact.claim_kind}\t{fact.project or ''}\t{fact.confidence}"
+
+
+@facts_app.command("list")
+def facts_list(context: typer.Context) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        facts = list(list_facts(workspace))
+        return Outcome(
+            result=FactsListResult(facts=facts),
+            human_result=(
+                "\n".join(_fact_human_line(fact) for fact in facts)
+                or "No current facts."
+            ),
+        )
+
+    _run_command(context, "facts list", operation)
+
+
+@facts_app.command("show")
+def facts_show(
+    context: typer.Context,
+    fact_id: str = typer.Option(..., "--fact-id"),
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        fact = show_fact(workspace, fact_id=fact_id)
+        return Outcome(
+            result=FactsListResult(facts=[fact]),
+            human_result=_fact_human_line(fact),
+        )
+
+    _run_command(context, "facts show", operation)
 
 
 @logs_app.command("list")
