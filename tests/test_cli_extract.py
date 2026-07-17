@@ -15,6 +15,7 @@ import exp2res.services.facts as facts_service
 from exp2res.cli import app
 from exp2res.config import DEFAULT_LLM_CONFIG
 from exp2res.domain.models import ExperienceFact
+from exp2res.errors import LLMCancelledError, LLMInvocationError
 from exp2res.llm.adapter import AdapterRuntime
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import CodexCLIRunner
@@ -260,6 +261,18 @@ def test_facts_list_show_round_trip_complete_values_via_read_seam(
     )
     assert missing.exit_code == 2
     assert missing_envelope["diagnostic_class"] == "selector_not_found"
+
+
+@pytest.mark.unit
+def test_llm_failure_exit_classes_follow_rule_4() -> None:
+    """§14.14 rule 4: local validation/integrity codes are class 7, not 6."""
+
+    assert LLMInvocationError("response_validation_failed").exit_code == 7
+    assert LLMInvocationError("business_commit_failed").exit_code == 7
+    assert LLMInvocationError("deterministic_enrichment_failed").exit_code == 7
+    assert LLMInvocationError("budget_exceeded").exit_code == 6
+    assert LLMInvocationError("capability_mismatch").exit_code == 6
+    assert LLMCancelledError().exit_code == 9
 
 
 def test_extract_on_empty_workspace_completes_without_adapter_preflight(
