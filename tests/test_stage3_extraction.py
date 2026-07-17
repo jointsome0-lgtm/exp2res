@@ -837,6 +837,37 @@ def test_stage_default_token_patterns_come_from_registration(
     assert run["failure_code"] == calls[0]["failure_code"] == "credential_detected"
 
 
+def test_adapter_build_failure_keeps_durable_failed_run_and_call(
+    workspace: Path,
+) -> None:
+    """§24.46/§14.14 rule 5: a deferred-build auth failure stays inspectable."""
+
+    add_log(
+        workspace,
+        log_id="log_vera_authfail",
+        recorded_at=FIXED_NOW - timedelta(hours=1),
+        raw_text="Vera Example auth-failure lineage.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_authfail", "manual_claim"),),
+    )
+
+    class BuildFailingRunner:
+        def runtime_version(self) -> str | None:
+            return None
+
+        def run_contract(self, _call):
+            raise LLMInvocationError("transport_auth_failed")
+
+    with pytest.raises(LLMInvocationError) as caught:
+        run_stage3(workspace, BuildFailingRunner(), TestIds())
+    assert caught.value.failure_code == "transport_auth_failed"
+    run, calls = telemetry_rows(workspace, "run_vera_0001")
+    assert run["status"] == "failed"
+    assert run["failure_code"] == "transport_auth_failed"
+    assert calls[0]["status"] == "failed"
+    assert calls[0]["failure_code"] == "transport_auth_failed"
+
+
 def test_stage_records_probed_runtime_version_when_runner_exposes_it(
     workspace: Path,
 ) -> None:
