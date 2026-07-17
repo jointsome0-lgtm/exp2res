@@ -14,7 +14,6 @@ from pydantic import BaseModel
 from exp2res.errors import LLMCancelledError, LLMInvocationError
 from exp2res.llm.adapter import invoke_contract
 from exp2res.llm.contracts import ContractDefinition, prompt_policy_hash
-from exp2res.llm.preflight import CODEX_TOKEN_PATTERNS
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.storage.telemetry import create_processing_run, finish_processing_run
@@ -87,7 +86,7 @@ def run_complete_stage(
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
     jitter: Callable[[float, float], float] | None = None,
-    token_patterns: Iterable[Pattern[bytes]] = CODEX_TOKEN_PATTERNS,
+    token_patterns: Iterable[Pattern[bytes]] | None = None,
     resolved_credentials: Iterable[bytes] = (),
 ) -> StageOutcome:
     """Validate every planned call before one caller-defined business swap.
