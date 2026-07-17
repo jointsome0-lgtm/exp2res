@@ -215,6 +215,12 @@ CLAUDE_FAILURE_MARKERS = (
     FailureMarker(b"", 1, "transport_auth_failed", False, 403),
     FailureMarker(b"", 1, "transport_provider_error", True, 503),
     FailureMarker(b"", 1, "transport_provider_error", False, 422),
+    FailureMarker(b"HTTP 408 request failed", 1, "transport_timeout", True),
+    FailureMarker(b"HTTP 429", 1, "transport_rate_limited", True),
+    FailureMarker(b"HTTP 401", 1, "transport_auth_failed", False),
+    FailureMarker(b"HTTP 403 forbidden", 1, "transport_auth_failed", False),
+    FailureMarker(b"HTTP 503 unavailable", 1, "transport_provider_error", True),
+    FailureMarker(b"API Error: 529 overloaded", 1, "transport_provider_error", True),
     FailureMarker(b"", 0, "transport_provider_error", False),
 )
 

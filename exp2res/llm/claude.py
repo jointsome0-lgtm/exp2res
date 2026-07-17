@@ -512,6 +512,8 @@ def classify_claude_failure(result: RawResult) -> tuple[str | None, bool]:
             b"authentication",
             b"unauthorized",
             b"oauth token",
+            b"401",
+            b"403",
         )
     ):
         return "transport_auth_failed", False
@@ -522,16 +524,26 @@ def classify_claude_failure(result: RawResult) -> tuple[str | None, bool]:
             b"usage limit",
             b"quota",
             b"too many requests",
+            b"429",
         )
     ):
         return "transport_rate_limited", True
-    if any(marker in channel for marker in (b"timeout", b"timed out")):
+    if any(marker in channel for marker in (b"timeout", b"timed out", b"408")):
         return "transport_timeout", True
     if any(marker in channel for marker in (b"lost response", b"ambiguous delivery")):
         return "transport_lost_response", True
     if any(
         marker in channel
-        for marker in (b"overloaded", b"overload", b"connection", b"tls", b"5xx")
+        for marker in (
+            b"overloaded",
+            b"overload",
+            b"connection",
+            b"tls",
+            b"5xx",
+            b"http 5",
+            b" 500",
+            b"529",
+        )
     ):
         return "transport_provider_error", True
     return "transport_provider_error", False
