@@ -56,6 +56,10 @@ class LazyPreflightRunner:
     def run_contract(self, call: PreparedCall) -> RawResult:
         return self.materialize().run_contract(call)
 
+    def runtime_version(self) -> str | None:
+        probe = getattr(self.materialize(), "runtime_version", None)
+        return probe() if callable(probe) else None
+
 
 def build_llm_execution(
     workspace: Path,

@@ -837,6 +837,36 @@ def test_stage_default_token_patterns_come_from_registration(
     assert run["failure_code"] == calls[0]["failure_code"] == "credential_detected"
 
 
+def test_stage_records_probed_runtime_version_when_runner_exposes_it(
+    workspace: Path,
+) -> None:
+    """§15.12 rule 9: metadata cli_version is the probed runtime identity."""
+
+    add_log(
+        workspace,
+        log_id="log_vera_version",
+        recorded_at=FIXED_NOW - timedelta(hours=1),
+        raw_text="Vera Example version lineage.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_version", "manual_claim"),),
+    )
+
+    class VersionedRunner:
+        def __init__(self, inner: FakeContractRunner) -> None:
+            self._inner = inner
+
+        def runtime_version(self) -> str:
+            return "9.9.9-vera"
+
+        def run_contract(self, call):
+            return self._inner.run_contract(call)
+
+    run_stage3(workspace, VersionedRunner(FakeContractRunner([empty_response()])), TestIds())
+    run, _calls = telemetry_rows(workspace, "run_vera_0001")
+    metadata = json.loads(run["metadata_json"])
+    assert metadata["cli_version"] == "9.9.9-vera"
+
+
 @pytest.mark.lifecycle
 def test_business_commit_failure_rolls_back_fact_and_fails_run(
     workspace: Path,

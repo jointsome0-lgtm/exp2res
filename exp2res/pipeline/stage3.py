@@ -326,6 +326,18 @@ def run_fact_extraction(
             )
             for context, generation_id in zip(contexts, generation_ids)
         )
+        resolved_cli_version = cli_version
+        if planned:
+            # §15.12 rule 9: runner identity records the probed runtime
+            # version, so a version-capable runner resolves it before the
+            # run row exists. The zero-call guarantee holds — the build
+            # runs only after lineage planning proves calls are planned,
+            # still under the writer lock — and a build-time capability
+            # failure precedes the run exactly like §15.10 rule 4's
+            # selection-time validation.
+            version_probe = getattr(runner, "runtime_version", None)
+            if callable(version_probe):
+                resolved_cli_version = version_probe() or cli_version
         superseded_ids: list[str] = []
         superseded_generation_ids: set[str] = set()
 
@@ -377,7 +389,7 @@ def run_fact_extraction(
             commit=commit,
             run_id=run_id,
             clock=now,
-            cli_version=cli_version,
+            cli_version=resolved_cli_version,
             capability_check=capability_check,
             monotonic=monotonic,
             sleeper=sleeper,

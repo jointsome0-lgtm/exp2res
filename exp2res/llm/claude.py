@@ -198,11 +198,18 @@ class ClaudeAgentRunner:
         bwrap_binary: Path,
         claude_config_dir: Path,
         reasoning_effort: str = "high",
+        cli_version: str = "unversioned",
     ) -> None:
         self.claude_binary = claude_binary
         self.bwrap_binary = bwrap_binary
         self.claude_config_dir = claude_config_dir
         self.reasoning_effort = reasoning_effort
+        self.cli_version = cli_version
+
+    def runtime_version(self) -> str:
+        """§15.12 rule 9: the probed runtime version is runner identity."""
+
+        return self.cli_version
 
     def run_contract(self, call: PreparedCall) -> RawResult:
         workspace = Path(tempfile.mkdtemp(prefix="exp2res-llm-"))
@@ -470,6 +477,7 @@ def build_runner(config: LLMConfig, repository_root: Path) -> ContractRunner:
         bwrap_binary=runtime.bwrap_binary,
         claude_config_dir=runtime.claude_config_dir,
         reasoning_effort=reasoning_effort,
+        cli_version=runtime.cli_version,
     )
 
 
