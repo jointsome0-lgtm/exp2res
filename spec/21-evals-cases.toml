@@ -297,7 +297,7 @@ title = "Stage 4 Contract Is Complete and Schema-Only Retried"
 case = '''
 Given all current facts and the complete effective-lineage evidence context
 When the Stage 4 detector returns a schema-valid complete candidate set
-Then that candidate is processed atomically under §13.4's content-equivalence rule
+Then that candidate is processed atomically under §13.4's structural-key equivalence rule
 And every polymorphic target type is a `DetectionRefType` (§10)
 And it exposes no status, resolution, dismissal, or verdict channel
 
@@ -305,19 +305,24 @@ Given current gaps including one answered gap, current contradictions, a current
 When `detections generate` runs
 Then the resulting gap and contradiction sets come from one complete §15.8 call
 And the two complete sets are retained or replaced together
-And because one current gap is answered, the run replaces both sets even when the detector-authored fields are equivalent
+And because one current gap is answered, the run replaces both sets even when the structural key sets are equal
 And each replacement gap starts with `answered = false` and no answer link is re-created
 And no run preserves one old half while replacing the other
 And no command form exists that regenerates only gaps or only contradictions
 
-Given a rerun whose validated candidate is content-equivalent over the detector-authored fields of both output sets
+Given a rerun whose validated candidate has structural key sets equal to the current generation's for both outputs — gap keys over (`target_type`, `target_id`, `reason`, `priority`), contradiction keys over the unordered reference pair
+And its detector-authored `question`, `title`, and `description` prose is paraphrased
 And every gap in the current generation is unanswered
 When `detections generate` runs directly
-Then the prior current generation is retained
+Then the prior current generation is retained with its existing row IDs and prose
 And nothing is superseded
 And the snapshot and branch remain current
 
-Given a rerun whose validated candidate is changed over the detector-authored fields of either output set
+Given a candidate contradiction whose left and right references are swapped relative to the current row
+Then both orderings compute one canonical unordered structural key
+And the swap alone does not replace the generation
+
+Given a rerun whose validated candidate changes any structural key — a changed target, reason, priority, or reference pair — in either output set
 Then both complete sets are replaced
 And every current signal, claim, snapshot, branch, and bullet is superseded in the same transaction
 And the command reports both complete result sets and every invalidated artifact class
@@ -333,7 +338,7 @@ Then the displaced pre-correction content is neither detector input nor a detect
 And no current detection re-derives the conflict the correction removed
 And the lineage's effective records and their factless evidence remain targetable
 
-Given the detector returns invalid structure, enum values, or references
+Given the detector returns invalid structure, enum values, references, or two detections with equal structural keys in one output set
 When §15.1 retries once
 Then no partial candidate persists
 And a schema-valid semantic inclusion or omission never triggers a retry or writer repair
@@ -771,7 +776,7 @@ And the two lineages carry two different generation IDs
 
 Given one Stage 4 run replaces both the gap and contradiction sets
 Then every row in both sets shares one generation_id and one produced_by_run_id
-When a later content-equivalent Stage 4 run retains those sets
+When a later structural-key-equal Stage 4 run retains those sets
 Then it produces no business row, changes neither provenance column, and allocates no generation_id
 
 Given Stage 5 replaces signals, Stage 6 replaces one view's claims plus snapshot, or Stage 10 replaces one branch plus its bullets
