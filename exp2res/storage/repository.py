@@ -152,6 +152,58 @@ def insert_evidence_item(connection: sqlite3.Connection, item: EvidenceItem) -> 
         raise IntegrityFailureError() from error
 
 
+def validate_experience_fact_sources(
+    connection: sqlite3.Connection, fact: ExperienceFact
+) -> dict[str, sqlite3.Row]:
+    """Revalidate §13.3's retained-row source-selection predicate.
+
+    Facts copy their selected evidence and raw-log IDs at creation time, but
+    corrections can later displace one of those retained source rows.  Every
+    consumer that treats a fact as current must therefore rerun the same
+    selectability checks rather than trusting the copied IDs alone.
+    """
+
+    selections: list[tuple[str, str]] = []
+    for evidence_id in fact.evidence_item_ids:
+        source = connection.execute(
+            "SELECT raw_log_id, strength FROM evidence_items WHERE id = ?",
+            (evidence_id,),
+        ).fetchone()
+        if source is None:
+            raise IntegrityFailureError()
+        selections.append((source["raw_log_id"], source["strength"]))
+    reached_ids = {raw_log_id for raw_log_id, _ in selections}
+    if reached_ids != set(fact.source_log_ids):
+        raise IntegrityFailureError()
+    reached_logs: dict[str, sqlite3.Row] = {}
+    for raw_log_id in reached_ids:
+        row = connection.execute(
+            """
+            SELECT id, recorded_at, project, project_key,
+                   occurred_start, occurred_end, temporal_precision,
+                   temporal_confidence,
+                   EXISTS(
+                       SELECT 1 FROM raw_logs AS correction
+                       WHERE correction.corrects_log_id = raw_logs.id
+                   ) AS displaced
+            FROM raw_logs WHERE id = ?
+            """,
+            (raw_log_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError()
+        reached_logs[raw_log_id] = row
+    for raw_log_id, strength in selections:
+        if reached_logs[raw_log_id]["displaced"] and strength == "manual_claim":
+            raise IntegrityFailureError()
+    effective = [row for row in reached_logs.values() if not row["displaced"]]
+    if not effective:
+        raise IntegrityFailureError()
+    if len({lineage_root(connection, raw_log_id) for raw_log_id in reached_ids}) != 1:
+        raise IntegrityFailureError()
+    return reached_logs
+
+
 def _hydrate(model: type, payload: dict[str, object]):
     try:
         return model.model_validate_json(_json(payload))
@@ -228,44 +280,8 @@ def insert_experience_fact(
     # manual_claim selection, at least one effective selection, one
     # correction lineage — and copy `project`/`project_key` from the
     # governing record rather than trusting the caller's fact values.
-    selections: list[tuple[str, str]] = []
-    for evidence_id in fact.evidence_item_ids:
-        source = connection.execute(
-            "SELECT raw_log_id, strength FROM evidence_items WHERE id = ?",
-            (evidence_id,),
-        ).fetchone()
-        if source is None:
-            raise IntegrityFailureError()
-        selections.append((source["raw_log_id"], source["strength"]))
-    reached_ids = {raw_log_id for raw_log_id, _ in selections}
-    if reached_ids != set(fact.source_log_ids):
-        raise IntegrityFailureError()
-    reached_logs: dict[str, sqlite3.Row] = {}
-    for raw_log_id in reached_ids:
-        row = connection.execute(
-            """
-            SELECT id, recorded_at, project, project_key,
-                   occurred_start, occurred_end, temporal_precision,
-                   temporal_confidence,
-                   EXISTS(
-                       SELECT 1 FROM raw_logs AS correction
-                       WHERE correction.corrects_log_id = raw_logs.id
-                   ) AS displaced
-            FROM raw_logs WHERE id = ?
-            """,
-            (raw_log_id,),
-        ).fetchone()
-        if row is None:
-            raise IntegrityFailureError()
-        reached_logs[raw_log_id] = row
-    for raw_log_id, strength in selections:
-        if reached_logs[raw_log_id]["displaced"] and strength == "manual_claim":
-            raise IntegrityFailureError()
+    reached_logs = validate_experience_fact_sources(connection, fact)
     effective = [row for row in reached_logs.values() if not row["displaced"]]
-    if not effective:
-        raise IntegrityFailureError()
-    if len({lineage_root(connection, raw_log_id) for raw_log_id in reached_ids}) != 1:
-        raise IntegrityFailureError()
     governing = max(
         effective,
         key=lambda row: (_utc_instant(row["recorded_at"]), row["id"].encode("utf-8")),
@@ -1073,7 +1089,7 @@ def update_assessment_snapshot_verification(
         raise IntegrityFailureError("snapshot_verification_update_failed")
 
 
-def _validate_detection_reference(
+def validate_detection_reference(
     connection: sqlite3.Connection,
     *,
     ref_type: str,
@@ -1144,7 +1160,7 @@ def insert_gap_question(
         or gap.answer_log_id is not None
     ):
         raise IntegrityFailureError("gap_initial_lifecycle_invalid")
-    _validate_detection_reference(
+    validate_detection_reference(
         connection,
         ref_type=gap.target_type,
         ref_id=gap.target_id,
@@ -1191,13 +1207,13 @@ def insert_contradiction(
         raise IntegrityFailureError("contradiction_production_identity_invalid")
     if contradiction.superseded_at is not None:
         raise IntegrityFailureError("contradiction_initial_lifecycle_invalid")
-    _validate_detection_reference(
+    validate_detection_reference(
         connection,
         ref_type=contradiction.left_ref_type,
         ref_id=contradiction.left_ref_id,
         field="contradiction_left_ref",
     )
-    _validate_detection_reference(
+    validate_detection_reference(
         connection,
         ref_type=contradiction.right_ref_type,
         ref_id=contradiction.right_ref_id,
