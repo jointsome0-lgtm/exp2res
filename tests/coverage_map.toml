@@ -98,11 +98,11 @@ nodes = [
   "tests/test_stage4_detection.py::test_paraphrase_and_swapped_sides_retain_ids_prose_and_generation",
   "tests/test_stage4_detection.py::test_changed_structural_key_replaces_both_sets_under_one_generation",
   "tests/test_stage4_detection.py::test_stage3_replacement_invalidates_detections_but_empty_stage3_does_not",
-  "tests/test_cli_detections.py::test_detection_inspection_is_read_only_ordered_and_show_includes_history",
+  "tests/test_cli_detections.py::test_detection_inspection_is_read_only_ordered_and_current_only",
   "tests/test_vera_replay_detect.py::test_vera_e2_cli_detect_replay_is_navigable_and_retains_paraphrases",
 ]
 phase = "3"
-note = "Stage 4 and the CLI preserve current contradictions across structural-key retention, expose superseded rows only through immutable show inspection, and Vera E2 proves source-log navigation; snapshot completeness and rendered contradiction coverage remain Stage 6+"
+note = "Stage 4 and the CLI preserve current contradictions across structural-key retention and Vera E2 proves source-log navigation; snapshot completeness, rendered contradiction coverage, and upper-layer supersession remain Stage 5/6+"
 
 ["21.20"]
 status = "pending"
@@ -140,7 +140,7 @@ nodes = [
   "tests/test_vera_replay_detect.py::test_vera_e2_cli_detect_replay_is_navigable_and_retains_paraphrases",
 ]
 phase = "2"
-note = "Stage 4 plus the CLI and Vera E2 execute every §21.23 block except the schema-valid generated-voice violation block, which still has no deterministic validator"
+note = "Stage 4 plus the CLI and Vera E2 execute the detector-lifecycle blocks; still missing are the generated-voice violation block (no deterministic validator) and the upper-layer clauses — superseding current signals, claims, snapshots, branches, and bullets and reporting their regeneration guidance — whose tables land in later phases"
 
 ["21.24"]
 status = "pending"

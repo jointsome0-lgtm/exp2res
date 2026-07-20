@@ -79,9 +79,11 @@ def list_current_contradictions(workspace: Path) -> tuple[Contradiction, ...]:
 def show_contradiction(
     workspace: Path, *, contradiction_id: str
 ) -> Contradiction:
+    # §14.14 rule 7 defers historical-generation browsing beyond `runs show`;
+    # like `facts show`, a superseded row fails as selector_not_found.
     with read_database(workspace) as connection:
         contradiction = get_contradiction(
-            connection, contradiction_id, current_only=False
+            connection, contradiction_id, current_only=True
         )
     if contradiction is None:
         raise SelectorNotFoundError()

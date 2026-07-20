@@ -376,7 +376,7 @@ def test_answered_gap_key_equal_cli_rerun_replaces_without_relinking(
     assert needs_file_envelope["diagnostic_class"] == "input_required"
 
 
-def test_detection_inspection_is_read_only_ordered_and_show_includes_history(
+def test_detection_inspection_is_read_only_ordered_and_current_only(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fact_id, log_id, item_id = seed_detection_inputs(workspace)
@@ -418,7 +418,12 @@ def test_detection_inspection_is_read_only_ordered_and_show_includes_history(
     contradictions_result, contradictions = invoke_json(
         workspace, ["contradictions", "list"]
     )
+    current_contradiction_id = second["result"]["contradictions"][0]["id"]
     shown_result, shown = invoke_json(
+        workspace,
+        ["contradictions", "show", "--contradiction-id", current_contradiction_id],
+    )
+    superseded_result, superseded_envelope = invoke_json(
         workspace,
         ["contradictions", "show", "--contradiction-id", old_contradiction_id],
     )
@@ -431,10 +436,13 @@ def test_detection_inspection_is_read_only_ordered_and_show_includes_history(
     ]
     assert current_ids == sorted(current_ids)
     assert current_ids == [second["result"]["contradictions"][0]["id"]]
-    historical = shown["result"]["contradictions"][0]
-    assert historical["id"] == old_contradiction_id
-    assert historical["superseded_at"] is not None
-    assert read_calls == [workspace, workspace, workspace]
+    current_row = shown["result"]["contradictions"][0]
+    assert current_row["id"] == current_contradiction_id
+    assert current_row["superseded_at"] is None
+    # §14.14 rule 7: superseded detections are not browsable beyond runs show.
+    assert superseded_result.exit_code == 2
+    assert superseded_envelope["diagnostic_class"] == "selector_not_found"
+    assert read_calls == [workspace, workspace, workspace, workspace]
 
     missing, missing_envelope = invoke_json(
         workspace,
