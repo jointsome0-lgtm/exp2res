@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import unicodedata
 
 from exp2res import __version__
 from exp2res.domain.enums import AssessmentScope
@@ -61,9 +62,14 @@ def validate_assessment_selection(
         if project is not None:
             raise InvalidUsageError()
         return "global", None
-    if project is None or not canonical_project_key(project):
+    if project is None:
         raise InvalidUsageError()
-    return "project", project
+    # §14.9 canonical pre-fold selector: NFC + trim happens here so every
+    # caller, not only the CLI, persists the canonical scope_target.
+    canonical = unicodedata.normalize("NFC", project).strip()
+    if not canonical_project_key(canonical):
+        raise InvalidUsageError()
+    return "project", canonical
 
 
 def run_assess_generate(

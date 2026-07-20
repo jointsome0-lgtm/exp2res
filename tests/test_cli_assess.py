@@ -175,6 +175,14 @@ def test_project_selector_persists_canonical_prefold_value(
     assert shown["result"]["snapshot"]["scope_target"] == "Vera Example Project"
 
 
+def test_validate_assessment_selection_canonicalizes_for_direct_callers() -> None:
+    scope, target = assessment_service.validate_assessment_selection(
+        scope="project", project="  Verá Example  "
+    )
+    assert scope == "project"
+    assert target == "Verá Example"
+
+
 def test_logs_delete_reports_purged_assessment_groups_and_view(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

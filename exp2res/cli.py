@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import sys
-import unicodedata
 from typing import Callable, cast
 
 import typer
@@ -814,11 +813,8 @@ def assess_generate(
     project: str | None = typer.Option(None, "--project"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
-        canonical_project = (
-            None if project is None else unicodedata.normalize("NFC", project).strip()
-        )
         selected_scope, selected_project = validate_assessment_selection(
-            scope=scope, project=canonical_project
+            scope=scope, project=project
         )
         require_compatible(workspace)
         if not controls.yes:
