@@ -555,7 +555,7 @@ def test_claim_from_another_generation_fails_export_as_mixed_graph(
 
 
 def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
-    workspace: Path,
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """§13.14: counterevidence grounding rows read for validation join
     source_ids and the render-input hash without widening the closed
@@ -611,6 +611,9 @@ def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
     assert scope_fact in manifest["source_ids"]["experience_fact_ids"]
     # §16.1 cascade: the grounding fact's own chain rows were read and join
     # the manifest source lists.
+    import exp2res.exports.graph as graph_module
+
+    real_get = graph_module.get_experience_fact
     with read_database(workspace) as connection:
         chain = connection.execute(
             "SELECT fs.evidence_item_id, ei.raw_log_id FROM fact_sources fs "
@@ -618,6 +621,8 @@ def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
             "WHERE fs.fact_id = ?",
             (scope_fact,),
         ).fetchall()
+        scope_model = real_get(connection, scope_fact)
+    assert scope_model is not None
     assert chain
     for evidence_id, raw_log_id in chain:
         assert evidence_id in manifest["source_ids"]["evidence_item_ids"]
@@ -628,6 +633,37 @@ def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
     assert scope_fact not in [
         link["fact_id"] for link in evidence_map["fact_links"]
     ]
+
+    # §16.1: every supplemental fact entering export still needs a direct
+    # source. Simulate a corrupt future writer that preserves the exact
+    # evidence/log closure but downgrades every relation to corroborating.
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "DELETE FROM fact_sources WHERE fact_id = ?", (scope_fact,)
+        )
+        connection.executemany(
+            "INSERT INTO fact_sources(fact_id, evidence_item_id, support_type) "
+            "VALUES (?, ?, 'corroborating')",
+            ((scope_fact, evidence_id) for evidence_id, _raw_log_id in chain),
+        )
+        connection.commit()
+
+    # Current hydration already rejects this corruption. Keep the export
+    # layer's own direct-source invariant effective even if a future hydrator
+    # returns the fact model while exposing the stored source rows unchanged.
+    def tolerate_corrupt_support_type(connection, fact_id):
+        if fact_id == scope_fact:
+            return scope_model
+        return real_get(connection, fact_id)
+
+    monkeypatch.setattr(
+        graph_module, "get_experience_fact", tolerate_corrupt_support_type
+    )
+    with pytest.raises(
+        IntegrityFailureError, match="supplemental_fact_direct_source_missing"
+    ):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
 
 @pytest.mark.parametrize("displaced_role", ["main", "supplemental"])

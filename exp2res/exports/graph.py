@@ -686,10 +686,13 @@ def load_assessment_graph(
             (fact_id,),
         ).fetchall()
         row_evidence: list[str] = []
+        has_direct_source = False
         for source in source_rows:
             support_type = source["support_type"]
             if support_type not in {"direct", "corroborating"}:
                 raise IntegrityFailureError(invalid)
+            if support_type == "direct":
+                has_direct_source = True
             ce_fact_sources.append(
                 FactSourceRecord(
                     fact_id=source["fact_id"],
@@ -700,6 +703,8 @@ def load_assessment_graph(
             row_evidence.append(source["evidence_item_id"])
         if sorted(set(row_evidence), key=id_key) != list(fact.evidence_item_ids):
             raise IntegrityFailureError("fact_evidence_closure_incomplete")
+        if not has_direct_source:
+            raise IntegrityFailureError("supplemental_fact_direct_source_missing")
         ce_fact_evidence[fact_id] = list(fact.evidence_item_ids)
         ce_evidence_ids.update(set(fact.evidence_item_ids) - set(evidence_ids))
     ce_fact_sources.sort(
