@@ -982,6 +982,11 @@ def gaps_answer(
                 workspace, gap_id=gap_id, raw_text=raw_text
             )
         evidence_ids = [item.id for item in bundle.evidence_items]
+        # §13/§14.7 gap-answer stale-export trigger: when §13.12/§13.14 managed
+        # exports land, this transaction enumerates and removes the affected
+        # out/assessment and out/branch sets. It supersedes no snapshot row and
+        # reports no §13.13 rule 9 regeneration command — the still-current
+        # snapshot needs re-export, not regeneration.
         return Outcome(
             affected_ids=AffectedIds(
                 created=[
