@@ -3,9 +3,10 @@ status = "partial"
 nodes = [
   "tests/test_stage7_verification.py::test_mixed_verdicts_commit_findings_and_precedence[statuses0-contradicted]",
   "tests/test_stage7_verification.py::test_mixed_verdicts_commit_findings_and_precedence[statuses1-rejected]",
+  "tests/test_cli_assess.py::test_verify_happy_envelope_and_complete_human_rewrite_presentation",
 ]
 phase = "3"
-note = "Stage 7 proves blocking-verdict persistence and aggregate precedence with deterministic fake verdicts; semantic detection remains live-only"
+note = "Stage 7 proves blocking-verdict persistence and aggregate precedence with deterministic fake verdicts, while the CLI presents the complete owner-visible suggested rewrite without mutating claim prose; semantic detection remains live-only"
 
 ["21.2"]
 status = "pending"
@@ -98,8 +99,14 @@ status = "pending"
 phase = "4"
 
 ["21.18"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_cli_assess.py::test_verify_happy_envelope_and_complete_human_rewrite_presentation",
+  "tests/test_cli_assess.py::test_verify_blocked_is_completed_semantic_result",
+  "tests/test_vera_replay_verify.py::test_vera_e5_cli_reverification_preserves_complete_finding_history",
+]
 phase = "4"
+note = "Stage 7 now executes through the CLI, returns complete findings, and applies the assessment-export allowlist as a completed code-10 gate; the Stage 10 input gate, Stage 11 bullet verification, both export implementations, and their end-to-end allowlists remain"
 
 ["21.19"]
 status = "partial"
@@ -119,9 +126,12 @@ nodes = [
   "tests/test_stage7_verification.py::test_mixed_verdicts_commit_findings_and_precedence[statuses0-contradicted]",
   "tests/test_stage7_verification.py::test_invalid_after_retry_keeps_prior_complete_pass_and_records_failed_run",
   "tests/test_stage7_verification.py::test_reverification_appends_history_and_overwrites_current_state",
+  "tests/test_cli_assess.py::test_verify_happy_envelope_and_complete_human_rewrite_presentation",
+  "tests/test_cli_assess.py::test_verify_blocked_is_completed_semantic_result",
+  "tests/test_vera_replay_verify.py::test_vera_e5_cli_reverification_preserves_complete_finding_history",
 ]
 phase = "4"
-note = "Stage 7 proves atomic verifier mechanics, aggregation, durable failed attempts, and append-only history; Stage 11 and CLI presentation land later"
+note = "Stage 7 proves atomic verifier mechanics, aggregation, durable failed attempts, append-only history, complete CLI finding and rewrite presentation, and the blocked consumer gate without repair; the Stage 11 bullet half remains"
 
 ["21.21"]
 status = "covered"

@@ -17,7 +17,12 @@ except ImportError:  # typer releases that depend on an external click
 
 from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
-from exp2res.domain.models import ExperienceFact, SelfClaim, SelfSignal
+from exp2res.domain.models import (
+    ExperienceFact,
+    SelfClaim,
+    SelfSignal,
+    VerificationFinding,
+)
 from exp2res.domain.results import (
     AffectedIds,
     AssessListResult,
@@ -45,6 +50,8 @@ from exp2res.errors import (
     MigrationInterrupted,
     NonInteractiveInputRequired,
     OperationDeferredError,
+    SelectorNotFoundError,
+    SnapshotNotCurrentError,
 )
 from exp2res.llm.contracts import ContractWarning
 from exp2res.services.capture import (
@@ -59,6 +66,7 @@ from exp2res.services.capture import (
 from exp2res.services.assessment import (
     list_current_snapshots,
     run_assess_generate,
+    run_assess_verify,
     show_snapshot,
     validate_assessment_selection,
 )
@@ -73,12 +81,14 @@ from exp2res.services.facts import list_facts, show_fact
 from exp2res.services.logs import delete_log, list_logs, show_log
 from exp2res.services.signals import list_current_signals, run_signals_generate
 from exp2res.services.time_input import parse_occurred, workspace_zone
+from exp2res.storage.repository import get_assessment_snapshot
 from exp2res.storage.workspace import (
     SchemaStatus,
     discover_workspace,
     initialize_workspace,
     inspect_workspace,
     migrate_workspace,
+    read_database,
     require_compatible,
 )
 
@@ -133,6 +143,7 @@ class Outcome:
     generation_ids: list[str] = field(default_factory=list)
     run_ids: list[str] = field(default_factory=list)
     invalidated_views: list[InvalidatedView] = field(default_factory=list)
+    findings: list[VerificationFinding] = field(default_factory=list)
     residual_paths: list[str] = field(default_factory=list)
     warnings: list[ContractWarning] = field(default_factory=list)
     result: (
@@ -283,7 +294,7 @@ def _run_command(
         run_ids=outcome.run_ids,
         invalidated_views=outcome.invalidated_views,
         invalidated_branches=[],
-        findings=[],
+        findings=outcome.findings,
         residual_paths=outcome.residual_paths,
         warnings=outcome.warnings,
         retry=None,
@@ -806,6 +817,40 @@ def _claim_human_line(claim: SelfClaim) -> str:
     )
 
 
+def _verification_human_result(
+    snapshot_id: str,
+    snapshot_status: str,
+    findings: list[VerificationFinding],
+) -> str:
+    lines = [f"Snapshot {snapshot_id}: {snapshot_status}"]
+    for finding in findings:
+        lines.extend(
+            [
+                "",
+                f"Finding {finding.id}",
+                f"Target claim: {finding.target_id}",
+                f"Status: {finding.status}",
+                f"Reason: {finding.reason}",
+                "Unsupported phrases:",
+            ]
+        )
+        lines.extend(
+            f"- {phrase}" for phrase in finding.unsupported_phrases
+        )
+        if not finding.unsupported_phrases:
+            lines.append("- none")
+        if finding.suggested_rewrite is not None:
+            lines.append(f"Suggested rewrite: {finding.suggested_rewrite}")
+        lines.append("Counterevidence:")
+        lines.extend(
+            f"- {item.statement} [{item.source_ref_type}:{item.source_ref_id}]"
+            for item in finding.counterevidence
+        )
+        if not finding.counterevidence:
+            lines.append("- none")
+    return "\n".join(lines)
+
+
 @assess_app.command("generate")
 def assess_generate(
     context: typer.Context,
@@ -884,6 +929,66 @@ def assess_generate(
         )
 
     _run_command(context, "assess generate", operation)
+
+
+@assess_app.command("verify")
+def assess_verify(
+    context: typer.Context,
+    snapshot_id: str = typer.Option(..., "--snapshot"),
+) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        # §14.14 rule 3: resolve the selector before consent so a missing or
+        # superseded snapshot never prompts or constructs the LLM adapter.
+        require_compatible(workspace)
+        with read_database(workspace) as connection:
+            snapshot = get_assessment_snapshot(
+                connection, snapshot_id, current_only=False
+            )
+        if snapshot is None:
+            raise SelectorNotFoundError()
+        if snapshot.superseded_at is not None:
+            raise SnapshotNotCurrentError()
+
+        if not controls.yes:
+            if _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            if not typer.confirm(
+                "Verify the self-assessment view using the configured model provider?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
+
+        verified = run_assess_verify(workspace, snapshot_id=snapshot_id)
+        findings = list(verified.findings)
+        blocked = verified.snapshot_status in {"unsupported", "rejected"}
+        if blocked:
+            typer.echo(
+                "Assessment verification completed, but assessment export is blocked.",
+                err=True,
+            )
+        return Outcome(
+            exit_code=10 if blocked else 0,
+            diagnostic_class="verifier_gate_blocked" if blocked else None,
+            affected_ids=AffectedIds(
+                created=[
+                    EntityIdGroup(
+                        entity_type="verification_finding",
+                        ids=[item.id for item in findings],
+                    )
+                ],
+                superseded=[],
+                deleted=[],
+            ),
+            generation_ids=[],
+            run_ids=[verified.run_id],
+            findings=findings,
+            result=None,
+            human_result=_verification_human_result(
+                verified.snapshot_id, verified.snapshot_status, findings
+            ),
+        )
+
+    _run_command(context, "assess verify", operation)
 
 
 @assess_app.command("list")

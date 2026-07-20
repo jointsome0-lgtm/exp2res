@@ -12,12 +12,18 @@ import exp2res.services.assessment as assessment_service
 import exp2res.services.detection as detection_service
 import exp2res.services.extraction as extraction_service
 from exp2res.cli import app
+from exp2res.storage.repository import (
+    list_self_claims_for_snapshot,
+    list_verification_findings,
+)
+from exp2res.storage.workspace import read_database
 
 from fakes import FakeContractRunner
 from test_stage3_extraction import SELECTION, budgets, fact_response
 from test_stage4_detection import detector_response
 from test_stage5_signals import prepare_facts, run_stage5, signal_response, SignalIds
 from test_stage6_assessment import assessment_response
+from test_stage7_verification import verifier_response
 
 
 runner = CliRunner()
@@ -36,6 +42,28 @@ def prepare_graph(workspace: Path):
         workspace, FakeContractRunner([signal_response(list(facts))]), ids
     ).current_signals
     return facts, tuple(item.id for item in signals)
+
+
+def generate_snapshot(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    facts, signals = prepare_graph(workspace)
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [assessment_response(fact_ids=list(facts), signal_ids=list(signals))]
+            ),
+        ),
+    )
+    result, envelope = invoke_json(
+        workspace, ["--yes", "assess", "generate"]
+    )
+    assert result.exit_code == 0, (result.stderr, envelope)
+    return envelope["affected_ids"]["created"][0]["ids"][0], facts, signals
 
 
 @pytest.mark.parametrize(
@@ -80,6 +108,239 @@ def test_consent_decline_precedes_adapter_construction(
     )
     assert declined.exit_code == 9
     assert json.loads(declined.stdout.splitlines()[-1])["diagnostic_class"] == "cancelled"
+
+
+def test_verify_noninteractive_and_declined_consent_precede_adapter(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+
+    def refuse_build(_workspace: Path):
+        raise AssertionError("adapter construction ran before Vera Example consent")
+
+    monkeypatch.setattr(assessment_service, "build_llm_execution", refuse_build)
+    missing, envelope = invoke_json(
+        workspace, ["assess", "verify", "--snapshot", snapshot_id]
+    )
+    assert missing.exit_code == 2
+    assert envelope["diagnostic_class"] == "input_required"
+
+    monkeypatch.setattr("exp2res.cli._noninteractive", lambda _controls: False)
+    declined = runner.invoke(
+        app,
+        [
+            "--json",
+            "--workspace",
+            str(workspace),
+            "assess",
+            "verify",
+            "--snapshot",
+            snapshot_id,
+        ],
+        input="n\n",
+    )
+    assert declined.exit_code == 9
+    assert json.loads(declined.stdout.splitlines()[-1])["diagnostic_class"] == "cancelled"
+
+
+def test_verify_missing_selector_precedes_consent_and_adapter(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
+    )
+    result, envelope = invoke_json(
+        workspace,
+        ["assess", "verify", "--snapshot", "snapshot_vera_example_missing"],
+    )
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] == "selector_not_found"
+
+
+def test_verify_superseded_selector_precedes_consent_and_adapter(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    facts, signals = prepare_graph(workspace)
+    response = assessment_response(fact_ids=list(facts), signal_ids=list(signals))
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (SELECTION, budgets(), FakeContractRunner([response, response])),
+    )
+    first_result, first = invoke_json(
+        workspace, ["--yes", "assess", "generate"]
+    )
+    second_result, _second = invoke_json(
+        workspace, ["--yes", "assess", "generate"]
+    )
+    assert first_result.exit_code == second_result.exit_code == 0
+    superseded_id = first["affected_ids"]["created"][0]["ids"][0]
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
+    )
+    result, envelope = invoke_json(
+        workspace, ["assess", "verify", "--snapshot", superseded_id]
+    )
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] == "snapshot_not_current"
+
+
+def test_verify_happy_envelope_and_complete_human_rewrite_presentation(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot_id, facts, _signals = generate_snapshot(workspace, monkeypatch)
+    counterevidence = [
+        {
+            "statement": "Vera Example counterevidence narrows the claim.",
+            "source_ref_type": "experience_fact",
+            "source_ref_id": facts[0],
+        }
+    ]
+    responses = [
+        verifier_response("partially_supported", counterevidence=counterevidence),
+        verifier_response(),
+    ]
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (SELECTION, budgets(), FakeContractRunner(responses)),
+    )
+    result, envelope = invoke_json(
+        workspace, ["--yes", "assess", "verify", "--snapshot", snapshot_id]
+    )
+    assert result.exit_code == 0, (result.stderr, envelope)
+    assert envelope["status"] == "ok"
+    assert envelope["generation_ids"] == []
+    assert envelope["result"] is None
+    assert len(envelope["run_ids"]) == 1
+    assert len(envelope["affected_ids"]["created"]) == 1
+    created = envelope["affected_ids"]["created"][0]
+    assert created["entity_type"] == "verification_finding"
+    assert created["ids"] == [item["id"] for item in envelope["findings"]]
+    with read_database(workspace) as connection:
+        stored = list_verification_findings(
+            connection, run_id=envelope["run_ids"][0]
+        )
+        run = connection.execute(
+            "SELECT status FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
+    assert envelope["findings"] == [
+        item.model_dump(mode="json") for item in stored
+    ]
+    assert run["status"] == "completed"
+
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [
+                    verifier_response(
+                        "partially_supported", counterevidence=counterevidence
+                    ),
+                    verifier_response(),
+                ]
+            ),
+        ),
+    )
+    human = runner.invoke(
+        app,
+        [
+            "--workspace",
+            str(workspace),
+            "--yes",
+            "assess",
+            "verify",
+            "--snapshot",
+            snapshot_id,
+        ],
+    )
+    assert human.exit_code == 0
+    assert f"Snapshot {snapshot_id}: partially_supported" in human.stdout
+    assert human.stdout.count("Finding ") == 2
+    assert "Target claim:" in human.stdout
+    assert "Status: partially_supported" in human.stdout
+    assert "Reason: Vera Example" in human.stdout
+    assert "Vera Example unsupported phrase" in human.stdout
+    assert "Suggested rewrite: Vera Example" in human.stdout
+    assert (
+        f"[experience_fact:{facts[0]}]" in human.stdout
+    )
+
+
+def test_verify_blocked_is_completed_semantic_result(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [verifier_response("unsupported"), verifier_response()]
+            ),
+        ),
+    )
+    result, envelope = invoke_json(
+        workspace, ["--yes", "assess", "verify", "--snapshot", snapshot_id]
+    )
+    assert result.exit_code == 10
+    assert envelope["status"] == "blocked"
+    assert envelope["diagnostic_class"] == "verifier_gate_blocked"
+    assert len(envelope["findings"]) == 2
+    assert {item["status"] for item in envelope["findings"]} == {
+        "supported",
+        "unsupported",
+    }
+    with read_database(workspace) as connection:
+        run = connection.execute(
+            "SELECT status, failure_code FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
+        claims = list_self_claims_for_snapshot(connection, snapshot_id)
+    assert tuple(run) == ("completed", None)
+    assert {item.verification_status for item in claims} == {
+        "supported",
+        "unsupported",
+    }
+
+
+def test_verify_invalid_after_retry_reports_failed_run(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    invalid = verifier_response(include_reason=False)
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner([invalid, invalid]),
+        ),
+    )
+    result, envelope = invoke_json(
+        workspace, ["--yes", "assess", "verify", "--snapshot", snapshot_id]
+    )
+    assert result.exit_code == 7
+    assert envelope["diagnostic_class"] == "response_validation_failed"
+    assert len(envelope["run_ids"]) == 1
+    assert envelope["findings"] == []
+    with read_database(workspace) as connection:
+        run = connection.execute(
+            "SELECT status, failure_code FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
+    assert tuple(run) == ("failed", "response_validation_failed")
 
 
 def test_generate_list_show_and_current_only_replacement(

@@ -26,6 +26,7 @@ from .models import (
     SelfSignal,
     SelfClaim,
     StrictModel,
+    VerificationFinding,
 )
 
 CommandPath = Literal[
@@ -44,6 +45,7 @@ CommandPath = Literal[
     "signals generate",
     "signals list",
     "assess generate",
+    "assess verify",
     "assess list",
     "assess show",
     "gaps list",
@@ -197,7 +199,7 @@ class CLIEnvelope(StrictModel):
     run_ids: list[str] = Field(default_factory=list)
     invalidated_views: list[InvalidatedView] = Field(default_factory=list)
     invalidated_branches: list[Any] = Field(default_factory=list)
-    findings: list[Any] = Field(default_factory=list)
+    findings: list[VerificationFinding] = Field(default_factory=list)
     residual_paths: list[str] = Field(default_factory=list)
     warnings: list[ContractWarning] = Field(default_factory=list)
     retry: Retry | None = None
