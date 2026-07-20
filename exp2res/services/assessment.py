@@ -17,6 +17,7 @@ from exp2res.domain.models import (
 )
 from exp2res.errors import InvalidUsageError, LLMInvocationError, SelectorNotFoundError
 from exp2res.pipeline.stage6 import Stage6Result, run_assessment_generation
+from exp2res.pipeline.stage7 import Stage7Result, run_assessment_verification
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import build_llm_execution
 from exp2res.storage.repository import (
@@ -93,6 +94,32 @@ def run_assess_generate(
             workspace,
             scope=selected_scope,
             scope_target=selected_project,
+            selection=selection,
+            budgets=budgets,
+            runner=runner,
+            id_factory=tracking_id_factory,
+            cli_version=__version__,
+        )
+    except LLMInvocationError as error:
+        error.run_ids = _committed_runs(workspace, allocated_runs)
+        raise
+
+
+def run_assess_verify(workspace: Path, *, snapshot_id: str) -> Stage7Result:
+    require_compatible(workspace)
+    selection, budgets, runner = build_llm_execution(workspace)
+    allocated_runs: list[str] = []
+
+    def tracking_id_factory(kind: str) -> str:
+        value = new_id(kind)
+        if kind == "run":
+            allocated_runs.append(value)
+        return value
+
+    try:
+        return run_assessment_verification(
+            workspace,
+            snapshot_id=snapshot_id,
             selection=selection,
             budgets=budgets,
             runner=runner,

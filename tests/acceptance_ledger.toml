@@ -32,10 +32,11 @@ issues = ["#81", "PR #95", "#82", "PR #125"]
 note = "Stage 1 proves atomic EvidenceItem capture and Stage 3 now proves direct fact_sources rows plus source_log_ids derived through selected evidence; the broader wrong-type, superseded, duplicate, and Stage 6 clauses in the linked eval remain"
 
 ["24.6"]
-status = "pending"
+status = "met"
 phases = ["3"]
 evals = ["21.10"]
 issues = []
+note = "Stage 7 deterministically rejects a passing verdict for a self-claim without a direct source chain, while covered eval 21.10 executes the failed supported attempt and the valid rejected closure in required CI"
 
 ["24.7"]
 status = "pending"
@@ -44,10 +45,11 @@ evals = ["21.4", "21.26"]
 issues = []
 
 ["24.8"]
-status = "pending"
+status = "partial"
 phases = ["3"]
 evals = ["21.1", "21.8", "21.28", "21.29"]
 issues = []
+note = "Stage 7 now persists deterministic blocking verdicts, preserves claim prose, and exposes the complete owner-visible rewrite through the CLI; live semantic detection of flattery, unsupported identity, and diagnostic claims remains"
 
 ["24.9"]
 status = "pending"
@@ -125,10 +127,11 @@ evals = ["21.17"]
 issues = []
 
 ["24.21"]
-status = "pending"
+status = "partial"
 phases = ["3", "4", "5"]
 evals = ["21.18"]
 issues = []
+note = "The Stage 7 assessment-verifier gate now runs through the CLI with no owner confirm, dispute, or override state; Stage 10 gating, Stage 11 resume verification, exports, and exhaustive producer coverage for every SourceType and EvidenceStrength remain"
 
 ["24.22"]
 status = "pending"
@@ -137,10 +140,11 @@ evals = ["21.19"]
 issues = []
 
 ["24.23"]
-status = "pending"
+status = "partial"
 phases = ["3", "4"]
 evals = ["21.20"]
 issues = []
+note = "Stage 7 performs one pass per current claim, presents every valid negative finding and advisory rewrite, preserves derived prose, and keeps schema retry separate from semantic verdicts; the Stage 11 bullet half remains"
 
 ["24.24"]
 status = "met"
@@ -194,16 +198,18 @@ evals = ["21.27"]
 issues = []
 
 ["24.32"]
-status = "pending"
+status = "partial"
 phases = ["3"]
 evals = ["21.28"]
 issues = []
+note = "Stage 7 and its CLI prove deterministic rejected and unsupported verdict persistence, blocked assessment export eligibility, and no rewrite application; live semantic rejection of a writer-generated permanent-identity claim remains"
 
 ["24.33"]
-status = "pending"
+status = "partial"
 phases = ["3"]
 evals = ["21.29"]
 issues = []
+note = "Stage 7 proves that a deterministic supported verdict preserves non-flattering claim prose byte-for-byte without a writer or repair pass; live semantic evaluation of the uncomfortable evidence-grounded case remains"
 
 ["24.34"]
 status = "partial"
@@ -213,10 +219,11 @@ issues = ["#131"]
 note = "Stage 3 fact ceilings, Stage 5 signal caps, and Stage 6 claim-side §9.4 caps are covered; Stage 7 semantic breadth remains"
 
 ["24.35"]
-status = "pending"
+status = "met"
 phases = ["1", "3"]
 evals = ["21.32"]
 issues = []
+note = "Covered eval 21.32 executes the exact duplicate-free ID-ordered §15.5 closure, including view context, displaced-evidence descriptor projection, and non-displaced raw-log reachability"
 
 ["24.36"]
 status = "partial"
