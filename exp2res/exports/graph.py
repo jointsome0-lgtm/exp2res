@@ -363,6 +363,7 @@ def _validated_answer_log(
     answer_log = hydrate_raw_log(answer_row)
     if (
         answer_log.entry_type != "gap_answer"
+        or answer_log.source_type != "manual_entry"
         or answer_log.metadata.get("question_text") != gap.question
         or answer_log.metadata.get("question_reason") != gap.reason
     ):

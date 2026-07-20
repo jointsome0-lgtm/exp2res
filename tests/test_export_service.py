@@ -272,6 +272,25 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
         workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
     )
 
+    # §14.7 gap answers are manual captures, not imported or inferred rows,
+    # even when entry_type and copied question metadata otherwise match.
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE raw_logs SET source_type = 'imported_artifact' "
+            "WHERE id = 'log_vera_late_answer'"
+        )
+        connection.commit()
+    with pytest.raises(IntegrityFailureError, match="gap_answer_log_invalid"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE raw_logs SET source_type = 'manual_entry' "
+            "WHERE id = 'log_vera_late_answer'"
+        )
+        connection.commit()
+
     # An unlisted answered gap suppresses its row only through a shape-valid
     # §14.7 record: pointing answer_log_id at an ordinary manual log fails
     # closed instead of silently omitting the question.
