@@ -630,6 +630,85 @@ def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
     ]
 
 
+@pytest.mark.parametrize("displaced_role", ["main", "supplemental"])
+def test_displaced_selected_fact_source_fails_export(
+    workspace: Path, displaced_role: str
+) -> None:
+    """§13.3: main and supplemental facts rerun retained-source selection."""
+
+    from test_stage5_signals import (
+        SignalIds,
+        prepare_facts,
+        run_stage5,
+        signal_response,
+    )
+    from test_stage6_assessment import assessment_response, run_stage6
+
+    ids = SignalIds()
+    cited_fact, scope_fact = prepare_facts(workspace, ids, count=2)
+    signal_result = run_stage5(
+        workspace,
+        FakeContractRunner([signal_response([cited_fact])]),
+        ids,
+    )
+    generated = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [
+                assessment_response(
+                    fact_ids=[cited_fact],
+                    signal_ids=[item.id for item in signal_result.current_signals],
+                )
+            ]
+        ),
+        ids,
+    )
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [
+                verifier_response(
+                    "contradicted",
+                    counterevidence=[
+                        {
+                            "statement": "Vera Example holds contrary evidence.",
+                            "source_ref_type": "experience_fact",
+                            "source_ref_id": scope_fact,
+                        }
+                    ],
+                ),
+                *(verifier_response() for _ in generated.claims[1:]),
+            ]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    selected_fact = cited_fact if displaced_role == "main" else scope_fact
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        selected_log = connection.execute(
+            "SELECT ei.raw_log_id FROM fact_sources AS fs "
+            "JOIN evidence_items AS ei ON ei.id = fs.evidence_item_id "
+            "WHERE fs.fact_id = ? AND ei.strength = 'manual_claim'",
+            (selected_fact,),
+        ).fetchone()[0]
+        connection.execute(
+            "INSERT INTO raw_logs (id, recorded_at, entry_type, source_type, "
+            "temporal_precision, temporal_confidence, raw_text, "
+            "corrects_log_id) VALUES (?, '2026-07-20T15:00:00+00:00', "
+            "'correction', 'manual_entry', 'unknown', 'unknown', ?, ?)",
+            (
+                f"log_vera_export_displaces_{displaced_role}",
+                f"Vera Example correction displaces the {displaced_role} source.",
+                selected_log,
+            ),
+        )
+        connection.commit()
+
+    with pytest.raises(IntegrityFailureError, match="fact_source_selection_invalid"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+
 def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -981,4 +1060,3 @@ def test_unreconciled_preamble_residual_stops_before_rendering(
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
     assert caught.value.residual_paths == (str(candidate),)
     assert not (assessment_parent / generated.snapshot_id).exists()
-

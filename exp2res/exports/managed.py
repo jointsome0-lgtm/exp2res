@@ -471,9 +471,10 @@ def _inspect_set(path: Path, parent: Path, out_root: Path) -> AssessmentManifest
         manifest_path = path / "manifest.json"
         if stat.S_IMODE(manifest_path.lstat().st_mode) != 0o600:
             return None
-        manifest = AssessmentManifest.model_validate_json(
-            _read_regular(manifest_path, out_root)
-        )
+        stored_manifest = _read_regular(manifest_path, out_root)
+        manifest = AssessmentManifest.model_validate_json(stored_manifest)
+        if stored_manifest != manifest_bytes(manifest):
+            return None
         path_entity = path.name
         reserved = _CANDIDATE.fullmatch(path.name) or _ROLLBACK.fullmatch(path.name)
         if reserved is not None:

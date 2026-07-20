@@ -36,6 +36,7 @@ from exp2res.storage.repository import (
     hydrate_self_claim,
     hydrate_self_signal,
     validate_detection_reference,
+    validate_experience_fact_sources,
 )
 
 
@@ -630,6 +631,10 @@ def load_assessment_graph(
         )
         if derived_logs != list(fact.source_log_ids):
             raise IntegrityFailureError("fact_raw_log_closure_incomplete")
+        try:
+            validate_experience_fact_sources(connection, fact)
+        except IntegrityFailureError as error:
+            raise IntegrityFailureError("fact_source_selection_invalid") from error
 
     # §16.1: a supplemental row entering export — counterevidence grounding,
     # gap target, gap answer log, contradiction reference — resolves its own
@@ -734,6 +739,10 @@ def load_assessment_graph(
         )
         if derived_logs != list(fact.source_log_ids):
             raise IntegrityFailureError("fact_raw_log_closure_incomplete")
+        try:
+            validate_experience_fact_sources(connection, fact)
+        except IntegrityFailureError as error:
+            raise IntegrityFailureError("fact_source_selection_invalid") from error
     unknown_types = set(supplemental_refs) - {
         "self_signal",
         "experience_fact",

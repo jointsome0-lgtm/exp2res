@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import shutil
@@ -71,6 +72,26 @@ def test_private_modes_idempotent_reexport_and_same_view_stale_replacement(
     _publish(workspace, replacement)
     assert not final.exists()
     assert (workspace / "out" / "assessment" / replacement.snapshot.value.id).is_dir()
+
+
+def test_noncanonical_prior_manifest_is_not_accepted_for_idempotent_reexport(
+    workspace: Path,
+) -> None:
+    graph = assessment_graph(all_sections=False)
+    _publish(workspace, graph)
+    final = workspace / "out" / "assessment" / graph.snapshot.value.id
+    manifest_path = final / "manifest.json"
+    parsed = json.loads(manifest_path.read_bytes())
+    manifest_path.write_text(
+        json.dumps(parsed, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    manifest_path.chmod(0o600)
+
+    with pytest.raises(ManagedOutputIncompleteError) as caught:
+        _publish(workspace, graph)
+    assert caught.value.residual_paths == (str(final),)
+    assert manifest_path.read_bytes().startswith(b"{\n  ")
 
 
 def test_reexport_after_gap_answer_replaces_prior_set(workspace: Path) -> None:
@@ -256,4 +277,3 @@ def test_preamble_planted_symlink_candidate_is_reported_once(workspace: Path) ->
     residuals = managed.reconcile_managed_outputs(workspace)
     assert residuals == (str(candidate),)
     assert candidate.is_symlink() and outside.is_dir()
-
