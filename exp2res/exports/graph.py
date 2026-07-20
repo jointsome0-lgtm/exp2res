@@ -495,7 +495,12 @@ def load_assessment_graph(
         answer_log = _validated_answer_log(connection, gap)
         if answer_log.recorded_at > snapshot.created_at:
             raise IntegrityFailureError("snapshot_gap_set_stale")
-        # §13.14: both rows gated the export, so they join the hash surface.
+        # Same typed-reference rule as listed gaps, and §13.14: every row
+        # that gated the export joins the hash surface.
+        _require_reference(
+            connection, gap.target_type, gap.target_id, "gap_target_invalid"
+        )
+        note_supplemental(gap.target_type, gap.target_id)
         note_supplemental("raw_log", gap.answer_log_id)
         omitted_gap_records.append(_stored(row, gap))
     omitted_gap_records.sort(key=lambda item: id_key(item.value.id))

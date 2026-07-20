@@ -319,6 +319,21 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
     with pytest.raises(IntegrityFailureError, match="gap_answer_log_invalid"):
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
+    # An omitted gap's target obeys the same typed-reference rule as a
+    # listed one: restore the legal omission, then break the target.
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "DELETE FROM raw_logs WHERE id = 'log_vera_answer_correction'"
+        )
+        connection.execute(
+            "UPDATE gap_questions SET target_id = 'fact_vera_missing' "
+            "WHERE id = 'gap_vera_stray'"
+        )
+        connection.commit()
+    with pytest.raises(IntegrityFailureError, match="gap_target_invalid"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
 
 def test_cited_signal_without_fact_chain_fails_export(workspace: Path) -> None:
     """§16.1: a cited signal with empty supporting and counter fact lists has
