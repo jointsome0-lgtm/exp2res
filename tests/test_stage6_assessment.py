@@ -22,7 +22,15 @@ from exp2res.storage.workspace import read_database, writer_database
 
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
-from test_stage3_extraction import SELECTION, add_log, budgets, exact_day, fact_response, run_stage3
+from test_stage3_extraction import (
+    SELECTION,
+    add_log,
+    budgets,
+    empty_response,
+    exact_day,
+    fact_response,
+    run_stage3,
+)
 from test_stage5_signals import SignalIds, prepare_facts, run_stage5, signal_response
 from test_stage4_detection import detector_response, run_stage4
 from exp2res.services.logs import delete_log
@@ -146,6 +154,69 @@ def test_empty_global_fails_before_provider_and_processing_run(workspace: Path) 
     assert fake.calls == []
     with read_database(workspace) as connection:
         assert connection.execute("SELECT COUNT(*) FROM processing_runs").fetchone()[0] == 0
+
+
+def test_gaps_only_global_mirrors_open_questions(workspace: Path) -> None:
+    ids = AssessmentIds()
+    log, _items = add_log(
+        workspace,
+        log_id="log_vera_gap_only",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example noted an unresolved scope question.",
+        occurred=exact_day(15),
+        item_specs=(("evi_vera_gap_only", "manual_claim"),),
+    )
+    run_stage3(workspace, FakeContractRunner([empty_response()]), ids, log_id=log.id)
+    gap_only_detection = json.dumps(
+        {
+            "gap_questions": [
+                {
+                    "target_type": "raw_log",
+                    "target_id": log.id,
+                    "question": "What scale did Vera Example validate?",
+                    "reason": "missing_scale",
+                    "priority": "medium",
+                }
+            ],
+            "contradictions": [],
+            "warnings": [],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    run_stage4(workspace, FakeContractRunner([gap_only_detection]), ids)
+    with read_database(workspace) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM experience_facts WHERE superseded_at IS NULL"
+            ).fetchone()[0]
+            == 0
+        )
+    gaps_only_assessment = json.dumps(
+        {
+            "self_claims": [
+                {
+                    "claim": (
+                        "Current evidence suggests Vera Example has open questions, "
+                        "not conclusions."
+                    ),
+                    "claim_kind": "narrative_summary",
+                    "dimension": "gap",
+                    "source_signal_ids": [],
+                    "source_fact_ids": [],
+                    "confidence": "unknown",
+                    "uncertainty": "Vera Example has no extracted facts yet.",
+                }
+            ],
+            "warnings": [],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    result = run_stage6(workspace, FakeContractRunner([gaps_only_assessment]), ids)
+    assert result.snapshot is not None
+    assert len(result.snapshot.gap_question_ids) == 1
+    assert result.snapshot.contradiction_ids == []
+    assert result.claims[0].confidence == "unknown"
+    assert result.claims[0].source_fact_ids == []
 
 
 def test_empty_project_fails_before_provider_and_new_processing_run(workspace: Path) -> None:

@@ -291,11 +291,6 @@ def run_assessment_generation(
             except KeyError as error:
                 raise IntegrityFailureError("assessment_context_fact_missing") from error
 
-        # §13.6 requires this for project views. V1 also rejects a fully empty
-        # global call because a writer with no supplied subject object could only fabricate.
-        if not facts and not signals:
-            raise EmptyAssessmentViewError()
-
         gaps = tuple(
             sorted(
                 (gap for gap in list_gap_questions(connection) if not gap.answered),
@@ -305,6 +300,16 @@ def run_assessment_generation(
         contradictions = tuple(
             sorted(list_contradictions(connection), key=lambda item: _id_key(item.id))
         )
+
+        # §13.6 defines the empty-subject failure for project views only. A global
+        # view may legitimately mirror open gaps/contradictions with no facts or
+        # signals yet; it fails only when the writer would receive zero supplied
+        # objects of any kind and could therefore only fabricate.
+        if scope == "project":
+            if not facts and not signals:
+                raise EmptyAssessmentViewError()
+        elif not (facts or signals or gaps or contradictions):
+            raise EmptyAssessmentViewError()
         input_payload = AssessmentWriterInput(
             scope=scope,
             scope_target=scope_target,
