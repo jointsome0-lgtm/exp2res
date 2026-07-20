@@ -145,7 +145,19 @@ def validate_entity_id(value: str) -> None:
         raise IntegrityFailureError("managed_output_entity_id_invalid")
 
 
+def _validate_snapshot_title(graph: AssessmentExportGraph) -> None:
+    snapshot = graph.snapshot.value
+    expected = (
+        "Self-Assessment — Global"
+        if snapshot.scope == "global"
+        else f"Self-Assessment — {snapshot.scope_target}"
+    )
+    if snapshot.title != expected:
+        raise IntegrityFailureError("snapshot_title_invalid")
+
+
 def assessment_member_bytes(graph: AssessmentExportGraph) -> dict[str, bytes]:
+    _validate_snapshot_title(graph)
     return {
         "report.md": render_report(graph),
         "self_claims.json": companion_bytes(build_self_claims_document(graph)),
@@ -168,6 +180,7 @@ def build_assessment_manifest(
         raise IntegrityFailureError("manifest_created_at_naive")
     if set(members) != set(_MEMBER_NAMES):
         raise IntegrityFailureError("assessment_member_set_invalid")
+    _validate_snapshot_title(graph)
     snapshot = graph.snapshot.value
     return AssessmentManifest(
         manifest_version=1,

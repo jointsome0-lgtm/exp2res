@@ -137,6 +137,30 @@ def test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity(
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
 
+def test_non_derived_snapshot_title_fails_export(workspace: Path) -> None:
+    """§13.6: service-owned title remains derived from persisted view identity."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response() for _ in generated.claims]),
+        ids,
+        generated.snapshot_id,
+    )
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE assessment_snapshots SET title = ? WHERE id = ?",
+            ("Vera Example corrupted assessment title", generated.snapshot_id),
+        )
+        connection.commit()
+    with pytest.raises(IntegrityFailureError, match="snapshot_title_invalid"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+    assert not (
+        workspace / "out" / "assessment" / generated.snapshot_id
+    ).exists()
+
+
 def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
     """§13.12: a current contradiction missing from the snapshot's referenced
     set, or a current unanswered gap it does not reference, is an

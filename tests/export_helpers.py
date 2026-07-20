@@ -166,7 +166,7 @@ def assessment_graph(
         created_at=EXPORT_TIME,
         scope="global",
         scope_target=None,
-        title="Vera Example Assessment",
+        title="Self-Assessment — Global",
         summary=summary,
         gap_question_ids=[gap.id],
         contradiction_ids=[contradiction.id],
@@ -234,4 +234,3 @@ def graph_with_gap_answered_after_export(
         gaps=(replace(gap, value=updated),),
         supplemental_raw_logs=(*graph.supplemental_raw_logs, answer),
     )
-
