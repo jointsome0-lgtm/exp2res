@@ -235,8 +235,15 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
             "WHERE id = 'log_vera_late_answer'"
         )
         connection.commit()
-    export_assessment(
+    omitted_result = export_assessment(
         workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
+    )
+    # §13.14: the omitted gap and its answer log gated this export, so both
+    # join the manifest source lists and the render-input hash.
+    omitted_manifest = json.loads(Path(omitted_result.manifest_path).read_bytes())
+    assert "gap_vera_stray" in omitted_manifest["source_ids"]["gap_question_ids"]
+    assert (
+        "log_vera_late_answer" in omitted_manifest["source_ids"]["raw_log_ids"]
     )
 
     # The listed complement: a listed gap whose answer predates synthesis is
@@ -308,6 +315,73 @@ def test_cited_signal_without_fact_chain_fails_export(workspace: Path) -> None:
         )
         connection.commit()
     with pytest.raises(IntegrityFailureError, match="claim_signal_chain_empty"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+
+def test_chainless_supplemental_signal_fails_export(workspace: Path) -> None:
+    """§16.1: an out-of-closure counterevidence signal with empty fact lists
+    contributes no chain and fails export closed like a claim-cited one."""
+
+    from test_stage5_signals import (
+        SignalIds,
+        prepare_facts,
+        run_stage5,
+        signal_response,
+    )
+    from test_stage6_assessment import assessment_response, run_stage6
+
+    ids = SignalIds()
+    cited_fact = prepare_facts(workspace, ids)[0]
+    signal_result = run_stage5(
+        workspace,
+        FakeContractRunner([signal_response([cited_fact])]),
+        ids,
+    )
+    signal_ids = [item.id for item in signal_result.current_signals]
+    generated = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [assessment_response(fact_ids=[cited_fact], signal_ids=signal_ids)]
+        ),
+        ids,
+    )
+    with read_database(workspace) as connection:
+        run_id = connection.execute(
+            "SELECT id FROM processing_runs LIMIT 1"
+        ).fetchone()[0]
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "INSERT INTO self_signals (id, created_at, signal_type, statement, "
+            "supporting_fact_ids_json, counter_fact_ids_json, confidence, "
+            "produced_by_run_id, generation_id) VALUES "
+            "('signal_vera_chainless', '2026-07-15T12:00:00+00:00', "
+            "'execution_pattern', 'Vera Example chainless statement.', "
+            "'[]', '[]', 'low', ?, 'generation_vera_chainless')",
+            (run_id,),
+        )
+        connection.commit()
+    counterevidence = [
+        {
+            "statement": "A Vera Example signal disputes the claim.",
+            "source_ref_type": "self_signal",
+            "source_ref_id": "signal_vera_chainless",
+        }
+    ]
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [
+                verifier_response("contradicted", counterevidence=counterevidence),
+                *(verifier_response() for _ in generated.claims[1:]),
+            ]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    with pytest.raises(
+        IntegrityFailureError, match="export_source_reference_invalid"
+    ):
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
 

@@ -107,6 +107,11 @@ class AssessmentExportGraph:
     supplemental_fact_sources: tuple[FactSourceRecord, ...] = ()
     supplemental_evidence_items: tuple[EvidenceItem, ...] = ()
     supplemental_raw_logs: tuple[RawLog, ...] = ()
+    # Unlisted current gaps whose shape-valid pre-synthesis answers gated the
+    # export: read rows participate in source_ids and the render-input hash
+    # (§13.14) while the closed §13.12 projections keep rendering only the
+    # listed gaps above.
+    supplemental_gaps: tuple[StoredRecord[GapQuestion], ...] = ()
 
     def source_ids(self) -> dict[str, list[str]]:
         def merged(main: list[str], extra: list[str]) -> list[str]:
@@ -130,7 +135,10 @@ class AssessmentExportGraph:
                 [item.id for item in self.raw_logs],
                 [item.id for item in self.supplemental_raw_logs],
             ),
-            "gap_question_ids": [item.value.id for item in self.gaps],
+            "gap_question_ids": merged(
+                [item.value.id for item in self.gaps],
+                [item.value.id for item in self.supplemental_gaps],
+            ),
             "contradiction_ids": [item.value.id for item in self.contradictions],
         }
 
@@ -268,7 +276,7 @@ def render_input_bundle(graph: AssessmentExportGraph) -> AssessmentRenderInputBu
                 generation_id=item.generation_id,
                 produced_by_run_id=item.produced_by_run_id,
             )
-            for item in graph.gaps
+            for item in _merged_stored(graph.gaps, graph.supplemental_gaps)
         ],
         contradictions=[
             ContradictionRenderEntry(
@@ -467,6 +475,7 @@ def load_assessment_graph(
     if current_contradictions != set(snapshot.contradiction_ids):
         raise IntegrityFailureError("snapshot_contradiction_set_stale")
     listed_gap_ids = set(snapshot.gap_question_ids)
+    omitted_gap_records: list[StoredRecord[GapQuestion]] = []
     for row in connection.execute(
         "SELECT * FROM gap_questions WHERE superseded_at IS NULL"
     ).fetchall():
@@ -482,6 +491,10 @@ def load_assessment_graph(
         answer_log = _validated_answer_log(connection, gap)
         if answer_log.recorded_at > snapshot.created_at:
             raise IntegrityFailureError("snapshot_gap_set_stale")
+        # §13.14: both rows gated the export, so they join the hash surface.
+        note_supplemental("raw_log", gap.answer_log_id)
+        omitted_gap_records.append(_stored(row, gap))
+    omitted_gap_records.sort(key=lambda item: id_key(item.value.id))
 
     signal_ids = sorted(
         {signal_id for item in claims for signal_id in item.value.source_signal_ids},
@@ -634,6 +647,10 @@ def load_assessment_graph(
         signal = hydrate_self_signal(row)
         if signal.superseded_at is not None:
             raise IntegrityFailureError(invalid)
+        # §16.1: a supplemental signal is subject to the same complete-chain
+        # requirement as a claim-cited one.
+        if not signal.supporting_fact_ids and not signal.counter_fact_ids:
+            raise IntegrityFailureError(invalid)
         ce_signals.append(_stored(row, signal))
         ce_fact_ids.update(set(signal.supporting_fact_ids) - fact_ids)
         ce_fact_ids.update(set(signal.counter_fact_ids) - fact_ids)
@@ -733,4 +750,5 @@ def load_assessment_graph(
         supplemental_fact_sources=tuple(ce_fact_sources),
         supplemental_evidence_items=tuple(ce_evidence),
         supplemental_raw_logs=tuple(ce_raw_logs),
+        supplemental_gaps=tuple(omitted_gap_records),
     )
