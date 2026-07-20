@@ -10,6 +10,7 @@ from typing import Iterable
 
 from pydantic import ValidationError
 
+from exp2res.domain.calibration import signal_confidence_cap
 from exp2res.domain.models import (
     Contradiction,
     EvidenceItem,
@@ -17,6 +18,7 @@ from exp2res.domain.models import (
     GapQuestion,
     OccurredAt,
     RawLog,
+    SelfSignal,
     canonical_project_key,
 )
 from exp2res.domain.temporal import (
@@ -517,6 +519,118 @@ def mark_facts_superseded(
         raise IntegrityFailureError() from error
 
 
+def insert_self_signal(
+    connection: sqlite3.Connection,
+    signal: SelfSignal,
+    *,
+    produced_by_run_id: str,
+    generation_id: str,
+) -> None:
+    if not produced_by_run_id or not generation_id:
+        raise IntegrityFailureError("signal_production_identity_invalid")
+    if signal.superseded_at is not None:
+        raise IntegrityFailureError("signal_initial_lifecycle_invalid")
+
+    referenced: dict[str, sqlite3.Row] = {}
+    for fact_id in (*signal.supporting_fact_ids, *signal.counter_fact_ids):
+        if fact_id in referenced:
+            continue
+        row = connection.execute(
+            "SELECT confidence, superseded_at FROM experience_facts WHERE id = ?",
+            (fact_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("signal_fact_missing")
+        if row["superseded_at"] is not None:
+            raise IntegrityFailureError("signal_fact_superseded")
+        referenced[fact_id] = row
+
+    distinct_source_log_count = 0
+    if signal.supporting_fact_ids:
+        placeholders = ",".join("?" for _ in signal.supporting_fact_ids)
+        distinct_source_log_count = connection.execute(
+            "SELECT COUNT(DISTINCT ei.raw_log_id) "
+            "FROM fact_sources AS fs "
+            "JOIN evidence_items AS ei ON ei.id = fs.evidence_item_id "
+            f"WHERE fs.fact_id IN ({placeholders})",
+            signal.supporting_fact_ids,
+        ).fetchone()[0]
+    cap = signal_confidence_cap(
+        supporting_confidences=(
+            referenced[fact_id]["confidence"]
+            for fact_id in signal.supporting_fact_ids
+        ),
+        distinct_source_log_count=distinct_source_log_count,
+        has_counter_facts=bool(signal.counter_fact_ids),
+    )
+    if confidence_exceeds(signal.confidence, cap):
+        raise IntegrityFailureError("signal_confidence_above_cap")
+
+    try:
+        connection.execute(
+            """
+            INSERT INTO self_signals(
+                id, created_at, superseded_at, signal_type, statement,
+                supporting_fact_ids_json, counter_fact_ids_json, confidence,
+                metadata_json, produced_by_run_id, generation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                signal.id,
+                _iso(signal.created_at),
+                _iso(signal.superseded_at),
+                signal.signal_type,
+                signal.statement,
+                _json(signal.supporting_fact_ids),
+                _json(signal.counter_fact_ids),
+                signal.confidence,
+                _json(signal.metadata),
+                produced_by_run_id,
+                generation_id,
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        if "self_signals.id" in str(error):
+            raise IdCollisionError() from error
+        raise IntegrityFailureError("signal_insert_failed") from error
+
+
+def hydrate_self_signal(row: sqlite3.Row) -> SelfSignal:
+    try:
+        supporting_fact_ids = json.loads(row["supporting_fact_ids_json"])
+        counter_fact_ids = json.loads(row["counter_fact_ids_json"])
+        metadata = json.loads(row["metadata_json"])
+    except (json.JSONDecodeError, IndexError, TypeError) as error:
+        raise HydrationFailureError() from error
+    payload = {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "superseded_at": row["superseded_at"],
+        "signal_type": row["signal_type"],
+        "statement": row["statement"],
+        "supporting_fact_ids": supporting_fact_ids,
+        "counter_fact_ids": counter_fact_ids,
+        "confidence": row["confidence"],
+        "metadata": metadata,
+    }
+    return _hydrate(SelfSignal, payload)
+
+
+def list_self_signals(
+    connection: sqlite3.Connection, *, current_only: bool = True
+) -> tuple[SelfSignal, ...]:
+    where = " WHERE superseded_at IS NULL" if current_only else ""
+    rows = connection.execute("SELECT * FROM self_signals" + where).fetchall()
+    signals = [hydrate_self_signal(row) for row in rows]
+    signals.sort(
+        key=lambda item: (
+            item.created_at.astimezone(timezone.utc),
+            item.id.encode("utf-8"),
+        )
+    )
+    return tuple(signals)
+
+
 def _validate_detection_reference(
     connection: sqlite3.Connection,
     *,
@@ -795,7 +909,7 @@ def mark_gap_answered(
         raise IntegrityFailureError("gap_answer_update_failed")
 
 
-def _mark_detections_superseded(
+def _mark_rows_superseded(
     connection: sqlite3.Connection,
     *,
     table: str,
@@ -831,7 +945,7 @@ def mark_gap_questions_superseded(
     gap_ids: Iterable[str],
     superseded_at: datetime,
 ) -> None:
-    _mark_detections_superseded(
+    _mark_rows_superseded(
         connection,
         table="gap_questions",
         ids=gap_ids,
@@ -844,10 +958,23 @@ def mark_contradictions_superseded(
     contradiction_ids: Iterable[str],
     superseded_at: datetime,
 ) -> None:
-    _mark_detections_superseded(
+    _mark_rows_superseded(
         connection,
         table="contradictions",
         ids=contradiction_ids,
+        superseded_at=superseded_at,
+    )
+
+
+def mark_self_signals_superseded(
+    connection: sqlite3.Connection,
+    signal_ids: Iterable[str],
+    superseded_at: datetime,
+) -> None:
+    _mark_rows_superseded(
+        connection,
+        table="self_signals",
+        ids=signal_ids,
         superseded_at=superseded_at,
     )
 

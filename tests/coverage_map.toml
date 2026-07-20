@@ -54,9 +54,10 @@ status = "partial"
 nodes = [
   "tests/test_stage3_extraction.py::test_rerun_supersedes_prior_generation_at_one_swap_instant",
   "tests/test_vera_replay_extract.py::test_vera_e1_cli_replay_preserves_provenance_and_one_current_generation",
+  "tests/test_stage5_signals.py::test_identical_rerun_still_replaces_the_complete_generation",
 ]
 phase = "1"
-note = "Stage 3 service and Vera CLI reruns prove one coherent current fact generation per lineage; higher-layer generation mixing and managed-export invalidation remain unavailable until their owning phases"
+note = "Stage 3 and Stage 5 reruns prove coherent current fact and signal generations; Stage 6+ generation mixing and managed-export invalidation remain unavailable until their owning phases"
 
 ["21.13"]
 status = "pending"
@@ -171,8 +172,21 @@ status = "pending"
 phase = "4"
 
 ["21.31"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage3_extraction.py::test_confidence_ceiling_and_independent_displaced_support",
+  "tests/test_stage5_signals.py::test_confidence_cap_violations_retry_once_and_commit_no_rows[high-one_medium-False]",
+  "tests/test_stage5_signals.py::test_confidence_cap_violations_retry_once_and_commit_no_rows[high-two_one_log-False]",
+  "tests/test_stage5_signals.py::test_confidence_cap_violations_retry_once_and_commit_no_rows[medium-one_low-False]",
+  "tests/test_stage5_signals.py::test_confidence_cap_violations_retry_once_and_commit_no_rows[high-one_medium-True]",
+  "tests/test_stage5_signals.py::test_confidence_cap_violations_retry_once_and_commit_no_rows[low-empty-False]",
+  "tests/test_stage5_signals.py::test_high_passes_with_two_high_facts_across_two_raw_logs",
+  "tests/test_stage5_signals.py::test_high_with_two_high_facts_from_one_raw_log_retries_then_fails",
+  "tests/test_stage5_signals.py::test_high_with_counter_fact_retries_despite_independent_high_support",
+  "tests/test_stage5_signals.py::test_insert_self_signal_guards_lifecycle_references_and_commit_cap",
+]
 phase = "3"
+note = "Stage 3 fact ceilings and Stage 5 signal propagation caps are enforced at structured output and commit; Stage 6/7 claim-side propagation and semantic breadth slices remain pending"
 
 ["21.32"]
 status = "pending"

@@ -512,6 +512,59 @@ BEGIN
 END;
 """
 
+SELF_SIGNALS_SQL = """
+CREATE TABLE self_signals (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,
+    signal_type TEXT NOT NULL CHECK (signal_type IN (
+        'skill_signal', 'interest_signal', 'direction_signal',
+        'execution_pattern', 'avoidance_pattern', 'constraint_signal',
+        'capacity_signal', 'contradiction_signal'
+    )),
+    statement TEXT NOT NULL CHECK (statement <> ''),
+    supporting_fact_ids_json TEXT NOT NULL DEFAULT '[]',
+    counter_fact_ids_json TEXT NOT NULL DEFAULT '[]',
+    confidence TEXT NOT NULL CHECK (
+        confidence IN ('low', 'medium', 'high', 'unknown')
+    ),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
+    generation_id TEXT NOT NULL CHECK (generation_id <> '')
+);
+"""
+
+SELF_SIGNALS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER self_signals_lifecycle_update_guard
+BEFORE UPDATE ON self_signals
+WHEN exp2res_owner_delete() <> 1 AND NOT (
+    OLD.superseded_at IS NULL
+    AND NEW.superseded_at IS NOT NULL
+    AND NEW.id IS OLD.id
+    AND NEW.created_at IS OLD.created_at
+    AND NEW.signal_type IS OLD.signal_type
+    AND NEW.statement IS OLD.statement
+    AND NEW.supporting_fact_ids_json IS OLD.supporting_fact_ids_json
+    AND NEW.counter_fact_ids_json IS OLD.counter_fact_ids_json
+    AND NEW.confidence IS OLD.confidence
+    AND NEW.metadata_json IS OLD.metadata_json
+    AND NEW.produced_by_run_id IS OLD.produced_by_run_id
+    AND NEW.generation_id IS OLD.generation_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'self_signal_lifecycle_only');
+END;
+"""
+
+SELF_SIGNALS_DELETE_GUARD_SQL = """
+CREATE TRIGGER self_signals_owner_delete_guard
+BEFORE DELETE ON self_signals
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'self_signal_owner_purge_required');
+END;
+"""
+
 SCHEMA_META_SQL = """
 CREATE TABLE schema_meta (
     version INTEGER PRIMARY KEY,
@@ -555,13 +608,22 @@ SCHEMA_V4_SQL = "\n".join(
     )
 )
 
+SCHEMA_V5_SQL = "\n".join(
+    (
+        SCHEMA_V4_SQL,
+        SELF_SIGNALS_SQL,
+        SELF_SIGNALS_UPDATE_GUARD_SQL,
+        SELF_SIGNALS_DELETE_GUARD_SQL,
+    )
+)
+
 
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    if version != 4:
-        raise ValueError("fresh workspaces must use schema version 4")
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V4_SQL)
+    if version != 5:
+        raise ValueError("fresh workspaces must use schema version 5")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V5_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
@@ -640,5 +702,16 @@ def apply_migration_3_to_4(connection: Connection) -> None:
         GAP_QUESTIONS_DELETE_GUARD_SQL,
         CONTRADICTIONS_UPDATE_GUARD_SQL,
         CONTRADICTIONS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+
+def apply_migration_4_to_5(connection: Connection) -> None:
+    """Add the Stage 5 self-signal substrate without rewriting retained rows."""
+
+    for statement in (
+        SELF_SIGNALS_SQL,
+        SELF_SIGNALS_UPDATE_GUARD_SQL,
+        SELF_SIGNALS_DELETE_GUARD_SQL,
     ):
         connection.execute(statement)

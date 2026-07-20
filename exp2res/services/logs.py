@@ -31,6 +31,7 @@ class DeleteOutcome:
     purged_fact_ids: tuple[str, ...]
     purged_gap_ids: tuple[str, ...]
     purged_contradiction_ids: tuple[str, ...]
+    purged_signal_ids: tuple[str, ...]
     residual_paths: tuple[str, ...]
 
 
@@ -125,13 +126,20 @@ def delete_log(
                     "SELECT id FROM contradictions ORDER BY CAST(id AS BLOB)"
                 )
             )
+            purged_signal_ids = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM self_signals ORDER BY CAST(id AS BLOB)"
+                )
+            )
             residual_paths.extend(_remove_managed_backups(workspace))
-            # §13.13 rule 5: detections are generated prose and leave with the
-            # facts; purging them before the raw_logs delete also keeps the
+            # §13.13 rule 5: detections and signals are generated prose and
+            # leave with the facts; purging before the raw_logs delete keeps the
             # answer_log_id ON DELETE SET NULL action from firing into the
             # gap_questions answered-iff CHECK.
             connection.execute("DELETE FROM gap_questions")
             connection.execute("DELETE FROM contradictions")
+            connection.execute("DELETE FROM self_signals")
             connection.execute("DELETE FROM experience_facts")
             connection.execute(
                 "UPDATE llm_calls SET input_hash = NULL, output_hash = NULL"
@@ -161,5 +169,6 @@ def delete_log(
         purged_fact_ids=purged_fact_ids,
         purged_gap_ids=purged_gap_ids,
         purged_contradiction_ids=purged_contradiction_ids,
+        purged_signal_ids=purged_signal_ids,
         residual_paths=tuple(sorted(set(residual_paths))),
     )
