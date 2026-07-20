@@ -191,12 +191,138 @@ def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
     )
     manifest = json.loads(Path(result.manifest_path).read_bytes())
     assert scope_fact in manifest["source_ids"]["experience_fact_ids"]
+    # §16.1 cascade: the grounding fact's own chain rows were read and join
+    # the manifest source lists.
+    with read_database(workspace) as connection:
+        chain = connection.execute(
+            "SELECT fs.evidence_item_id, ei.raw_log_id FROM fact_sources fs "
+            "JOIN evidence_items ei ON ei.id = fs.evidence_item_id "
+            "WHERE fs.fact_id = ?",
+            (scope_fact,),
+        ).fetchall()
+    assert chain
+    for evidence_id, raw_log_id in chain:
+        assert evidence_id in manifest["source_ids"]["evidence_item_ids"]
+        assert raw_log_id in manifest["source_ids"]["raw_log_ids"]
     evidence_map = json.loads(
         (Path(result.manifest_path).parent / "evidence_map.json").read_bytes()
     )
     assert scope_fact not in [
         link["fact_id"] for link in evidence_map["fact_links"]
     ]
+
+
+def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
+    workspace: Path,
+) -> None:
+    """A grounding signal outside the closure resolves signal → facts →
+    evidence → raw logs; every read row joins source_ids while the closed
+    evidence-map link projection stays claim-closure-only."""
+
+    import json
+
+    from test_stage5_signals import SignalIds, prepare_facts, run_stage5
+    from test_stage6_assessment import assessment_response, run_stage6
+
+    ids = SignalIds()
+    cited_fact, scope_fact = prepare_facts(workspace, ids, count=2)
+    two_signals = json.dumps(
+        {
+            "signals": [
+                {
+                    "signal_type": "execution_pattern",
+                    "statement": "Vera Example repeatedly cites the first fact.",
+                    "supporting_fact_ids": [cited_fact],
+                    "counter_fact_ids": [],
+                    "confidence": "medium",
+                },
+                {
+                    "signal_type": "execution_pattern",
+                    "statement": "Vera Example holds an uncited contrary pattern.",
+                    "supporting_fact_ids": [scope_fact],
+                    "counter_fact_ids": [],
+                    "confidence": "medium",
+                },
+            ],
+            "warnings": [],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    signal_result = run_stage5(workspace, FakeContractRunner([two_signals]), ids)
+    by_statement = {
+        item.statement: item.id for item in signal_result.current_signals
+    }
+    cited_signal = by_statement["Vera Example repeatedly cites the first fact."]
+    uncited_signal = by_statement["Vera Example holds an uncited contrary pattern."]
+    generated = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [
+                assessment_response(
+                    fact_ids=[cited_fact], signal_ids=[cited_signal]
+                )
+            ]
+        ),
+        ids,
+    )
+    counterevidence = [
+        {
+            "statement": "Vera Example shows a contrary recurring pattern.",
+            "source_ref_type": "self_signal",
+            "source_ref_id": uncited_signal,
+        }
+    ]
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [
+                verifier_response("contradicted", counterevidence=counterevidence),
+                *(verifier_response() for _ in generated.claims[1:]),
+            ]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    result = export_assessment(
+        workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
+    )
+    manifest = json.loads(Path(result.manifest_path).read_bytes())
+    assert uncited_signal in manifest["source_ids"]["self_signal_ids"]
+    assert scope_fact in manifest["source_ids"]["experience_fact_ids"]
+    with read_database(workspace) as connection:
+        chain = connection.execute(
+            "SELECT fs.evidence_item_id, ei.raw_log_id FROM fact_sources fs "
+            "JOIN evidence_items ei ON ei.id = fs.evidence_item_id "
+            "WHERE fs.fact_id = ?",
+            (scope_fact,),
+        ).fetchall()
+    assert chain
+    for evidence_id, raw_log_id in chain:
+        assert evidence_id in manifest["source_ids"]["evidence_item_ids"]
+        assert raw_log_id in manifest["source_ids"]["raw_log_ids"]
+    evidence_map = json.loads(
+        (Path(result.manifest_path).parent / "evidence_map.json").read_bytes()
+    )
+    assert uncited_signal not in [
+        link["signal_id"] for link in evidence_map["signal_links"]
+    ]
+    assert scope_fact not in [
+        link["fact_id"] for link in evidence_map["fact_links"]
+    ]
+
+    # A corrupted graph — the grounding signal's fact superseded without the
+    # lifecycle supersession of the snapshot — fails export closed.
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE experience_facts SET superseded_at = ? WHERE id = ?",
+            (FIXED_NOW.isoformat(), scope_fact),
+        )
+        connection.commit()
+    with pytest.raises(
+        IntegrityFailureError, match="claim_counterevidence_reference_invalid"
+    ):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
 
 def test_fact_provenance_disagreement_fails_export_closure(

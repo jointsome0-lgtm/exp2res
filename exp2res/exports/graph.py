@@ -101,6 +101,7 @@ class AssessmentExportGraph:
     # report projections keep consuming only the closure fields above.
     counterevidence_signals: tuple[StoredRecord[SelfSignal], ...] = ()
     counterevidence_facts: tuple[StoredRecord[ExperienceFact], ...] = ()
+    counterevidence_fact_sources: tuple[FactSourceRecord, ...] = ()
     counterevidence_evidence_items: tuple[EvidenceItem, ...] = ()
     counterevidence_raw_logs: tuple[RawLog, ...] = ()
 
@@ -219,6 +220,10 @@ def render_input_bundle(graph: AssessmentExportGraph) -> AssessmentRenderInputBu
         (*graph.raw_logs, *graph.counterevidence_raw_logs),
         key=lambda item: id_key(item.id),
     )
+    bundle_fact_sources = sorted(
+        (*graph.fact_sources, *graph.counterevidence_fact_sources),
+        key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id)),
+    )
     return AssessmentRenderInputBundle(
         assessment_snapshots=[
             SnapshotRenderEntry(
@@ -276,7 +281,7 @@ def render_input_bundle(graph: AssessmentExportGraph) -> AssessmentRenderInputBu
                 evidence_item_id=item.evidence_item_id,
                 support_type=item.support_type,
             )
-            for item in graph.fact_sources
+            for item in bundle_fact_sources
         ],
     )
 
@@ -518,11 +523,19 @@ def load_assessment_graph(
         if derived_logs != list(fact.source_log_ids):
             raise IntegrityFailureError("fact_raw_log_closure_incomplete")
 
+    # §16.1: a counterevidence grounding row entering export resolves its own
+    # complete current chain, so out-of-closure targets cascade one level —
+    # signal → facts → fact_sources/evidence → raw logs — and every row read
+    # here joins the manifest source lists and the render-input bundle.
     ce_signals: list[StoredRecord[SelfSignal]] = []
     ce_facts: list[StoredRecord[ExperienceFact]] = []
+    ce_fact_sources: list[FactSourceRecord] = []
     ce_evidence: list[EvidenceItem] = []
     ce_raw_logs: list[RawLog] = []
     invalid = "claim_counterevidence_reference_invalid"
+    ce_fact_ids: set[str] = set(
+        counterevidence_refs.get("experience_fact", set()) - fact_ids
+    )
     for signal_id in sorted(
         counterevidence_refs.get("self_signal", set()) - set(signals_by_id), key=id_key
     ):
@@ -535,9 +548,12 @@ def load_assessment_graph(
         if signal.superseded_at is not None:
             raise IntegrityFailureError(invalid)
         ce_signals.append(_stored(row, signal))
-    for fact_id in sorted(
-        counterevidence_refs.get("experience_fact", set()) - fact_ids, key=id_key
-    ):
+        ce_fact_ids.update(set(signal.supporting_fact_ids) - fact_ids)
+        ce_fact_ids.update(set(signal.counter_fact_ids) - fact_ids)
+    ce_evidence_ids: set[str] = set(
+        counterevidence_refs.get("evidence_item", set()) - set(evidence_ids)
+    )
+    for fact_id in sorted(ce_fact_ids, key=id_key):
         row = connection.execute(
             "SELECT * FROM experience_facts WHERE id = ?", (fact_id,)
         ).fetchone()
@@ -545,19 +561,44 @@ def load_assessment_graph(
         if row is None or fact is None or fact.superseded_at is not None:
             raise IntegrityFailureError(invalid)
         ce_facts.append(_stored(row, fact))
-    for evidence_id in sorted(
-        counterevidence_refs.get("evidence_item", set()) - set(evidence_ids),
-        key=id_key,
-    ):
+        source_rows = connection.execute(
+            "SELECT fact_id, evidence_item_id, support_type "
+            "FROM fact_sources WHERE fact_id = ?",
+            (fact_id,),
+        ).fetchall()
+        row_evidence: list[str] = []
+        for source in source_rows:
+            support_type = source["support_type"]
+            if support_type not in {"direct", "corroborating"}:
+                raise IntegrityFailureError(invalid)
+            ce_fact_sources.append(
+                FactSourceRecord(
+                    fact_id=source["fact_id"],
+                    evidence_item_id=source["evidence_item_id"],
+                    support_type=support_type,
+                )
+            )
+            row_evidence.append(source["evidence_item_id"])
+        if sorted(set(row_evidence), key=id_key) != list(fact.evidence_item_ids):
+            raise IntegrityFailureError("fact_evidence_closure_incomplete")
+        ce_evidence_ids.update(set(fact.evidence_item_ids) - set(evidence_ids))
+    ce_fact_sources.sort(
+        key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id))
+    )
+    ce_log_ids: set[str] = set(
+        counterevidence_refs.get("raw_log", set()) - set(raw_log_ids)
+    )
+    for evidence_id in sorted(ce_evidence_ids, key=id_key):
         row = connection.execute(
             "SELECT * FROM evidence_items WHERE id = ?", (evidence_id,)
         ).fetchone()
         if row is None:
             raise IntegrityFailureError(invalid)
-        ce_evidence.append(hydrate_evidence_item(row))
-    for raw_log_id in sorted(
-        counterevidence_refs.get("raw_log", set()) - set(raw_log_ids), key=id_key
-    ):
+        item = hydrate_evidence_item(row)
+        ce_evidence.append(item)
+        if item.raw_log_id not in set(raw_log_ids):
+            ce_log_ids.add(item.raw_log_id)
+    for raw_log_id in sorted(ce_log_ids, key=id_key):
         row = connection.execute(
             "SELECT * FROM raw_logs WHERE id = ?", (raw_log_id,)
         ).fetchone()
@@ -586,6 +627,7 @@ def load_assessment_graph(
         fact_sources=tuple(fact_source_records),
         counterevidence_signals=tuple(ce_signals),
         counterevidence_facts=tuple(ce_facts),
+        counterevidence_fact_sources=tuple(ce_fact_sources),
         counterevidence_evidence_items=tuple(ce_evidence),
         counterevidence_raw_logs=tuple(ce_raw_logs),
     )
