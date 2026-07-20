@@ -348,8 +348,12 @@ def _require_reference(
 def _validated_answer_log(
     connection: sqlite3.Connection, gap: GapQuestion
 ) -> RawLog:
-    """§14.7 shape check: a real gap-answer record with the copied question."""
+    """§14.7 shape check: a current, real gap-answer record with the copied
+    question — a §13.3-displaced answer log is not a valid current source."""
 
+    _require_reference(
+        connection, "raw_log", gap.answer_log_id, "gap_answer_log_invalid"
+    )
     answer_row = connection.execute(
         "SELECT * FROM raw_logs WHERE id = ?", (gap.answer_log_id,)
     ).fetchone()

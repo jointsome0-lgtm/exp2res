@@ -295,6 +295,30 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
     with pytest.raises(IntegrityFailureError, match="gap_answer_log_invalid"):
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
+    # A displaced answer log is not a current source: restore the legal
+    # pre-synthesis omission, then displace the answer with a correction.
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE gap_questions SET answer_log_id = 'log_vera_late_answer' "
+            "WHERE id = 'gap_vera_stray'"
+        )
+        connection.execute(
+            "UPDATE raw_logs SET recorded_at = '2000-01-01T00:00:00+00:00' "
+            "WHERE id = 'log_vera_late_answer'"
+        )
+        connection.execute(
+            "INSERT INTO raw_logs (id, recorded_at, entry_type, source_type, "
+            "temporal_precision, temporal_confidence, raw_text, "
+            "corrects_log_id) VALUES "
+            "('log_vera_answer_correction', '2026-07-15T14:00:00+00:00', "
+            "'correction', 'manual_entry', 'unknown', 'unknown', "
+            "'Vera Example corrected the answer.', 'log_vera_late_answer')"
+        )
+        connection.commit()
+    with pytest.raises(IntegrityFailureError, match="gap_answer_log_invalid"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
 
 def test_cited_signal_without_fact_chain_fails_export(workspace: Path) -> None:
     """§16.1: a cited signal with empty supporting and counter fact lists has
