@@ -739,7 +739,6 @@ VERIFICATION_FINDINGS_TARGET_INDEX_SQL = (
 VERIFICATION_FINDINGS_UPDATE_GUARD_SQL = """
 CREATE TRIGGER verification_findings_update_guard
 BEFORE UPDATE ON verification_findings
-WHEN exp2res_owner_delete() <> 1
 BEGIN
     SELECT RAISE(ABORT, 'verification_finding_immutable');
 END;

@@ -505,6 +505,16 @@ def test_findings_are_append_only_until_owner_purge(workspace: Path) -> None:
             connection.execute(
                 "DELETE FROM verification_findings WHERE id = ?", (finding_id,)
             )
+    # §11.14: the payload stays immutable even on owner-delete connections;
+    # owner deletion may only purge finding rows, never rewrite them.
+    with writer_database(workspace, owner_delete=True) as connection:
+        with pytest.raises(
+            sqlite3.IntegrityError, match="verification_finding_immutable"
+        ):
+            connection.execute(
+                "UPDATE verification_findings SET reason = ? WHERE id = ?",
+                ("Vera Example altered reason.", finding_id),
+            )
 
 
 def test_raw_log_reset_purges_verification_findings(workspace: Path) -> None:
