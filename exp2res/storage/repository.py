@@ -1073,7 +1073,7 @@ def update_assessment_snapshot_verification(
         raise IntegrityFailureError("snapshot_verification_update_failed")
 
 
-def _validate_detection_reference(
+def validate_detection_reference(
     connection: sqlite3.Connection,
     *,
     ref_type: str,
@@ -1144,7 +1144,7 @@ def insert_gap_question(
         or gap.answer_log_id is not None
     ):
         raise IntegrityFailureError("gap_initial_lifecycle_invalid")
-    _validate_detection_reference(
+    validate_detection_reference(
         connection,
         ref_type=gap.target_type,
         ref_id=gap.target_id,
@@ -1191,13 +1191,13 @@ def insert_contradiction(
         raise IntegrityFailureError("contradiction_production_identity_invalid")
     if contradiction.superseded_at is not None:
         raise IntegrityFailureError("contradiction_initial_lifecycle_invalid")
-    _validate_detection_reference(
+    validate_detection_reference(
         connection,
         ref_type=contradiction.left_ref_type,
         ref_id=contradiction.left_ref_id,
         field="contradiction_left_ref",
     )
-    _validate_detection_reference(
+    validate_detection_reference(
         connection,
         ref_type=contradiction.right_ref_type,
         ref_id=contradiction.right_ref_id,

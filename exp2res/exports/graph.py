@@ -36,6 +36,7 @@ from exp2res.storage.repository import (
     hydrate_raw_log,
     hydrate_self_claim,
     hydrate_self_signal,
+    validate_detection_reference,
 )
 
 
@@ -320,22 +321,21 @@ def load_current_snapshot(
 def _require_reference(
     connection: sqlite3.Connection, ref_type: str, ref_id: str, diagnostic: str
 ) -> None:
-    table_and_lifecycle = {
-        "raw_log": ("raw_logs", False),
-        "evidence_item": ("evidence_items", False),
-        "experience_fact": ("experience_facts", True),
-        "self_signal": ("self_signals", True),
-    }
+    if ref_type == "self_signal":
+        row = connection.execute(
+            "SELECT superseded_at FROM self_signals WHERE id = ?", (ref_id,)
+        ).fetchone()
+        if row is None or row[0] is not None:
+            raise IntegrityFailureError(diagnostic)
+        return
+    # §13.3: detection targets exclude displaced records and their linked
+    # items, so export reuses Stage 4 insertion's reference validation.
     try:
-        table, lifecycle = table_and_lifecycle[ref_type]
-    except KeyError as error:
+        validate_detection_reference(
+            connection, ref_type=ref_type, ref_id=ref_id, field="export"
+        )
+    except IntegrityFailureError as error:
         raise IntegrityFailureError(diagnostic) from error
-    selected = "superseded_at" if lifecycle else "id"
-    row = connection.execute(
-        f"SELECT {selected} FROM {table} WHERE id = ?", (ref_id,)
-    ).fetchone()
-    if row is None or (lifecycle and row[0] is not None):
-        raise IntegrityFailureError(diagnostic)
 
 
 def load_assessment_graph(
@@ -411,6 +411,11 @@ def load_assessment_graph(
                 or question_reason != gap.reason
             ):
                 raise IntegrityFailureError("gap_answer_log_invalid")
+            # Complement of the unlisted-gap check below: Stage 6 lists only
+            # gaps unanswered at synthesis, so a listed answer recorded at or
+            # before the snapshot instant is an inconsistent input.
+            if answer_log.recorded_at <= snapshot.created_at:
+                raise IntegrityFailureError("snapshot_gap_set_stale")
             note_supplemental("raw_log", gap.answer_log_id)
         gap_records.append(_stored(row, gap))
     gap_records.sort(key=lambda item: id_key(item.value.id))

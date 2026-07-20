@@ -239,6 +239,90 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
         workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
     )
 
+    # The listed complement: a listed gap whose answer predates synthesis is
+    # equally inconsistent (Stage 6 lists only gaps unanswered at synthesis),
+    # while a listed answer recorded after synthesis renders the
+    # answered-since-synthesis marker and exports.
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE assessment_snapshots SET gap_question_ids_json = ? "
+            "WHERE id = ?",
+            (json.dumps(["gap_vera_stray"]), generated.snapshot_id),
+        )
+        connection.commit()
+    with pytest.raises(IntegrityFailureError, match="snapshot_gap_set_stale"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE raw_logs SET recorded_at = '2099-01-01T00:00:00+00:00' "
+            "WHERE id = 'log_vera_late_answer'"
+        )
+        connection.commit()
+    export_assessment(
+        workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
+    )
+
+
+def test_displaced_detection_targets_fail_export(workspace: Path) -> None:
+    """§13.3: a listed contradiction referencing a raw log displaced by a
+    correction is not a current detection target and fails export closed."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response() for _ in generated.claims]),
+        ids,
+        generated.snapshot_id,
+    )
+    with read_database(workspace) as connection:
+        run_id = connection.execute(
+            "SELECT id FROM processing_runs LIMIT 1"
+        ).fetchone()[0]
+        fact_id = connection.execute(
+            "SELECT id FROM experience_facts WHERE superseded_at IS NULL LIMIT 1"
+        ).fetchone()[0]
+        raw_log_id = connection.execute(
+            "SELECT id FROM raw_logs LIMIT 1"
+        ).fetchone()[0]
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "INSERT INTO raw_logs (id, recorded_at, entry_type, source_type, "
+            "temporal_precision, temporal_confidence, raw_text, "
+            "corrects_log_id) VALUES "
+            "('log_vera_correction', '2026-07-15T13:00:00+00:00', "
+            "'correction', 'manual_entry', 'unknown', 'unknown', "
+            "'Vera Example corrected restatement.', ?)",
+            (raw_log_id,),
+        )
+        connection.execute(
+            "INSERT INTO contradictions (id, created_at, title, description, "
+            "left_ref_type, left_ref_id, right_ref_type, right_ref_id, "
+            "metadata_json, produced_by_run_id, generation_id) VALUES "
+            "('contradiction_vera_displaced', '2026-07-15T12:00:00+00:00', "
+            "'Vera Example displaced conflict', "
+            "'Vera Example displaced description.', "
+            "'experience_fact', ?, 'raw_log', ?, '{}', ?, "
+            "'generation_vera_displaced')",
+            (fact_id, raw_log_id, run_id),
+        )
+        connection.execute(
+            "UPDATE assessment_snapshots SET contradiction_ids_json = ? "
+            "WHERE id = ?",
+            (
+                json.dumps(["contradiction_vera_displaced"]),
+                generated.snapshot_id,
+            ),
+        )
+        connection.commit()
+    with pytest.raises(
+        IntegrityFailureError, match="contradiction_right_ref_invalid"
+    ):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
 
 def test_claim_from_another_generation_fails_export_as_mixed_graph(
     workspace: Path,
