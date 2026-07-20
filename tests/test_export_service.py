@@ -136,6 +136,62 @@ def test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity(
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
 
+def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
+    """§13.12: a current contradiction missing from the snapshot's referenced
+    set, or a current unanswered gap it does not reference, is an
+    inconsistent input and fails export before publication."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response() for _ in generated.claims]),
+        ids,
+        generated.snapshot_id,
+    )
+    with read_database(workspace) as connection:
+        run_id = connection.execute(
+            "SELECT id FROM processing_runs LIMIT 1"
+        ).fetchone()[0]
+        fact_id = connection.execute(
+            "SELECT id FROM experience_facts WHERE superseded_at IS NULL LIMIT 1"
+        ).fetchone()[0]
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "INSERT INTO contradictions (id, created_at, title, description, "
+            "left_ref_type, left_ref_id, right_ref_type, right_ref_id, "
+            "metadata_json, produced_by_run_id, generation_id) VALUES "
+            "('contradiction_vera_stray', '2026-07-15T12:00:00+00:00', "
+            "'Vera Example stray conflict', 'Vera Example stray description.', "
+            "'experience_fact', ?, 'experience_fact', ?, '{}', ?, "
+            "'generation_vera_stray')",
+            (fact_id, fact_id, run_id),
+        )
+        connection.commit()
+    with pytest.raises(
+        IntegrityFailureError, match="snapshot_contradiction_set_stale"
+    ):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "DELETE FROM contradictions WHERE id = 'contradiction_vera_stray'"
+        )
+        connection.execute(
+            "INSERT INTO gap_questions (id, created_at, target_type, "
+            "target_id, question, reason, priority, answered, "
+            "produced_by_run_id, generation_id) VALUES "
+            "('gap_vera_stray', '2026-07-15T12:00:00+00:00', "
+            "'experience_fact', ?, 'Which Vera Example scale applies?', "
+            "'missing_scale', 'medium', 0, ?, 'generation_vera_stray')",
+            (fact_id, run_id),
+        )
+        connection.commit()
+    with pytest.raises(IntegrityFailureError, match="snapshot_gap_set_stale"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+
 def test_claim_from_another_generation_fails_export_as_mixed_graph(
     workspace: Path,
 ) -> None:

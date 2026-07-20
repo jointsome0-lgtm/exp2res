@@ -443,6 +443,29 @@ def load_assessment_graph(
         contradiction_records.append(_stored(row, contradiction))
     contradiction_records.sort(key=lambda item: id_key(item.value.id))
 
+    # §13.12 inconsistent-input gate (evals 21.4/21.33): while this snapshot
+    # is current, Stage 4 cannot have changed the detection sets without
+    # superseding it, so the complete current contradiction set must equal the
+    # referenced set and every current unanswered gap must be referenced. A
+    # gap answered before synthesis legitimately stays current and unlisted.
+    current_contradictions = {
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM contradictions WHERE superseded_at IS NULL"
+        )
+    }
+    if current_contradictions != set(snapshot.contradiction_ids):
+        raise IntegrityFailureError("snapshot_contradiction_set_stale")
+    current_unanswered = {
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM gap_questions "
+            "WHERE superseded_at IS NULL AND answered = 0"
+        )
+    }
+    if not current_unanswered <= set(snapshot.gap_question_ids):
+        raise IntegrityFailureError("snapshot_gap_set_stale")
+
     signal_ids = sorted(
         {signal_id for item in claims for signal_id in item.value.source_signal_ids},
         key=id_key,
