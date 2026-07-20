@@ -10,14 +10,16 @@ from typing import Iterable
 
 from pydantic import ValidationError
 
-from exp2res.domain.calibration import signal_confidence_cap
+from exp2res.domain.calibration import claim_confidence_cap, signal_confidence_cap
 from exp2res.domain.models import (
     Contradiction,
+    AssessmentSnapshot,
     EvidenceItem,
     ExperienceFact,
     GapQuestion,
     OccurredAt,
     RawLog,
+    SelfClaim,
     SelfSignal,
     canonical_project_key,
 )
@@ -631,6 +633,248 @@ def list_self_signals(
     return tuple(signals)
 
 
+def insert_assessment_snapshot(
+    connection: sqlite3.Connection,
+    snapshot: AssessmentSnapshot,
+    *,
+    produced_by_run_id: str,
+    generation_id: str,
+) -> None:
+    if not produced_by_run_id or not generation_id:
+        raise IntegrityFailureError("snapshot_production_identity_invalid")
+    if snapshot.superseded_at is not None:
+        raise IntegrityFailureError("snapshot_initial_lifecycle_invalid")
+    if snapshot.verification_status != "unverified":
+        raise IntegrityFailureError("snapshot_initial_verification_invalid")
+    for gap_id in snapshot.gap_question_ids:
+        row = connection.execute(
+            "SELECT superseded_at, answered FROM gap_questions WHERE id = ?",
+            (gap_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("snapshot_gap_missing")
+        if row["superseded_at"] is not None:
+            raise IntegrityFailureError("snapshot_gap_superseded")
+        if row["answered"] != 0:
+            raise IntegrityFailureError("snapshot_gap_answered")
+    for contradiction_id in snapshot.contradiction_ids:
+        row = connection.execute(
+            "SELECT superseded_at FROM contradictions WHERE id = ?",
+            (contradiction_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("snapshot_contradiction_missing")
+        if row["superseded_at"] is not None:
+            raise IntegrityFailureError("snapshot_contradiction_superseded")
+    try:
+        connection.execute(
+            """
+            INSERT INTO assessment_snapshots(
+                id, created_at, superseded_at, scope, scope_target, title,
+                summary, gap_question_ids_json, contradiction_ids_json,
+                verification_status, metadata_json, produced_by_run_id,
+                generation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot.id,
+                _iso(snapshot.created_at),
+                _iso(snapshot.superseded_at),
+                snapshot.scope,
+                snapshot.scope_target,
+                snapshot.title,
+                snapshot.summary,
+                _json(snapshot.gap_question_ids),
+                _json(snapshot.contradiction_ids),
+                snapshot.verification_status,
+                _json(snapshot.metadata),
+                produced_by_run_id,
+                generation_id,
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        if "assessment_snapshots.id" in str(error):
+            raise IdCollisionError() from error
+        raise IntegrityFailureError("snapshot_insert_failed") from error
+
+
+def insert_self_claim(
+    connection: sqlite3.Connection,
+    claim: SelfClaim,
+    *,
+    produced_by_run_id: str,
+    generation_id: str,
+) -> None:
+    if not produced_by_run_id or not generation_id:
+        raise IntegrityFailureError("claim_production_identity_invalid")
+    if claim.superseded_at is not None:
+        raise IntegrityFailureError("claim_initial_lifecycle_invalid")
+    if claim.verification_status != "unverified":
+        raise IntegrityFailureError("claim_initial_verification_invalid")
+    if claim.counterevidence:
+        raise IntegrityFailureError("claim_initial_counterevidence_invalid")
+    owner = connection.execute(
+        "SELECT superseded_at FROM assessment_snapshots WHERE id = ?",
+        (claim.snapshot_id,),
+    ).fetchone()
+    if owner is None:
+        raise IntegrityFailureError("claim_snapshot_missing")
+    if owner["superseded_at"] is not None:
+        raise IntegrityFailureError("claim_snapshot_superseded")
+
+    confidences: list[str] = []
+    for signal_id in claim.source_signal_ids:
+        row = connection.execute(
+            "SELECT confidence, superseded_at FROM self_signals WHERE id = ?",
+            (signal_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("claim_signal_missing")
+        if row["superseded_at"] is not None:
+            raise IntegrityFailureError("claim_signal_superseded")
+        confidences.append(row["confidence"])
+    for fact_id in claim.source_fact_ids:
+        row = connection.execute(
+            "SELECT confidence, superseded_at FROM experience_facts WHERE id = ?",
+            (fact_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("claim_fact_missing")
+        if row["superseded_at"] is not None:
+            raise IntegrityFailureError("claim_fact_superseded")
+        confidences.append(row["confidence"])
+    cap = claim_confidence_cap(source_confidences=confidences)
+    if confidence_exceeds(claim.confidence, cap):
+        raise IntegrityFailureError("claim_confidence_above_cap")
+    try:
+        connection.execute(
+            """
+            INSERT INTO self_claims(
+                id, created_at, superseded_at, snapshot_id, claim, claim_kind,
+                dimension, source_signal_ids_json, source_fact_ids_json,
+                confidence, verification_status, counterevidence_json,
+                uncertainty, metadata_json, produced_by_run_id, generation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                claim.id,
+                _iso(claim.created_at),
+                _iso(claim.superseded_at),
+                claim.snapshot_id,
+                claim.claim,
+                claim.claim_kind,
+                claim.dimension,
+                _json(claim.source_signal_ids),
+                _json(claim.source_fact_ids),
+                claim.confidence,
+                claim.verification_status,
+                _json([item.model_dump(mode="json") for item in claim.counterevidence]),
+                claim.uncertainty,
+                _json(claim.metadata),
+                produced_by_run_id,
+                generation_id,
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        if "self_claims.id" in str(error):
+            raise IdCollisionError() from error
+        raise IntegrityFailureError("claim_insert_failed") from error
+
+
+def hydrate_assessment_snapshot(row: sqlite3.Row) -> AssessmentSnapshot:
+    try:
+        gap_ids = json.loads(row["gap_question_ids_json"])
+        contradiction_ids = json.loads(row["contradiction_ids_json"])
+        metadata = json.loads(row["metadata_json"])
+    except (json.JSONDecodeError, IndexError, TypeError) as error:
+        raise HydrationFailureError() from error
+    return _hydrate(
+        AssessmentSnapshot,
+        {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "superseded_at": row["superseded_at"],
+            "scope": row["scope"],
+            "scope_target": row["scope_target"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "gap_question_ids": gap_ids,
+            "contradiction_ids": contradiction_ids,
+            "verification_status": row["verification_status"],
+            "metadata": metadata,
+        },
+    )
+
+
+def hydrate_self_claim(row: sqlite3.Row) -> SelfClaim:
+    try:
+        signal_ids = json.loads(row["source_signal_ids_json"])
+        fact_ids = json.loads(row["source_fact_ids_json"])
+        counterevidence = json.loads(row["counterevidence_json"])
+        metadata = json.loads(row["metadata_json"])
+    except (json.JSONDecodeError, IndexError, TypeError) as error:
+        raise HydrationFailureError() from error
+    return _hydrate(
+        SelfClaim,
+        {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "superseded_at": row["superseded_at"],
+            "snapshot_id": row["snapshot_id"],
+            "claim": row["claim"],
+            "claim_kind": row["claim_kind"],
+            "dimension": row["dimension"],
+            "source_signal_ids": signal_ids,
+            "source_fact_ids": fact_ids,
+            "confidence": row["confidence"],
+            "verification_status": row["verification_status"],
+            "counterevidence": counterevidence,
+            "uncertainty": row["uncertainty"],
+            "metadata": metadata,
+        },
+    )
+
+
+def list_assessment_snapshots(
+    connection: sqlite3.Connection, *, current_only: bool = True
+) -> tuple[AssessmentSnapshot, ...]:
+    where = " WHERE superseded_at IS NULL" if current_only else ""
+    rows = connection.execute("SELECT * FROM assessment_snapshots" + where).fetchall()
+    return tuple(
+        sorted((hydrate_assessment_snapshot(row) for row in rows), key=lambda item: item.id.encode("utf-8"))
+    )
+
+
+def list_self_claims_for_snapshot(
+    connection: sqlite3.Connection,
+    snapshot_id: str,
+    *,
+    current_only: bool = True,
+) -> tuple[SelfClaim, ...]:
+    current = " AND superseded_at IS NULL" if current_only else ""
+    rows = connection.execute(
+        "SELECT * FROM self_claims WHERE snapshot_id = ?" + current,
+        (snapshot_id,),
+    ).fetchall()
+    return tuple(
+        sorted((hydrate_self_claim(row) for row in rows), key=lambda item: item.id.encode("utf-8"))
+    )
+
+
+def get_assessment_snapshot(
+    connection: sqlite3.Connection,
+    snapshot_id: str,
+    *,
+    current_only: bool = True,
+) -> AssessmentSnapshot | None:
+    current = " AND superseded_at IS NULL" if current_only else ""
+    row = connection.execute(
+        "SELECT * FROM assessment_snapshots WHERE id = ?" + current,
+        (snapshot_id,),
+    ).fetchone()
+    return None if row is None else hydrate_assessment_snapshot(row)
+
+
 def _validate_detection_reference(
     connection: sqlite3.Connection,
     *,
@@ -975,6 +1219,32 @@ def mark_self_signals_superseded(
         connection,
         table="self_signals",
         ids=signal_ids,
+        superseded_at=superseded_at,
+    )
+
+
+def mark_self_claims_superseded(
+    connection: sqlite3.Connection,
+    claim_ids: Iterable[str],
+    superseded_at: datetime,
+) -> None:
+    _mark_rows_superseded(
+        connection,
+        table="self_claims",
+        ids=claim_ids,
+        superseded_at=superseded_at,
+    )
+
+
+def mark_assessment_snapshots_superseded(
+    connection: sqlite3.Connection,
+    snapshot_ids: Iterable[str],
+    superseded_at: datetime,
+) -> None:
+    _mark_rows_superseded(
+        connection,
+        table="assessment_snapshots",
+        ids=snapshot_ids,
         superseded_at=superseded_at,
     )
 

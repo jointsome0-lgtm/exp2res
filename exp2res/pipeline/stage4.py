@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.models import Contradiction, GapQuestion
+from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.llm.contracts import (
     ContractValidationError,
     ContractWarning,
@@ -32,13 +33,17 @@ from exp2res.services.capture import new_id
 from exp2res.storage.repository import (
     insert_contradiction,
     insert_gap_question,
+    list_assessment_snapshots,
     list_contradictions,
     list_experience_facts,
     list_gap_questions,
     list_self_signals,
+    list_self_claims_for_snapshot,
+    mark_assessment_snapshots_superseded,
     mark_contradictions_superseded,
     mark_gap_questions_superseded,
     mark_self_signals_superseded,
+    mark_self_claims_superseded,
 )
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
 
@@ -59,6 +64,9 @@ class Stage4Result:
     superseded_gap_ids: tuple[str, ...]
     superseded_contradiction_ids: tuple[str, ...]
     superseded_signal_ids: tuple[str, ...]
+    superseded_claim_ids: tuple[str, ...]
+    superseded_snapshot_ids: tuple[str, ...]
+    invalidated_views: tuple[InvalidatedView, ...]
     generation_id: str | None
     superseded_generation_ids: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
@@ -326,6 +334,9 @@ def run_detection_generation(
         superseded_gap_ids: tuple[str, ...] = ()
         superseded_contradiction_ids: tuple[str, ...] = ()
         superseded_signal_ids: tuple[str, ...] = ()
+        superseded_claim_ids: tuple[str, ...] = ()
+        superseded_snapshot_ids: tuple[str, ...] = ()
+        invalidated_views: tuple[InvalidatedView, ...] = ()
         generation_id: str | None = None
         superseded_generation_ids: set[str] = set()
 
@@ -336,6 +347,7 @@ def run_detection_generation(
             nonlocal created_gap_ids, created_contradiction_ids
             nonlocal superseded_gap_ids, superseded_contradiction_ids
             nonlocal superseded_signal_ids
+            nonlocal superseded_claim_ids, superseded_snapshot_ids, invalidated_views
             nonlocal generation_id
 
             candidate = cast(_ResolvedDetection, resolved[0])
@@ -367,10 +379,27 @@ def run_detection_generation(
             )
             current_signals = list_self_signals(held)
             superseded_signal_ids = tuple(item.id for item in current_signals)
+            current_snapshots = list_assessment_snapshots(held)
+            superseded_snapshot_ids = tuple(item.id for item in current_snapshots)
+            superseded_claim_ids = tuple(
+                claim.id
+                for snapshot in current_snapshots
+                for claim in list_self_claims_for_snapshot(held, snapshot.id)
+            )
+            invalidated_views = tuple(
+                invalidated_view(
+                    scope=snapshot.scope,
+                    scope_target=snapshot.scope_target,
+                    snapshot_id=snapshot.id,
+                )
+                for snapshot in current_snapshots
+            )
             for table, ids in (
                 ("gap_questions", superseded_gap_ids),
                 ("contradictions", superseded_contradiction_ids),
                 ("self_signals", superseded_signal_ids),
+                ("self_claims", superseded_claim_ids),
+                ("assessment_snapshots", superseded_snapshot_ids),
             ):
                 if ids:
                     placeholders = ",".join("?" for _ in ids)
@@ -389,8 +418,10 @@ def run_detection_generation(
             mark_self_signals_superseded(
                 held, superseded_signal_ids, swap_time
             )
-            # §13.4: claim/snapshot/branch/bullet supersession joins this
-            # transaction when those upper-layer tables land.
+            mark_self_claims_superseded(held, superseded_claim_ids, swap_time)
+            mark_assessment_snapshots_superseded(
+                held, superseded_snapshot_ids, swap_time
+            )
             generation_id = id_factory("gen")
             for gap in candidate.gaps:
                 insert_gap_question(
@@ -453,6 +484,13 @@ def run_detection_generation(
         superseded_gap_ids=superseded_gap_ids,
         superseded_contradiction_ids=superseded_contradiction_ids,
         superseded_signal_ids=tuple(sorted(superseded_signal_ids, key=_id_key)),
+        superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
+        superseded_snapshot_ids=tuple(
+            sorted(superseded_snapshot_ids, key=_id_key)
+        ),
+        invalidated_views=tuple(
+            sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
+        ),
         generation_id=generation_id,
         superseded_generation_ids=tuple(
             sorted(superseded_generation_ids, key=_id_key)

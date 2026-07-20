@@ -4,22 +4,27 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
+import shlex
 
 from pydantic import ConfigDict, Field, model_validator
 
 from exp2res.llm.contracts import ContractWarning
 
 from .enums import (
+    AssessmentScope,
     CLIResultStatus,
     EntryType,
     SourceType,
+    VerificationStatus,
 )
 from .models import (
+    AssessmentSnapshot,
     Contradiction,
     ExperienceFact,
     GapQuestion,
     OccurredAt,
     SelfSignal,
+    SelfClaim,
     StrictModel,
 )
 
@@ -38,6 +43,9 @@ CommandPath = Literal[
     "detections generate",
     "signals generate",
     "signals list",
+    "assess generate",
+    "assess list",
+    "assess show",
     "gaps list",
     "gaps answer",
     "contradictions list",
@@ -116,6 +124,47 @@ class SignalsListResult(StrictModel):
     signals: list[SelfSignal]
 
 
+class InvalidatedView(StrictModel):
+    scope: AssessmentScope
+    scope_target: str | None
+    snapshot_id: str
+    regeneration_command: str
+
+
+def invalidated_view(
+    *, scope: AssessmentScope, scope_target: str | None, snapshot_id: str
+) -> InvalidatedView:
+    command = "exp2res assess generate"
+    if scope == "project":
+        assert scope_target is not None
+        command += f" --scope project --project {shlex.quote(scope_target)}"
+    return InvalidatedView(
+        scope=scope,
+        scope_target=scope_target,
+        snapshot_id=snapshot_id,
+        regeneration_command=command,
+    )
+
+
+class SnapshotListItem(StrictModel):
+    id: str
+    scope: AssessmentScope
+    scope_target: str | None
+    verification_status: VerificationStatus
+    created_at: datetime
+
+
+class AssessListResult(StrictModel):
+    snapshots: list[SnapshotListItem]
+
+
+class AssessShowResult(StrictModel):
+    snapshot: AssessmentSnapshot
+    claims: list[SelfClaim]
+    gaps: list[GapQuestion]
+    contradictions: list[Contradiction]
+
+
 ResultPayload = (
     SchemaResult
     | LogsListResult
@@ -125,6 +174,8 @@ ResultPayload = (
     | GapsListResult
     | ContradictionsResult
     | SignalsListResult
+    | AssessListResult
+    | AssessShowResult
 )
 
 
@@ -144,7 +195,7 @@ class CLIEnvelope(StrictModel):
     affected_ids: AffectedIds = Field(default_factory=AffectedIds)
     generation_ids: list[str] = Field(default_factory=list)
     run_ids: list[str] = Field(default_factory=list)
-    invalidated_views: list[Any] = Field(default_factory=list)
+    invalidated_views: list[InvalidatedView] = Field(default_factory=list)
     invalidated_branches: list[Any] = Field(default_factory=list)
     findings: list[Any] = Field(default_factory=list)
     residual_paths: list[str] = Field(default_factory=list)

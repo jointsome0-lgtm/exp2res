@@ -14,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.calibration import signal_confidence_cap
 from exp2res.domain.models import EvidenceItem, ExperienceFact, SelfSignal
+from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.domain.temporal import confidence_exceeds
 from exp2res.errors import IntegrityFailureError
 from exp2res.llm.contracts import (
@@ -33,10 +34,14 @@ from exp2res.services.capture import new_id
 from exp2res.storage.repository import (
     hydrate_evidence_item,
     insert_self_signal,
+    list_assessment_snapshots,
     list_contradictions,
     list_experience_facts,
     list_self_signals,
+    list_self_claims_for_snapshot,
+    mark_assessment_snapshots_superseded,
     mark_self_signals_superseded,
+    mark_self_claims_superseded,
 )
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
 
@@ -48,6 +53,9 @@ class Stage5Result:
     run_id: str
     created_signal_ids: tuple[str, ...]
     superseded_signal_ids: tuple[str, ...]
+    superseded_claim_ids: tuple[str, ...]
+    superseded_snapshot_ids: tuple[str, ...]
+    invalidated_views: tuple[InvalidatedView, ...]
     generation_id: str | None
     superseded_generation_ids: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
@@ -263,6 +271,9 @@ def run_signal_generation(
 
         created_signal_ids: tuple[str, ...] = ()
         superseded_signal_ids: tuple[str, ...] = ()
+        superseded_claim_ids: tuple[str, ...] = ()
+        superseded_snapshot_ids: tuple[str, ...] = ()
+        invalidated_views: tuple[InvalidatedView, ...] = ()
         generation_id: str | None = None
         superseded_generation_ids: set[str] = set()
 
@@ -270,6 +281,7 @@ def run_signal_generation(
             held: sqlite3.Connection, resolved: Sequence[object]
         ) -> Iterable[str]:
             nonlocal created_signal_ids, superseded_signal_ids, generation_id
+            nonlocal superseded_claim_ids, superseded_snapshot_ids, invalidated_views
 
             candidate = cast(_ResolvedSignals, resolved[0])
             current = list_self_signals(held)
@@ -286,6 +298,39 @@ def run_signal_generation(
                 )
             swap_time = now()
             mark_self_signals_superseded(held, superseded_signal_ids, swap_time)
+            current_snapshots = list_assessment_snapshots(held)
+            superseded_snapshot_ids = tuple(item.id for item in current_snapshots)
+            superseded_claim_ids = tuple(
+                claim.id
+                for snapshot in current_snapshots
+                for claim in list_self_claims_for_snapshot(held, snapshot.id)
+            )
+            invalidated_views = tuple(
+                invalidated_view(
+                    scope=snapshot.scope,
+                    scope_target=snapshot.scope_target,
+                    snapshot_id=snapshot.id,
+                )
+                for snapshot in current_snapshots
+            )
+            for table, ids in (
+                ("self_claims", superseded_claim_ids),
+                ("assessment_snapshots", superseded_snapshot_ids),
+            ):
+                if ids:
+                    placeholders = ",".join("?" for _ in ids)
+                    superseded_generation_ids.update(
+                        row[0]
+                        for row in held.execute(
+                            f"SELECT DISTINCT generation_id FROM {table} "
+                            f"WHERE id IN ({placeholders})",
+                            ids,
+                        )
+                    )
+            mark_self_claims_superseded(held, superseded_claim_ids, swap_time)
+            mark_assessment_snapshots_superseded(
+                held, superseded_snapshot_ids, swap_time
+            )
             generation_id = id_factory("gen")
             for signal in candidate.signals:
                 insert_self_signal(
@@ -331,6 +376,13 @@ def run_signal_generation(
         created_signal_ids=created_signal_ids,
         superseded_signal_ids=tuple(
             sorted(superseded_signal_ids, key=_id_key)
+        ),
+        superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
+        superseded_snapshot_ids=tuple(
+            sorted(superseded_snapshot_ids, key=_id_key)
+        ),
+        invalidated_views=tuple(
+            sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
         ),
         generation_id=generation_id,
         superseded_generation_ids=tuple(

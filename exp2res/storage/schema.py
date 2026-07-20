@@ -565,6 +565,152 @@ BEGIN
 END;
 """
 
+ASSESSMENT_SNAPSHOTS_SQL = """
+CREATE TABLE assessment_snapshots (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,
+    scope TEXT NOT NULL CHECK (scope IN ('global', 'project')),
+    scope_target TEXT,
+    title TEXT NOT NULL CHECK (title <> ''),
+    summary TEXT NOT NULL CHECK (summary <> ''),
+    gap_question_ids_json TEXT NOT NULL DEFAULT '[]',
+    contradiction_ids_json TEXT NOT NULL DEFAULT '[]',
+    verification_status TEXT NOT NULL CHECK (verification_status IN (
+        'unverified', 'supported', 'partially_supported',
+        'inferred_but_acceptable', 'needs_clarification', 'contradicted',
+        'unsupported', 'rejected'
+    )),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
+    generation_id TEXT NOT NULL CHECK (generation_id <> ''),
+    CHECK ((scope = 'global') = (scope_target IS NULL)),
+    CHECK (scope_target IS NULL OR scope_target <> '')
+);
+"""
+
+SELF_CLAIMS_SQL = """
+CREATE TABLE self_claims (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,
+    snapshot_id TEXT NOT NULL REFERENCES assessment_snapshots(id),
+    claim TEXT NOT NULL CHECK (claim <> ''),
+    claim_kind TEXT NOT NULL CHECK (claim_kind IN (
+        'pattern_signal', 'hypothesis', 'narrative_summary'
+    )),
+    dimension TEXT NOT NULL CHECK (dimension IN (
+        'technical_skill', 'domain_interest', 'working_style',
+        'execution_capacity', 'constraint', 'risk', 'gap', 'trajectory',
+        'identity_hypothesis'
+    )),
+    source_signal_ids_json TEXT NOT NULL DEFAULT '[]',
+    source_fact_ids_json TEXT NOT NULL DEFAULT '[]',
+    confidence TEXT NOT NULL CHECK (
+        confidence IN ('low', 'medium', 'high', 'unknown')
+    ),
+    verification_status TEXT NOT NULL CHECK (verification_status IN (
+        'unverified', 'supported', 'partially_supported',
+        'inferred_but_acceptable', 'needs_clarification', 'contradicted',
+        'unsupported', 'rejected'
+    )),
+    counterevidence_json TEXT NOT NULL DEFAULT '[]',
+    uncertainty TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
+    generation_id TEXT NOT NULL CHECK (generation_id <> '')
+);
+"""
+
+SELF_CLAIMS_SNAPSHOT_INDEX_SQL = (
+    "CREATE INDEX self_claims_snapshot_id_idx ON self_claims(snapshot_id);"
+)
+
+SELF_CLAIMS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER self_claims_lifecycle_update_guard
+BEFORE UPDATE ON self_claims
+WHEN exp2res_owner_delete() <> 1 AND NOT (
+    OLD.superseded_at IS NULL
+    AND (
+        (
+            NEW.superseded_at IS NOT NULL
+            AND NEW.verification_status IS OLD.verification_status
+            AND NEW.counterevidence_json IS OLD.counterevidence_json
+        )
+        OR
+        (
+            NEW.superseded_at IS OLD.superseded_at
+        )
+    )
+    AND NEW.id IS OLD.id
+    AND NEW.created_at IS OLD.created_at
+    AND NEW.snapshot_id IS OLD.snapshot_id
+    AND NEW.claim IS OLD.claim
+    AND NEW.claim_kind IS OLD.claim_kind
+    AND NEW.dimension IS OLD.dimension
+    AND NEW.source_signal_ids_json IS OLD.source_signal_ids_json
+    AND NEW.source_fact_ids_json IS OLD.source_fact_ids_json
+    AND NEW.confidence IS OLD.confidence
+    AND NEW.uncertainty IS OLD.uncertainty
+    AND NEW.metadata_json IS OLD.metadata_json
+    AND NEW.produced_by_run_id IS OLD.produced_by_run_id
+    AND NEW.generation_id IS OLD.generation_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'self_claim_lifecycle_only');
+END;
+"""
+
+ASSESSMENT_SNAPSHOTS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER assessment_snapshots_lifecycle_update_guard
+BEFORE UPDATE ON assessment_snapshots
+WHEN exp2res_owner_delete() <> 1 AND NOT (
+    OLD.superseded_at IS NULL
+    AND (
+        (
+            NEW.superseded_at IS NOT NULL
+            AND NEW.verification_status IS OLD.verification_status
+        )
+        OR
+        (
+            NEW.superseded_at IS OLD.superseded_at
+        )
+    )
+    AND NEW.id IS OLD.id
+    AND NEW.created_at IS OLD.created_at
+    AND NEW.scope IS OLD.scope
+    AND NEW.scope_target IS OLD.scope_target
+    AND NEW.title IS OLD.title
+    AND NEW.summary IS OLD.summary
+    AND NEW.gap_question_ids_json IS OLD.gap_question_ids_json
+    AND NEW.contradiction_ids_json IS OLD.contradiction_ids_json
+    AND NEW.metadata_json IS OLD.metadata_json
+    AND NEW.produced_by_run_id IS OLD.produced_by_run_id
+    AND NEW.generation_id IS OLD.generation_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'assessment_snapshot_lifecycle_only');
+END;
+"""
+
+SELF_CLAIMS_DELETE_GUARD_SQL = """
+CREATE TRIGGER self_claims_owner_delete_guard
+BEFORE DELETE ON self_claims
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'self_claim_owner_purge_required');
+END;
+"""
+
+ASSESSMENT_SNAPSHOTS_DELETE_GUARD_SQL = """
+CREATE TRIGGER assessment_snapshots_owner_delete_guard
+BEFORE DELETE ON assessment_snapshots
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'assessment_snapshot_owner_purge_required');
+END;
+"""
+
 SCHEMA_META_SQL = """
 CREATE TABLE schema_meta (
     version INTEGER PRIMARY KEY,
@@ -617,13 +763,26 @@ SCHEMA_V5_SQL = "\n".join(
     )
 )
 
+SCHEMA_V6_SQL = "\n".join(
+    (
+        SCHEMA_V5_SQL,
+        ASSESSMENT_SNAPSHOTS_SQL,
+        SELF_CLAIMS_SQL,
+        SELF_CLAIMS_SNAPSHOT_INDEX_SQL,
+        SELF_CLAIMS_UPDATE_GUARD_SQL,
+        ASSESSMENT_SNAPSHOTS_UPDATE_GUARD_SQL,
+        SELF_CLAIMS_DELETE_GUARD_SQL,
+        ASSESSMENT_SNAPSHOTS_DELETE_GUARD_SQL,
+    )
+)
+
 
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    if version != 5:
-        raise ValueError("fresh workspaces must use schema version 5")
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V5_SQL)
+    if version != 6:
+        raise ValueError("fresh workspaces must use schema version 6")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V6_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
@@ -713,5 +872,20 @@ def apply_migration_4_to_5(connection: Connection) -> None:
         SELF_SIGNALS_SQL,
         SELF_SIGNALS_UPDATE_GUARD_SQL,
         SELF_SIGNALS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+
+def apply_migration_5_to_6(connection: Connection) -> None:
+    """Add the Stage 6 assessment substrate without rewriting retained rows."""
+
+    for statement in (
+        ASSESSMENT_SNAPSHOTS_SQL,
+        SELF_CLAIMS_SQL,
+        SELF_CLAIMS_SNAPSHOT_INDEX_SQL,
+        SELF_CLAIMS_UPDATE_GUARD_SQL,
+        ASSESSMENT_SNAPSHOTS_UPDATE_GUARD_SQL,
+        SELF_CLAIMS_DELETE_GUARD_SQL,
+        ASSESSMENT_SNAPSHOTS_DELETE_GUARD_SQL,
     ):
         connection.execute(statement)

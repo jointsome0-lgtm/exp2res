@@ -15,9 +15,19 @@ class InvalidInputError(Exp2ResError):
     public_message = "The supplied input is invalid."
 
 
+class InvalidUsageError(InvalidInputError):
+    diagnostic_class = "invalid_usage"
+    public_message = "The command options are invalid."
+
+
 class BlankProjectLabelError(InvalidInputError):
     diagnostic_class = "blank_project_label"
     public_message = "A project label must not canonicalize to blank."
+
+
+class EmptyAssessmentViewError(InvalidInputError):
+    diagnostic_class = "empty_assessment_view"
+    public_message = "The selected assessment view has no facts or signals."
 
 
 class NonInteractiveInputRequired(InvalidInputError):

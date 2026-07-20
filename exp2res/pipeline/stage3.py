@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.models import ExperienceFact, RawLog
+from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.domain.temporal import (
     confidence_exceeds,
     interval_contains,
@@ -34,13 +35,17 @@ from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
 from exp2res.storage.repository import (
     insert_experience_fact,
+    list_assessment_snapshots,
     list_contradictions,
     list_gap_questions,
     list_self_signals,
+    list_self_claims_for_snapshot,
+    mark_assessment_snapshots_superseded,
     mark_contradictions_superseded,
     mark_facts_superseded,
     mark_gap_questions_superseded,
     mark_self_signals_superseded,
+    mark_self_claims_superseded,
 )
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
 
@@ -58,6 +63,9 @@ class Stage3Result:
     superseded_gap_ids: tuple[str, ...]
     superseded_contradiction_ids: tuple[str, ...]
     superseded_signal_ids: tuple[str, ...]
+    superseded_claim_ids: tuple[str, ...]
+    superseded_snapshot_ids: tuple[str, ...]
+    invalidated_views: tuple[InvalidatedView, ...]
     warnings: tuple[ContractWarning, ...]
 
 
@@ -339,6 +347,9 @@ def run_fact_extraction(
         superseded_gap_ids: list[str] = []
         superseded_contradiction_ids: list[str] = []
         superseded_signal_ids: list[str] = []
+        superseded_claim_ids: list[str] = []
+        superseded_snapshot_ids: list[str] = []
+        invalidated_views: list[InvalidatedView] = []
         superseded_generation_ids: set[str] = set()
 
         def commit(
@@ -379,15 +390,30 @@ def run_fact_extraction(
                 current_gaps = list_gap_questions(held)
                 current_contradictions = list_contradictions(held)
                 current_signals = list_self_signals(held)
+                current_snapshots = list_assessment_snapshots(held)
                 superseded_gap_ids.extend(gap.id for gap in current_gaps)
                 superseded_contradiction_ids.extend(
                     contradiction.id for contradiction in current_contradictions
                 )
                 superseded_signal_ids.extend(signal.id for signal in current_signals)
+                superseded_snapshot_ids.extend(item.id for item in current_snapshots)
+                for snapshot in current_snapshots:
+                    superseded_claim_ids.extend(
+                        item.id for item in list_self_claims_for_snapshot(held, snapshot.id)
+                    )
+                    invalidated_views.append(
+                        invalidated_view(
+                            scope=snapshot.scope,
+                            scope_target=snapshot.scope_target,
+                            snapshot_id=snapshot.id,
+                        )
+                    )
                 for table, ids in (
                     ("gap_questions", superseded_gap_ids),
                     ("contradictions", superseded_contradiction_ids),
                     ("self_signals", superseded_signal_ids),
+                    ("self_claims", superseded_claim_ids),
+                    ("assessment_snapshots", superseded_snapshot_ids),
                 ):
                     if ids:
                         placeholders = ",".join("?" for _ in ids)
@@ -407,6 +433,10 @@ def run_fact_extraction(
                 )
                 mark_self_signals_superseded(
                     held, superseded_signal_ids, swap_time
+                )
+                mark_self_claims_superseded(held, superseded_claim_ids, swap_time)
+                mark_assessment_snapshots_superseded(
+                    held, superseded_snapshot_ids, swap_time
                 )
             return created_ids
 
@@ -449,6 +479,13 @@ def run_fact_extraction(
             sorted(superseded_contradiction_ids, key=_id_key)
         ),
         superseded_signal_ids=tuple(sorted(superseded_signal_ids, key=_id_key)),
+        superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
+        superseded_snapshot_ids=tuple(
+            sorted(superseded_snapshot_ids, key=_id_key)
+        ),
+        invalidated_views=tuple(
+            sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
+        ),
         warnings=tuple(
             warning
             for item in resolved_lineages
