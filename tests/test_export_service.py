@@ -136,6 +136,33 @@ def test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity(
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
 
+def test_claim_from_another_generation_fails_export_as_mixed_graph(
+    workspace: Path,
+) -> None:
+    """§12 rule 13 / #97: a member claim whose production provenance differs
+    from the snapshot's is a mixed Stage 6 graph and fails export closed."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response() for _ in generated.claims]),
+        ids,
+        generated.snapshot_id,
+    )
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE self_claims SET generation_id = 'generation_vera_stray' "
+            "WHERE id = ?",
+            (generated.claims[0].id,),
+        )
+        connection.commit()
+    with pytest.raises(
+        IntegrityFailureError, match="snapshot_claim_generation_mismatch"
+    ):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+
 def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
     workspace: Path,
 ) -> None:

@@ -343,6 +343,7 @@ def load_assessment_graph(
     snapshot_row: sqlite3.Row,
     snapshot: AssessmentSnapshot,
 ) -> AssessmentExportGraph:
+    snapshot_record = _stored(snapshot_row, snapshot)
     claim_rows = connection.execute(
         "SELECT * FROM self_claims WHERE snapshot_id = ?", (snapshot.id,)
     ).fetchall()
@@ -353,7 +354,15 @@ def load_assessment_graph(
         claim = hydrate_self_claim(row)
         if claim.superseded_at is not None:
             raise IntegrityFailureError("snapshot_claim_not_current")
-        claims.append(_stored(row, claim))
+        stored = _stored(row, claim)
+        # §12 rule 13: one Stage 6 swap shares one generation and run, so a
+        # member claim from another generation is a mixed graph (#97).
+        if (
+            stored.generation_id != snapshot_record.generation_id
+            or stored.produced_by_run_id != snapshot_record.produced_by_run_id
+        ):
+            raise IntegrityFailureError("snapshot_claim_generation_mismatch")
+        claims.append(stored)
     claims.sort(key=lambda item: id_key(item.value.id))
 
     fresh = _reduce_verification_status(
@@ -657,7 +666,7 @@ def load_assessment_graph(
         raise IntegrityFailureError(invalid)
 
     return AssessmentExportGraph(
-        snapshot=_stored(snapshot_row, snapshot),
+        snapshot=snapshot_record,
         snapshot_created_at_text=snapshot_row["created_at"],
         claims=tuple(claims),
         signals=tuple(signal_records),
