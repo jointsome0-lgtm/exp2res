@@ -160,7 +160,7 @@ status = "partial"
 phases = ["2"]
 evals = ["21.23"]
 issues = ["#70", "#99"]
-note = "Stage-level fake-runner tests prove the complete detector call, structural-key retention and joint replacement, answered-gap reset, displaced-record exclusion, typed reference retry, and atomic failure; the public detections command and its complete affected/invalidation envelope land in issue #99 slice 2"
+note = "Stage 4, the public detections command, gap-answer round trip, and Vera E2 prove the complete detector lifecycle and envelope; only the generated-voice gate remains missing"
 
 ["24.27"]
 status = "pending"

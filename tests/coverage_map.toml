@@ -98,9 +98,11 @@ nodes = [
   "tests/test_stage4_detection.py::test_paraphrase_and_swapped_sides_retain_ids_prose_and_generation",
   "tests/test_stage4_detection.py::test_changed_structural_key_replaces_both_sets_under_one_generation",
   "tests/test_stage4_detection.py::test_stage3_replacement_invalidates_detections_but_empty_stage3_does_not",
+  "tests/test_cli_detections.py::test_detection_inspection_is_read_only_ordered_and_show_includes_history",
+  "tests/test_vera_replay_detect.py::test_vera_e2_cli_detect_replay_is_navigable_and_retains_paraphrases",
 ]
 phase = "3"
-note = "Stage 4 preserves contradiction rows across structural-key retention and supersedes them only through complete replacing regeneration; snapshot completeness and rendered contradiction coverage land with Stage 6 and browser/CLI slices"
+note = "Stage 4 and the CLI preserve current contradictions across structural-key retention, expose superseded rows only through immutable show inspection, and Vera E2 proves source-log navigation; snapshot completeness and rendered contradiction coverage remain Stage 6+"
 
 ["21.20"]
 status = "pending"
@@ -131,9 +133,14 @@ nodes = [
   "tests/test_stage4_detection.py::test_duplicate_structural_keys_retry_once_then_fail_atomically[gap]",
   "tests/test_stage4_detection.py::test_displaced_records_and_items_are_absent_and_invalid_targets",
   "tests/test_stage4_detection.py::test_commit_failure_and_interrupt_keep_prior_current_generation",
+  "tests/test_cli_detections.py::test_generate_replaces_then_retains_complete_sets_and_standard_fields",
+  "tests/test_cli_detections.py::test_gap_answer_is_atomic_self_contained_and_fails_closed",
+  "tests/test_cli_detections.py::test_answered_gap_key_equal_cli_rerun_replaces_without_relinking",
+  "tests/test_cli_detections.py::test_invalid_detector_response_keeps_prior_generation_and_reports_run",
+  "tests/test_vera_replay_detect.py::test_vera_e2_cli_detect_replay_is_navigable_and_retains_paraphrases",
 ]
 phase = "2"
-note = "The Stage 4 service proves one complete call, structural-key retain/replace, answered-gap replacement, closed typed references, displaced-record exclusion, single schema retry, and atomic failure; the detections CLI, upper-layer invalidation/reporting, and generated-voice gate land in the next and later slices"
+note = "Stage 4 plus the CLI and Vera E2 execute every §21.23 block except the schema-valid generated-voice violation block, which still has no deterministic validator"
 
 ["21.24"]
 status = "pending"

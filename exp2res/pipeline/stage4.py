@@ -59,6 +59,8 @@ class Stage4Result:
     generation_id: str | None
     superseded_generation_ids: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
+    current_gaps: tuple[GapQuestion, ...]
+    current_contradictions: tuple[Contradiction, ...]
 
 
 @dataclass(frozen=True)
@@ -419,6 +421,17 @@ def run_detection_generation(
             token_patterns=token_patterns,
             resolved_credentials=resolved_credentials,
         )
+        # Capture the complete post-run sets while the command still owns the
+        # writer lock, so the §14.7 result cannot race a following writer.
+        current_gaps = tuple(
+            sorted(list_gap_questions(connection), key=lambda gap: _id_key(gap.id))
+        )
+        current_contradictions = tuple(
+            sorted(
+                list_contradictions(connection),
+                key=lambda contradiction: _id_key(contradiction.id),
+            )
+        )
 
     resolved = tuple(cast(_ResolvedDetection, item) for item in outcome.resolved)
     return Stage4Result(
@@ -435,4 +448,6 @@ def run_detection_generation(
         warnings=tuple(
             warning for candidate in resolved for warning in candidate.warnings
         ),
+        current_gaps=current_gaps,
+        current_contradictions=current_contradictions,
     )
