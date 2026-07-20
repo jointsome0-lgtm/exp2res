@@ -12,11 +12,12 @@ from typer.testing import CliRunner
 from exp2res.cli import app
 from exp2res.services.capture import capture_daily
 from exp2res.services.logs import delete_log, list_logs, show_log
-from exp2res.domain.models import EvidenceItem, ExperienceFact, RawLog
+from exp2res.domain.models import EvidenceItem, ExperienceFact, RawLog, SelfSignal
 from exp2res.storage.repository import (
     insert_evidence_item,
     insert_experience_fact,
     insert_raw_log,
+    insert_self_signal,
     mark_facts_superseded,
 )
 from exp2res.storage.telemetry import (
@@ -120,6 +121,44 @@ def _persist_facts_and_completed_calls(workspace: Path):
         )
         connection.commit()
     return selected, retained, facts
+
+
+def _persist_signal(workspace: Path, fact_id: str) -> SelfSignal:
+    signal = SelfSignal(
+        id="signal_" + "f" * 32,
+        created_at=FIXED_NOW,
+        signal_type="execution_pattern",
+        statement="Vera Example repeats a provenance-aware workflow.",
+        supporting_fact_ids=[fact_id],
+        confidence="medium",
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id="run_" + "f" * 32,
+            stage="13.5",
+            started_at=FIXED_NOW,
+            provider="fake",
+            model="fake-model",
+            prompt_policy_hash="f" * 64,
+            input_ids=[fact_id],
+        )
+        insert_self_signal(
+            connection,
+            signal,
+            produced_by_run_id="run_" + "f" * 32,
+            generation_id="gen_" + "f" * 32,
+        )
+        finish_processing_run(
+            connection,
+            run_id="run_" + "f" * 32,
+            finished_at=FIXED_NOW,
+            status="completed",
+            output_ids=[signal.id],
+        )
+        connection.commit()
+    return signal
 
 
 def test_automation_cannot_rewrite_or_delete_but_owner_deletion_cascades(
@@ -279,6 +318,7 @@ def test_cli_owner_delete_reports_global_experience_fact_group(
     """§14.14: logs delete reports purged fact IDs in deterministic type order."""
 
     selected, _retained, facts = _persist_facts_and_completed_calls(workspace)
+    signal = _persist_signal(workspace, facts[0].id)
     monkeypatch.chdir(workspace)
     result = runner.invoke(
         app,
@@ -290,9 +330,11 @@ def test_cli_owner_delete_reports_global_experience_fact_group(
     assert [group["entity_type"] for group in deleted] == [
         "evidence_item",
         "experience_fact",
+        "self_signal",
         "raw_log",
     ]
     assert deleted[1]["ids"] == [fact.id for fact in facts]
+    assert deleted[2]["ids"] == [signal.id]
 
 
 def test_owner_delete_purges_detections_and_answer_log_fk_cannot_block(
@@ -306,6 +348,7 @@ def test_owner_delete_purges_detections_and_answer_log_fk_cannot_block(
     from exp2res.storage.repository import insert_contradiction, insert_gap_question
 
     selected, retained, facts = _persist_facts_and_completed_calls(workspace)
+    signal = _persist_signal(workspace, facts[0].id)
     answer = capture_daily(
         workspace,
         raw_text="Vera Example answer record",
@@ -371,9 +414,11 @@ def test_owner_delete_purges_detections_and_answer_log_fk_cannot_block(
     outcome = delete_log(workspace, log_id=answer.raw_log.id)
     assert outcome.purged_gap_ids == (gap.id,)
     assert outcome.purged_contradiction_ids == (contradiction.id,)
+    assert outcome.purged_signal_ids == (signal.id,)
     assert outcome.residual_paths == ()
     database = workspace / ".exp2res" / "exp2res.sqlite"
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM gap_questions").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM contradictions").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM self_signals").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM experience_facts").fetchone()[0] == 0

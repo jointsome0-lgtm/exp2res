@@ -36,9 +36,11 @@ from exp2res.storage.repository import (
     insert_experience_fact,
     list_contradictions,
     list_gap_questions,
+    list_self_signals,
     mark_contradictions_superseded,
     mark_facts_superseded,
     mark_gap_questions_superseded,
+    mark_self_signals_superseded,
 )
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
 
@@ -55,6 +57,7 @@ class Stage3Result:
     superseded_generation_ids: tuple[str, ...]
     superseded_gap_ids: tuple[str, ...]
     superseded_contradiction_ids: tuple[str, ...]
+    superseded_signal_ids: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
 
 
@@ -335,6 +338,7 @@ def run_fact_extraction(
         superseded_ids: list[str] = []
         superseded_gap_ids: list[str] = []
         superseded_contradiction_ids: list[str] = []
+        superseded_signal_ids: list[str] = []
         superseded_generation_ids: set[str] = set()
 
         def commit(
@@ -374,13 +378,16 @@ def run_fact_extraction(
             if created_ids or superseded_ids:
                 current_gaps = list_gap_questions(held)
                 current_contradictions = list_contradictions(held)
+                current_signals = list_self_signals(held)
                 superseded_gap_ids.extend(gap.id for gap in current_gaps)
                 superseded_contradiction_ids.extend(
                     contradiction.id for contradiction in current_contradictions
                 )
+                superseded_signal_ids.extend(signal.id for signal in current_signals)
                 for table, ids in (
                     ("gap_questions", superseded_gap_ids),
                     ("contradictions", superseded_contradiction_ids),
+                    ("self_signals", superseded_signal_ids),
                 ):
                     if ids:
                         placeholders = ",".join("?" for _ in ids)
@@ -397,6 +404,9 @@ def run_fact_extraction(
                 )
                 mark_contradictions_superseded(
                     held, superseded_contradiction_ids, swap_time
+                )
+                mark_self_signals_superseded(
+                    held, superseded_signal_ids, swap_time
                 )
             return created_ids
 
@@ -438,6 +448,7 @@ def run_fact_extraction(
         superseded_contradiction_ids=tuple(
             sorted(superseded_contradiction_ids, key=_id_key)
         ),
+        superseded_signal_ids=tuple(sorted(superseded_signal_ids, key=_id_key)),
         warnings=tuple(
             warning
             for item in resolved_lineages

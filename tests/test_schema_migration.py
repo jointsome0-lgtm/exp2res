@@ -1,4 +1,4 @@
-"""Schema v1→v2→v3→v4 backup, migration, and rollback acceptance tests."""
+"""Schema v1→v2→v3→v4→v5 backup, migration, and rollback tests."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from exp2res.storage.schema import (
     SCHEMA_V1_SQL,
     SCHEMA_V2_SQL,
     SCHEMA_V3_SQL,
+    SCHEMA_V4_SQL,
 )
 from exp2res.storage.workspace import (
     inspect_workspace,
@@ -146,6 +147,29 @@ def v3_workspace(tmp_path: Path, *, name: str = "v3-workspace") -> Path:
     return root
 
 
+def v4_workspace(tmp_path: Path, *, name: str = "v4-workspace") -> Path:
+    root = tmp_path / name
+    root.mkdir()
+    (root / ".exp2res").mkdir(mode=0o700)
+    (root / ".exp2res" / "lock").touch(mode=0o600)
+    (root / "out").mkdir(mode=0o700)
+    configure_timezone(root)
+    database = root / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.executescript(SCHEMA_V4_SQL)
+        connection.executemany(
+            "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
+            tuple(
+                (version, FIXED_NOW.isoformat(), f"0.1.0-v{version}-fixture")
+                for version in range(1, 5)
+            ),
+        )
+    database.chmod(0o600)
+    return root
+
+
 def sqlite_master_shape(database: Path) -> list[tuple[object, ...]]:
     with sqlite3.connect(database) as connection:
         return sorted(
@@ -206,7 +230,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     assert result.exit_code == 0, result.stderr
     envelope = json.loads(result.stdout)
     schema = envelope["result"]["schema"]
-    assert schema["stored_version"] == 4
+    assert schema["stored_version"] == 5
     assert schema["compatible"] is True
     backup = Path(schema["managed_backup_path"])
     assert backup.is_file()
@@ -224,7 +248,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     with sqlite3.connect(database) as connection:
         assert [
             row[0] for row in connection.execute("SELECT version FROM schema_meta ORDER BY version")
-        ] == [1, 2, 3, 4]
+        ] == [1, 2, 3, 4, 5]
         tables = {
             row[0]
             for row in connection.execute(
@@ -238,6 +262,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
         "fact_sources",
         "gap_questions",
         "contradictions",
+        "self_signals",
     }.issubset(tables)
     assert show_log(workspace, log_id=log_id).raw_log.raw_text == raw_text
 
@@ -258,7 +283,7 @@ def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 4
+    assert migrated.stored_version == 5
     backup = Path(migrated.managed_backup_path or "")
     assert backup.is_file()
     assert "exp2res-v2-" in backup.name
@@ -276,17 +301,17 @@ def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
         ]
         assert connection.execute(
             "SELECT version FROM schema_meta ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,), (4,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,), (5,)]
 
 
-def test_fresh_v4_and_migrated_v3_to_v4_have_identical_sqlite_master_shape(
+def test_fresh_v5_and_migrated_v4_to_v5_have_identical_sqlite_master_shape(
     tmp_path: Path,
 ) -> None:
-    """§12.14: fresh and additive-v4 table/trigger SQL has exact parity."""
+    """§12.14: fresh and additive-v5 table/trigger SQL has exact parity."""
 
-    migrated = v3_workspace(tmp_path)
+    migrated = v4_workspace(tmp_path)
     migrate_workspace(migrated, clock=lambda: FIXED_NOW.replace(day=16))
-    fresh = tmp_path / "fresh-v4"
+    fresh = tmp_path / "fresh-v5"
     fresh.mkdir()
     initialize_workspace(fresh, clock=lambda: FIXED_NOW.replace(day=16))
     assert sqlite_master_shape(
@@ -300,9 +325,13 @@ def test_fresh_v4_and_migrated_v3_to_v4_have_identical_sqlite_master_shape(
         (1, "after_migration_1_to_2"),
         (1, "after_migration_2_to_3"),
         (1, "after_migration_3_to_4"),
+        (1, "after_migration_4_to_5"),
         (2, "after_migration_2_to_3"),
         (2, "after_migration_3_to_4"),
+        (2, "after_migration_4_to_5"),
         (3, "after_migration_3_to_4"),
+        (3, "after_migration_4_to_5"),
+        (4, "after_migration_4_to_5"),
     ],
 )
 def test_each_registered_step_failure_rolls_back_to_the_original_version(
@@ -314,8 +343,10 @@ def test_each_registered_step_failure_rolls_back_to_the_original_version(
         workspace, _log_id, _raw_text = v1_workspace(tmp_path)
     elif start_version == 2:
         workspace = v2_workspace(tmp_path)
-    else:
+    elif start_version == 3:
         workspace = v3_workspace(tmp_path)
+    else:
+        workspace = v4_workspace(tmp_path)
 
     def inject(point: str) -> None:
         if point == failure_point:
@@ -509,7 +540,7 @@ def test_cli_pre_backup_interrupt_keeps_the_generic_null_result_envelope(
     assert envelope["result"] is None
 
 
-def test_post_commit_interrupt_reports_backup_and_leaves_durable_v3(
+def test_post_commit_interrupt_reports_backup_and_leaves_durable_v5(
     tmp_path: Path,
 ) -> None:
     """§14.14 rule 4: a post-commit interrupt still reports both effects."""
@@ -531,11 +562,11 @@ def test_post_commit_interrupt_reports_backup_and_leaves_durable_v3(
     assert len(backups) == 1
     assert interrupt_info.value.managed_backup_path == str(backups[0])
     after = inspect_workspace(workspace)
-    assert after.stored_version == 4
+    assert after.stored_version == 5
     assert after.compatible is True
 
 
-def test_cli_post_commit_interrupt_envelope_reports_durable_v3_and_backup(
+def test_cli_post_commit_interrupt_envelope_reports_durable_v5_and_backup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """§14.14 rule 4: the cancelled envelope shows the committed migration."""
@@ -561,7 +592,7 @@ def test_cli_post_commit_interrupt_envelope_reports_durable_v3_and_backup(
     assert result.exit_code == 9
     envelope = json.loads(result.stdout)
     assert envelope["status"] == "cancelled"
-    assert envelope["result"]["schema"]["stored_version"] == 4
+    assert envelope["result"]["schema"]["stored_version"] == 5
     assert envelope["result"]["schema"]["compatible"] is True
     backup = Path(envelope["result"]["schema"]["managed_backup_path"])
     assert backup.is_file()
@@ -756,6 +787,6 @@ def test_exact_shape_preexisting_telemetry_table_migrates(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
 
-    assert migrated.stored_version == 4
+    assert migrated.stored_version == 5
     assert migrated.compatible is True
     assert table_shape(database, table) == expected_shape

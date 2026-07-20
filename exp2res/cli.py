@@ -17,7 +17,7 @@ except ImportError:  # typer releases that depend on an external click
 
 from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
-from exp2res.domain.models import ExperienceFact
+from exp2res.domain.models import ExperienceFact, SelfSignal
 from exp2res.domain.results import (
     AffectedIds,
     CLIEnvelope,
@@ -33,6 +33,7 @@ from exp2res.domain.results import (
     SchemaProjection,
     SchemaResult,
     SelectedLogProjection,
+    SignalsListResult,
 )
 from exp2res.errors import (
     Exp2ResError,
@@ -60,6 +61,7 @@ from exp2res.services.detection import (
 from exp2res.services.extraction import run_extract, validate_extract_selection
 from exp2res.services.facts import list_facts, show_fact
 from exp2res.services.logs import delete_log, list_logs, show_log
+from exp2res.services.signals import list_current_signals, run_signals_generate
 from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.storage.workspace import (
     SchemaStatus,
@@ -89,6 +91,7 @@ gaps_app = typer.Typer(help="Inspect and answer current gap questions.")
 contradictions_app = typer.Typer(
     help="Inspect current contradictions and immutable contradiction history."
 )
+signals_app = typer.Typer(help="Generate and inspect current self-signals.")
 app.add_typer(db_app, name="db")
 app.add_typer(log_app, name="log")
 app.add_typer(logs_app, name="logs")
@@ -97,6 +100,7 @@ app.add_typer(facts_app, name="facts")
 app.add_typer(detections_app, name="detections")
 app.add_typer(gaps_app, name="gaps")
 app.add_typer(contradictions_app, name="contradictions")
+app.add_typer(signals_app, name="signals")
 
 
 @dataclass(frozen=True)
@@ -126,6 +130,7 @@ class Outcome:
         | DetectionsGenerateResult
         | GapsListResult
         | ContradictionsResult
+        | SignalsListResult
         | None
     ) = None
     human_result: str = ""
@@ -511,6 +516,13 @@ def extract_command(
                     ids=list(extracted.superseded_contradiction_ids),
                 )
             )
+        if extracted.superseded_signal_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="self_signal",
+                    ids=list(extracted.superseded_signal_ids),
+                )
+            )
         return Outcome(
             affected_ids=AffectedIds(
                 created=(
@@ -584,6 +596,13 @@ def detections_generate(context: typer.Context) -> None:
         superseded_groups = _detection_groups(
             superseded_gap_ids, superseded_contradiction_ids
         )
+        if generated.superseded_signal_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="self_signal",
+                    ids=list(generated.superseded_signal_ids),
+                )
+            )
         if generated.retained:
             human = "Retained the current detection generation unchanged."
         else:
@@ -630,6 +649,80 @@ def detections_generate(context: typer.Context) -> None:
         )
 
     _run_command(context, "detections generate", operation)
+
+
+def _signal_human_line(signal: SelfSignal) -> str:
+    return f"{signal.id}\t{signal.signal_type}\t{signal.confidence}"
+
+
+@signals_app.command("generate")
+def signals_generate(context: typer.Context) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        require_compatible(workspace)
+        if not controls.yes:
+            if _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            if not typer.confirm(
+                "Replace the complete current signal generation using the "
+                "configured model provider?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
+        generated = run_signals_generate(workspace)
+        created = list(generated.created_signal_ids)
+        superseded = list(generated.superseded_signal_ids)
+        created_groups = (
+            [EntityIdGroup(entity_type="self_signal", ids=created)]
+            if created
+            else []
+        )
+        superseded_groups = (
+            [EntityIdGroup(entity_type="self_signal", ids=superseded)]
+            if superseded
+            else []
+        )
+        return Outcome(
+            affected_ids=AffectedIds(
+                created=created_groups,
+                superseded=superseded_groups,
+                deleted=[],
+            ),
+            generation_ids=sorted(
+                {
+                    *(
+                        [generated.generation_id]
+                        if generated.generation_id is not None
+                        else []
+                    ),
+                    *generated.superseded_generation_ids,
+                },
+                key=lambda value: value.encode("utf-8"),
+            ),
+            run_ids=[generated.run_id],
+            warnings=list(generated.warnings),
+            result=None,
+            human_result=(
+                f"Created {len(created)} signals; superseded {len(superseded)}. "
+                "Invalidated artifact classes: none; self-claims, assessment "
+                "snapshots, branches, and bullets are not implemented yet. "
+                "No assessment view exists yet to regenerate."
+            ),
+        )
+
+    _run_command(context, "signals generate", operation)
+
+
+@signals_app.command("list")
+def signals_list(context: typer.Context) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        signals = list(list_current_signals(workspace))
+        human = "\n".join(_signal_human_line(signal) for signal in signals)
+        return Outcome(
+            result=SignalsListResult(signals=signals),
+            human_result=human or "No current signals.",
+        )
+
+    _run_command(context, "signals list", operation)
 
 
 @gaps_app.command("list")
@@ -833,6 +926,16 @@ def logs_delete(
                             )
                         ]
                         if deleted.purged_contradiction_ids
+                        else []
+                    )
+                    + (
+                        [
+                            EntityIdGroup(
+                                entity_type="self_signal",
+                                ids=list(deleted.purged_signal_ids),
+                            )
+                        ]
+                        if deleted.purged_signal_ids
                         else []
                     )
                     + [

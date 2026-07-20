@@ -15,6 +15,17 @@ TemporalPrecision = Literal[
 TemporalConfidence = Literal["low", "medium", "high", "unknown"]
 Confidence = Literal["low", "medium", "high", "unknown"]
 
+SignalType = Literal[
+    "skill_signal",
+    "interest_signal",
+    "direction_signal",
+    "execution_pattern",
+    "avoidance_pattern",
+    "constraint_signal",
+    "capacity_signal",
+    "contradiction_signal",
+]
+
 EntryType = Literal[
     "manual_daily",
     "manual_retro",

@@ -19,6 +19,7 @@ from .models import (
     ExperienceFact,
     GapQuestion,
     OccurredAt,
+    SelfSignal,
     StrictModel,
 )
 
@@ -35,6 +36,8 @@ CommandPath = Literal[
     "facts list",
     "facts show",
     "detections generate",
+    "signals generate",
+    "signals list",
     "gaps list",
     "gaps answer",
     "contradictions list",
@@ -109,6 +112,10 @@ class ContradictionsResult(StrictModel):
     contradictions: list[Contradiction]
 
 
+class SignalsListResult(StrictModel):
+    signals: list[SelfSignal]
+
+
 ResultPayload = (
     SchemaResult
     | LogsListResult
@@ -117,6 +124,7 @@ ResultPayload = (
     | DetectionsGenerateResult
     | GapsListResult
     | ContradictionsResult
+    | SignalsListResult
 )
 
 

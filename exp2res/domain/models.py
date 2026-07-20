@@ -1,4 +1,4 @@
-"""Strict §11 models implemented through the current Stage 3 schema slice."""
+"""Strict models for the implemented §11 entity subset."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from .enums import (
     GapPriority,
     GapTrigger,
     OwnershipLevel,
+    SignalType,
     SourceType,
     TemporalConfidence,
     TemporalPrecision,
@@ -318,6 +319,49 @@ class ExperienceFact(StrictModel):
     @field_validator("source_log_ids", "evidence_item_ids")
     @classmethod
     def typed_id_list_policy(cls, value: list[str]) -> list[str]:
+        for member in value:
+            validate_structural(member)
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate typed ID")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_metadata(value)
+
+
+class SelfSignal(StrictModel):
+    id: str
+    created_at: datetime
+    superseded_at: Optional[datetime] = None
+    signal_type: SignalType
+    statement: str
+    supporting_fact_ids: list[str] = Field(max_length=1_000)
+    counter_fact_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    confidence: Confidence
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("id")
+    @classmethod
+    def structural_id(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("created_at", "superseded_at")
+    @classmethod
+    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("datetime must carry an offset")
+        return value
+
+    @field_validator("statement")
+    @classmethod
+    def statement_policy(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True)
+
+    @field_validator("supporting_fact_ids", "counter_fact_ids")
+    @classmethod
+    def fact_id_list_policy(cls, value: list[str]) -> list[str]:
         for member in value:
             validate_structural(member)
         if len(value) != len(set(value)):
