@@ -1,1 +1,1 @@
-"""Application services for the Phase 0 vertical."""
+"""Application services for implemented Exp2Res vertical slices."""

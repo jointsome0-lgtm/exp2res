@@ -1,1 +1,1 @@
-"""Export package reserved by §20; Phase 0 produces no managed exports."""
+"""Deterministic §13.12 export projections and §13.14 publication support."""

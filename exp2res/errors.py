@@ -89,6 +89,22 @@ class IntegrityFailureError(Exp2ResError):
     public_message = "Validation or storage integrity failed."
 
 
+class ManagedOutputIncompleteError(Exp2ResError):
+    exit_code = 8
+    diagnostic_class = "managed_output_incomplete"
+    public_message = "Managed-output durability or cleanup is incomplete."
+
+    def __init__(self, residual_paths: tuple[str, ...] | list[str]) -> None:
+        super().__init__()
+        self.residual_paths = tuple(sorted(set(residual_paths)))
+
+
+class AssessmentExportBlockedError(Exp2ResError):
+    exit_code = 10
+    diagnostic_class = "assessment_export_blocked"
+    public_message = "Assessment export is blocked by its verification-status gate."
+
+
 class MigrationFailedError(IntegrityFailureError):
     """A rolled-back migration is §14.14 class 7, not schema class 4."""
 

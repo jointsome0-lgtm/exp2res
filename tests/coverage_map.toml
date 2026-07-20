@@ -359,12 +359,38 @@ status = "pending"
 phase = "5"
 
 ["21.47"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_managed_output.py::test_private_modes_idempotent_reexport_and_same_view_stale_replacement",
+  "tests/test_managed_output.py::test_candidate_write_failure_never_publishes_partial_current_set[report.md]",
+  "tests/test_managed_output.py::test_candidate_write_failure_never_publishes_partial_current_set[manifest.json]",
+  "tests/test_managed_output.py::test_rename_failures_before_and_after_rollback_move_preserve_prior",
+  "tests/test_managed_output.py::test_failed_restoration_reports_rollback_residual_and_no_current_set",
+  "tests/test_managed_output.py::test_symlink_final_is_left_untouched_and_reported",
+  "tests/test_managed_output.py::test_preamble_candidate_restore_remove_and_ambiguous_matrix",
+  "tests/test_managed_output.py::test_preamble_planted_symlink_candidate_is_reported_once",
+  "tests/test_export_service.py::test_repeated_service_export_keeps_fixed_members_identical_and_writes_no_rows",
+]
 phase = "4"
+note = "Assessment publication proves the ID-keyed manifest writer, owner-only modes, atomic candidate/rollback fallback, idempotency, same-view replacement, no-follow symlink residuals, preamble recovery, and database-read-only service boundary; resume-set publication and the later CLI/invalidation wiring remain"
 
 ["21.48"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_export_markdown.py::test_escape_generated_covers_every_metacharacter_tab_and_embedded_newline",
+  "tests/test_export_markdown.py::test_source_voice_fence_is_shortest_and_preserves_interior_bytes",
+  "tests/test_export_markdown.py::test_renderer_is_byte_deterministic_and_uses_closed_order_and_empty_headings",
+  "tests/test_export_markdown.py::test_answered_since_synthesis_is_explicit_and_question_is_omitted",
+  "tests/test_export_markdown.py::test_unmatched_non_summary_claim_fails_closed",
+  "tests/test_export_companions.py::test_companion_encoding_has_canonical_key_order_utc_datetime_and_one_lf",
+  "tests/test_export_companions.py::test_closed_companion_models_reject_extra_missing_and_wrong_version[SelfClaimsDocument-payload0]",
+  "tests/test_export_companions.py::test_render_input_hash_covers_gap_lifecycle_and_verification_at_same_ids",
+  "tests/test_export_service.py::test_assessment_export_gate_matrix_all_eight_statuses[contradicted-True]",
+  "tests/test_export_service.py::test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity",
+  "tests/test_export_service.py::test_repeated_service_export_keeps_fixed_members_identical_and_writes_no_rows",
+]
 phase = "4"
+note = "The assessment half proves deterministic §17 Markdown, strict version-1 companions, complete typed link projections, lifecycle-sensitive render hashing, all-status export gating, graph integrity, and byte-identical repeat export; the bullet-pack members, CLI result wiring, and cross-kind end-to-end contract remain"
 
 ["21.49"]
 status = "pending"

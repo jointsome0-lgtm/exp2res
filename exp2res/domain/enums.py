@@ -146,3 +146,5 @@ GapTrigger = Literal[
 ]
 
 CLIResultStatus = Literal["ok", "blocked", "failed", "cancelled"]
+
+ManagedOutputKind = Literal["assessment", "resume"]

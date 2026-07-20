@@ -64,10 +64,11 @@ evals = ["21.5", "21.6", "21.27"]
 issues = []
 
 ["24.11"]
-status = "pending"
+status = "partial"
 phases = ["3"]
 evals = ["21.16", "21.48"]
 issues = []
+note = "The assessment export service now renders and publishes deterministic report.md through the managed writer; the public CLI command and lifecycle invalidation wiring remain in the follow-up slice"
 
 ["24.12"]
 status = "pending"
@@ -76,10 +77,11 @@ evals = ["21.16", "21.48"]
 issues = []
 
 ["24.13"]
-status = "pending"
+status = "partial"
 phases = ["3", "4"]
 evals = ["21.15", "21.48"]
 issues = []
+note = "Assessment evidence_map.json now carries the complete closed claim-signal-fact-evidence link projection; the resume evidence map remains"
 
 ["24.14"]
 status = "pending"
@@ -233,10 +235,11 @@ issues = ["#132"]
 note = "Stage 6 covers view identity, stored-key subject selection, and context facts; the remaining correction-CLI slice waits on correction add"
 
 ["24.37"]
-status = "pending"
+status = "partial"
 phases = ["3", "4"]
 evals = ["21.34", "21.47"]
 issues = []
+note = "Assessment sets are opaque-snapshot-ID keyed, manifest-validated, lifecycle-hash-sensitive, and same-view replaced without touching other views; resume paths and branch-name separation remain"
 
 ["24.38"]
 status = "partial"
@@ -325,16 +328,18 @@ evals = ["21.3", "21.46"]
 issues = []
 
 ["24.50"]
-status = "pending"
+status = "partial"
 phases = ["3", "4"]
 evals = ["21.34", "21.47"]
 issues = []
+note = "The assessment half proves private candidate construction, manifest-last flush, portable rollback publication, no-follow containment, residual reporting, and deterministic preamble recovery; resume publication remains"
 
 ["24.51"]
-status = "pending"
+status = "partial"
 phases = ["3", "4"]
 evals = ["21.48"]
 issues = []
+note = "Assessment report.md, self_claims.json, evidence_map.json, manifest hashes, closed schemas, hostile-Markdown escaping, and repeat bytes are covered; every bullet-pack member and CLI envelope half remains"
 
 ["24.52"]
 status = "pending"
