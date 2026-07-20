@@ -1159,6 +1159,16 @@ def logs_delete(
                     + (
                         [
                             EntityIdGroup(
+                                entity_type="verification_finding",
+                                ids=list(deleted.purged_finding_ids),
+                            )
+                        ]
+                        if deleted.purged_finding_ids
+                        else []
+                    )
+                    + (
+                        [
+                            EntityIdGroup(
                                 entity_type="self_claim",
                                 ids=list(deleted.purged_claim_ids),
                             )

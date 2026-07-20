@@ -11,6 +11,7 @@ from typing import Iterable
 from pydantic import ValidationError
 
 from exp2res.domain.calibration import claim_confidence_cap, signal_confidence_cap
+from exp2res.domain.enums import VerificationStatus
 from exp2res.domain.models import (
     Contradiction,
     AssessmentSnapshot,
@@ -21,6 +22,7 @@ from exp2res.domain.models import (
     RawLog,
     SelfClaim,
     SelfSignal,
+    VerificationFinding,
     canonical_project_key,
 )
 from exp2res.domain.temporal import (
@@ -873,6 +875,202 @@ def get_assessment_snapshot(
         (snapshot_id,),
     ).fetchone()
     return None if row is None else hydrate_assessment_snapshot(row)
+
+
+def _validate_verifier_reference(
+    connection: sqlite3.Connection,
+    *,
+    ref_type: str,
+    ref_id: str,
+) -> None:
+    if ref_type == "experience_fact":
+        row = connection.execute(
+            "SELECT superseded_at FROM experience_facts WHERE id = ?", (ref_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("finding_counterevidence_fact_missing")
+        if row["superseded_at"] is not None:
+            raise IntegrityFailureError("finding_counterevidence_fact_superseded")
+        return
+    if ref_type == "self_signal":
+        row = connection.execute(
+            "SELECT superseded_at FROM self_signals WHERE id = ?", (ref_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("finding_counterevidence_signal_missing")
+        if row["superseded_at"] is not None:
+            raise IntegrityFailureError("finding_counterevidence_signal_superseded")
+        return
+    if ref_type == "evidence_item":
+        row = connection.execute(
+            "SELECT 1 FROM evidence_items WHERE id = ?", (ref_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("finding_counterevidence_item_missing")
+        return
+    if ref_type == "raw_log":
+        row = connection.execute(
+            "SELECT 1 FROM raw_logs WHERE id = ?", (ref_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("finding_counterevidence_log_missing")
+        return
+    raise IntegrityFailureError("finding_counterevidence_type_invalid")
+
+
+def insert_verification_finding(
+    connection: sqlite3.Connection,
+    finding: VerificationFinding,
+    *,
+    bundle_refs: set[tuple[str, str]] | frozenset[tuple[str, str]],
+) -> None:
+    if finding.status == "unverified":
+        raise IntegrityFailureError("finding_status_unverified")
+    if connection.execute(
+        "SELECT 1 FROM processing_runs WHERE id = ?", (finding.produced_by_run_id,)
+    ).fetchone() is None:
+        raise IntegrityFailureError("finding_run_missing")
+    if finding.target_type == "resume_bullet":
+        raise IntegrityFailureError("finding_resume_bullet_target_unavailable")
+    target = connection.execute(
+        "SELECT superseded_at FROM self_claims WHERE id = ?", (finding.target_id,)
+    ).fetchone()
+    if target is None:
+        raise IntegrityFailureError("finding_self_claim_target_missing")
+    if target["superseded_at"] is not None:
+        raise IntegrityFailureError("finding_self_claim_target_superseded")
+
+    pairs = [
+        (item.source_ref_type, item.source_ref_id)
+        for item in finding.counterevidence
+    ]
+    if len(pairs) != len(set(pairs)):
+        raise IntegrityFailureError("finding_counterevidence_duplicate")
+    for pair in pairs:
+        if pair not in bundle_refs:
+            raise IntegrityFailureError("finding_counterevidence_out_of_bundle")
+        _validate_verifier_reference(
+            connection, ref_type=pair[0], ref_id=pair[1]
+        )
+    try:
+        connection.execute(
+            """
+            INSERT INTO verification_findings(
+                id, created_at, produced_by_run_id, target_type, target_id,
+                status, reason, unsupported_phrases_json, suggested_rewrite,
+                counterevidence_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                finding.id,
+                _iso(finding.created_at),
+                finding.produced_by_run_id,
+                finding.target_type,
+                finding.target_id,
+                finding.status,
+                finding.reason,
+                _json(finding.unsupported_phrases),
+                finding.suggested_rewrite,
+                _json(
+                    [
+                        item.model_dump(mode="json")
+                        for item in finding.counterevidence
+                    ]
+                ),
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        if "verification_findings.id" in str(error):
+            raise IdCollisionError() from error
+        raise IntegrityFailureError("finding_insert_failed") from error
+
+
+def hydrate_verification_finding(row: sqlite3.Row) -> VerificationFinding:
+    try:
+        unsupported_phrases = json.loads(row["unsupported_phrases_json"])
+        counterevidence = json.loads(row["counterevidence_json"])
+    except (json.JSONDecodeError, IndexError, TypeError) as error:
+        raise HydrationFailureError() from error
+    return _hydrate(
+        VerificationFinding,
+        {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "produced_by_run_id": row["produced_by_run_id"],
+            "target_type": row["target_type"],
+            "target_id": row["target_id"],
+            "status": row["status"],
+            "reason": row["reason"],
+            "unsupported_phrases": unsupported_phrases,
+            "suggested_rewrite": row["suggested_rewrite"],
+            "counterevidence": counterevidence,
+        },
+    )
+
+
+def list_verification_findings(
+    connection: sqlite3.Connection,
+    *,
+    run_id: str | None = None,
+    target_id: str | None = None,
+) -> tuple[VerificationFinding, ...]:
+    clauses: list[str] = []
+    parameters: list[str] = []
+    if run_id is not None:
+        clauses.append("produced_by_run_id = ?")
+        parameters.append(run_id)
+    if target_id is not None:
+        clauses.append("target_id = ?")
+        parameters.append(target_id)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    rows = connection.execute(
+        "SELECT * FROM verification_findings" + where + " ORDER BY CAST(id AS BLOB)",
+        parameters,
+    ).fetchall()
+    return tuple(hydrate_verification_finding(row) for row in rows)
+
+
+def update_self_claim_verification(
+    connection: sqlite3.Connection,
+    *,
+    claim_id: str,
+    verification_status: VerificationStatus,
+    counterevidence: Iterable[object],
+) -> None:
+    payload = [item.model_dump(mode="json") for item in counterevidence]  # type: ignore[attr-defined]
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE self_claims
+            SET verification_status = ?, counterevidence_json = ?
+            WHERE id = ? AND superseded_at IS NULL
+            """,
+            (verification_status, _json(payload), claim_id),
+        )
+    except sqlite3.IntegrityError as error:
+        raise IntegrityFailureError("claim_verification_update_failed") from error
+    if cursor.rowcount != 1:
+        raise IntegrityFailureError("claim_verification_update_failed")
+
+
+def update_assessment_snapshot_verification(
+    connection: sqlite3.Connection,
+    *,
+    snapshot_id: str,
+    verification_status: VerificationStatus,
+) -> None:
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE assessment_snapshots SET verification_status = ?
+            WHERE id = ? AND superseded_at IS NULL
+            """,
+            (verification_status, snapshot_id),
+        )
+    except sqlite3.IntegrityError as error:
+        raise IntegrityFailureError("snapshot_verification_update_failed") from error
+    if cursor.rowcount != 1:
+        raise IntegrityFailureError("snapshot_verification_update_failed")
 
 
 def _validate_detection_reference(

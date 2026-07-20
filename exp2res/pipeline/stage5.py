@@ -32,7 +32,6 @@ from exp2res.llm.signal_extractor import (
 )
 from exp2res.services.capture import new_id
 from exp2res.storage.repository import (
-    hydrate_evidence_item,
     insert_self_signal,
     list_assessment_snapshots,
     list_contradictions,
@@ -46,6 +45,7 @@ from exp2res.storage.repository import (
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
 
 from .orchestration import PlannedCall, run_complete_stage
+from .evidence_context import project_evidence_context
 
 
 @dataclass(frozen=True)
@@ -170,41 +170,9 @@ def _resolve_for(
 def _evidence_context(
     connection: sqlite3.Connection, facts: Sequence[ExperienceFact]
 ) -> tuple[EvidenceItem | DisplacedSupportDescriptor, ...]:
-    evidence_ids = sorted(
-        {item_id for fact in facts for item_id in fact.evidence_item_ids},
-        key=_id_key,
+    return project_evidence_context(
+        connection, facts, missing_diagnostic="signal_evidence_missing"
     )
-    context: list[EvidenceItem | DisplacedSupportDescriptor] = []
-    for item_id in evidence_ids:
-        row = connection.execute(
-            """
-            SELECT item.*,
-                   EXISTS(
-                       SELECT 1 FROM raw_logs AS correction
-                       WHERE correction.corrects_log_id = owner.id
-                   ) AS owner_displaced
-            FROM evidence_items AS item
-            JOIN raw_logs AS owner ON owner.id = item.raw_log_id
-            WHERE item.id = ?
-            """,
-            (item_id,),
-        ).fetchone()
-        if row is None:
-            raise IntegrityFailureError("signal_evidence_missing")
-        item = hydrate_evidence_item(row)
-        if row["owner_displaced"]:
-            context.append(
-                DisplacedSupportDescriptor(
-                    id=item.id,
-                    raw_log_id=item.raw_log_id,
-                    strength=item.strength,
-                    uri=item.uri,
-                    path=item.path,
-                )
-            )
-        else:
-            context.append(item)
-    return tuple(context)
 
 
 def run_signal_generation(
