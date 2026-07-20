@@ -745,6 +745,56 @@ def list_contradictions(
     return tuple(contradictions)
 
 
+def get_gap_question(
+    connection: sqlite3.Connection,
+    gap_id: str,
+    *,
+    current_only: bool = True,
+) -> GapQuestion | None:
+    current = " AND superseded_at IS NULL" if current_only else ""
+    row = connection.execute(
+        "SELECT * FROM gap_questions WHERE id = ?" + current,
+        (gap_id,),
+    ).fetchone()
+    return None if row is None else hydrate_gap_question(row)
+
+
+def get_contradiction(
+    connection: sqlite3.Connection,
+    contradiction_id: str,
+    *,
+    current_only: bool = True,
+) -> Contradiction | None:
+    current = " AND superseded_at IS NULL" if current_only else ""
+    row = connection.execute(
+        "SELECT * FROM contradictions WHERE id = ?" + current,
+        (contradiction_id,),
+    ).fetchone()
+    return None if row is None else hydrate_contradiction(row)
+
+
+def mark_gap_answered(
+    connection: sqlite3.Connection,
+    *,
+    gap_id: str,
+    answer_log_id: str,
+) -> None:
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE gap_questions
+            SET answered = 1, answer_log_id = ?
+            WHERE id = ? AND superseded_at IS NULL
+              AND answered = 0 AND answer_log_id IS NULL
+            """,
+            (answer_log_id, gap_id),
+        )
+    except sqlite3.IntegrityError as error:
+        raise IntegrityFailureError("gap_answer_update_failed") from error
+    if cursor.rowcount != 1:
+        raise IntegrityFailureError("gap_answer_update_failed")
+
+
 def _mark_detections_superseded(
     connection: sqlite3.Connection,
     *,

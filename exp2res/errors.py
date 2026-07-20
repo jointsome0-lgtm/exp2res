@@ -45,6 +45,11 @@ class SelectorNotFoundError(InvalidInputError):
     public_message = "The selected record does not exist."
 
 
+class GapAlreadyAnsweredError(InvalidInputError):
+    diagnostic_class = "gap_already_answered"
+    public_message = "The selected gap has already been answered."
+
+
 class WorkspaceError(Exp2ResError):
     exit_code = 3
     diagnostic_class = "workspace_not_found"

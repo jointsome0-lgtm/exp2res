@@ -9,8 +9,18 @@ from pydantic import ConfigDict, Field, model_validator
 
 from exp2res.llm.contracts import ContractWarning
 
-from .enums import CLIResultStatus, EntryType, SourceType
-from .models import ExperienceFact, OccurredAt, StrictModel
+from .enums import (
+    CLIResultStatus,
+    EntryType,
+    SourceType,
+)
+from .models import (
+    Contradiction,
+    ExperienceFact,
+    GapQuestion,
+    OccurredAt,
+    StrictModel,
+)
 
 CommandPath = Literal[
     "init",
@@ -24,6 +34,11 @@ CommandPath = Literal[
     "logs delete",
     "facts list",
     "facts show",
+    "detections generate",
+    "gaps list",
+    "gaps answer",
+    "contradictions list",
+    "contradictions show",
 ]
 
 
@@ -81,7 +96,28 @@ class FactsListResult(StrictModel):
     facts: list[ExperienceFact]
 
 
-ResultPayload = SchemaResult | LogsListResult | LogsDeleteResult | FactsListResult
+class DetectionsGenerateResult(StrictModel):
+    gaps: list[GapQuestion]
+    contradictions: list[Contradiction]
+
+
+class GapsListResult(StrictModel):
+    gaps: list[GapQuestion]
+
+
+class ContradictionsResult(StrictModel):
+    contradictions: list[Contradiction]
+
+
+ResultPayload = (
+    SchemaResult
+    | LogsListResult
+    | LogsDeleteResult
+    | FactsListResult
+    | DetectionsGenerateResult
+    | GapsListResult
+    | ContradictionsResult
+)
 
 
 class CLIEnvelope(StrictModel):

@@ -22,8 +22,11 @@ from exp2res.domain.results import (
     AffectedIds,
     CLIEnvelope,
     CommandPath,
+    ContradictionsResult,
+    DetectionsGenerateResult,
     EntityIdGroup,
     FactsListResult,
+    GapsListResult,
     LogProjection,
     LogsDeleteResult,
     LogsListResult,
@@ -42,8 +45,17 @@ from exp2res.llm.contracts import ContractWarning
 from exp2res.services.capture import (
     capture_daily,
     capture_daily_file,
+    capture_gap_answer,
+    capture_gap_answer_file,
     capture_retro,
+    validate_gap_answer_selection,
     validate_project_label,
+)
+from exp2res.services.detection import (
+    list_current_contradictions,
+    list_current_gaps,
+    run_detections_generate,
+    show_contradiction,
 )
 from exp2res.services.extraction import run_extract, validate_extract_selection
 from exp2res.services.facts import list_facts, show_fact
@@ -70,11 +82,21 @@ log_app = typer.Typer(help="Capture a manual record.")
 logs_app = typer.Typer(help="Inspect or owner-delete raw records.")
 correction_app = typer.Typer(help="Correction capture lifecycle.")
 facts_app = typer.Typer(help="Inspect current extracted facts.")
+detections_app = typer.Typer(
+    help="Generate both complete current detection sets together."
+)
+gaps_app = typer.Typer(help="Inspect and answer current gap questions.")
+contradictions_app = typer.Typer(
+    help="Inspect current contradictions and immutable contradiction history."
+)
 app.add_typer(db_app, name="db")
 app.add_typer(log_app, name="log")
 app.add_typer(logs_app, name="logs")
 app.add_typer(correction_app, name="correction")
 app.add_typer(facts_app, name="facts")
+app.add_typer(detections_app, name="detections")
+app.add_typer(gaps_app, name="gaps")
+app.add_typer(contradictions_app, name="contradictions")
 
 
 @dataclass(frozen=True)
@@ -97,7 +119,14 @@ class Outcome:
     residual_paths: list[str] = field(default_factory=list)
     warnings: list[ContractWarning] = field(default_factory=list)
     result: (
-        SchemaResult | LogsListResult | LogsDeleteResult | FactsListResult | None
+        SchemaResult
+        | LogsListResult
+        | LogsDeleteResult
+        | FactsListResult
+        | DetectionsGenerateResult
+        | GapsListResult
+        | ContradictionsResult
+        | None
     ) = None
     human_result: str = ""
 
@@ -510,6 +539,190 @@ def extract_command(
 
 def _fact_human_line(fact: ExperienceFact) -> str:
     return f"{fact.id}\t{fact.claim_kind}\t{fact.project or ''}\t{fact.confidence}"
+
+
+def _detection_groups(
+    gap_ids: list[str], contradiction_ids: list[str]
+) -> list[EntityIdGroup]:
+    gap_ids = sorted(set(gap_ids), key=lambda value: value.encode("utf-8"))
+    contradiction_ids = sorted(
+        set(contradiction_ids), key=lambda value: value.encode("utf-8")
+    )
+    groups: list[EntityIdGroup] = []
+    if gap_ids:
+        groups.append(EntityIdGroup(entity_type="gap_question", ids=gap_ids))
+    if contradiction_ids:
+        groups.append(
+            EntityIdGroup(entity_type="contradiction", ids=contradiction_ids)
+        )
+    return groups
+
+
+@detections_app.command("generate")
+def detections_generate(context: typer.Context) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        # §14.14 rule 3: compatibility precedes consent; this command has no
+        # selector, and adapter construction follows cost consent.
+        require_compatible(workspace)
+        if not controls.yes:
+            if _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            if not typer.confirm(
+                "Replace both complete detection sets using the configured model provider?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
+        generated = run_detections_generate(workspace)
+        gaps = list(generated.current_gaps)
+        contradictions = list(generated.current_contradictions)
+        created_gap_ids = list(generated.created_gap_ids)
+        created_contradiction_ids = list(generated.created_contradiction_ids)
+        superseded_gap_ids = list(generated.superseded_gap_ids)
+        superseded_contradiction_ids = list(
+            generated.superseded_contradiction_ids
+        )
+        superseded_groups = _detection_groups(
+            superseded_gap_ids, superseded_contradiction_ids
+        )
+        if generated.retained:
+            human = "Retained the current detection generation unchanged."
+        else:
+            invalidated = (
+                ", ".join(group.entity_type for group in superseded_groups)
+                or "none"
+            )
+            human = (
+                "Replaced both complete detection sets. "
+                f"Current gaps ({len(gaps)}): "
+                f"{', '.join(gap.id for gap in gaps) or 'none'}. "
+                f"Current contradictions ({len(contradictions)}): "
+                f"{', '.join(item.id for item in contradictions) or 'none'}. "
+                f"Invalidated artifact classes: {invalidated}."
+            )
+        return Outcome(
+            affected_ids=AffectedIds(
+                created=_detection_groups(
+                    created_gap_ids, created_contradiction_ids
+                ),
+                superseded=superseded_groups,
+                deleted=[],
+            ),
+            generation_ids=sorted(
+                {
+                    *(
+                        [generated.generation_id]
+                        if generated.generation_id is not None
+                        else []
+                    ),
+                    *generated.superseded_generation_ids,
+                },
+                key=lambda value: value.encode("utf-8"),
+            ),
+            run_ids=[generated.run_id],
+            warnings=list(generated.warnings),
+            result=DetectionsGenerateResult(
+                gaps=gaps,
+                contradictions=contradictions,
+            ),
+            # §13.13 rule 9 hook: schema v4 has no snapshot/branch/bullet
+            # tables yet, so invalidated_views/branches remain empty.
+            human_result=human,
+        )
+
+    _run_command(context, "detections generate", operation)
+
+
+@gaps_app.command("list")
+def gaps_list(context: typer.Context) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        gaps = list(list_current_gaps(workspace))
+        human = "\n".join(
+            f"{gap.id}\t{gap.priority}\t{gap.reason}\t{str(gap.answered).lower()}"
+            for gap in gaps
+        )
+        return Outcome(
+            result=GapsListResult(gaps=gaps),
+            human_result=human or "No current gaps.",
+        )
+
+    _run_command(context, "gaps list", operation)
+
+
+@gaps_app.command("answer")
+def gaps_answer(
+    context: typer.Context,
+    gap_id: str = typer.Option(..., "--gap-id"),
+    source_file: str | None = typer.Option(None, "--file"),
+) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        # Resolve before file acquisition or prompt; capture re-checks under
+        # the writer lock so this read-only validation cannot race the write.
+        validate_gap_answer_selection(workspace, gap_id=gap_id)
+        if source_file is not None:
+            bundle = capture_gap_answer_file(
+                workspace, gap_id=gap_id, source_path=source_file
+            )
+        else:
+            if _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            # Fail closed on local-time configuration before owner input.
+            workspace_zone(require_timezone(load_workspace_config(workspace)))
+            raw_text = typer.prompt("Answer the gap question", err=True)
+            bundle = capture_gap_answer(
+                workspace, gap_id=gap_id, raw_text=raw_text
+            )
+        evidence_ids = [item.id for item in bundle.evidence_items]
+        return Outcome(
+            affected_ids=AffectedIds(
+                created=[
+                    EntityIdGroup(entity_type="evidence_item", ids=evidence_ids),
+                    EntityIdGroup(entity_type="raw_log", ids=[bundle.raw_log.id]),
+                ],
+                superseded=[],
+                deleted=[],
+            ),
+            human_result=(
+                f"Answered gap {gap_id} with raw log {bundle.raw_log.id}."
+            ),
+        )
+
+    _run_command(context, "gaps answer", operation)
+
+
+@contradictions_app.command("list")
+def contradictions_list(context: typer.Context) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        contradictions = list(list_current_contradictions(workspace))
+        human = "\n".join(
+            f"{item.id}\t{item.title}\t{item.created_at.isoformat()}"
+            for item in contradictions
+        )
+        return Outcome(
+            result=ContradictionsResult(contradictions=contradictions),
+            human_result=human or "No current contradictions.",
+        )
+
+    _run_command(context, "contradictions list", operation)
+
+
+@contradictions_app.command("show")
+def contradictions_show(
+    context: typer.Context,
+    contradiction_id: str = typer.Option(..., "--contradiction-id"),
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        contradiction = show_contradiction(
+            workspace, contradiction_id=contradiction_id
+        )
+        return Outcome(
+            result=ContradictionsResult(contradictions=[contradiction]),
+            human_result=(
+                f"{contradiction.id}\t{contradiction.title}\t"
+                f"{contradiction.created_at.isoformat()}"
+            ),
+        )
+
+    _run_command(context, "contradictions show", operation)
 
 
 @facts_app.command("list")
