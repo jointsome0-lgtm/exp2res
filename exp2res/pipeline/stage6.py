@@ -16,7 +16,6 @@ from exp2res.domain.calibration import claim_confidence_cap
 from exp2res.domain.enums import AssessmentScope
 from exp2res.domain.models import (
     AssessmentSnapshot,
-    ExperienceFact,
     SelfClaim,
     SelfSignal,
     canonical_project_key,
@@ -41,16 +40,15 @@ from exp2res.storage.repository import (
     insert_self_claim,
     list_assessment_snapshots,
     list_contradictions,
-    list_experience_facts,
     list_gap_questions,
     list_self_claims_for_snapshot,
-    list_self_signals,
     mark_assessment_snapshots_superseded,
     mark_self_claims_superseded,
 )
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
 
 from .orchestration import PlannedCall, run_complete_stage
+from .view_selection import select_assessment_view
 
 
 @dataclass(frozen=True)
@@ -252,44 +250,12 @@ def run_assessment_generation(
 
     now = clock or (lambda: datetime.now(timezone.utc))
     with writer_database(workspace, timeout_ms=timeout_ms, reconcile=True) as connection:
-        all_facts = tuple(sorted(list_experience_facts(connection), key=lambda item: _id_key(item.id)))
-        all_signals = tuple(sorted(list_self_signals(connection), key=lambda item: _id_key(item.id)))
-        if scope == "global":
-            facts = all_facts
-            signals = all_signals
-            context_facts: tuple[ExperienceFact, ...] = ()
-        else:
-            assert scope_target is not None
-            project_key = canonical_project_key(scope_target)
-            subject_ids = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM experience_facts "
-                    "WHERE superseded_at IS NULL AND project_key = ?",
-                    (project_key,),
-                )
-            }
-            fact_by_id = {fact.id: fact for fact in all_facts}
-            facts = tuple(sorted((fact_by_id[item] for item in subject_ids), key=lambda item: _id_key(item.id)))
-            signals = tuple(
-                signal
-                for signal in all_signals
-                if subject_ids.intersection(
-                    (*signal.supporting_fact_ids, *signal.counter_fact_ids)
-                )
-            )
-            context_ids = {
-                fact_id
-                for signal in signals
-                for fact_id in (*signal.supporting_fact_ids, *signal.counter_fact_ids)
-                if fact_id not in subject_ids
-            }
-            try:
-                context_facts = tuple(
-                    sorted((fact_by_id[item] for item in context_ids), key=lambda item: _id_key(item.id))
-                )
-            except KeyError as error:
-                raise IntegrityFailureError("assessment_context_fact_missing") from error
+        view = select_assessment_view(
+            connection, scope=scope, scope_target=scope_target
+        )
+        facts = view.facts
+        signals = view.signals
+        context_facts = view.context_facts
 
         gaps = tuple(
             sorted(

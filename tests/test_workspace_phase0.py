@@ -41,9 +41,9 @@ def test_fresh_init_and_idempotent_reopen_are_private_and_versioned(
     root.mkdir()
     _, first_status, created = initialize_workspace(root, clock=lambda: FIXED_NOW)
     assert created is True
-    assert CURRENT_SCHEMA_VERSION == 6
+    assert CURRENT_SCHEMA_VERSION == 7
     assert first_status.stored_version == CURRENT_SCHEMA_VERSION
-    assert first_status.supported_version == 6
+    assert first_status.supported_version == 7
     assert first_status.compatible is True
 
     database = root / ".exp2res" / "exp2res.sqlite"
@@ -67,8 +67,8 @@ def test_fresh_init_and_idempotent_reopen_are_private_and_versioned(
         "managed_backup_path": None,
         "migration_path_available": None,
         "recognized": True,
-        "stored_version": 6,
-        "supported_version": 6,
+        "stored_version": 7,
+        "supported_version": 7,
     }
 
     sentinel = root / "out" / "Vera Example - inert.txt"
@@ -124,7 +124,7 @@ def test_incompatible_schema_blocks_business_io_but_status_reports(
     with sqlite3.connect(database) as connection:
         connection.execute(
             "INSERT INTO schema_meta VALUES (?, ?, ?)",
-            (7, FIXED_NOW.isoformat(), "future-build"),
+            (8, FIXED_NOW.isoformat(), "future-build"),
         )
 
     with pytest.raises(SchemaCompatibilityError):
@@ -137,7 +137,7 @@ def test_incompatible_schema_blocks_business_io_but_status_reports(
     envelope = json.loads(result.stdout)
     assert result.exit_code == 4
     assert envelope["diagnostic_class"] == "schema_incompatible"
-    assert envelope["result"]["schema"]["stored_version"] == 7
+    assert envelope["result"]["schema"]["stored_version"] == 8
     assert original.raw_log.raw_text not in result.stdout
     assert original.raw_log.raw_text not in result.stderr
 
@@ -248,7 +248,7 @@ def test_incompatible_workspace_blocks_file_capture_before_source_read(
     database = workspace / ".exp2res" / "exp2res.sqlite"
     connection = sqlite3.connect(database)
     connection.execute(
-        "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (7, ?, ?)",
+        "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (8, ?, ?)",
         (FIXED_NOW.isoformat(), "future"),
     )
     connection.commit()

@@ -1,6 +1,11 @@
 ["21.1"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage7_verification.py::test_mixed_verdicts_commit_findings_and_precedence[statuses0-contradicted]",
+  "tests/test_stage7_verification.py::test_mixed_verdicts_commit_findings_and_precedence[statuses1-rejected]",
+]
 phase = "3"
+note = "Stage 7 proves blocking-verdict persistence and aggregate precedence with deterministic fake verdicts; semantic detection remains live-only"
 
 ["21.2"]
 status = "pending"
@@ -39,8 +44,10 @@ status = "pending"
 phase = "4"
 
 ["21.10"]
-status = "pending"
-phase = "3"
+status = "covered"
+nodes = [
+  "tests/test_stage7_verification.py::test_chainless_supported_retries_then_fails_but_rejected_commits",
+]
 
 ["21.11"]
 status = "covered"
@@ -107,8 +114,14 @@ phase = "3"
 note = "Stage 4 and the CLI preserve current contradictions across structural-key retention and Vera E2 proves source-log navigation; snapshot completeness, rendered contradiction coverage, and upper-layer supersession remain Stage 5/6+"
 
 ["21.20"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage7_verification.py::test_mixed_verdicts_commit_findings_and_precedence[statuses0-contradicted]",
+  "tests/test_stage7_verification.py::test_invalid_after_retry_keeps_prior_complete_pass_and_records_failed_run",
+  "tests/test_stage7_verification.py::test_reverification_appends_history_and_overwrites_current_state",
+]
 phase = "4"
+note = "Stage 7 proves atomic verifier mechanics, aggregation, durable failed attempts, and append-only history; Stage 11 and CLI presentation land later"
 
 ["21.21"]
 status = "covered"
@@ -161,12 +174,21 @@ status = "pending"
 phase = "4"
 
 ["21.28"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage7_verification.py::test_mixed_verdicts_commit_findings_and_precedence[statuses0-contradicted]",
+  "tests/test_stage7_verification.py::test_mixed_verdicts_commit_findings_and_precedence[statuses1-rejected]",
+]
 phase = "3"
+note = "Stage 7 proves blocking-verdict mechanics with deterministic fake verdicts; semantic detection remains live-only"
 
 ["21.29"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage7_verification.py::test_pass_changes_only_verification_fields_and_claim_prose_trigger_holds",
+]
 phase = "3"
+note = "Stage 7 proves byte-identical claim prose and no-repair persistence with a fake supported verdict; semantic judgment remains live-only"
 
 ["21.30"]
 status = "pending"
@@ -190,8 +212,10 @@ phase = "3"
 note = "Stage 3 fact ceilings, Stage 5 signal propagation caps, and Stage 6 claim source-maximum caps are enforced at structured output and commit; Stage 7 semantic breadth remains pending"
 
 ["21.32"]
-status = "pending"
-phase = "3"
+status = "covered"
+nodes = [
+  "tests/test_stage7_verification.py::test_exact_closure_is_ordered_and_projects_displaced_support",
+]
 
 ["21.33"]
 status = "partial"

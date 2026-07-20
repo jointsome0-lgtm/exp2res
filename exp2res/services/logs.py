@@ -33,6 +33,7 @@ class DeleteOutcome:
     purged_gap_ids: tuple[str, ...]
     purged_contradiction_ids: tuple[str, ...]
     purged_signal_ids: tuple[str, ...]
+    purged_finding_ids: tuple[str, ...]
     purged_claim_ids: tuple[str, ...]
     purged_snapshot_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
@@ -136,6 +137,12 @@ def delete_log(
                     "SELECT id FROM self_signals ORDER BY CAST(id AS BLOB)"
                 )
             )
+            purged_finding_ids = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM verification_findings ORDER BY CAST(id AS BLOB)"
+                )
+            )
             snapshot_rows = connection.execute(
                 "SELECT id, scope, scope_target FROM assessment_snapshots "
                 "WHERE superseded_at IS NULL ORDER BY CAST(id AS BLOB)"
@@ -165,6 +172,7 @@ def delete_log(
             # leave with the facts; purging before the raw_logs delete keeps the
             # answer_log_id ON DELETE SET NULL action from firing into the
             # gap_questions answered-iff CHECK.
+            connection.execute("DELETE FROM verification_findings")
             connection.execute("DELETE FROM self_claims")
             connection.execute("DELETE FROM assessment_snapshots")
             connection.execute("DELETE FROM gap_questions")
@@ -200,6 +208,7 @@ def delete_log(
         purged_gap_ids=purged_gap_ids,
         purged_contradiction_ids=purged_contradiction_ids,
         purged_signal_ids=purged_signal_ids,
+        purged_finding_ids=purged_finding_ids,
         purged_claim_ids=purged_claim_ids,
         purged_snapshot_ids=purged_snapshot_ids,
         invalidated_views=invalidated_views,

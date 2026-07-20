@@ -58,6 +58,11 @@ CounterevidenceRefType = Literal[
     "self_signal",
 ]
 
+VerificationTargetRefType = Literal[
+    "self_claim",
+    "resume_bullet",
+]
+
 EntryType = Literal[
     "manual_daily",
     "manual_retro",

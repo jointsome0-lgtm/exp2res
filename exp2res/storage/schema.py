@@ -711,6 +711,48 @@ BEGIN
 END;
 """
 
+VERIFICATION_FINDINGS_SQL = """
+CREATE TABLE verification_findings (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    created_at TEXT NOT NULL,
+    produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
+    target_type TEXT NOT NULL CHECK (target_type IN (
+        'self_claim', 'resume_bullet'
+    )),
+    target_id TEXT NOT NULL CHECK (target_id <> ''),
+    status TEXT NOT NULL CHECK (status IN (
+        'supported', 'partially_supported', 'inferred_but_acceptable',
+        'needs_clarification', 'contradicted', 'unsupported', 'rejected'
+    )),
+    reason TEXT NOT NULL CHECK (reason <> ''),
+    unsupported_phrases_json TEXT NOT NULL DEFAULT '[]',
+    suggested_rewrite TEXT,
+    counterevidence_json TEXT NOT NULL DEFAULT '[]'
+);
+"""
+
+VERIFICATION_FINDINGS_TARGET_INDEX_SQL = (
+    "CREATE INDEX verification_findings_target_id_idx "
+    "ON verification_findings(target_id);"
+)
+
+VERIFICATION_FINDINGS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER verification_findings_update_guard
+BEFORE UPDATE ON verification_findings
+BEGIN
+    SELECT RAISE(ABORT, 'verification_finding_immutable');
+END;
+"""
+
+VERIFICATION_FINDINGS_DELETE_GUARD_SQL = """
+CREATE TRIGGER verification_findings_owner_delete_guard
+BEFORE DELETE ON verification_findings
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'verification_finding_owner_purge_required');
+END;
+"""
+
 SCHEMA_META_SQL = """
 CREATE TABLE schema_meta (
     version INTEGER PRIMARY KEY,
@@ -776,13 +818,23 @@ SCHEMA_V6_SQL = "\n".join(
     )
 )
 
+SCHEMA_V7_SQL = "\n".join(
+    (
+        SCHEMA_V6_SQL,
+        VERIFICATION_FINDINGS_SQL,
+        VERIFICATION_FINDINGS_TARGET_INDEX_SQL,
+        VERIFICATION_FINDINGS_UPDATE_GUARD_SQL,
+        VERIFICATION_FINDINGS_DELETE_GUARD_SQL,
+    )
+)
+
 
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    if version != 6:
-        raise ValueError("fresh workspaces must use schema version 6")
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V6_SQL)
+    if version != 7:
+        raise ValueError("fresh workspaces must use schema version 7")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V7_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
@@ -887,5 +939,17 @@ def apply_migration_5_to_6(connection: Connection) -> None:
         ASSESSMENT_SNAPSHOTS_UPDATE_GUARD_SQL,
         SELF_CLAIMS_DELETE_GUARD_SQL,
         ASSESSMENT_SNAPSHOTS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+
+def apply_migration_6_to_7(connection: Connection) -> None:
+    """Add the Stage 7 verification-finding substrate without rewriting rows."""
+
+    for statement in (
+        VERIFICATION_FINDINGS_SQL,
+        VERIFICATION_FINDINGS_TARGET_INDEX_SQL,
+        VERIFICATION_FINDINGS_UPDATE_GUARD_SQL,
+        VERIFICATION_FINDINGS_DELETE_GUARD_SQL,
     ):
         connection.execute(statement)

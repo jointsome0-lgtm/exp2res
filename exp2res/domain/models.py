@@ -29,6 +29,7 @@ from .enums import (
     TemporalConfidence,
     TemporalPrecision,
     VerificationStatus,
+    VerificationTargetRefType,
 )
 
 RAW_TEXT_LIMIT = 1_048_576
@@ -519,6 +520,60 @@ class AssessmentSnapshot(StrictModel):
             if self.scope_target != canonical:
                 raise ValueError("scope target is not canonical NFC+trim form")
         return self
+
+
+class VerificationFinding(StrictModel):
+    id: str
+    created_at: datetime
+    produced_by_run_id: str
+    target_type: VerificationTargetRefType
+    target_id: str
+    status: VerificationStatus
+    reason: str
+    unsupported_phrases: list[str] = Field(default_factory=list, max_length=1_000)
+    suggested_rewrite: Optional[str] = None
+    counterevidence: list[CounterevidenceItem] = Field(
+        default_factory=list, max_length=1_000
+    )
+
+    @field_validator("id", "produced_by_run_id", "target_id")
+    @classmethod
+    def structural_fields(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def timestamp_is_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("datetime must carry an offset")
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def reason_policy(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True)
+
+    @field_validator("suggested_rewrite")
+    @classmethod
+    def suggested_rewrite_policy(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else validate_free_text(value, nonempty=True)
+
+    @field_validator("unsupported_phrases")
+    @classmethod
+    def unsupported_phrase_policy(cls, value: list[str]) -> list[str]:
+        for member in value:
+            validate_free_text(member, nonempty=True)
+        return value
+
+    @field_validator("counterevidence")
+    @classmethod
+    def counterevidence_policy(
+        cls, value: list[CounterevidenceItem]
+    ) -> list[CounterevidenceItem]:
+        keys = [(item.source_ref_type, item.source_ref_id) for item in value]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate counterevidence reference")
+        return value
 
 
 class Contradiction(StrictModel):

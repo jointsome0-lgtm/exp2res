@@ -56,6 +56,7 @@ def new_id(kind: str) -> str:
         "signal": "signal",
         "snapshot": "snapshot",
         "claim": "claim",
+        "finding": "finding",
         "run": "run",
         "gen": "gen",
     }

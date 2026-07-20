@@ -55,6 +55,11 @@ class SelectorNotFoundError(InvalidInputError):
     public_message = "The selected record does not exist."
 
 
+class SnapshotNotCurrentError(InvalidInputError):
+    diagnostic_class = "snapshot_not_current"
+    public_message = "The selected assessment snapshot is not current."
+
+
 class GapAlreadyAnsweredError(InvalidInputError):
     diagnostic_class = "gap_already_answered"
     public_message = "The selected gap has already been answered."
