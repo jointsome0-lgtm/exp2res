@@ -345,9 +345,83 @@ def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
         )
         connection.commit()
     with pytest.raises(
-        IntegrityFailureError, match="claim_counterevidence_reference_invalid"
+        IntegrityFailureError, match="export_source_reference_invalid"
     ):
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+
+def test_out_of_closure_detection_references_join_manifest_sources(
+    workspace: Path,
+) -> None:
+    """Gap targets and contradiction references outside the claim closure
+    fold into source_ids and the render-input bundle like counterevidence
+    grounding rows, while the closed link projections stay closure-only."""
+
+    import json
+
+    from test_stage4_detection import detector_response, run_stage4
+    from test_stage5_signals import (
+        SignalIds,
+        prepare_facts,
+        run_stage5,
+        signal_response,
+    )
+    from test_stage6_assessment import assessment_response, run_stage6
+
+    ids = SignalIds()
+    cited_fact, detected_fact = prepare_facts(workspace, ids, count=2)
+    run_stage4(
+        workspace,
+        FakeContractRunner(
+            [
+                detector_response(
+                    target_id=detected_fact,
+                    left=("experience_fact", cited_fact),
+                    right=("experience_fact", detected_fact),
+                )
+            ]
+        ),
+        ids,
+    )
+    signal_result = run_stage5(
+        workspace, FakeContractRunner([signal_response([cited_fact])]), ids
+    )
+    signal_ids = [item.id for item in signal_result.current_signals]
+    generated = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [assessment_response(fact_ids=[cited_fact], signal_ids=signal_ids)]
+        ),
+        ids,
+    )
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response() for _ in generated.claims]),
+        ids,
+        generated.snapshot_id,
+    )
+    result = export_assessment(
+        workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
+    )
+    manifest = json.loads(Path(result.manifest_path).read_bytes())
+    assert detected_fact in manifest["source_ids"]["experience_fact_ids"]
+    with read_database(workspace) as connection:
+        chain = connection.execute(
+            "SELECT fs.evidence_item_id, ei.raw_log_id FROM fact_sources fs "
+            "JOIN evidence_items ei ON ei.id = fs.evidence_item_id "
+            "WHERE fs.fact_id = ?",
+            (detected_fact,),
+        ).fetchall()
+    assert chain
+    for evidence_id, raw_log_id in chain:
+        assert evidence_id in manifest["source_ids"]["evidence_item_ids"]
+        assert raw_log_id in manifest["source_ids"]["raw_log_ids"]
+    evidence_map = json.loads(
+        (Path(result.manifest_path).parent / "evidence_map.json").read_bytes()
+    )
+    assert detected_fact not in [
+        link["fact_id"] for link in evidence_map["fact_links"]
+    ]
 
 
 def test_fact_provenance_disagreement_fails_export_closure(
