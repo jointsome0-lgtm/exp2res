@@ -28,6 +28,9 @@ from .enums import (
 
 RAW_TEXT_LIMIT = 1_048_576
 STRING_LIMIT = 16_384
+# §11 boundary limits: GapQuestion.question alone carries a 1,024-byte cap so
+# the §14.7 question_text metadata copy fits the 4 KiB entity budget.
+QUESTION_LIMIT = 1_024
 METADATA_LIMIT = 4_096
 METADATA_KEY = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -53,10 +56,17 @@ def validate_structural(value: str, *, nonempty: bool = True) -> str:
     return value
 
 
-def validate_free_text(value: str, *, raw: bool = False, nonempty: bool = False) -> str:
+def validate_free_text(
+    value: str,
+    *,
+    raw: bool = False,
+    nonempty: bool = False,
+    limit: int | None = None,
+) -> str:
     if nonempty and not value:
         raise ValueError("empty text")
-    limit = RAW_TEXT_LIMIT if raw else STRING_LIMIT
+    if limit is None:
+        limit = RAW_TEXT_LIMIT if raw else STRING_LIMIT
     if _utf8_size(value) > limit:
         raise ValueError("text too large")
     if any(
@@ -387,4 +397,4 @@ class GapQuestion(StrictModel):
     @field_validator("question")
     @classmethod
     def question_policy(cls, value: str) -> str:
-        return validate_free_text(value, nonempty=True)
+        return validate_free_text(value, nonempty=True, limit=QUESTION_LIMIT)

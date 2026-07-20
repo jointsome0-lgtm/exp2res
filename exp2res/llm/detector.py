@@ -6,6 +6,7 @@ from pydantic import Field, field_validator, model_validator
 
 from exp2res.domain.enums import DetectionRefType, GapPriority, GapTrigger
 from exp2res.domain.models import (
+    QUESTION_LIMIT,
     EvidenceItem,
     ExperienceFact,
     RawLog,
@@ -72,7 +73,7 @@ class GapCandidate(StrictModel):
     @field_validator("question")
     @classmethod
     def question_policy(cls, value: str) -> str:
-        return validate_free_text(value, nonempty=True)
+        return validate_free_text(value, nonempty=True, limit=QUESTION_LIMIT)
 
 
 class ContradictionCandidate(StrictModel):

@@ -612,3 +612,59 @@ def test_detector_candidates_require_explicit_non_null_model_judgments() -> None
         DetectorOutput.model_validate(
             {"gap_questions": [], "contradictions": [], "warnings": None}
         )
+
+
+@pytest.mark.lifecycle
+def test_production_id_factory_supports_detection_kinds(workspace: Path) -> None:
+    """new_id must allocate gap/contradiction IDs so the default path persists."""
+
+    ids = DetectionIds()
+    fact_id, log_id, _item_id = prepare_fact(workspace, ids)
+    fake = FakeContractRunner(
+        [
+            detector_response(
+                target_id=fact_id,
+                left=("experience_fact", fact_id),
+                right=("raw_log", log_id),
+            )
+        ]
+    )
+    result = run_detection_generation(
+        workspace,
+        selection=SELECTION,
+        budgets=budgets(),
+        runner=fake,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    assert result.retained is False
+    assert len(result.created_gap_ids) == 1
+    assert result.created_gap_ids[0].startswith("gap_")
+    assert result.created_contradiction_ids[0].startswith("contradiction_")
+
+
+def test_gap_question_enforces_the_1024_byte_boundary(workspace: Path) -> None:
+    """§11: GapQuestion.question caps at 1,024 UTF-8 bytes at every boundary."""
+
+    from exp2res.domain.models import GapQuestion
+
+    fitting = "q" * 1_024
+    oversized = "q" * 1_025
+    base = {
+        "target_type": "experience_fact",
+        "target_id": "fact_x",
+        "reason": "weak_evidence",
+        "priority": "medium",
+    }
+    assert GapCandidate(question=fitting, **base).question == fitting
+    with pytest.raises(ValidationError):
+        GapCandidate(question=oversized, **base)
+    entity = {
+        "id": "gap_x",
+        "created_at": FIXED_NOW,
+        **base,
+    }
+    assert GapQuestion(question=fitting, **entity).question == fitting
+    with pytest.raises(ValidationError):
+        GapQuestion(question=oversized, **entity)

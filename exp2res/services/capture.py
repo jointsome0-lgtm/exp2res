@@ -32,6 +32,8 @@ def new_id(kind: str) -> str:
         "raw_log": "log",
         "evidence_item": "evi",
         "fact": "fact",
+        "gap": "gap",
+        "contradiction": "contradiction",
         "run": "run",
         "gen": "gen",
     }
