@@ -93,8 +93,14 @@ status = "pending"
 phase = "4"
 
 ["21.19"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage4_detection.py::test_paraphrase_and_swapped_sides_retain_ids_prose_and_generation",
+  "tests/test_stage4_detection.py::test_changed_structural_key_replaces_both_sets_under_one_generation",
+  "tests/test_stage4_detection.py::test_stage3_replacement_invalidates_detections_but_empty_stage3_does_not",
+]
 phase = "3"
+note = "Stage 4 preserves contradiction rows across structural-key retention and supersedes them only through complete replacing regeneration; snapshot completeness and rendered contradiction coverage land with Stage 6 and browser/CLI slices"
 
 ["21.20"]
 status = "pending"
@@ -116,8 +122,18 @@ status = "pending"
 phase = "4"
 
 ["21.23"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage4_detection.py::test_happy_path_persists_shared_generation_and_complete_telemetry",
+  "tests/test_stage4_detection.py::test_paraphrase_and_swapped_sides_retain_ids_prose_and_generation",
+  "tests/test_stage4_detection.py::test_changed_structural_key_replaces_both_sets_under_one_generation",
+  "tests/test_stage4_detection.py::test_answered_gap_forces_key_equal_replacement_and_resets_answer_state",
+  "tests/test_stage4_detection.py::test_duplicate_structural_keys_retry_once_then_fail_atomically[gap]",
+  "tests/test_stage4_detection.py::test_displaced_records_and_items_are_absent_and_invalid_targets",
+  "tests/test_stage4_detection.py::test_commit_failure_and_interrupt_keep_prior_current_generation",
+]
 phase = "2"
+note = "The Stage 4 service proves one complete call, structural-key retain/replace, answered-gap replacement, closed typed references, displaced-record exclusion, single schema retry, and atomic failure; the detections CLI, upper-layer invalidation/reporting, and generated-voice gate land in the next and later slices"
 
 ["21.24"]
 status = "pending"

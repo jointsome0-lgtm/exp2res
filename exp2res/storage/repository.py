@@ -11,8 +11,10 @@ from typing import Iterable
 from pydantic import ValidationError
 
 from exp2res.domain.models import (
+    Contradiction,
     EvidenceItem,
     ExperienceFact,
+    GapQuestion,
     OccurredAt,
     RawLog,
     canonical_project_key,
@@ -144,10 +146,7 @@ def insert_evidence_item(connection: sqlite3.Connection, item: EvidenceItem) -> 
         raise IntegrityFailureError() from error
 
 
-def _hydrate(
-    model: type[RawLog] | type[EvidenceItem] | type[ExperienceFact],
-    payload: dict[str, object],
-):
+def _hydrate(model: type, payload: dict[str, object]):
     try:
         return model.model_validate_json(_json(payload))
     except (ValidationError, ValueError, TypeError, UnicodeError) as error:
@@ -516,6 +515,291 @@ def mark_facts_superseded(
                 raise IntegrityFailureError()
     except sqlite3.IntegrityError as error:
         raise IntegrityFailureError() from error
+
+
+def _validate_detection_reference(
+    connection: sqlite3.Connection,
+    *,
+    ref_type: str,
+    ref_id: str,
+    field: str,
+) -> None:
+    if ref_type == "experience_fact":
+        row = connection.execute(
+            "SELECT superseded_at FROM experience_facts WHERE id = ?",
+            (ref_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError(f"{field}_experience_fact_missing")
+        if row["superseded_at"] is not None:
+            raise IntegrityFailureError(f"{field}_experience_fact_superseded")
+        return
+    elif ref_type == "raw_log":
+        row = connection.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM raw_logs AS correction
+                WHERE correction.corrects_log_id = target.id
+            ) AS displaced
+            FROM raw_logs AS target
+            WHERE target.id = ?
+            """,
+            (ref_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError(f"{field}_raw_log_missing")
+        if row["displaced"]:
+            raise IntegrityFailureError(f"{field}_raw_log_displaced")
+        return
+    elif ref_type == "evidence_item":
+        row = connection.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM raw_logs AS correction
+                WHERE correction.corrects_log_id = owner.id
+            ) AS owner_displaced
+            FROM evidence_items AS item
+            JOIN raw_logs AS owner ON owner.id = item.raw_log_id
+            WHERE item.id = ?
+            """,
+            (ref_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError(f"{field}_evidence_item_missing")
+        if row["owner_displaced"]:
+            raise IntegrityFailureError(f"{field}_evidence_item_owner_displaced")
+        return
+    else:
+        raise IntegrityFailureError(f"{field}_unknown_reference_type")
+
+
+def insert_gap_question(
+    connection: sqlite3.Connection,
+    gap: GapQuestion,
+    *,
+    produced_by_run_id: str,
+    generation_id: str,
+) -> None:
+    if not produced_by_run_id or not generation_id:
+        raise IntegrityFailureError("gap_production_identity_invalid")
+    if (
+        gap.superseded_at is not None
+        or gap.answered
+        or gap.answer_log_id is not None
+    ):
+        raise IntegrityFailureError("gap_initial_lifecycle_invalid")
+    _validate_detection_reference(
+        connection,
+        ref_type=gap.target_type,
+        ref_id=gap.target_id,
+        field="gap_target",
+    )
+    try:
+        connection.execute(
+            """
+            INSERT INTO gap_questions(
+                id, created_at, superseded_at, target_type, target_id,
+                question, reason, priority, answered, answer_log_id,
+                produced_by_run_id, generation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                gap.id,
+                _iso(gap.created_at),
+                _iso(gap.superseded_at),
+                gap.target_type,
+                gap.target_id,
+                gap.question,
+                gap.reason,
+                gap.priority,
+                int(gap.answered),
+                gap.answer_log_id,
+                produced_by_run_id,
+                generation_id,
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        if "gap_questions.id" in str(error):
+            raise IdCollisionError() from error
+        raise IntegrityFailureError("gap_insert_failed") from error
+
+
+def insert_contradiction(
+    connection: sqlite3.Connection,
+    contradiction: Contradiction,
+    *,
+    produced_by_run_id: str,
+    generation_id: str,
+) -> None:
+    if not produced_by_run_id or not generation_id:
+        raise IntegrityFailureError("contradiction_production_identity_invalid")
+    if contradiction.superseded_at is not None:
+        raise IntegrityFailureError("contradiction_initial_lifecycle_invalid")
+    _validate_detection_reference(
+        connection,
+        ref_type=contradiction.left_ref_type,
+        ref_id=contradiction.left_ref_id,
+        field="contradiction_left_ref",
+    )
+    _validate_detection_reference(
+        connection,
+        ref_type=contradiction.right_ref_type,
+        ref_id=contradiction.right_ref_id,
+        field="contradiction_right_ref",
+    )
+    try:
+        connection.execute(
+            """
+            INSERT INTO contradictions(
+                id, created_at, superseded_at, title, description,
+                left_ref_type, left_ref_id, right_ref_type, right_ref_id,
+                metadata_json, produced_by_run_id, generation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                contradiction.id,
+                _iso(contradiction.created_at),
+                _iso(contradiction.superseded_at),
+                contradiction.title,
+                contradiction.description,
+                contradiction.left_ref_type,
+                contradiction.left_ref_id,
+                contradiction.right_ref_type,
+                contradiction.right_ref_id,
+                _json(contradiction.metadata),
+                produced_by_run_id,
+                generation_id,
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        if "contradictions.id" in str(error):
+            raise IdCollisionError() from error
+        raise IntegrityFailureError("contradiction_insert_failed") from error
+
+
+def hydrate_gap_question(row: sqlite3.Row) -> GapQuestion:
+    if row["answered"] not in (0, 1) or isinstance(row["answered"], bool):
+        raise HydrationFailureError()
+    payload = {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "superseded_at": row["superseded_at"],
+        "target_type": row["target_type"],
+        "target_id": row["target_id"],
+        "question": row["question"],
+        "reason": row["reason"],
+        "priority": row["priority"],
+        "answered": bool(row["answered"]),
+        "answer_log_id": row["answer_log_id"],
+    }
+    return _hydrate(GapQuestion, payload)
+
+
+def hydrate_contradiction(row: sqlite3.Row) -> Contradiction:
+    try:
+        metadata = json.loads(row["metadata_json"])
+    except (json.JSONDecodeError, TypeError) as error:
+        raise HydrationFailureError() from error
+    payload = {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "superseded_at": row["superseded_at"],
+        "title": row["title"],
+        "description": row["description"],
+        "left_ref_type": row["left_ref_type"],
+        "left_ref_id": row["left_ref_id"],
+        "right_ref_type": row["right_ref_type"],
+        "right_ref_id": row["right_ref_id"],
+        "metadata": metadata,
+    }
+    return _hydrate(Contradiction, payload)
+
+
+def list_gap_questions(
+    connection: sqlite3.Connection, *, current_only: bool = True
+) -> tuple[GapQuestion, ...]:
+    where = " WHERE superseded_at IS NULL" if current_only else ""
+    rows = connection.execute("SELECT * FROM gap_questions" + where).fetchall()
+    gaps = [hydrate_gap_question(row) for row in rows]
+    gaps.sort(
+        key=lambda item: (
+            item.created_at.astimezone(timezone.utc),
+            item.id.encode("utf-8"),
+        )
+    )
+    return tuple(gaps)
+
+
+def list_contradictions(
+    connection: sqlite3.Connection, *, current_only: bool = True
+) -> tuple[Contradiction, ...]:
+    where = " WHERE superseded_at IS NULL" if current_only else ""
+    rows = connection.execute("SELECT * FROM contradictions" + where).fetchall()
+    contradictions = [hydrate_contradiction(row) for row in rows]
+    contradictions.sort(
+        key=lambda item: (
+            item.created_at.astimezone(timezone.utc),
+            item.id.encode("utf-8"),
+        )
+    )
+    return tuple(contradictions)
+
+
+def _mark_detections_superseded(
+    connection: sqlite3.Connection,
+    *,
+    table: str,
+    ids: Iterable[str],
+    superseded_at: datetime,
+) -> None:
+    if superseded_at.tzinfo is None or superseded_at.utcoffset() is None:
+        raise IntegrityFailureError()
+    values = list(ids)
+    if len(values) != len(set(values)):
+        raise IntegrityFailureError()
+    for entity_id in values:
+        row = connection.execute(
+            f"SELECT superseded_at FROM {table} WHERE id = ?", (entity_id,)
+        ).fetchone()
+        if row is None or row[0] is not None:
+            raise IntegrityFailureError()
+    try:
+        for entity_id in values:
+            cursor = connection.execute(
+                f"UPDATE {table} SET superseded_at = ? "
+                "WHERE id = ? AND superseded_at IS NULL",
+                (_iso(superseded_at), entity_id),
+            )
+            if cursor.rowcount != 1:
+                raise IntegrityFailureError()
+    except sqlite3.IntegrityError as error:
+        raise IntegrityFailureError() from error
+
+
+def mark_gap_questions_superseded(
+    connection: sqlite3.Connection,
+    gap_ids: Iterable[str],
+    superseded_at: datetime,
+) -> None:
+    _mark_detections_superseded(
+        connection,
+        table="gap_questions",
+        ids=gap_ids,
+        superseded_at=superseded_at,
+    )
+
+
+def mark_contradictions_superseded(
+    connection: sqlite3.Connection,
+    contradiction_ids: Iterable[str],
+    superseded_at: datetime,
+) -> None:
+    _mark_detections_superseded(
+        connection,
+        table="contradictions",
+        ids=contradiction_ids,
+        superseded_at=superseded_at,
+    )
 
 
 def get_raw_log(connection: sqlite3.Connection, log_id: str) -> RawLog | None:

@@ -11,8 +11,10 @@ from pydantic import ValidationError
 import pytest
 
 from exp2res.domain.models import (
+    Contradiction,
     EvidenceItem,
     ExperienceFact,
+    GapQuestion,
     OccurredAt,
     RawLog,
     canonical_project_key,
@@ -27,11 +29,17 @@ from exp2res.services.logs import show_log
 from exp2res.storage.repository import (
     RawLogBundle,
     get_experience_fact,
+    insert_contradiction,
     insert_evidence_item,
     insert_experience_fact,
+    insert_gap_question,
     insert_raw_log,
     list_experience_facts,
+    list_contradictions,
+    list_gap_questions,
+    mark_contradictions_superseded,
     mark_facts_superseded,
+    mark_gap_questions_superseded,
 )
 from exp2res.storage.telemetry import create_processing_run, finish_processing_run
 from exp2res.storage.workspace import read_database, writer_database
@@ -125,6 +133,48 @@ def persist_fact(
             finished_at=FIXED_NOW,
             status="completed",
             output_ids=[fact.id],
+        )
+        connection.commit()
+
+
+def persist_detections(
+    workspace: Path,
+    gap: GapQuestion,
+    contradiction: Contradiction,
+    *,
+    run_id: str = RUN_B,
+    generation_id: str = "gen_" + "d" * 32,
+) -> None:
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=run_id,
+            stage="13.4",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+            input_ids=[gap.target_id],
+        )
+        insert_gap_question(
+            connection,
+            gap,
+            produced_by_run_id=run_id,
+            generation_id=generation_id,
+        )
+        insert_contradiction(
+            connection,
+            contradiction,
+            produced_by_run_id=run_id,
+            generation_id=generation_id,
+        )
+        finish_processing_run(
+            connection,
+            run_id=run_id,
+            finished_at=FIXED_NOW,
+            status="completed",
+            output_ids=[gap.id, contradiction.id],
         )
         connection.commit()
 
@@ -1010,4 +1060,203 @@ def test_fact_insert_enforces_the_retained_rows_selectability_predicate(
                     produced_by_run_id=RUN_A,
                     generation_id=GEN_A,
                 )
+        connection.rollback()
+
+
+def test_detection_models_storage_hydration_and_lifecycle_guards(
+    workspace: Path,
+) -> None:
+    """§11.9–§11.10/§12: detection rows hydrate and only lifecycle moves."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example detection storage source",
+        clock=lambda: FIXED_NOW,
+    )
+    fact = make_fact(
+        raw_log_id=bundle.raw_log.id,
+        evidence_item_id=bundle.evidence_items[0].id,
+        project=None,
+    )
+    persist_fact(workspace, fact)
+    gap = GapQuestion(
+        id="gap_vera_storage",
+        created_at=FIXED_NOW,
+        target_type="experience_fact",
+        target_id=fact.id,
+        question="What scale did Vera Example validate?",
+        reason="missing_scale",
+        priority="medium",
+    )
+    contradiction = Contradiction(
+        id="contradiction_vera_storage",
+        created_at=FIXED_NOW,
+        title="Vera Example scope conflict",
+        description="The supplied fact and record describe different scopes.",
+        left_ref_type="experience_fact",
+        left_ref_id=fact.id,
+        right_ref_type="raw_log",
+        right_ref_id=bundle.raw_log.id,
+        metadata={},
+    )
+    persist_detections(workspace, gap, contradiction)
+
+    with read_database(workspace) as connection:
+        assert list_gap_questions(connection) == (gap,)
+        assert list_contradictions(connection) == (contradiction,)
+        production = {
+            table: tuple(
+                connection.execute(
+                    f"SELECT produced_by_run_id, generation_id FROM {table}"
+                ).fetchone()
+            )
+            for table in ("gap_questions", "contradictions")
+        }
+    assert production == {
+        "gap_questions": (RUN_B, "gen_" + "d" * 32),
+        "contradictions": (RUN_B, "gen_" + "d" * 32),
+    }
+
+    with writer_database(workspace) as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="gap_question_lifecycle_only"):
+            connection.execute(
+                "UPDATE gap_questions SET question = 'Vera Example rewrite' WHERE id = ?",
+                (gap.id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="contradiction_lifecycle_only"):
+            connection.execute(
+                "UPDATE contradictions SET title = 'Vera Example rewrite' WHERE id = ?",
+                (contradiction.id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="gap_question_owner_purge_required"):
+            connection.execute("DELETE FROM gap_questions WHERE id = ?", (gap.id,))
+        with pytest.raises(sqlite3.IntegrityError, match="contradiction_owner_purge_required"):
+            connection.execute(
+                "DELETE FROM contradictions WHERE id = ?", (contradiction.id,)
+            )
+
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE gap_questions SET answered = 1, answer_log_id = ? WHERE id = ?",
+            (bundle.raw_log.id, gap.id),
+        )
+        connection.commit()
+    with read_database(workspace) as connection:
+        answered = list_gap_questions(connection)[0]
+    assert answered.answered is True and answered.answer_log_id == bundle.raw_log.id
+
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        mark_gap_questions_superseded(connection, [gap.id], FIXED_NOW.replace(hour=13))
+        mark_contradictions_superseded(
+            connection, [contradiction.id], FIXED_NOW.replace(hour=13)
+        )
+        connection.commit()
+    with read_database(workspace) as connection:
+        assert list_gap_questions(connection) == ()
+        assert list_contradictions(connection) == ()
+
+
+def test_detection_insert_reference_validation_distinguishes_failure_kinds(
+    workspace: Path,
+) -> None:
+    """§12 rule 10: each polymorphic target must be current and effective."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example reference validation source",
+        clock=lambda: FIXED_NOW,
+    )
+    gap = GapQuestion(
+        id="gap_vera_invalid_ref",
+        created_at=FIXED_NOW,
+        target_type="raw_log",
+        target_id="log_vera_missing",
+        question="What evidence is missing for Vera Example?",
+        reason="weak_evidence",
+        priority="low",
+    )
+    contradiction = Contradiction(
+        id="contradiction_vera_invalid_ref",
+        created_at=FIXED_NOW,
+        title="Vera Example missing reference",
+        description="One typed reference does not resolve.",
+        left_ref_type="raw_log",
+        left_ref_id=bundle.raw_log.id,
+        right_ref_type="evidence_item",
+        right_ref_id="evi_vera_missing",
+        metadata={},
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.4",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        with pytest.raises(
+            IntegrityFailureError, match="gap_target_raw_log_missing"
+        ):
+            insert_gap_question(
+                connection,
+                gap,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        with pytest.raises(
+            IntegrityFailureError,
+            match="contradiction_right_ref_evidence_item_missing",
+        ):
+            insert_contradiction(
+                connection,
+                contradiction,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        connection.rollback()
+
+
+def test_gap_answered_iff_check_rejects_half_transitions(workspace: Path) -> None:
+    """§14.7: answered and answer_log_id move together or the CHECK aborts."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example gap answer invariant source",
+        clock=lambda: FIXED_NOW,
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.4",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            connection.execute(
+                """
+                INSERT INTO gap_questions(
+                    id, created_at, target_type, target_id, question, reason,
+                    priority, answered, answer_log_id, produced_by_run_id,
+                    generation_id
+                ) VALUES (?, ?, 'raw_log', ?, ?, 'missing_context', 'low',
+                          1, NULL, ?, ?)
+                """,
+                (
+                    "gap_vera_half_answer",
+                    FIXED_NOW.isoformat(),
+                    bundle.raw_log.id,
+                    "What context is missing for Vera Example?",
+                    RUN_A,
+                    GEN_A,
+                ),
+            )
         connection.rollback()

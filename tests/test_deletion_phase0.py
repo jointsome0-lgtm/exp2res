@@ -293,3 +293,87 @@ def test_cli_owner_delete_reports_global_experience_fact_group(
         "raw_log",
     ]
     assert deleted[1]["ids"] == [fact.id for fact in facts]
+
+
+def test_owner_delete_purges_detections_and_answer_log_fk_cannot_block(
+    workspace: Path,
+) -> None:
+    """§13.13 rule 5: detections purge with the reset, and the answered gap's
+    answer_log_id ON DELETE SET NULL action cannot fire into the answered-iff
+    CHECK and block owner deletion of the answer record."""
+
+    from exp2res.domain.models import Contradiction, GapQuestion
+    from exp2res.storage.repository import insert_contradiction, insert_gap_question
+
+    selected, retained, facts = _persist_facts_and_completed_calls(workspace)
+    answer = capture_daily(
+        workspace,
+        raw_text="Vera Example answer record",
+        clock=lambda: FIXED_NOW.replace(hour=15),
+    )
+    gap = GapQuestion(
+        id="gap_" + "a" * 32,
+        created_at=FIXED_NOW,
+        target_type="experience_fact",
+        target_id=facts[0].id,
+        question="Vera Example open question?",
+        reason="weak_evidence",
+        priority="medium",
+    )
+    contradiction = Contradiction(
+        id="contradiction_" + "a" * 32,
+        created_at=FIXED_NOW,
+        title="Vera Example conflict",
+        description="Vera Example conflicting statements.",
+        left_ref_type="experience_fact",
+        left_ref_id=facts[0].id,
+        right_ref_type="raw_log",
+        right_ref_id=selected.raw_log.id,
+    )
+    detection_run = "run_" + "e" * 32
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=detection_run,
+            stage="13.4",
+            started_at=FIXED_NOW,
+            provider="fake",
+            model="fake-model",
+            prompt_policy_hash="b" * 64,
+            input_ids=[facts[0].id],
+        )
+        insert_gap_question(
+            connection,
+            gap,
+            produced_by_run_id=detection_run,
+            generation_id="gen_" + "e" * 32,
+        )
+        insert_contradiction(
+            connection,
+            contradiction,
+            produced_by_run_id=detection_run,
+            generation_id="gen_" + "e" * 32,
+        )
+        finish_processing_run(
+            connection,
+            run_id=detection_run,
+            finished_at=FIXED_NOW,
+            status="completed",
+            output_ids=[gap.id, contradiction.id],
+        )
+        connection.execute(
+            "UPDATE gap_questions SET answered = 1, answer_log_id = ? WHERE id = ?",
+            (answer.raw_log.id, gap.id),
+        )
+        connection.commit()
+
+    outcome = delete_log(workspace, log_id=answer.raw_log.id)
+    assert outcome.purged_gap_ids == (gap.id,)
+    assert outcome.purged_contradiction_ids == (contradiction.id,)
+    assert outcome.residual_paths == ()
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM gap_questions").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM contradictions").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM experience_facts").fetchone()[0] == 0

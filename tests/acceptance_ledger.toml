@@ -156,10 +156,11 @@ evals = ["21.22", "21.24"]
 issues = []
 
 ["24.26"]
-status = "pending"
+status = "partial"
 phases = ["2"]
 evals = ["21.23"]
-issues = []
+issues = ["#70", "#99"]
+note = "Stage-level fake-runner tests prove the complete detector call, structural-key retention and joint replacement, answered-gap reset, displaced-record exclusion, typed reference retry, and atomic failure; the public detections command and its complete affected/invalidation envelope land in issue #99 slice 2"
 
 ["24.27"]
 status = "pending"
