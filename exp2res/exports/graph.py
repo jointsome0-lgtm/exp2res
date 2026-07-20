@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 import sqlite3
 from typing import Generic, Literal, TypeVar, cast
 
@@ -456,15 +457,23 @@ def load_assessment_graph(
     }
     if current_contradictions != set(snapshot.contradiction_ids):
         raise IntegrityFailureError("snapshot_contradiction_set_stale")
-    current_unanswered = {
-        row[0]
-        for row in connection.execute(
-            "SELECT id FROM gap_questions "
-            "WHERE superseded_at IS NULL AND answered = 0"
-        )
-    }
-    if not current_unanswered <= set(snapshot.gap_question_ids):
-        raise IntegrityFailureError("snapshot_gap_set_stale")
+    listed_gap_ids = set(snapshot.gap_question_ids)
+    for gap_row in connection.execute(
+        "SELECT gq.id, gq.answered, logs.recorded_at "
+        "FROM gap_questions gq "
+        "LEFT JOIN raw_logs logs ON logs.id = gq.answer_log_id "
+        "WHERE gq.superseded_at IS NULL"
+    ):
+        if gap_row[0] in listed_gap_ids:
+            continue
+        # An unlisted current gap is legal only when it was already answered
+        # at synthesis: unanswered rows and rows whose answer was recorded
+        # after the snapshot instant were writer inputs and must be listed.
+        if not gap_row[1] or gap_row[2] is None:
+            raise IntegrityFailureError("snapshot_gap_set_stale")
+        answered_at = datetime.fromisoformat(gap_row[2])
+        if answered_at > snapshot.created_at:
+            raise IntegrityFailureError("snapshot_gap_set_stale")
 
     signal_ids = sorted(
         {signal_id for item in claims for signal_id in item.value.source_signal_ids},

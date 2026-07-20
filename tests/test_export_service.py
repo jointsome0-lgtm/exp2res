@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -190,6 +191,53 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
         connection.commit()
     with pytest.raises(IntegrityFailureError, match="snapshot_gap_set_stale"):
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+    # A current gap answered after synthesis must stay listed so the report
+    # renders its answered-since-synthesis marker; an unlisted one is the
+    # same inconsistent input and fails closed. A gap answered before
+    # synthesis is legitimately unlisted and does not block export.
+    with read_database(workspace) as connection:
+        snapshot_created_at = connection.execute(
+            "SELECT created_at FROM assessment_snapshots WHERE id = ?",
+            (generated.snapshot_id,),
+        ).fetchone()[0]
+    assert "2000-01-01" < snapshot_created_at < "2099-01-01"
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "INSERT INTO raw_logs (id, recorded_at, entry_type, source_type, "
+            "temporal_precision, temporal_confidence, raw_text, metadata_json) "
+            "VALUES ('log_vera_late_answer', '2099-01-01T00:00:00+00:00', "
+            "'gap_answer', 'manual_entry', 'unknown', 'unknown', "
+            "'Vera Example late answer.', ?)",
+            (
+                json.dumps(
+                    {
+                        "question_text": "Which Vera Example scale applies?",
+                        "question_reason": "missing_scale",
+                    }
+                ),
+            ),
+        )
+        connection.execute(
+            "UPDATE gap_questions SET answered = 1, "
+            "answer_log_id = 'log_vera_late_answer' "
+            "WHERE id = 'gap_vera_stray'"
+        )
+        connection.commit()
+    with pytest.raises(IntegrityFailureError, match="snapshot_gap_set_stale"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE raw_logs SET recorded_at = '2000-01-01T00:00:00+00:00' "
+            "WHERE id = 'log_vera_late_answer'"
+        )
+        connection.commit()
+    export_assessment(
+        workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
+    )
 
 
 def test_claim_from_another_generation_fails_export_as_mixed_graph(
