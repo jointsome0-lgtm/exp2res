@@ -423,6 +423,26 @@ def test_out_of_closure_detection_references_join_manifest_sources(
         link["fact_id"] for link in evidence_map["fact_links"]
     ]
 
+    # §14.7 shape check: an answered marker backed by a raw log that is not a
+    # real gap-answer record fails export closed instead of rendering.
+    with read_database(workspace) as connection:
+        gap_id = connection.execute(
+            "SELECT id FROM gap_questions WHERE superseded_at IS NULL"
+        ).fetchone()[0]
+        manual_log_id = connection.execute(
+            "SELECT id FROM raw_logs WHERE entry_type != 'gap_answer' LIMIT 1"
+        ).fetchone()[0]
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE gap_questions SET answered = 1, answer_log_id = ? "
+            "WHERE id = ?",
+            (manual_log_id, gap_id),
+        )
+        connection.commit()
+    with pytest.raises(IntegrityFailureError, match="gap_answer_log_invalid"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
 
 def test_fact_provenance_disagreement_fails_export_closure(
     workspace: Path, monkeypatch: pytest.MonkeyPatch

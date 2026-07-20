@@ -385,9 +385,22 @@ def load_assessment_graph(
         )
         note_supplemental(gap.target_type, gap.target_id)
         if gap.answer_log_id is not None:
-            _require_reference(
-                connection, "raw_log", gap.answer_log_id, "gap_answer_log_invalid"
-            )
+            # §14.7 shape check: the answered marker renders only for a real
+            # gap-answer record carrying the copied question context.
+            answer_row = connection.execute(
+                "SELECT * FROM raw_logs WHERE id = ?", (gap.answer_log_id,)
+            ).fetchone()
+            if answer_row is None:
+                raise IntegrityFailureError("gap_answer_log_invalid")
+            answer_log = hydrate_raw_log(answer_row)
+            question_text = answer_log.metadata.get("question_text")
+            question_reason = answer_log.metadata.get("question_reason")
+            if (
+                answer_log.entry_type != "gap_answer"
+                or question_text != gap.question
+                or question_reason != gap.reason
+            ):
+                raise IntegrityFailureError("gap_answer_log_invalid")
             note_supplemental("raw_log", gap.answer_log_id)
         gap_records.append(_stored(row, gap))
     gap_records.sort(key=lambda item: id_key(item.value.id))
