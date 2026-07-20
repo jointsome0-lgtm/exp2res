@@ -387,6 +387,131 @@ BEGIN
 END;
 """
 
+GAP_QUESTIONS_SQL = """
+CREATE TABLE gap_questions (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,
+    target_type TEXT NOT NULL CHECK (target_type IN (
+        'raw_log', 'evidence_item', 'experience_fact'
+    )),
+    target_id TEXT NOT NULL CHECK (target_id <> ''),
+    question TEXT NOT NULL CHECK (question <> ''),
+    reason TEXT NOT NULL CHECK (reason IN (
+        'missing_metric', 'missing_scale', 'missing_ownership',
+        'missing_context', 'ambiguous_time', 'ambiguous_claim',
+        'weak_evidence', 'unsupported_skill_claim',
+        'unclear_artifact_status'
+    )),
+    priority TEXT NOT NULL CHECK (priority IN ('low', 'medium', 'high')),
+    answered INTEGER NOT NULL DEFAULT 0 CHECK (answered IN (0, 1)),
+    answer_log_id TEXT REFERENCES raw_logs(id) ON DELETE SET NULL,
+    produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
+    generation_id TEXT NOT NULL CHECK (generation_id <> ''),
+    CHECK (
+        (answered = 0 AND answer_log_id IS NULL)
+        OR (answered = 1 AND answer_log_id IS NOT NULL)
+    )
+);
+"""
+
+CONTRADICTIONS_SQL = """
+CREATE TABLE contradictions (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,
+    title TEXT NOT NULL CHECK (title <> ''),
+    description TEXT NOT NULL CHECK (description <> ''),
+    left_ref_type TEXT NOT NULL CHECK (left_ref_type IN (
+        'raw_log', 'evidence_item', 'experience_fact'
+    )),
+    left_ref_id TEXT NOT NULL CHECK (left_ref_id <> ''),
+    right_ref_type TEXT NOT NULL CHECK (right_ref_type IN (
+        'raw_log', 'evidence_item', 'experience_fact'
+    )),
+    right_ref_id TEXT NOT NULL CHECK (right_ref_id <> ''),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
+    generation_id TEXT NOT NULL CHECK (generation_id <> '')
+);
+"""
+
+GAP_QUESTIONS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER gap_questions_lifecycle_update_guard
+BEFORE UPDATE ON gap_questions
+WHEN exp2res_owner_delete() <> 1 AND NOT (
+    OLD.superseded_at IS NULL
+    AND (
+        (
+            NEW.superseded_at IS NOT NULL
+            AND NEW.answered IS OLD.answered
+            AND NEW.answer_log_id IS OLD.answer_log_id
+        )
+        OR
+        (
+            NEW.superseded_at IS OLD.superseded_at
+            AND OLD.answered = 0
+            AND NEW.answered = 1
+            AND OLD.answer_log_id IS NULL
+            AND NEW.answer_log_id IS NOT NULL
+        )
+    )
+    AND NEW.id IS OLD.id
+    AND NEW.created_at IS OLD.created_at
+    AND NEW.target_type IS OLD.target_type
+    AND NEW.target_id IS OLD.target_id
+    AND NEW.question IS OLD.question
+    AND NEW.reason IS OLD.reason
+    AND NEW.priority IS OLD.priority
+    AND NEW.produced_by_run_id IS OLD.produced_by_run_id
+    AND NEW.generation_id IS OLD.generation_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'gap_question_lifecycle_only');
+END;
+"""
+
+GAP_QUESTIONS_DELETE_GUARD_SQL = """
+CREATE TRIGGER gap_questions_owner_delete_guard
+BEFORE DELETE ON gap_questions
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'gap_question_owner_purge_required');
+END;
+"""
+
+CONTRADICTIONS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER contradictions_lifecycle_update_guard
+BEFORE UPDATE ON contradictions
+WHEN exp2res_owner_delete() <> 1 AND NOT (
+    OLD.superseded_at IS NULL
+    AND NEW.superseded_at IS NOT NULL
+    AND NEW.id IS OLD.id
+    AND NEW.created_at IS OLD.created_at
+    AND NEW.title IS OLD.title
+    AND NEW.description IS OLD.description
+    AND NEW.left_ref_type IS OLD.left_ref_type
+    AND NEW.left_ref_id IS OLD.left_ref_id
+    AND NEW.right_ref_type IS OLD.right_ref_type
+    AND NEW.right_ref_id IS OLD.right_ref_id
+    AND NEW.metadata_json IS OLD.metadata_json
+    AND NEW.produced_by_run_id IS OLD.produced_by_run_id
+    AND NEW.generation_id IS OLD.generation_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'contradiction_lifecycle_only');
+END;
+"""
+
+CONTRADICTIONS_DELETE_GUARD_SQL = """
+CREATE TRIGGER contradictions_owner_delete_guard
+BEFORE DELETE ON contradictions
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'contradiction_owner_purge_required');
+END;
+"""
+
 SCHEMA_META_SQL = """
 CREATE TABLE schema_meta (
     version INTEGER PRIMARY KEY,
@@ -418,13 +543,25 @@ SCHEMA_V3_SQL = "\n".join(
     )
 )
 
+SCHEMA_V4_SQL = "\n".join(
+    (
+        SCHEMA_V3_SQL,
+        GAP_QUESTIONS_SQL,
+        CONTRADICTIONS_SQL,
+        GAP_QUESTIONS_UPDATE_GUARD_SQL,
+        GAP_QUESTIONS_DELETE_GUARD_SQL,
+        CONTRADICTIONS_UPDATE_GUARD_SQL,
+        CONTRADICTIONS_DELETE_GUARD_SQL,
+    )
+)
+
 
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    if version != 3:
-        raise ValueError("fresh workspaces must use schema version 3")
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V3_SQL)
+    if version != 4:
+        raise ValueError("fresh workspaces must use schema version 4")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V4_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
@@ -489,5 +626,19 @@ def apply_migration_2_to_3(connection: Connection) -> None:
         RAW_LOGS_INDEX_SQL,
         RAW_LOGS_UPDATE_GUARD_SQL,
         RAW_LOGS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+
+def apply_migration_3_to_4(connection: Connection) -> None:
+    """Add the Stage 4 detection substrate without rewriting retained rows."""
+
+    for statement in (
+        GAP_QUESTIONS_SQL,
+        CONTRADICTIONS_SQL,
+        GAP_QUESTIONS_UPDATE_GUARD_SQL,
+        GAP_QUESTIONS_DELETE_GUARD_SQL,
+        CONTRADICTIONS_UPDATE_GUARD_SQL,
+        CONTRADICTIONS_DELETE_GUARD_SQL,
     ):
         connection.execute(statement)

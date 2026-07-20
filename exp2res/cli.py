@@ -463,6 +463,25 @@ def extract_command(
         extracted = run_extract(workspace, log_id=log_id)
         created = list(extracted.created)
         superseded = list(extracted.superseded)
+        superseded_groups: list[EntityIdGroup] = []
+        if superseded:
+            superseded_groups.append(
+                EntityIdGroup(entity_type="experience_fact", ids=superseded)
+            )
+        if extracted.superseded_gap_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="gap_question",
+                    ids=list(extracted.superseded_gap_ids),
+                )
+            )
+        if extracted.superseded_contradiction_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="contradiction",
+                    ids=list(extracted.superseded_contradiction_ids),
+                )
+            )
         return Outcome(
             affected_ids=AffectedIds(
                 created=(
@@ -470,15 +489,7 @@ def extract_command(
                     if created
                     else []
                 ),
-                superseded=(
-                    [
-                        EntityIdGroup(
-                            entity_type="experience_fact", ids=superseded
-                        )
-                    ]
-                    if superseded
-                    else []
-                ),
+                superseded=superseded_groups,
                 deleted=[],
             ),
             # §14.14 rule 5: produced OR invalidated generation IDs,
@@ -589,6 +600,26 @@ def logs_delete(
                             )
                         ]
                         if deleted.purged_fact_ids
+                        else []
+                    )
+                    + (
+                        [
+                            EntityIdGroup(
+                                entity_type="gap_question",
+                                ids=list(deleted.purged_gap_ids),
+                            )
+                        ]
+                        if deleted.purged_gap_ids
+                        else []
+                    )
+                    + (
+                        [
+                            EntityIdGroup(
+                                entity_type="contradiction",
+                                ids=list(deleted.purged_contradiction_ids),
+                            )
+                        ]
+                        if deleted.purged_contradiction_ids
                         else []
                     )
                     + [

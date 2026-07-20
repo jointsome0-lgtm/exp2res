@@ -34,7 +34,11 @@ from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
 from exp2res.storage.repository import (
     insert_experience_fact,
+    list_contradictions,
+    list_gap_questions,
+    mark_contradictions_superseded,
     mark_facts_superseded,
+    mark_gap_questions_superseded,
 )
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
 
@@ -49,6 +53,8 @@ class Stage3Result:
     superseded: tuple[str, ...]
     generation_ids: tuple[str, ...]
     superseded_generation_ids: tuple[str, ...]
+    superseded_gap_ids: tuple[str, ...]
+    superseded_contradiction_ids: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
 
 
@@ -327,6 +333,8 @@ def run_fact_extraction(
             for context, generation_id in zip(contexts, generation_ids)
         )
         superseded_ids: list[str] = []
+        superseded_gap_ids: list[str] = []
+        superseded_contradiction_ids: list[str] = []
         superseded_generation_ids: set[str] = set()
 
         def commit(
@@ -363,6 +371,33 @@ def run_fact_extraction(
                         generation_id=swap.generation_id,
                     )
                     created_ids.append(fact.id)
+            if created_ids or superseded_ids:
+                current_gaps = list_gap_questions(held)
+                current_contradictions = list_contradictions(held)
+                superseded_gap_ids.extend(gap.id for gap in current_gaps)
+                superseded_contradiction_ids.extend(
+                    contradiction.id for contradiction in current_contradictions
+                )
+                for table, ids in (
+                    ("gap_questions", superseded_gap_ids),
+                    ("contradictions", superseded_contradiction_ids),
+                ):
+                    if ids:
+                        placeholders = ",".join("?" for _ in ids)
+                        superseded_generation_ids.update(
+                            row[0]
+                            for row in held.execute(
+                                f"SELECT DISTINCT generation_id FROM {table} "
+                                f"WHERE id IN ({placeholders})",
+                                ids,
+                            )
+                        )
+                mark_gap_questions_superseded(
+                    held, superseded_gap_ids, swap_time
+                )
+                mark_contradictions_superseded(
+                    held, superseded_contradiction_ids, swap_time
+                )
             return created_ids
 
         outcome = run_complete_stage(
@@ -396,6 +431,12 @@ def run_fact_extraction(
         ),
         superseded_generation_ids=tuple(
             sorted(superseded_generation_ids, key=_id_key)
+        ),
+        # §14.14 rule 5: envelope ID collections are ID-byte-ordered; the
+        # listing helpers return creation-time order.
+        superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
+        superseded_contradiction_ids=tuple(
+            sorted(superseded_contradiction_ids, key=_id_key)
         ),
         warnings=tuple(
             warning

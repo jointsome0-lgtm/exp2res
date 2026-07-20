@@ -77,4 +77,24 @@ ClaimKind = Literal[
     "narrative_summary",
 ]
 
+GapPriority = Literal["low", "medium", "high"]
+
+DetectionRefType = Literal[
+    "raw_log",
+    "evidence_item",
+    "experience_fact",
+]
+
+GapTrigger = Literal[
+    "missing_metric",
+    "missing_scale",
+    "missing_ownership",
+    "missing_context",
+    "ambiguous_time",
+    "ambiguous_claim",
+    "weak_evidence",
+    "unsupported_skill_claim",
+    "unclear_artifact_status",
+]
+
 CLIResultStatus = Literal["ok", "blocked", "failed", "cancelled"]

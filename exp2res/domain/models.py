@@ -15,8 +15,11 @@ from .enums import (
     ActivityContext,
     ClaimKind,
     Confidence,
+    DetectionRefType,
     EntryType,
     EvidenceStrength,
+    GapPriority,
+    GapTrigger,
     OwnershipLevel,
     SourceType,
     TemporalConfidence,
@@ -25,6 +28,9 @@ from .enums import (
 
 RAW_TEXT_LIMIT = 1_048_576
 STRING_LIMIT = 16_384
+# §11 boundary limits: GapQuestion.question alone carries a 1,024-byte cap so
+# the §14.7 question_text metadata copy fits the 4 KiB entity budget.
+QUESTION_LIMIT = 1_024
 METADATA_LIMIT = 4_096
 METADATA_KEY = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -50,10 +56,17 @@ def validate_structural(value: str, *, nonempty: bool = True) -> str:
     return value
 
 
-def validate_free_text(value: str, *, raw: bool = False, nonempty: bool = False) -> str:
+def validate_free_text(
+    value: str,
+    *,
+    raw: bool = False,
+    nonempty: bool = False,
+    limit: int | None = None,
+) -> str:
     if nonempty and not value:
         raise ValueError("empty text")
-    limit = RAW_TEXT_LIMIT if raw else STRING_LIMIT
+    if limit is None:
+        limit = RAW_TEXT_LIMIT if raw else STRING_LIMIT
     if _utf8_size(value) > limit:
         raise ValueError("text too large")
     if any(
@@ -315,3 +328,73 @@ class ExperienceFact(StrictModel):
     @classmethod
     def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
         return validate_metadata(value)
+
+
+class Contradiction(StrictModel):
+    id: str
+    created_at: datetime
+    superseded_at: Optional[datetime] = None
+    title: str
+    description: str
+
+    left_ref_type: DetectionRefType
+    left_ref_id: str
+    right_ref_type: DetectionRefType
+    right_ref_id: str
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("id", "left_ref_id", "right_ref_id")
+    @classmethod
+    def structural_fields(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("created_at", "superseded_at")
+    @classmethod
+    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("datetime must carry an offset")
+        return value
+
+    @field_validator("title", "description")
+    @classmethod
+    def text_fields(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True)
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_metadata(value)
+
+
+class GapQuestion(StrictModel):
+    id: str
+    created_at: datetime
+    superseded_at: Optional[datetime] = None
+
+    target_type: DetectionRefType
+    target_id: str
+
+    question: str
+    reason: GapTrigger
+    priority: GapPriority
+
+    answered: bool = False
+    answer_log_id: Optional[str] = None
+
+    @field_validator("id", "target_id", "answer_log_id")
+    @classmethod
+    def structural_fields(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else validate_structural(value)
+
+    @field_validator("created_at", "superseded_at")
+    @classmethod
+    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("datetime must carry an offset")
+        return value
+
+    @field_validator("question")
+    @classmethod
+    def question_policy(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True, limit=QUESTION_LIMIT)
