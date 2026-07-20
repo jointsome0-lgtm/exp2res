@@ -349,6 +349,7 @@ Input:
       "id": "claim_001",
       "created_at": "2026-07-11T10:05:00+02:00",
       "superseded_at": null,
+      "snapshot_id": "snapshot_001",
       "claim": "Current evidence supports recurring work on provenance-heavy systems.",
       "claim_kind": "pattern_signal",
       "dimension": "domain_interest",
@@ -599,7 +600,7 @@ Every §15.2–§15.9 transport field has exactly one authorship class under §1
 |---|---|---|
 | §15.2 fact extractor | per fact: `claim`, `claim_kind`, `role`, `company`, `context`, `ownership_level`, `action`, `object`, `outcome`, `skills`, `technologies`, `themes`, `evidence_item_ids`, `confidence`, the nullable `occurred` override channel — `null` and a non-null narrowing are both valid authored transport values under §15.2; `warnings` | all input arrays; per fact: `id`, `created_at`, `superseded_at`, `metadata`, copied `project`, derived `source_log_ids`, and the persisted `occurred` value, service-resolved deterministically from the authored transport value — the governing placement on `null`, the validated narrowing otherwise |
 | §15.3 signal extractor | per signal: `signal_type`, `statement`, `supporting_fact_ids`, `counter_fact_ids`, `confidence`; `warnings` | all input arrays; per signal: `id`, `created_at`, `superseded_at`, `metadata` |
-| §15.4 assessment writer | per claim: `claim`, `claim_kind`, `dimension`, `source_signal_ids`, `source_fact_ids`, `confidence`, `uncertainty`; `warnings` | `scope`, `scope_target`, `gaps`, `contradictions`, and every other input; per claim: `id`, `created_at`, `superseded_at`, initial `verification_status`, `metadata`; the complete snapshot: `id`, `created_at`, `superseded_at`, `scope`, `scope_target`, `title` (derived per §13.6), initial `verification_status`, `metadata`, `summary` (copied from the `narrative_summary` claim), `gap_question_ids`, `contradiction_ids`, `self_claim_ids` |
+| §15.4 assessment writer | per claim: `claim`, `claim_kind`, `dimension`, `source_signal_ids`, `source_fact_ids`, `confidence`, `uncertainty`; `warnings` | `scope`, `scope_target`, `gaps`, `contradictions`, and every other input; per claim: `id`, `created_at`, `superseded_at`, `snapshot_id` (the owning snapshot, §11.6), initial `verification_status`, `metadata`; the complete snapshot: `id`, `created_at`, `superseded_at`, `scope`, `scope_target`, `title` (derived per §13.6), initial `verification_status`, `metadata`, `summary` (copied from the `narrative_summary` claim), `gap_question_ids`, `contradiction_ids` |
 | §15.5 assessment verifier | transition result: `status`, `unsupported_phrases`, `counterevidence`, `suggested_rewrite`, `reason` | the complete input bundle; Stage 7 alone validates and applies the result and writes the §11.14 finding |
 | §15.6 resume writer | per bullet: `text`, `target_section`, `target_role_relevance`, `matched_jd_requirements`, `source_fact_ids`; `warnings` | all inputs; per bullet: `id`, `created_at`, `superseded_at`, `branch_id`, derived `source_log_ids`, exact-input `source_self_claim_ids`, initial `verification_status` with the §11.8 verifier-field defaults until Stage 11 |
 | §15.7 resume verifier | transition result: `status`, `unsupported_phrases`, `suggested_rewrite`, `reason` | the complete input bundle; Stage 11 alone validates and applies the result and writes the §11.14 finding |

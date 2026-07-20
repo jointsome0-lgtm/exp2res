@@ -267,7 +267,7 @@ This contract binds every command-specific form above and every later §14 addit
    | `contradictions list`, `contradictions show` | `{contradictions: list[Contradiction]}` using complete §11.9 values; a successful `show` result contains exactly one. |
    | `signals list` | `{signals: list[SelfSignal]}` using complete §11.5 values. |
    | `assess list` | `{snapshots: list[{id, scope, scope_target, verification_status, created_at}]}`, exactly the §14.9 discovery projection. |
-   | `assess show` | `{snapshot: AssessmentSnapshot, claims: list[SelfClaim], gaps: list[GapQuestion], contradictions: list[Contradiction]}` using the complete §11 values reached by that snapshot's typed references. |
+   | `assess show` | `{snapshot: AssessmentSnapshot, claims: list[SelfClaim], gaps: list[GapQuestion], contradictions: list[Contradiction]}` using the complete §11 values reached through the snapshot's claim membership (`SelfClaim.snapshot_id`, claim-ID order) and its typed gap/contradiction references. |
    | `jd list` (§14.15) | `{job_descriptions: list[{id, created_at, title, company}]}`. |
    | `jd show` (§14.15) | `{job_description: {id, created_at, title, company, parsed}}`, the §11.11 `raw_text`-free inspection projection; `raw_text` is absent and `parsed` is the complete §11.13 value. |
    | `jd delete` (§14.15) | `{selected_job_description: {id, created_at, title, company}, purged_branches: list[{id, name}], removed_managed_paths: list[str]}`; `purged_branches` contains every current and historical dependent branch captured before deletion, while residual paths use the envelope's top-level `residual_paths`. |

@@ -168,6 +168,7 @@ class SelfClaim(BaseModel):
     id: str
     created_at: datetime
     superseded_at: Optional[datetime] = None
+    snapshot_id: str
     claim: str
     claim_kind: ClaimKind
     dimension: SelfClaimDimension
@@ -179,6 +180,8 @@ class SelfClaim(BaseModel):
     uncertainty: Optional[str] = None
     metadata: dict = Field(default_factory=dict)
 ```
+
+`snapshot_id` is the claim's owning `AssessmentSnapshot` (§11.7): a required service-owned reference Stage 6 assigns when it creates the claim generation, immutable for the row's lifetime. Ownership is one-to-many by construction — a claim row is created for exactly one snapshot and is never shared or re-parented, so current snapshots cannot share claim rows and no claim can be unowned. Deterministic claim ordering needs no separate position field: every ordering consumer — §13.12 export documents, §14.14 inspection results, §17 rendering — orders a snapshot's claims by `SelfClaim.id` ascending in UTF-8 byte order, and the service-assigned entity ID is that stable ordering field.
 
 `CounterevidenceItem` is an embedded typed annotation, not an ontology entity. `statement` is the verifier-authored contrary-evidence prose and remains generated voice under §16.12; (`source_ref_type`, `source_ref_id`) is its polymorphic grounding reference. Stage 7 persists the validated §15.5 list: each reference must resolve under §12 rule 10 to the table its type selects and must be a member of that claim's supplied §15.5 bundle — closure, `scope_facts`, or `scope_signals` — so the verifier cannot ground contrary evidence outside what it received, while an omitted contrary view member stays navigably citable. Entries are duplicate-free by (`source_ref_type`, `source_ref_id`); one grounding source carries one consolidated statement.
 
@@ -193,7 +196,6 @@ class AssessmentSnapshot(BaseModel):
     scope_target: Optional[str] = None
     title: str
     summary: str
-    self_claim_ids: list[str]
     gap_question_ids: list[str] = Field(default_factory=list)
     contradiction_ids: list[str] = Field(default_factory=list)
     verification_status: VerificationStatus
@@ -201,6 +203,8 @@ class AssessmentSnapshot(BaseModel):
 ```
 
 `contradiction_ids` is populated under §13.6's complete, unfiltered contradiction-set rule.
+
+A snapshot's member claims are exactly the `self_claims` rows whose `snapshot_id` names it (§11.6); the snapshot persists no claim list, and member selection orders by claim ID under §11.6's ordering rule.
 
 For `scope = "project"`, `scope_target` is required and is the canonical §14.9 `--project` value — Unicode NFC, leading/trailing whitespace trimmed, non-blank — persisted before case folding; the assessment writer cannot author or normalize it. For `global` it is `None`. A (`scope`, case-folded canonical `scope_target`) pair is an assessment view, the snapshot replacement identity under §13.6: one snapshot is current per view, and distinct views — `global` and each project target — are simultaneously current. The target remains a user-supplied scope label, not an entity reference; renaming a project starts a new view rather than migrating an old one. `title` is service-derived under §13.6's deterministic rule.
 

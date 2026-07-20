@@ -230,7 +230,7 @@ Assessment dimensions are the `SelfClaimDimension` values (§10), carried by `Se
 
 At the Stage 6 boundary, each candidate `SelfClaim.confidence` must satisfy §9.4's propagation caps; a candidate above its computed cap is invalid structured output.
 
-Synthesis atomically creates a complete current claim generation and a new current snapshot from one coherent current input generation, then supersedes the prior current snapshot for the same assessment view — (`scope`) for `global`, (`scope`, case-folded canonical `scope_target`) for `project` (§11.7) — and the claims owned by that snapshot. The transaction validates the reverse cardinality in §12: after the swap, every current `SelfClaim` appears in exactly one current `AssessmentSnapshot.self_claim_ids`, current snapshots share no claim rows, and no current claim is unowned. Every other view — the other scope and other project targets — remains current. A superseded snapshot's payload and provenance remain inspectable history after correction but cannot become a processing input.
+Synthesis atomically creates a complete current claim generation and a new current snapshot from one coherent current input generation, then supersedes the prior current snapshot for the same assessment view — (`scope`) for `global`, (`scope`, case-folded canonical `scope_target`) for `project` (§11.7) — and the claims owned by that snapshot. Claim ownership is claim-side: each candidate claim carries the new snapshot's ID in `SelfClaim.snapshot_id` (§11.6), so one row has one owner and current snapshots cannot share claim rows; the transaction validates the §12 Stage 6 checks — every candidate claim names the new snapshot, and the superseded snapshot's claims are superseded in the same swap, leaving no current claim owned by a superseded snapshot. Every other view — the other scope and other project targets — remains current. A superseded snapshot's payload and provenance remain inspectable history after correction but cannot become a processing input.
 
 Every new claim and snapshot starts with `verification_status = "unverified"`. Stage 6 may not pre-authorize its own output; Stage 7 alone assigns semantic claim verdicts and derives the current snapshot status under §16.11.
 
@@ -258,7 +258,7 @@ Known-gap assertions are emitted as ordinary `SelfClaim(dimension="gap")` rows a
 
 Every current Stage 4 contradiction appears exactly once in `AssessmentSnapshot.contradiction_ids`; Stage 6 does not scope-filter conflicts. The writer cannot suppress one as resolved or dismissed; duplicate or stale IDs fail under §12 rule 10.
 
-The writer emits exactly one `SelfClaim(claim_kind="narrative_summary")`; Stage 6 service-copies that claim's text into `AssessmentSnapshot.summary` (§15.4, §15.11), and the snapshot includes that claim ID. The summary receives an ordinary Stage 7 verdict and participates in §16.11 aggregation; Stage 6 cannot place separately unverified prose in the snapshot summary.
+The writer emits exactly one `SelfClaim(claim_kind="narrative_summary")`; Stage 6 service-copies that claim's text into `AssessmentSnapshot.summary` (§15.4, §15.11), and that claim belongs to the snapshot through its `snapshot_id` like every other member claim. The summary receives an ordinary Stage 7 verdict and participates in §16.11 aggregation; Stage 6 cannot place separately unverified prose in the snapshot summary.
 
 ## §13.7 Stage 7 — Assessment Verification
 
