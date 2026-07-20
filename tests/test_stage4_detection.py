@@ -668,3 +668,101 @@ def test_gap_question_enforces_the_1024_byte_boundary(workspace: Path) -> None:
     assert GapQuestion(question=fitting, **entity).question == fitting
     with pytest.raises(ValidationError):
         GapQuestion(question=oversized, **entity)
+
+
+@pytest.mark.lifecycle
+def test_stage3_invalidation_reports_detection_ids_in_id_byte_order(
+    workspace: Path,
+) -> None:
+    """§14.14 rule 5: superseded detection IDs sort by ID bytes, not creation."""
+
+    from datetime import timedelta as _timedelta
+
+    ids = DetectionIds()
+    fact_id, log_id, item_id = prepare_fact(workspace, ids)
+
+    class DescendingDetectionIds:
+        def __init__(self, inner: DetectionIds) -> None:
+            self.inner = inner
+            self.remaining = {"gap": 2, "contradiction": 2}
+
+        def __call__(self, kind: str) -> str:
+            if kind in self.remaining:
+                suffix = self.remaining[kind]
+                self.remaining[kind] -= 1
+                return f"{kind}_vera_{suffix:04d}"
+            return self.inner(kind)
+
+    ticks = {"count": 0}
+
+    def ticking_clock():
+        ticks["count"] += 1
+        return FIXED_NOW + _timedelta(microseconds=ticks["count"])
+
+    payload = json.dumps(
+        {
+            "gap_questions": [
+                {
+                    "target_type": "experience_fact",
+                    "target_id": fact_id,
+                    "question": "What scale did Vera Example validate?",
+                    "reason": "missing_scale",
+                    "priority": "medium",
+                },
+                {
+                    "target_type": "experience_fact",
+                    "target_id": fact_id,
+                    "question": "What metric did Vera Example capture?",
+                    "reason": "missing_metric",
+                    "priority": "medium",
+                },
+            ],
+            "contradictions": [
+                {
+                    "title": "Vera Example scope conflict",
+                    "description": "The supplied objects describe incompatible scopes.",
+                    "left_ref_type": "experience_fact",
+                    "left_ref_id": fact_id,
+                    "right_ref_type": "raw_log",
+                    "right_ref_id": log_id,
+                },
+                {
+                    "title": "Vera Example evidence tension",
+                    "description": "The supplied record and evidence item differ.",
+                    "left_ref_type": "experience_fact",
+                    "left_ref_id": fact_id,
+                    "right_ref_type": "evidence_item",
+                    "right_ref_id": item_id,
+                },
+            ],
+            "warnings": [],
+        },
+        separators=(",", ":"),
+    ).encode()
+
+    from exp2res.pipeline.stage4 import run_detection_generation
+
+    detected = run_detection_generation(
+        workspace,
+        selection=SELECTION,
+        budgets=budgets(),
+        runner=FakeContractRunner([payload]),
+        id_factory=DescendingDetectionIds(ids),
+        clock=ticking_clock,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    # Creation order is descending by ID bytes, so an unsorted passthrough
+    # would surface descending envelope IDs.
+    assert detected.created_gap_ids == ("gap_vera_0002", "gap_vera_0001")
+
+    replaced = run_stage3(
+        workspace,
+        FakeContractRunner([fact_response([item_id])]),
+        ids,  # type: ignore[arg-type]
+    )
+    assert replaced.superseded_gap_ids == ("gap_vera_0001", "gap_vera_0002")
+    assert replaced.superseded_contradiction_ids == (
+        "contradiction_vera_0001",
+        "contradiction_vera_0002",
+    )

@@ -432,8 +432,12 @@ def run_fact_extraction(
         superseded_generation_ids=tuple(
             sorted(superseded_generation_ids, key=_id_key)
         ),
-        superseded_gap_ids=tuple(superseded_gap_ids),
-        superseded_contradiction_ids=tuple(superseded_contradiction_ids),
+        # §14.14 rule 5: envelope ID collections are ID-byte-ordered; the
+        # listing helpers return creation-time order.
+        superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
+        superseded_contradiction_ids=tuple(
+            sorted(superseded_contradiction_ids, key=_id_key)
+        ),
         warnings=tuple(
             warning
             for item in resolved_lineages
