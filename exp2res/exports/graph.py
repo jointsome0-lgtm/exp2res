@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 import sqlite3
 from typing import Generic, Literal, TypeVar, cast
@@ -462,13 +463,22 @@ def load_assessment_graph(
             raise IntegrityFailureError("fact_raw_log_missing")
         raw_logs.append(hydrate_raw_log(row))
 
-    reached_evidence = set(evidence_ids)
-    reached_logs = set(raw_log_ids)
+    # §13.12: the evidence map must agree exactly with the persisted §11
+    # relations — per fact, the fact_sources rows, the hydrated
+    # evidence_item_ids, and the derived raw-log set are equal, not subsets.
+    log_by_evidence = {item.id: item.raw_log_id for item in evidence_items}
+    rows_by_fact: dict[str, list[str]] = defaultdict(list)
+    for source in fact_source_records:
+        rows_by_fact[source.fact_id].append(source.evidence_item_id)
     for fact_record in fact_records:
         fact = fact_record.value
-        if set(fact.evidence_item_ids) - reached_evidence:
+        row_evidence = sorted(set(rows_by_fact.get(fact.id, [])), key=id_key)
+        if row_evidence != list(fact.evidence_item_ids):
             raise IntegrityFailureError("fact_evidence_closure_incomplete")
-        if set(fact.source_log_ids) - reached_logs:
+        derived_logs = sorted(
+            {log_by_evidence[item] for item in row_evidence}, key=id_key
+        )
+        if derived_logs != list(fact.source_log_ids):
             raise IntegrityFailureError("fact_raw_log_closure_incomplete")
 
     return AssessmentExportGraph(

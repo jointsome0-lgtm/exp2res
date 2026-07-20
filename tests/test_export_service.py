@@ -136,6 +136,56 @@ def test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity(
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
 
+def test_fact_provenance_disagreement_fails_export_closure(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.12: per-fact equality with the persisted relations, not subsets.
+
+    Hydration derives both ID lists from fact_sources, so disagreement is
+    unrepresentable through the storage layer; the doctored hydration stands
+    in for a corrupted or future divergent producer.
+    """
+
+    import exp2res.exports.graph as graph_module
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response() for _ in generated.claims]),
+        ids,
+        generated.snapshot_id,
+    )
+    real_get = graph_module.get_experience_fact
+
+    def phantom_evidence(connection, fact_id):
+        fact = real_get(connection, fact_id)
+        return fact.model_copy(
+            update={
+                "evidence_item_ids": [
+                    *fact.evidence_item_ids,
+                    "evidence_vera_phantom",
+                ]
+            }
+        )
+
+    monkeypatch.setattr(graph_module, "get_experience_fact", phantom_evidence)
+    with pytest.raises(IntegrityFailureError, match="fact_evidence_closure"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+    def phantom_log(connection, fact_id):
+        fact = real_get(connection, fact_id)
+        return fact.model_copy(
+            update={"source_log_ids": [*fact.source_log_ids, "log_vera_phantom"]}
+        )
+
+    monkeypatch.setattr(graph_module, "get_experience_fact", phantom_log)
+    with pytest.raises(IntegrityFailureError, match="fact_raw_log_closure"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+    assert not (
+        workspace / "out" / "assessment" / generated.snapshot_id
+    ).exists()
+
+
 def test_repeated_service_export_keeps_fixed_members_identical_and_writes_no_rows(
     workspace: Path,
 ) -> None:
