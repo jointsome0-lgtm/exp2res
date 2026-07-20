@@ -553,6 +553,7 @@ def load_assessment_graph(
     ce_evidence_ids: set[str] = set(
         counterevidence_refs.get("evidence_item", set()) - set(evidence_ids)
     )
+    ce_fact_evidence: dict[str, list[str]] = {}
     for fact_id in sorted(ce_fact_ids, key=id_key):
         row = connection.execute(
             "SELECT * FROM experience_facts WHERE id = ?", (fact_id,)
@@ -581,6 +582,7 @@ def load_assessment_graph(
             row_evidence.append(source["evidence_item_id"])
         if sorted(set(row_evidence), key=id_key) != list(fact.evidence_item_ids):
             raise IntegrityFailureError("fact_evidence_closure_incomplete")
+        ce_fact_evidence[fact_id] = list(fact.evidence_item_ids)
         ce_evidence_ids.update(set(fact.evidence_item_ids) - set(evidence_ids))
     ce_fact_sources.sort(
         key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id))
@@ -605,6 +607,20 @@ def load_assessment_graph(
         if row is None:
             raise IntegrityFailureError(invalid)
         ce_raw_logs.append(hydrate_raw_log(row))
+    # Same per-fact raw-log equality as the claim closure: the evidence-derived
+    # log set of each counterevidence-reached fact equals its stored value.
+    ce_log_by_evidence = {
+        **log_by_evidence,
+        **{item.id: item.raw_log_id for item in ce_evidence},
+    }
+    for fact_record in ce_facts:
+        fact = fact_record.value
+        derived_logs = sorted(
+            {ce_log_by_evidence[item] for item in ce_fact_evidence[fact.id]},
+            key=id_key,
+        )
+        if derived_logs != list(fact.source_log_ids):
+            raise IntegrityFailureError("fact_raw_log_closure_incomplete")
     unknown_types = set(counterevidence_refs) - {
         "self_signal",
         "experience_fact",

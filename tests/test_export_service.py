@@ -213,7 +213,7 @@ def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
 
 
 def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
-    workspace: Path,
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A grounding signal outside the closure resolves signal → facts →
     evidence → raw logs; every read row joins source_ids while the closed
@@ -309,6 +309,31 @@ def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
     assert scope_fact not in [
         link["fact_id"] for link in evidence_map["fact_links"]
     ]
+
+    # Doped hydration on the grounding fact only: a stored raw-log set that
+    # disagrees with its evidence-derived chain fails export closed.
+    import exp2res.exports.graph as graph_module
+
+    real_get = graph_module.get_experience_fact
+
+    def phantom_log_on_grounding_fact(connection, fact_id):
+        fact = real_get(connection, fact_id)
+        if fact is not None and fact.id == scope_fact:
+            return fact.model_copy(
+                update={
+                    "source_log_ids": [*fact.source_log_ids, "log_vera_phantom"]
+                }
+            )
+        return fact
+
+    monkeypatch.setattr(
+        graph_module, "get_experience_fact", phantom_log_on_grounding_fact
+    )
+    with pytest.raises(
+        IntegrityFailureError, match="fact_raw_log_closure_incomplete"
+    ):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+    monkeypatch.setattr(graph_module, "get_experience_fact", real_get)
 
     # A corrupted graph — the grounding signal's fact superseded without the
     # lifecycle supersession of the snapshot — fails export closed.
