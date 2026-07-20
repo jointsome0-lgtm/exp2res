@@ -92,6 +92,8 @@ def test_vera_daily_and_retro_round_trip_with_atomic_manual_evidence(
         "gap_questions",
             "contradictions",
             "self_signals",
+            "assessment_snapshots",
+            "self_claims",
         }
     assert stored_retro == (
         "2026-06-01T00:00:00+02:00",

@@ -9,6 +9,7 @@ import sqlite3
 import stat
 
 from exp2res.domain.models import RawLog
+from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.errors import SelectorNotFoundError, WorkspaceBusyError
 from exp2res.storage.repository import (
     RawLogBundle,
@@ -32,6 +33,9 @@ class DeleteOutcome:
     purged_gap_ids: tuple[str, ...]
     purged_contradiction_ids: tuple[str, ...]
     purged_signal_ids: tuple[str, ...]
+    purged_claim_ids: tuple[str, ...]
+    purged_snapshot_ids: tuple[str, ...]
+    invalidated_views: tuple[InvalidatedView, ...]
     residual_paths: tuple[str, ...]
 
 
@@ -132,11 +136,37 @@ def delete_log(
                     "SELECT id FROM self_signals ORDER BY CAST(id AS BLOB)"
                 )
             )
+            snapshot_rows = connection.execute(
+                "SELECT id, scope, scope_target FROM assessment_snapshots "
+                "WHERE superseded_at IS NULL ORDER BY CAST(id AS BLOB)"
+            ).fetchall()
+            invalidated_views = tuple(
+                invalidated_view(
+                    scope=row["scope"],
+                    scope_target=row["scope_target"],
+                    snapshot_id=row["id"],
+                )
+                for row in snapshot_rows
+            )
+            purged_claim_ids = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM self_claims ORDER BY CAST(id AS BLOB)"
+                )
+            )
+            purged_snapshot_ids = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM assessment_snapshots ORDER BY CAST(id AS BLOB)"
+                )
+            )
             residual_paths.extend(_remove_managed_backups(workspace))
             # §13.13 rule 5: detections and signals are generated prose and
             # leave with the facts; purging before the raw_logs delete keeps the
             # answer_log_id ON DELETE SET NULL action from firing into the
             # gap_questions answered-iff CHECK.
+            connection.execute("DELETE FROM self_claims")
+            connection.execute("DELETE FROM assessment_snapshots")
             connection.execute("DELETE FROM gap_questions")
             connection.execute("DELETE FROM contradictions")
             connection.execute("DELETE FROM self_signals")
@@ -170,5 +200,8 @@ def delete_log(
         purged_gap_ids=purged_gap_ids,
         purged_contradiction_ids=purged_contradiction_ids,
         purged_signal_ids=purged_signal_ids,
+        purged_claim_ids=purged_claim_ids,
+        purged_snapshot_ids=purged_snapshot_ids,
+        invalidated_views=invalidated_views,
         residual_paths=tuple(sorted(set(residual_paths))),
     )

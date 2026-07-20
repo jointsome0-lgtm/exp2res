@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import sys
+import unicodedata
 from typing import Callable, cast
 
 import typer
@@ -17,9 +18,11 @@ except ImportError:  # typer releases that depend on an external click
 
 from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
-from exp2res.domain.models import ExperienceFact, SelfSignal
+from exp2res.domain.models import ExperienceFact, SelfClaim, SelfSignal
 from exp2res.domain.results import (
     AffectedIds,
+    AssessListResult,
+    AssessShowResult,
     CLIEnvelope,
     CommandPath,
     ContradictionsResult,
@@ -27,6 +30,7 @@ from exp2res.domain.results import (
     EntityIdGroup,
     FactsListResult,
     GapsListResult,
+    InvalidatedView,
     LogProjection,
     LogsDeleteResult,
     LogsListResult,
@@ -34,6 +38,7 @@ from exp2res.domain.results import (
     SchemaResult,
     SelectedLogProjection,
     SignalsListResult,
+    SnapshotListItem,
 )
 from exp2res.errors import (
     Exp2ResError,
@@ -51,6 +56,12 @@ from exp2res.services.capture import (
     capture_retro,
     validate_gap_answer_selection,
     validate_project_label,
+)
+from exp2res.services.assessment import (
+    list_current_snapshots,
+    run_assess_generate,
+    show_snapshot,
+    validate_assessment_selection,
 )
 from exp2res.services.detection import (
     list_current_contradictions,
@@ -92,6 +103,7 @@ contradictions_app = typer.Typer(
     help="Inspect current contradictions and immutable contradiction history."
 )
 signals_app = typer.Typer(help="Generate and inspect current self-signals.")
+assess_app = typer.Typer(help="Generate and inspect self-assessment views.")
 app.add_typer(db_app, name="db")
 app.add_typer(log_app, name="log")
 app.add_typer(logs_app, name="logs")
@@ -101,6 +113,7 @@ app.add_typer(detections_app, name="detections")
 app.add_typer(gaps_app, name="gaps")
 app.add_typer(contradictions_app, name="contradictions")
 app.add_typer(signals_app, name="signals")
+app.add_typer(assess_app, name="assess")
 
 
 @dataclass(frozen=True)
@@ -120,6 +133,7 @@ class Outcome:
     affected_ids: AffectedIds = field(default_factory=AffectedIds)
     generation_ids: list[str] = field(default_factory=list)
     run_ids: list[str] = field(default_factory=list)
+    invalidated_views: list[InvalidatedView] = field(default_factory=list)
     residual_paths: list[str] = field(default_factory=list)
     warnings: list[ContractWarning] = field(default_factory=list)
     result: (
@@ -131,6 +145,8 @@ class Outcome:
         | GapsListResult
         | ContradictionsResult
         | SignalsListResult
+        | AssessListResult
+        | AssessShowResult
         | None
     ) = None
     human_result: str = ""
@@ -266,7 +282,7 @@ def _run_command(
         affected_ids=outcome.affected_ids,
         generation_ids=outcome.generation_ids,
         run_ids=outcome.run_ids,
-        invalidated_views=[],
+        invalidated_views=outcome.invalidated_views,
         invalidated_branches=[],
         findings=[],
         residual_paths=outcome.residual_paths,
@@ -523,6 +539,25 @@ def extract_command(
                     ids=list(extracted.superseded_signal_ids),
                 )
             )
+        if extracted.superseded_claim_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="self_claim",
+                    ids=list(extracted.superseded_claim_ids),
+                )
+            )
+        if extracted.superseded_snapshot_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="assessment_snapshot",
+                    ids=list(extracted.superseded_snapshot_ids),
+                )
+            )
+        invalidated_views = list(extracted.invalidated_views)
+        view_lines = "\n".join(
+            f"Invalidated {item.snapshot_id}: {item.regeneration_command}"
+            for item in invalidated_views
+        )
         return Outcome(
             affected_ids=AffectedIds(
                 created=(
@@ -540,9 +575,11 @@ def extract_command(
                 key=lambda value: value.encode("utf-8"),
             ),
             run_ids=[extracted.run_id],
+            invalidated_views=invalidated_views,
             warnings=list(extracted.warnings),
             human_result=(
                 f"Extracted {len(created)} facts ({len(superseded)} superseded)."
+                + (f"\n{view_lines}" if view_lines else "")
             ),
         )
 
@@ -603,6 +640,21 @@ def detections_generate(context: typer.Context) -> None:
                     ids=list(generated.superseded_signal_ids),
                 )
             )
+        if generated.superseded_claim_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="self_claim",
+                    ids=list(generated.superseded_claim_ids),
+                )
+            )
+        if generated.superseded_snapshot_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="assessment_snapshot",
+                    ids=list(generated.superseded_snapshot_ids),
+                )
+            )
+        invalidated_views = list(generated.invalidated_views)
         if generated.retained:
             human = "Retained the current detection generation unchanged."
         else:
@@ -618,6 +670,11 @@ def detections_generate(context: typer.Context) -> None:
                 f"{', '.join(item.id for item in contradictions) or 'none'}. "
                 f"Invalidated artifact classes: {invalidated}."
             )
+            if invalidated_views:
+                human += "\n" + "\n".join(
+                    f"Invalidated {item.snapshot_id}: {item.regeneration_command}"
+                    for item in invalidated_views
+                )
         return Outcome(
             affected_ids=AffectedIds(
                 created=_detection_groups(
@@ -639,12 +696,11 @@ def detections_generate(context: typer.Context) -> None:
             ),
             run_ids=[generated.run_id],
             warnings=list(generated.warnings),
+            invalidated_views=invalidated_views,
             result=DetectionsGenerateResult(
                 gaps=gaps,
                 contradictions=contradictions,
             ),
-            # §13.13 rule 9 hook: schema v4 has no snapshot/branch/bullet
-            # tables yet, so invalidated_views/branches remain empty.
             human_result=human,
         )
 
@@ -681,6 +737,130 @@ def signals_generate(context: typer.Context) -> None:
             if superseded
             else []
         )
+        if generated.superseded_claim_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="self_claim",
+                    ids=list(generated.superseded_claim_ids),
+                )
+            )
+        if generated.superseded_snapshot_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="assessment_snapshot",
+                    ids=list(generated.superseded_snapshot_ids),
+                )
+            )
+        invalidated_views = list(generated.invalidated_views)
+        view_lines = "\n".join(
+            f"Invalidated {item.snapshot_id}: {item.regeneration_command}"
+            for item in invalidated_views
+        )
+        return Outcome(
+            affected_ids=AffectedIds(
+                created=created_groups,
+                superseded=superseded_groups,
+                deleted=[],
+            ),
+            generation_ids=sorted(
+                {
+                    *(
+                        [generated.generation_id]
+                        if generated.generation_id is not None
+                        else []
+                    ),
+                    *generated.superseded_generation_ids,
+                },
+                key=lambda value: value.encode("utf-8"),
+            ),
+            run_ids=[generated.run_id],
+            invalidated_views=invalidated_views,
+            warnings=list(generated.warnings),
+            result=None,
+            human_result=(
+                f"Created {len(created)} signals; superseded {len(superseded)}. "
+                f"Invalidated {len(invalidated_views)} assessment views."
+                + (f"\n{view_lines}" if view_lines else "")
+            ),
+        )
+
+    _run_command(context, "signals generate", operation)
+
+
+@signals_app.command("list")
+def signals_list(context: typer.Context) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        signals = list(list_current_signals(workspace))
+        human = "\n".join(_signal_human_line(signal) for signal in signals)
+        return Outcome(
+            result=SignalsListResult(signals=signals),
+            human_result=human or "No current signals.",
+        )
+
+    _run_command(context, "signals list", operation)
+
+
+def _claim_human_line(claim: SelfClaim) -> str:
+    return (
+        f"{claim.id}\t{claim.claim_kind}\t{claim.dimension}\t"
+        f"{claim.confidence}\t{claim.verification_status}"
+    )
+
+
+@assess_app.command("generate")
+def assess_generate(
+    context: typer.Context,
+    scope: str = typer.Option("global", "--scope"),
+    project: str | None = typer.Option(None, "--project"),
+) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        canonical_project = (
+            None if project is None else unicodedata.normalize("NFC", project).strip()
+        )
+        selected_scope, selected_project = validate_assessment_selection(
+            scope=scope, project=canonical_project
+        )
+        require_compatible(workspace)
+        if not controls.yes:
+            if _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            if not typer.confirm(
+                "Generate the self-assessment view using the configured model provider?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
+        generated = run_assess_generate(
+            workspace, scope=selected_scope, project=selected_project
+        )
+        assert generated.snapshot is not None and generated.snapshot_id is not None
+        created_groups = [
+            EntityIdGroup(
+                entity_type="assessment_snapshot", ids=[generated.snapshot_id]
+            ),
+            EntityIdGroup(
+                entity_type="self_claim", ids=list(generated.created_claim_ids)
+            ),
+        ]
+        superseded_groups: list[EntityIdGroup] = []
+        if generated.superseded_claim_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="self_claim",
+                    ids=list(generated.superseded_claim_ids),
+                )
+            )
+        if generated.superseded_snapshot_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="assessment_snapshot",
+                    ids=list(generated.superseded_snapshot_ids),
+                )
+            )
+        prior = (
+            ""
+            if generated.replaced_view is None
+            else f"; superseded {generated.replaced_view.snapshot_id}"
+        )
         return Outcome(
             affected_ids=AffectedIds(
                 created=created_groups,
@@ -702,27 +882,64 @@ def signals_generate(context: typer.Context) -> None:
             warnings=list(generated.warnings),
             result=None,
             human_result=(
-                f"Created {len(created)} signals; superseded {len(superseded)}. "
-                "Invalidated artifact classes: none; self-claims, assessment "
-                "snapshots, branches, and bullets are not implemented yet. "
-                "No assessment view exists yet to regenerate."
+                f"Created {generated.snapshot.id} — {generated.snapshot.title}; "
+                f"{len(generated.claims)} claims{prior}."
             ),
         )
 
-    _run_command(context, "signals generate", operation)
+    _run_command(context, "assess generate", operation)
 
 
-@signals_app.command("list")
-def signals_list(context: typer.Context) -> None:
+@assess_app.command("list")
+def assess_list(context: typer.Context) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        signals = list(list_current_signals(workspace))
-        human = "\n".join(_signal_human_line(signal) for signal in signals)
+        snapshots = list_current_snapshots(workspace)
+        items = [
+            SnapshotListItem(
+                id=item.id,
+                scope=item.scope,
+                scope_target=item.scope_target,
+                verification_status=item.verification_status,
+                created_at=item.created_at,
+            )
+            for item in snapshots
+        ]
+        human = "\n".join(
+            f"{item.id}\t{item.scope}\t{item.scope_target or ''}\t"
+            f"{item.verification_status}\t{item.created_at.isoformat()}"
+            for item in items
+        )
         return Outcome(
-            result=SignalsListResult(signals=signals),
-            human_result=human or "No current signals.",
+            result=AssessListResult(snapshots=items),
+            human_result=human or "No current assessment snapshots.",
         )
 
-    _run_command(context, "signals list", operation)
+    _run_command(context, "assess list", operation)
+
+
+@assess_app.command("show")
+def assess_show(
+    context: typer.Context,
+    snapshot_id: str = typer.Option(..., "--snapshot"),
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        details = show_snapshot(workspace, snapshot_id=snapshot_id)
+        human = details.snapshot.title
+        if details.claims:
+            human += "\n" + "\n".join(
+                _claim_human_line(claim) for claim in details.claims
+            )
+        return Outcome(
+            result=AssessShowResult(
+                snapshot=details.snapshot,
+                claims=list(details.claims),
+                gaps=list(details.gaps),
+                contradictions=list(details.contradictions),
+            ),
+            human_result=human,
+        )
+
+    _run_command(context, "assess show", operation)
 
 
 @gaps_app.command("list")
@@ -938,6 +1155,26 @@ def logs_delete(
                         if deleted.purged_signal_ids
                         else []
                     )
+                    + (
+                        [
+                            EntityIdGroup(
+                                entity_type="self_claim",
+                                ids=list(deleted.purged_claim_ids),
+                            )
+                        ]
+                        if deleted.purged_claim_ids
+                        else []
+                    )
+                    + (
+                        [
+                            EntityIdGroup(
+                                entity_type="assessment_snapshot",
+                                ids=list(deleted.purged_snapshot_ids),
+                            )
+                        ]
+                        if deleted.purged_snapshot_ids
+                        else []
+                    )
                     + [
                         EntityIdGroup(
                             entity_type="raw_log",
@@ -947,11 +1184,21 @@ def logs_delete(
                 ),
             ),
             residual_paths=list(deleted.residual_paths),
+            invalidated_views=list(deleted.invalidated_views),
             result=result,
             human_result=(
                 f"Deleted raw log {deleted.selected_log.id}."
                 if not deleted.residual_paths
                 else f"Deleted raw log {deleted.selected_log.id}; cleanup is incomplete."
+            )
+            + (
+                "\n"
+                + "\n".join(
+                    f"Purged {item.snapshot_id}: {item.regeneration_command}"
+                    for item in deleted.invalidated_views
+                )
+                if deleted.invalidated_views
+                else ""
             ),
         )
 

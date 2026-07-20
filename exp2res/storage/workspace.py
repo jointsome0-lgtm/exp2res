@@ -26,15 +26,16 @@ from exp2res.errors import (
 )
 
 from .schema import (
-    SCHEMA_V5_SQL,
+    SCHEMA_V6_SQL,
     apply_migration_1_to_2,
     apply_migration_2_to_3,
     apply_migration_3_to_4,
     apply_migration_4_to_5,
+    apply_migration_5_to_6,
     create_schema,
 )
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 CONFIG_TEMPLATE = """[workspace]
 timezone = ""
@@ -84,6 +85,7 @@ MIGRATION_REGISTRY = (
     MigrationStep(2, 3, apply_migration_2_to_3, requires_foreign_keys_off=True),
     MigrationStep(3, 4, apply_migration_3_to_4),
     MigrationStep(4, 5, apply_migration_4_to_5),
+    MigrationStep(5, 6, apply_migration_5_to_6),
 )
 
 
@@ -460,6 +462,8 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
         hydrate_gap_question,
         hydrate_raw_log,
         hydrate_self_signal,
+        hydrate_assessment_snapshot,
+        hydrate_self_claim,
     )
 
     for row in connection.execute("SELECT * FROM raw_logs"):
@@ -484,6 +488,10 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
         hydrate_contradiction(row)
     for row in connection.execute("SELECT * FROM self_signals"):
         hydrate_self_signal(row)
+    for row in connection.execute("SELECT * FROM assessment_snapshots"):
+        hydrate_assessment_snapshot(row)
+    for row in connection.execute("SELECT * FROM self_claims"):
+        hydrate_self_claim(row)
     if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
         raise sqlite3.IntegrityError("foreign key validation failed")
     status = inspect_schema(connection)
@@ -507,7 +515,7 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
     scratch = sqlite3.connect(":memory:")
     try:
         scratch.create_function("exp2res_owner_delete", 0, lambda: 0)
-        scratch.executescript(SCHEMA_V5_SQL)
+        scratch.executescript(SCHEMA_V6_SQL)
         expected_entries = schema_entries(scratch)
     finally:
         scratch.close()

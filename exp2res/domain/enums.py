@@ -26,6 +26,38 @@ SignalType = Literal[
     "contradiction_signal",
 ]
 
+AssessmentScope = Literal["global", "project"]
+
+SelfClaimDimension = Literal[
+    "technical_skill",
+    "domain_interest",
+    "working_style",
+    "execution_capacity",
+    "constraint",
+    "risk",
+    "gap",
+    "trajectory",
+    "identity_hypothesis",
+]
+
+VerificationStatus = Literal[
+    "unverified",
+    "supported",
+    "partially_supported",
+    "inferred_but_acceptable",
+    "needs_clarification",
+    "contradicted",
+    "unsupported",
+    "rejected",
+]
+
+CounterevidenceRefType = Literal[
+    "raw_log",
+    "evidence_item",
+    "experience_fact",
+    "self_signal",
+]
+
 EntryType = Literal[
     "manual_daily",
     "manual_retro",

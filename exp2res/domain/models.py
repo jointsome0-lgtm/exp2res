@@ -13,8 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .enums import (
     ActivityContext,
+    AssessmentScope,
     ClaimKind,
     Confidence,
+    CounterevidenceRefType,
     DetectionRefType,
     EntryType,
     EvidenceStrength,
@@ -22,9 +24,11 @@ from .enums import (
     GapTrigger,
     OwnershipLevel,
     SignalType,
+    SelfClaimDimension,
     SourceType,
     TemporalConfidence,
     TemporalPrecision,
+    VerificationStatus,
 )
 
 RAW_TEXT_LIMIT = 1_048_576
@@ -372,6 +376,149 @@ class SelfSignal(StrictModel):
     @classmethod
     def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
         return validate_metadata(value)
+
+
+class CounterevidenceItem(StrictModel):
+    statement: str
+    source_ref_type: CounterevidenceRefType
+    source_ref_id: str
+
+    @field_validator("statement")
+    @classmethod
+    def statement_policy(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True)
+
+    @field_validator("source_ref_id")
+    @classmethod
+    def source_ref_id_policy(cls, value: str) -> str:
+        return validate_structural(value)
+
+
+class SelfClaim(StrictModel):
+    id: str
+    created_at: datetime
+    superseded_at: Optional[datetime] = None
+    snapshot_id: str
+    claim: str
+    claim_kind: ClaimKind
+    dimension: SelfClaimDimension
+    source_signal_ids: list[str] = Field(max_length=1_000)
+    source_fact_ids: list[str] = Field(max_length=1_000)
+    confidence: Confidence
+    verification_status: VerificationStatus
+    counterevidence: list[CounterevidenceItem] = Field(
+        default_factory=list, max_length=1_000
+    )
+    uncertainty: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("id", "snapshot_id")
+    @classmethod
+    def structural_fields(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("created_at", "superseded_at")
+    @classmethod
+    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("datetime must carry an offset")
+        return value
+
+    @field_validator("claim")
+    @classmethod
+    def claim_policy(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True)
+
+    @field_validator("uncertainty")
+    @classmethod
+    def uncertainty_policy(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else validate_free_text(value, nonempty=True)
+
+    @field_validator("source_signal_ids", "source_fact_ids")
+    @classmethod
+    def typed_id_list_policy(cls, value: list[str]) -> list[str]:
+        for member in value:
+            validate_structural(member)
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate typed ID")
+        return value
+
+    @field_validator("counterevidence")
+    @classmethod
+    def counterevidence_policy(
+        cls, value: list[CounterevidenceItem]
+    ) -> list[CounterevidenceItem]:
+        keys = [(item.source_ref_type, item.source_ref_id) for item in value]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate counterevidence reference")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_metadata(value)
+
+
+class AssessmentSnapshot(StrictModel):
+    id: str
+    created_at: datetime
+    superseded_at: Optional[datetime] = None
+    scope: AssessmentScope
+    scope_target: Optional[str] = None
+    title: str
+    summary: str
+    gap_question_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    contradiction_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    verification_status: VerificationStatus
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("id")
+    @classmethod
+    def structural_id(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("scope_target")
+    @classmethod
+    def scope_target_policy(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else validate_structural(value)
+
+    @field_validator("created_at", "superseded_at")
+    @classmethod
+    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("datetime must carry an offset")
+        return value
+
+    @field_validator("title", "summary")
+    @classmethod
+    def text_policy(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True)
+
+    @field_validator("gap_question_ids", "contradiction_ids")
+    @classmethod
+    def typed_id_list_policy(cls, value: list[str]) -> list[str]:
+        for member in value:
+            validate_structural(member)
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate typed ID")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_metadata(value)
+
+    @model_validator(mode="after")
+    def scope_shape(self) -> "AssessmentSnapshot":
+        if (self.scope == "project") != (self.scope_target is not None):
+            raise ValueError("scope and scope target disagree")
+        if self.scope_target is not None:
+            canonical = unicodedata.normalize("NFC", self.scope_target).strip()
+            if not canonical_project_key(self.scope_target):
+                raise ValueError("scope target canonicalizes to blank")
+            if self.scope_target != canonical:
+                raise ValueError("scope target is not canonical NFC+trim form")
+        return self
 
 
 class Contradiction(StrictModel):

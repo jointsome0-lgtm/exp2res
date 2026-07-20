@@ -27,3 +27,13 @@ def signal_confidence_cap(
     if has_counter_facts and _CONFIDENCE_ORDER[cap] > _CONFIDENCE_ORDER["medium"]:
         cap = "medium"
     return cap
+
+
+def claim_confidence_cap(*, source_confidences: Iterable[Confidence]) -> str:
+    """Return §9.4's source-maximum cap for one self-claim candidate."""
+
+    return max(
+        tuple(source_confidences),
+        key=_CONFIDENCE_ORDER.__getitem__,
+        default="unknown",
+    )

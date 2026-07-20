@@ -55,9 +55,10 @@ nodes = [
   "tests/test_stage3_extraction.py::test_rerun_supersedes_prior_generation_at_one_swap_instant",
   "tests/test_vera_replay_extract.py::test_vera_e1_cli_replay_preserves_provenance_and_one_current_generation",
   "tests/test_stage5_signals.py::test_identical_rerun_still_replaces_the_complete_generation",
+  "tests/test_stage6_assessment.py::test_folded_project_view_replacement_preserves_other_views",
 ]
 phase = "1"
-note = "Stage 3 and Stage 5 reruns prove coherent current fact and signal generations; Stage 6+ generation mixing and managed-export invalidation remain unavailable until their owning phases"
+note = "Stage 3 and Stage 5 reruns prove coherent current fact and signal generations, and Stage 6 proves one-current-per-view replacement; Stage 7+ verification mixing and managed-export invalidation remain unavailable until their owning phases"
 
 ["21.13"]
 status = "pending"
@@ -186,15 +187,20 @@ nodes = [
   "tests/test_stage5_signals.py::test_insert_self_signal_guards_lifecycle_references_and_commit_cap",
 ]
 phase = "3"
-note = "Stage 3 fact ceilings and Stage 5 signal propagation caps are enforced at structured output and commit; Stage 6/7 claim-side propagation and semantic breadth slices remain pending"
+note = "Stage 3 fact ceilings, Stage 5 signal propagation caps, and Stage 6 claim source-maximum caps are enforced at structured output and commit; Stage 7 semantic breadth remains pending"
 
 ["21.32"]
 status = "pending"
 phase = "3"
 
 ["21.33"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage6_assessment.py::test_project_input_uses_stored_key_and_supplies_cross_project_context",
+  "tests/test_stage6_assessment.py::test_folded_project_view_replacement_preserves_other_views",
+]
 phase = "3"
+note = "Stage 6 proves stored-key subject selection, cross-project context facts, and folded view replacement identity; the §14.4 correction slice waits on the deferred correction add command, while Stage 3 project echo rejection is already enforced"
 
 ["21.34"]
 status = "pending"

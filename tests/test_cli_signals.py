@@ -98,8 +98,7 @@ def test_generate_envelope_replaces_and_keeps_unlisted_result_null(
     )
     assert human.exit_code == 0
     assert "Created 1 signals; superseded 1." in human.stdout
-    assert "Invalidated artifact classes: none" in human.stdout
-    assert "No assessment view exists yet to regenerate." in human.stdout
+    assert "Invalidated 0 assessment views" in human.stdout
 
 
 def test_generate_consent_decline_and_noninteractive_failure_precede_adapter(
