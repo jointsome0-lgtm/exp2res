@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
 import sqlite3
 from typing import Generic, Literal, TypeVar, cast
 
@@ -338,6 +337,26 @@ def _require_reference(
         raise IntegrityFailureError(diagnostic) from error
 
 
+def _validated_answer_log(
+    connection: sqlite3.Connection, gap: GapQuestion
+) -> RawLog:
+    """§14.7 shape check: a real gap-answer record with the copied question."""
+
+    answer_row = connection.execute(
+        "SELECT * FROM raw_logs WHERE id = ?", (gap.answer_log_id,)
+    ).fetchone()
+    if answer_row is None:
+        raise IntegrityFailureError("gap_answer_log_invalid")
+    answer_log = hydrate_raw_log(answer_row)
+    if (
+        answer_log.entry_type != "gap_answer"
+        or answer_log.metadata.get("question_text") != gap.question
+        or answer_log.metadata.get("question_reason") != gap.reason
+    ):
+        raise IntegrityFailureError("gap_answer_log_invalid")
+    return answer_log
+
+
 def load_assessment_graph(
     connection: sqlite3.Connection,
     *,
@@ -395,22 +414,7 @@ def load_assessment_graph(
         )
         note_supplemental(gap.target_type, gap.target_id)
         if gap.answer_log_id is not None:
-            # §14.7 shape check: the answered marker renders only for a real
-            # gap-answer record carrying the copied question context.
-            answer_row = connection.execute(
-                "SELECT * FROM raw_logs WHERE id = ?", (gap.answer_log_id,)
-            ).fetchone()
-            if answer_row is None:
-                raise IntegrityFailureError("gap_answer_log_invalid")
-            answer_log = hydrate_raw_log(answer_row)
-            question_text = answer_log.metadata.get("question_text")
-            question_reason = answer_log.metadata.get("question_reason")
-            if (
-                answer_log.entry_type != "gap_answer"
-                or question_text != gap.question
-                or question_reason != gap.reason
-            ):
-                raise IntegrityFailureError("gap_answer_log_invalid")
+            answer_log = _validated_answer_log(connection, gap)
             # Complement of the unlisted-gap check below: Stage 6 lists only
             # gaps unanswered at synthesis, so a listed answer recorded at or
             # before the snapshot instant is an inconsistent input.
@@ -463,21 +467,20 @@ def load_assessment_graph(
     if current_contradictions != set(snapshot.contradiction_ids):
         raise IntegrityFailureError("snapshot_contradiction_set_stale")
     listed_gap_ids = set(snapshot.gap_question_ids)
-    for gap_row in connection.execute(
-        "SELECT gq.id, gq.answered, logs.recorded_at "
-        "FROM gap_questions gq "
-        "LEFT JOIN raw_logs logs ON logs.id = gq.answer_log_id "
-        "WHERE gq.superseded_at IS NULL"
-    ):
-        if gap_row[0] in listed_gap_ids:
+    for row in connection.execute(
+        "SELECT * FROM gap_questions WHERE superseded_at IS NULL"
+    ).fetchall():
+        gap = hydrate_gap_question(row)
+        if gap.id in listed_gap_ids:
             continue
-        # An unlisted current gap is legal only when it was already answered
-        # at synthesis: unanswered rows and rows whose answer was recorded
-        # after the snapshot instant were writer inputs and must be listed.
-        if not gap_row[1] or gap_row[2] is None:
+        # An unlisted current gap is legal only when a shape-valid §14.7
+        # answer already existed at synthesis: unanswered rows and rows whose
+        # answer was recorded after the snapshot instant were writer inputs
+        # and must be listed.
+        if gap.answer_log_id is None:
             raise IntegrityFailureError("snapshot_gap_set_stale")
-        answered_at = datetime.fromisoformat(gap_row[2])
-        if answered_at > snapshot.created_at:
+        answer_log = _validated_answer_log(connection, gap)
+        if answer_log.recorded_at > snapshot.created_at:
             raise IntegrityFailureError("snapshot_gap_set_stale")
 
     signal_ids = sorted(
@@ -494,6 +497,10 @@ def load_assessment_graph(
         signal = hydrate_self_signal(row)
         if signal.superseded_at is not None:
             raise IntegrityFailureError("claim_signal_superseded")
+        # §16.1: a cited signal must ground in at least one fact, or its
+        # evidence-map signal_links entry would carry no fact path.
+        if not signal.supporting_fact_ids and not signal.counter_fact_ids:
+            raise IntegrityFailureError("claim_signal_chain_empty")
         signal_records.append(_stored(row, signal))
     signals_by_id = {item.value.id: item.value for item in signal_records}
 
@@ -549,6 +556,14 @@ def load_assessment_graph(
         if not reached or not (reached & direct_fact_ids):
             raise IntegrityFailureError("claim_direct_chain_missing")
         for counterevidence in claim.counterevidence:
+            # Same reference validation as gap targets and contradiction
+            # references: §13.3-displaced rows are not current sources.
+            _require_reference(
+                connection,
+                counterevidence.source_ref_type,
+                counterevidence.source_ref_id,
+                "export_source_reference_invalid",
+            )
             note_supplemental(
                 counterevidence.source_ref_type, counterevidence.source_ref_id
             )

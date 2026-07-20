@@ -265,6 +265,96 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
         workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
     )
 
+    # An unlisted answered gap suppresses its row only through a shape-valid
+    # §14.7 record: pointing answer_log_id at an ordinary manual log fails
+    # closed instead of silently omitting the question.
+    with read_database(workspace) as connection:
+        manual_log_id = connection.execute(
+            "SELECT id FROM raw_logs WHERE entry_type != 'gap_answer' LIMIT 1"
+        ).fetchone()[0]
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE assessment_snapshots SET gap_question_ids_json = '[]' "
+            "WHERE id = ?",
+            (generated.snapshot_id,),
+        )
+        connection.execute(
+            "UPDATE gap_questions SET answer_log_id = ? "
+            "WHERE id = 'gap_vera_stray'",
+            (manual_log_id,),
+        )
+        connection.commit()
+    with pytest.raises(IntegrityFailureError, match="gap_answer_log_invalid"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+
+def test_cited_signal_without_fact_chain_fails_export(workspace: Path) -> None:
+    """§16.1: a cited signal with empty supporting and counter fact lists has
+    no fact path for its evidence-map entry and fails export closed."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response() for _ in generated.claims]),
+        ids,
+        generated.snapshot_id,
+    )
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE self_signals SET supporting_fact_ids_json = '[]', "
+            "counter_fact_ids_json = '[]' WHERE superseded_at IS NULL"
+        )
+        connection.commit()
+    with pytest.raises(IntegrityFailureError, match="claim_signal_chain_empty"):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
+
+def test_displaced_counterevidence_raw_log_fails_export(workspace: Path) -> None:
+    """§13.3: verifier-cited raw-log counterevidence displaced by a correction
+    is not a current source and fails export closed."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    with read_database(workspace) as connection:
+        raw_log_id = connection.execute(
+            "SELECT id FROM raw_logs LIMIT 1"
+        ).fetchone()[0]
+    counterevidence = [
+        {
+            "statement": "A Vera Example source disputes the claim.",
+            "source_ref_type": "raw_log",
+            "source_ref_id": raw_log_id,
+        }
+    ]
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [
+                verifier_response("contradicted", counterevidence=counterevidence),
+                *(verifier_response() for _ in generated.claims[1:]),
+            ]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "INSERT INTO raw_logs (id, recorded_at, entry_type, source_type, "
+            "temporal_precision, temporal_confidence, raw_text, "
+            "corrects_log_id) VALUES "
+            "('log_vera_ce_correction', '2026-07-15T13:00:00+00:00', "
+            "'correction', 'manual_entry', 'unknown', 'unknown', "
+            "'Vera Example corrected counterevidence source.', ?)",
+            (raw_log_id,),
+        )
+        connection.commit()
+    with pytest.raises(
+        IntegrityFailureError, match="export_source_reference_invalid"
+    ):
+        export_assessment(workspace, snapshot_id=generated.snapshot_id)
+
 
 def test_displaced_detection_targets_fail_export(workspace: Path) -> None:
     """§13.3: a listed contradiction referencing a raw log displaced by a
