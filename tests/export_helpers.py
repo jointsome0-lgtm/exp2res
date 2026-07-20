@@ -202,3 +202,36 @@ def graph_with_gap_answered(graph: AssessmentExportGraph, answered: bool) -> Ass
     )
     return replace(graph, gaps=(replace(gap, value=updated),))
 
+
+def graph_with_gap_answered_after_export(
+    graph: AssessmentExportGraph,
+) -> AssessmentExportGraph:
+    """Answer the listed gap with a new §14.7 log outside the claim closure."""
+
+    gap = graph.gaps[0]
+    answer = RawLog(
+        id="log_vera_export_answer_0001",
+        recorded_at=EXPORT_TIME + timedelta(hours=3),
+        entry_type="gap_answer",
+        source_type="manual_entry",
+        occurred=OccurredAt(
+            start=None,
+            end=None,
+            precision="unknown",
+            confidence="unknown",
+        ),
+        raw_text="Vera Example answered the scale question.",
+        metadata={
+            "question_text": gap.value.question,
+            "question_reason": gap.value.reason,
+        },
+    )
+    updated = gap.value.model_copy(
+        update={"answered": True, "answer_log_id": answer.id}
+    )
+    return replace(
+        graph,
+        gaps=(replace(gap, value=updated),),
+        supplemental_raw_logs=(*graph.supplemental_raw_logs, answer),
+    )
+

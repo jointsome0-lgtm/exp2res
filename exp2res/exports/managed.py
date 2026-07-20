@@ -647,7 +647,13 @@ def _matching_prior_manifest(
     out_root: Path,
     graph: AssessmentExportGraph,
 ) -> AssessmentManifest | None:
-    """Validate a prior set while allowing its lifecycle-sensitive hash to be stale."""
+    """Validate a prior set while allowing its lifecycle-sensitive parts to be stale.
+
+    The render hash and the source closure both move with §14.7 lifecycle
+    events (a gap answered after export adds its answer log), so a prior set
+    for the same snapshot, generation, and identity stays replaceable; the
+    reuse short-circuit in publish_assessment still requires full equality.
+    """
 
     manifest = _inspect_set(final_path, parent, out_root)
     if manifest is None:
@@ -663,7 +669,6 @@ def _matching_prior_manifest(
             scope=snapshot.scope,
             scope_target=snapshot.scope_target,
         )
-        or manifest.source_ids != AssessmentSourceIds(**graph.source_ids())
     ):
         return None
     return manifest
@@ -742,7 +747,8 @@ def publish_assessment(
             if prior_manifest is None:
                 raise ManagedOutputIncompleteError((str(final_path),))
             if (
-                prior_manifest.render_input_sha256
+                prior_manifest.source_ids == candidate_manifest.source_ids
+                and prior_manifest.render_input_sha256
                 == candidate_manifest.render_input_sha256
                 and _member_bytes_equal(final_path, out_root, members)
             ):

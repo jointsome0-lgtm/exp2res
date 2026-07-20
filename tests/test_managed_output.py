@@ -12,7 +12,11 @@ import pytest
 from exp2res.errors import ManagedOutputIncompleteError
 from exp2res.exports import managed
 
-from export_helpers import assessment_graph, graph_with_gap_answered
+from export_helpers import (
+    assessment_graph,
+    graph_with_gap_answered,
+    graph_with_gap_answered_after_export,
+)
 
 
 pytestmark = [pytest.mark.lifecycle, pytest.mark.golden]
@@ -67,6 +71,38 @@ def test_private_modes_idempotent_reexport_and_same_view_stale_replacement(
     _publish(workspace, replacement)
     assert not final.exists()
     assert (workspace / "out" / "assessment" / replacement.snapshot.value.id).is_dir()
+
+
+def test_reexport_after_gap_answer_replaces_prior_set(workspace: Path) -> None:
+    """§14.7: answering a listed gap after export widens the source closure;
+    the same current snapshot must replace its prior set, not report it as a
+    residual."""
+
+    graph = assessment_graph(all_sections=False)
+    _publish(workspace, graph)
+    final = workspace / "out" / "assessment" / graph.snapshot.value.id
+    first_bytes = _bytes(final)
+
+    answered = graph_with_gap_answered_after_export(graph)
+    manifest, _paths = managed.publish_assessment(
+        workspace,
+        answered,
+        clock=lambda: datetime(2026, 7, 20, 13, tzinfo=timezone.utc),
+    )
+    answer_log_id = answered.supplemental_raw_logs[-1].id
+    assert answer_log_id in manifest.source_ids.raw_log_ids
+    second_bytes = _bytes(final)
+    assert second_bytes != first_bytes
+    assert final.is_dir()
+
+    # Unchanged re-export of the answered graph still reuses the set.
+    reused, _reused_paths = managed.publish_assessment(
+        workspace,
+        answered,
+        clock=lambda: datetime(2026, 7, 20, 14, tzinfo=timezone.utc),
+    )
+    assert reused == manifest
+    assert _bytes(final) == second_bytes
 
 
 @pytest.mark.parametrize("failure_name", ["report.md", "manifest.json"])
