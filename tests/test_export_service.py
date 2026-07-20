@@ -136,6 +136,69 @@ def test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity(
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
 
+def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
+    workspace: Path,
+) -> None:
+    """§13.14: counterevidence grounding rows read for validation join
+    source_ids and the render-input hash without widening the closed
+    §13.12 evidence-map link projection."""
+
+    import json
+
+    from test_stage5_signals import (
+        SignalIds,
+        prepare_facts,
+        run_stage5,
+        signal_response,
+    )
+    from test_stage6_assessment import assessment_response, run_stage6
+
+    ids = SignalIds()
+    cited_fact, scope_fact = prepare_facts(workspace, ids, count=2)
+    signal_result = run_stage5(
+        workspace,
+        FakeContractRunner([signal_response([cited_fact])]),
+        ids,
+    )
+    signal_ids = [item.id for item in signal_result.current_signals]
+    generated = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [assessment_response(fact_ids=[cited_fact], signal_ids=signal_ids)]
+        ),
+        ids,
+    )
+    counterevidence = [
+        {
+            "statement": "Vera Example holds one contrary scope fact.",
+            "source_ref_type": "experience_fact",
+            "source_ref_id": scope_fact,
+        }
+    ]
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [
+                verifier_response("contradicted", counterevidence=counterevidence),
+                *(verifier_response() for _ in generated.claims[1:]),
+            ]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    result = export_assessment(
+        workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
+    )
+    manifest = json.loads(Path(result.manifest_path).read_bytes())
+    assert scope_fact in manifest["source_ids"]["experience_fact_ids"]
+    evidence_map = json.loads(
+        (Path(result.manifest_path).parent / "evidence_map.json").read_bytes()
+    )
+    assert scope_fact not in [
+        link["fact_id"] for link in evidence_map["fact_links"]
+    ]
+
+
 def test_fact_provenance_disagreement_fails_export_closure(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

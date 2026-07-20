@@ -95,14 +95,37 @@ class AssessmentExportGraph:
     gaps: tuple[StoredRecord[GapQuestion], ...]
     contradictions: tuple[StoredRecord[Contradiction], ...]
     fact_sources: tuple[FactSourceRecord, ...]
+    # Counterevidence grounding rows outside the claim source closure. They
+    # are read to validate rendering, so §13.14 folds them into source_ids
+    # and the render-input bundle, while the closed §13.12 evidence-map and
+    # report projections keep consuming only the closure fields above.
+    counterevidence_signals: tuple[StoredRecord[SelfSignal], ...] = ()
+    counterevidence_facts: tuple[StoredRecord[ExperienceFact], ...] = ()
+    counterevidence_evidence_items: tuple[EvidenceItem, ...] = ()
+    counterevidence_raw_logs: tuple[RawLog, ...] = ()
 
     def source_ids(self) -> dict[str, list[str]]:
+        def merged(main: list[str], extra: list[str]) -> list[str]:
+            return sorted(set(main) | set(extra), key=id_key)
+
         return {
             "self_claim_ids": [item.value.id for item in self.claims],
-            "self_signal_ids": [item.value.id for item in self.signals],
-            "experience_fact_ids": [item.value.id for item in self.facts],
-            "evidence_item_ids": [item.id for item in self.evidence_items],
-            "raw_log_ids": [item.id for item in self.raw_logs],
+            "self_signal_ids": merged(
+                [item.value.id for item in self.signals],
+                [item.value.id for item in self.counterevidence_signals],
+            ),
+            "experience_fact_ids": merged(
+                [item.value.id for item in self.facts],
+                [item.value.id for item in self.counterevidence_facts],
+            ),
+            "evidence_item_ids": merged(
+                [item.id for item in self.evidence_items],
+                [item.id for item in self.counterevidence_evidence_items],
+            ),
+            "raw_log_ids": merged(
+                [item.id for item in self.raw_logs],
+                [item.id for item in self.counterevidence_raw_logs],
+            ),
             "gap_question_ids": [item.value.id for item in self.gaps],
             "contradiction_ids": [item.value.id for item in self.contradictions],
         }
@@ -179,7 +202,23 @@ class AssessmentRenderInputBundle(_BundleModel):
     fact_sources: list[FactSourceRenderEntry]
 
 
+def _merged_stored(
+    main: tuple[StoredRecord[T], ...], extra: tuple[StoredRecord[T], ...]
+) -> list[StoredRecord[T]]:
+    return sorted((*main, *extra), key=lambda item: id_key(item.value.id))
+
+
 def render_input_bundle(graph: AssessmentExportGraph) -> AssessmentRenderInputBundle:
+    bundle_signals = _merged_stored(graph.signals, graph.counterevidence_signals)
+    bundle_facts = _merged_stored(graph.facts, graph.counterevidence_facts)
+    bundle_evidence = sorted(
+        (*graph.evidence_items, *graph.counterevidence_evidence_items),
+        key=lambda item: id_key(item.id),
+    )
+    bundle_raw_logs = sorted(
+        (*graph.raw_logs, *graph.counterevidence_raw_logs),
+        key=lambda item: id_key(item.id),
+    )
     return AssessmentRenderInputBundle(
         assessment_snapshots=[
             SnapshotRenderEntry(
@@ -203,7 +242,7 @@ def render_input_bundle(graph: AssessmentExportGraph) -> AssessmentRenderInputBu
                 generation_id=item.generation_id,
                 produced_by_run_id=item.produced_by_run_id,
             )
-            for item in graph.signals
+            for item in bundle_signals
         ],
         experience_facts=[
             FactRenderEntry(
@@ -211,10 +250,10 @@ def render_input_bundle(graph: AssessmentExportGraph) -> AssessmentRenderInputBu
                 generation_id=item.generation_id,
                 produced_by_run_id=item.produced_by_run_id,
             )
-            for item in graph.facts
+            for item in bundle_facts
         ],
-        evidence_items=[EvidenceRenderEntry(value=item) for item in graph.evidence_items],
-        raw_logs=[RawLogRenderEntry(value=item) for item in graph.raw_logs],
+        evidence_items=[EvidenceRenderEntry(value=item) for item in bundle_evidence],
+        raw_logs=[RawLogRenderEntry(value=item) for item in bundle_raw_logs],
         gap_questions=[
             GapRenderEntry(
                 value=item.value,
@@ -423,6 +462,7 @@ def load_assessment_graph(
         key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id))
     )
 
+    counterevidence_refs: dict[str, set[str]] = {}
     for claim_record in claims:
         claim = claim_record.value
         reached = set(claim.source_fact_ids)
@@ -433,12 +473,9 @@ def load_assessment_graph(
         if not reached or not (reached & direct_fact_ids):
             raise IntegrityFailureError("claim_direct_chain_missing")
         for counterevidence in claim.counterevidence:
-            _require_reference(
-                connection,
-                counterevidence.source_ref_type,
-                counterevidence.source_ref_id,
-                "claim_counterevidence_reference_invalid",
-            )
+            counterevidence_refs.setdefault(
+                counterevidence.source_ref_type, set()
+            ).add(counterevidence.source_ref_id)
 
     evidence_ids = sorted(
         {source.evidence_item_id for source in fact_source_records},
@@ -481,6 +518,61 @@ def load_assessment_graph(
         if derived_logs != list(fact.source_log_ids):
             raise IntegrityFailureError("fact_raw_log_closure_incomplete")
 
+    ce_signals: list[StoredRecord[SelfSignal]] = []
+    ce_facts: list[StoredRecord[ExperienceFact]] = []
+    ce_evidence: list[EvidenceItem] = []
+    ce_raw_logs: list[RawLog] = []
+    invalid = "claim_counterevidence_reference_invalid"
+    for signal_id in sorted(
+        counterevidence_refs.get("self_signal", set()) - set(signals_by_id), key=id_key
+    ):
+        row = connection.execute(
+            "SELECT * FROM self_signals WHERE id = ?", (signal_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError(invalid)
+        signal = hydrate_self_signal(row)
+        if signal.superseded_at is not None:
+            raise IntegrityFailureError(invalid)
+        ce_signals.append(_stored(row, signal))
+    for fact_id in sorted(
+        counterevidence_refs.get("experience_fact", set()) - fact_ids, key=id_key
+    ):
+        row = connection.execute(
+            "SELECT * FROM experience_facts WHERE id = ?", (fact_id,)
+        ).fetchone()
+        fact = get_experience_fact(connection, fact_id)
+        if row is None or fact is None or fact.superseded_at is not None:
+            raise IntegrityFailureError(invalid)
+        ce_facts.append(_stored(row, fact))
+    for evidence_id in sorted(
+        counterevidence_refs.get("evidence_item", set()) - set(evidence_ids),
+        key=id_key,
+    ):
+        row = connection.execute(
+            "SELECT * FROM evidence_items WHERE id = ?", (evidence_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError(invalid)
+        ce_evidence.append(hydrate_evidence_item(row))
+    for raw_log_id in sorted(
+        counterevidence_refs.get("raw_log", set()) - set(raw_log_ids), key=id_key
+    ):
+        row = connection.execute(
+            "SELECT * FROM raw_logs WHERE id = ?", (raw_log_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError(invalid)
+        ce_raw_logs.append(hydrate_raw_log(row))
+    unknown_types = set(counterevidence_refs) - {
+        "self_signal",
+        "experience_fact",
+        "evidence_item",
+        "raw_log",
+    }
+    if unknown_types:
+        raise IntegrityFailureError(invalid)
+
     return AssessmentExportGraph(
         snapshot=_stored(snapshot_row, snapshot),
         snapshot_created_at_text=snapshot_row["created_at"],
@@ -492,4 +584,8 @@ def load_assessment_graph(
         gaps=tuple(gap_records),
         contradictions=tuple(contradiction_records),
         fact_sources=tuple(fact_source_records),
+        counterevidence_signals=tuple(ce_signals),
+        counterevidence_facts=tuple(ce_facts),
+        counterevidence_evidence_items=tuple(ce_evidence),
+        counterevidence_raw_logs=tuple(ce_raw_logs),
     )
