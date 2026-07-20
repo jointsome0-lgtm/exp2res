@@ -27,7 +27,7 @@ Specification: `SDD.md` is the map (§ index and numbering rules); the body live
 
 ## Skills
 
-Shared skills ship as the `sdd` plugin from the `selfos-skills` repo (a Claude Code plugin marketplace): `/plugin marketplace add jointsome0-lgtm/selfos-skills` (or the local checkout `~/projects/selfos-skills`), then `/plugin install sdd@selfos`. To grill the spec: `/sdd:grill-sdd`. If a needed skill is missing from a session, ask the user to install/update the plugin.
+Shared skills install from the `selfos-skills` repo (an Agent Skills catalog): `npx skills add jointsome0-lgtm/selfos-skills --skill grill-sdd slice sdd-conventions --agent claude-code --global --yes` (full catalog: `--skill '*'`). To grill the spec: `/grill-sdd`. If a needed skill is missing from a session, ask the user to install/update it with the same command.
 
 ## Shared SDD conventions
 
