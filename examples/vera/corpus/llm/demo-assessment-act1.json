@@ -1,0 +1,34 @@
+{
+  "self_claims": [
+    {
+      "claim": "Vera Example currently shows an evidence-checking documentation pattern.",
+      "claim_kind": "pattern_signal",
+      "confidence": "medium",
+      "dimension": "working_style",
+      "source_fact_ids": [
+        "fact_demo_0001",
+        "fact_demo_0003"
+      ],
+      "source_signal_ids": [
+        "signal_demo_0001"
+      ],
+      "uncertainty": "The invented evidence covers one small documentation project."
+    },
+    {
+      "claim": "Current evidence suggests Vera Example validates claims and retains visible uncertainty.",
+      "claim_kind": "narrative_summary",
+      "confidence": "medium",
+      "dimension": "trajectory",
+      "source_fact_ids": [
+        "fact_demo_0001",
+        "fact_demo_0002",
+        "fact_demo_0003"
+      ],
+      "source_signal_ids": [
+        "signal_demo_0001"
+      ],
+      "uncertainty": "No external outcome is established by the Vera Example corpus."
+    }
+  ],
+  "warnings": []
+}

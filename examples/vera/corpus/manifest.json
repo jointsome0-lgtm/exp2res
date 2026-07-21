@@ -12,6 +12,16 @@
     "invalid/github-commit-bad-hash.json": "f96f3e3a8d0db391520d7389f2973b657151afa6a327c54180e5633127d07b29",
     "jds/jd-docs-engineer-examplia.md": "50e73bf1b97d4a4587eeb6c0c35098075a14d5a5ee0e5ced12418528cc3e736c",
     "jds/jd-junior-backend-clouddocs.md": "7b7b1778eb49920a31b8aaea65f480017b34a8c8aba0efec6bf288cb972bc96c",
+    "llm/demo-assessment-act1.json": "3a067014d41457580b4d04f25d8a82bafc565e736a927d6304287f198593e43b",
+    "llm/demo-assessment-act2-overclaim.json": "f9cd705e4b966330f81c29687367e6fafefdbae6c1334332182b5d026ef97692",
+    "llm/demo-detection.json": "e167df528c0315e1458aa5aa2115616f1505da8680c80877ac0c45610a44996d",
+    "llm/demo-extract-call-01.json": "4e2f5ae20dcc3dadfc6f8675e6e166f51960cd6f733b89e6333d850315cbacde",
+    "llm/demo-extract-call-02.json": "36fb8534fef728f4dd55c5040a0aca010b779d7553a5ad6f1177f78c166d771c",
+    "llm/demo-extract-call-03.json": "6330bac2b84ecaf8b9bc222e3dc1f66ac4b9a2ba62df254c7f8976e304e8f6a6",
+    "llm/demo-signals.json": "e2200ca739ee74b41a5834772dcccb3f74326229a32a85edc3456c28301513f9",
+    "llm/demo-verification-act1-supported.json": "9df2aaadeb7b66b116d328e17f527d492253068992a674e9440b13c9a028d171",
+    "llm/demo-verification-act2-rejected.json": "2b3ef33b214c6924748e468f11409e7b7865d403dce9f21df40f16708619aa64",
+    "llm/demo-verification-act2-supported.json": "6e2251a0f4f15c772d78e0ef199b0c68c71e984ec8878479bf509f79719bc2bb",
     "llm/extract-call-01.json": "5515529820aed9a89428dcb0f47591f4bef9def78ec6d3d9a425a9aefdddee42",
     "llm/extract-call-02.json": "2f6368b41f2ceafdbc37a0ba73840e74304ee45a4d912664859a2f2c53d40d41",
     "llm/extract-call-03.json": "dc26c4ee1395748a994fcecbe488c160f80037918d3b6690503badef894a3025",
@@ -29,10 +39,10 @@
     "logs/daily-2026-07-08.md": "e1e0c545e1640da568f69ca4636728fff98006867743c4bcaf8978907f3348ce",
     "logs/retro-2026-05-strength.json": "89a02739084ecf21c18b11ddac64c8bd4ce725808ede96d2cf9968198e801c16",
     "logs/retro-2026-06-k8s.json": "c92f84c5c5b058238892697dd5ee01f4c3fe0a054684f7488ac4183c23d303af",
-    "replay.json": "178c895dcda1eac8f7a26f695709dadeb26a485ba68ce15b0828d95326812621"
+    "replay.json": "f4a155c01ef2e58a5faa8eaff1ef0801095ac97b5a74efa35606e6dffd42e8cd"
   },
   "generator": "examples/vera/corpus.py",
   "persona": "Vera Example",
   "persona_source": "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md",
-  "version": "0.2.0"
+  "version": "0.3.0"
 }

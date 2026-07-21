@@ -36,6 +36,7 @@ REQUIRED_GITIGNORE_PATTERNS = {
     ".claude/",
     ".codex/",
     ".agents/",
+    "demo/workspace/",
 }
 
 # Directory names denied at any depth, matching gitignore's
@@ -71,6 +72,11 @@ FIXTURE_PATH_PATTERNS = (
     "fixtures/**",
     "examples/vera/corpus/**",
     "tests/goldens/**",
+    "demo/**",
+)
+
+DEMO_PUBLIC_PATH_PATTERNS = (
+    "demo/**",
 )
 
 MARKER_EXEMPT_PATHS: frozenset[str] = frozenset(
@@ -201,6 +207,16 @@ def main() -> int:
                     errors.append(
                         f"fixture lacks required marker 'Vera Example': {path}"
                     )
+
+        if matches_any(path, DEMO_PUBLIC_PATH_PATTERNS):
+            try:
+                demo_artifact = published_content(path, cached)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                detail = str(exc).replace("\n", " ")
+                errors.append(f"cannot read demo artifact {path}: {detail}")
+            else:
+                if b"/home/" in demo_artifact:
+                    errors.append(f"demo artifact exposes an absolute home path: {path}")
 
     if errors:
         for error in errors:

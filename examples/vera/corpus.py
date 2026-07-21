@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 CORPUS_NAME = "vera-example-fixtures"
-CORPUS_VERSION = "0.2.0"
+CORPUS_VERSION = "0.3.0"
 MARKER = "Vera Example"
 PERSONA_SOURCE = "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md"
 ROOT = Path(__file__).resolve().parent / "corpus"
@@ -561,6 +561,135 @@ EXTRACT_RESPONSES = [
     },
 ]
 
+# Issue #79's first-mirror demo uses a deliberately small subset of the replay
+# corpus. These responses are public, invented corpus artifacts rather than
+# test helpers: scripts/demo.py verifies their manifest hashes before injecting
+# them through the production ContractRunner seam.
+DEMO_RESPONSES = {
+    "demo-extract-call-01.json": {
+        "facts": [{
+            "claim": "Vera Example drafted and validated a kubectl troubleshooting runbook.",
+            "claim_kind": "observed_fact", "role": None, "company": None,
+            "context": "independent_project", "ownership_level": "implemented",
+            "action": "drafted and validated", "object": "a kubectl troubleshooting runbook",
+            "outcome": "Every step was walked on an invented toy cluster.",
+            "skills": ["technical writing"], "technologies": ["Kubernetes", "kubectl"],
+            "themes": ["evidence-grounded documentation"], "occurred": None,
+            "evidence_item_ids": ["evi_demo_0001"], "confidence": "medium",
+        }],
+        "warnings": [],
+    },
+    "demo-extract-call-02.json": {
+        "facts": [{
+            "claim": "Vera Example reported finishing the ingress guide and closing its checklist item.",
+            "claim_kind": "observed_fact", "role": None, "company": None,
+            "context": "independent_project", "ownership_level": "contributed",
+            "action": "reported finishing", "object": "the ingress guide",
+            "outcome": "The checklist item was closed.", "skills": ["technical writing"],
+            "technologies": ["Kubernetes", "TLS"], "themes": ["platform documentation"],
+            "occurred": None, "evidence_item_ids": ["evi_demo_0002"],
+            "confidence": "medium",
+        }],
+        "warnings": [],
+    },
+    "demo-extract-call-03.json": {
+        "facts": [{
+            "claim": "Vera Example resumed the ingress guide after finding placeholder TLS text.",
+            "claim_kind": "observed_fact", "role": None, "company": None,
+            "context": "independent_project", "ownership_level": "contributed",
+            "action": "resumed drafting", "object": "the ingress guide",
+            "outcome": "The earlier completion report was contradicted by remaining placeholder text.",
+            "skills": ["technical writing"], "technologies": ["Kubernetes", "TLS"],
+            "themes": ["correction", "platform documentation"], "occurred": None,
+            "evidence_item_ids": ["evi_demo_0003"], "confidence": "medium",
+        }],
+        "warnings": [],
+    },
+    "demo-detection.json": {
+        "gap_questions": [{
+            "target_type": "experience_fact", "target_id": "fact_demo_0001",
+            "question": "What external outcome followed Vera Example's runbook validation?",
+            "reason": "missing_metric", "priority": "medium",
+        }],
+        "contradictions": [{
+            "title": "Vera Example ingress completion conflict",
+            "description": "One stored log says the guide was finished; a later stored log says placeholder TLS text remained.",
+            "left_ref_type": "raw_log", "left_ref_id": "log_demo_0002",
+            "right_ref_type": "raw_log", "right_ref_id": "log_demo_0003",
+        }],
+        "warnings": [],
+    },
+    "demo-signals.json": {
+        "signals": [{
+            "signal_type": "execution_pattern",
+            "statement": "Vera Example checks documentation claims against stored evidence and corrects premature completion reports.",
+            "supporting_fact_ids": ["fact_demo_0001", "fact_demo_0003"],
+            "counter_fact_ids": ["fact_demo_0002"], "confidence": "medium",
+        }],
+        "warnings": [],
+    },
+    "demo-assessment-act1.json": {
+        "self_claims": [
+            {
+                "claim": "Vera Example currently shows an evidence-checking documentation pattern.",
+                "claim_kind": "pattern_signal", "dimension": "working_style",
+                "source_signal_ids": ["signal_demo_0001"],
+                "source_fact_ids": ["fact_demo_0001", "fact_demo_0003"],
+                "confidence": "medium",
+                "uncertainty": "The invented evidence covers one small documentation project.",
+            },
+            {
+                "claim": "Current evidence suggests Vera Example validates claims and retains visible uncertainty.",
+                "claim_kind": "narrative_summary", "dimension": "trajectory",
+                "source_signal_ids": ["signal_demo_0001"],
+                "source_fact_ids": ["fact_demo_0001", "fact_demo_0002", "fact_demo_0003"],
+                "confidence": "medium",
+                "uncertainty": "No external outcome is established by the Vera Example corpus.",
+            },
+        ],
+        "warnings": [],
+    },
+    "demo-verification-act1-supported.json": {
+        "status": "supported",
+        "reason": "The Vera Example claim resolves to the supplied fact, evidence-item, and raw-log closure.",
+        "unsupported_phrases": [], "counterevidence": [], "suggested_rewrite": None,
+    },
+    "demo-assessment-act2-overclaim.json": {
+        "self_claims": [
+            {
+                "claim": "Vera Example operated production Kubernetes systems for ten years.",
+                "claim_kind": "pattern_signal", "dimension": "technical_skill",
+                "source_signal_ids": ["signal_demo_0001"],
+                "source_fact_ids": ["fact_demo_0001"], "confidence": "medium",
+                "uncertainty": None,
+            },
+            {
+                "claim": "Current evidence proves Vera Example is a senior production Kubernetes expert.",
+                "claim_kind": "narrative_summary", "dimension": "trajectory",
+                "source_signal_ids": ["signal_demo_0001"],
+                "source_fact_ids": ["fact_demo_0001"], "confidence": "medium",
+                "uncertainty": None,
+            },
+        ],
+        "warnings": [],
+    },
+    "demo-verification-act2-rejected.json": {
+        "status": "rejected",
+        "reason": "The Vera Example corpus contains no production-tenure or seniority evidence.",
+        "unsupported_phrases": ["operated production Kubernetes systems for ten years"],
+        "counterevidence": [{
+            "statement": "Vera Example only walked steps on an invented toy cluster.",
+            "source_ref_type": "experience_fact", "source_ref_id": "fact_demo_0001",
+        }],
+        "suggested_rewrite": "Vera Example drafted and validated a kubectl troubleshooting runbook on an invented toy cluster.",
+    },
+    "demo-verification-act2-supported.json": {
+        "status": "supported",
+        "reason": "The narrower Vera Example evidence-bound summary is supported.",
+        "unsupported_phrases": [], "counterevidence": [], "suggested_rewrite": None,
+    },
+}
+
 DESIGN_DOC = """# K8s Playbook — information architecture
 
 Design note by Vera Example for her public runbook project
@@ -787,6 +916,9 @@ def build_files() -> dict:
 
     for call_index, response in enumerate(EXTRACT_RESPONSES, start=1):
         files[f"llm/extract-call-{call_index:02d}.json"] = json_file(response)
+
+    for name, response in sorted(DEMO_RESPONSES.items()):
+        files[f"llm/{name}"] = json_file(response)
 
     files["imports/ephemeris-2026-06.jsonl"] = jsonl_file(ephemeris_envelopes())
 
