@@ -35,11 +35,6 @@ class NonInteractiveInputRequired(InvalidInputError):
     public_message = "Required input was not supplied in non-interactive mode."
 
 
-class OperationDeferredError(InvalidInputError):
-    diagnostic_class = "operation_deferred_phase_2"
-    public_message = "Correction capture is deferred until Phase 2."
-
-
 class ForbiddenPathError(InvalidInputError):
     diagnostic_class = "forbidden_path"
     public_message = "The selected source path is not permitted."

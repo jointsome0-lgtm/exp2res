@@ -99,13 +99,13 @@ def test_noninteractive_capture_and_delete_never_prompt_or_block(workspace: Path
     assert denied_envelope["diagnostic_class"] == "input_required"
 
 
-def test_correction_is_stably_deferred_without_model_or_mutation(workspace: Path) -> None:
-    """§22 Phase 0 / §24.30: correction is a stable Phase-2 refusal."""
+def test_correction_unknown_selector_fails_before_input_or_model(workspace: Path) -> None:
+    """§14.14 rule 3: correction resolves its selector before prompting."""
     result, envelope = invoke_json(
         workspace, ["correction", "add", "--log-id", "log_vera_example"]
     )
     assert result.exit_code == 2
-    assert envelope["diagnostic_class"] == "operation_deferred_phase_2"
+    assert envelope["diagnostic_class"] == "selector_not_found"
     listed, listed_envelope = invoke_json(workspace, ["logs", "list"])
     assert listed.exit_code == 0
     assert listed_envelope["result"]["logs"] == []

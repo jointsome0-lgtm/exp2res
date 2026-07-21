@@ -192,6 +192,8 @@ def run_signal_generation(
     budgets: CallBudgets,
     runner: ContractRunner,
     id_factory: Callable[[str], str] = new_id,
+    parent_run_id: str | None = None,
+    reconcile: bool = True,
     clock: Callable[[], datetime] | None = None,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     cli_version: str = "test-double",
@@ -206,7 +208,7 @@ def run_signal_generation(
 
     now = clock or (lambda: datetime.now(timezone.utc))
     with writer_database(
-        workspace, timeout_ms=timeout_ms, reconcile=True
+        workspace, timeout_ms=timeout_ms, reconcile=reconcile
     ) as connection:
         facts = tuple(
             sorted(list_experience_facts(connection), key=lambda fact: _id_key(fact.id))
@@ -347,6 +349,7 @@ def run_signal_generation(
             planned=planned,
             commit=commit,
             run_id=run_id,
+            parent_run_id=parent_run_id,
             clock=now,
             cli_version=cli_version,
             capability_check=capability_check,

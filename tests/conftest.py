@@ -32,9 +32,13 @@ def pytest_collection_modifyitems(
 
 
 def configure_timezone(workspace: Path, timezone_name: str = "Etc/UTC") -> None:
+    # Keep the §15.13 [llm] selection a fresh init writes: every configured
+    # workspace has one, and the §13.13 lifecycle resolves it eagerly even
+    # when zero planned calls keep the rebuild offline.
     config = workspace / ".exp2res" / "config.toml"
     config.write_text(
         f'[workspace]\ntimezone = "{timezone_name}"\n\n'
+        '[llm]\nadapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n\n'
         "[privacy]\nignore_paths = []\n",
         encoding="utf-8",
     )

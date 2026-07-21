@@ -1,0 +1,514 @@
+"""Offline §14.4/§14.12 correction and recompute lifecycle acceptance."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+import json
+from pathlib import Path
+
+import pytest
+import typer
+from typer.testing import CliRunner
+
+import exp2res.cli as cli_module
+import exp2res.services.lifecycle as lifecycle_service
+from exp2res.cli import app
+from exp2res.domain.models import OccurredAt
+from exp2res.llm.runner import AttemptTelemetry, PreparedCall, RawResult
+from exp2res.services.capture import new_id
+from exp2res.services.export import export_assessment
+from exp2res.storage.repository import (
+    get_raw_log,
+    list_assessment_snapshots,
+    list_contradictions,
+    list_experience_facts,
+    list_gap_questions,
+    list_self_signals,
+)
+from exp2res.storage.workspace import read_database
+
+from conftest import FIXED_NOW
+from fakes import FakeContractRunner
+from test_stage3_extraction import SELECTION, add_log, budgets, exact_day, fact_response, run_stage3
+from test_stage4_detection import detector_response, run_stage4
+from test_stage5_signals import SignalIds, run_stage5, signal_response
+from test_stage6_assessment import assessment_response, run_stage6
+from test_stage7_verification import run_stage7, verifier_response
+
+
+pytestmark = [pytest.mark.contract, pytest.mark.lifecycle]
+runner = CliRunner()
+
+
+def _raw(payload: bytes) -> RawResult:
+    return RawResult(
+        final_message_bytes=payload,
+        exit_code=0,
+        duration_seconds=0.01,
+        attempts=(AttemptTelemetry(1, 0, 0.01),),
+    )
+
+
+def _lifecycle_response(call: PreparedCall) -> RawResult:
+    payload = json.loads(call.serialized_input)
+    if call.contract_id == "fact-extractor":
+        evidence_ids = [item["id"] for item in payload["evidence_items"]]
+        return _raw(fact_response(evidence_ids))
+    if call.contract_id == "gap-contradiction-detector":
+        return _raw(b'{"gap_questions":[],"contradictions":[],"warnings":[]}')
+    assert call.contract_id == "self-signal-extractor"
+    fact_ids = [item["id"] for item in payload["facts"]]
+    return _raw(signal_response(fact_ids))
+
+
+def _install_lifecycle_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner([_lifecycle_response] * 12),
+        ),
+    )
+
+
+def _invoke_json(workspace: Path, arguments: list[str], *, input: str | None = None):
+    result = runner.invoke(
+        app,
+        ["--json", "--workspace", str(workspace), *arguments],
+        input=input,
+    )
+    return result, json.loads(result.stdout.splitlines()[-1])
+
+
+def _prepare_full_graph(workspace: Path):
+    ids = SignalIds()
+    target, target_items = add_log(
+        workspace,
+        log_id="log_vera_correction_target",
+        recorded_at=FIXED_NOW - timedelta(hours=2),
+        raw_text="Vera Example originally described a provenance workflow.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_correction_target", "manual_claim"),),
+        project="Vera Example Project",
+    )
+    other, other_items = add_log(
+        workspace,
+        log_id="log_vera_correction_other",
+        recorded_at=FIXED_NOW - timedelta(hours=1),
+        raw_text="Vera Example independently documented another workflow.",
+        occurred=exact_day(15),
+        item_specs=(("evi_vera_correction_other", "manual_claim"),),
+        project="Vera Example Other",
+    )
+    extracted = run_stage3(
+        workspace,
+        FakeContractRunner(
+            [fact_response([target_items[0].id]), fact_response([other_items[0].id])]
+        ),
+        ids,  # type: ignore[arg-type]
+    )
+    assert len(extracted.created) == 2
+    facts = {
+        fact.source_log_ids[0]: fact
+        for fact in list_experience_facts_for(workspace)
+    }
+    target_fact = facts[target.id]
+    detected = run_stage4(
+        workspace,
+        FakeContractRunner(
+            [
+                detector_response(
+                    target_id=target_fact.id,
+                    left=("experience_fact", target_fact.id),
+                    right=("raw_log", target.id),
+                )
+            ]
+        ),
+        ids,  # type: ignore[arg-type]
+    )
+    signaled = run_stage5(
+        workspace,
+        FakeContractRunner([signal_response([target_fact.id])]),
+        ids,
+    )
+    fact_ids = [item.id for item in list_experience_facts_for(workspace)]
+    signal_ids = [item.id for item in signaled.current_signals]
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [assessment_response(fact_ids=fact_ids, signal_ids=signal_ids)]
+        ),
+        ids,
+    )
+    assert assessed.snapshot_id is not None
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response()] * len(assessed.claims)),
+        ids,
+        assessed.snapshot_id,
+    )
+    exported = export_assessment(
+        workspace, snapshot_id=assessed.snapshot_id, clock=lambda: FIXED_NOW
+    )
+    return target, other, target_fact, detected, signaled, assessed, Path(exported.manifest_path).parent
+
+
+def list_experience_facts_for(workspace: Path):
+    with read_database(workspace) as connection:
+        return list_experience_facts(connection)
+
+
+def test_correction_rebuilds_through_artifacts_and_preserves_history(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target, other, old_fact, detected, signaled, assessed, export_dir = _prepare_full_graph(
+        workspace
+    )
+    _install_lifecycle_runner(monkeypatch)
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+
+    result, envelope = _invoke_json(
+        workspace,
+        ["--yes", "correction", "add", "--log-id", target.id],
+        input="Vera Example corrected and fully restated the workflow.\n\n\n",
+    )
+    assert result.exit_code == 0, result.stderr
+    assert len(envelope["run_ids"]) == 4
+    correction_id = next(
+        group["ids"][0]
+        for group in envelope["affected_ids"]["created"]
+        if group["entity_type"] == "raw_log"
+    )
+    assert envelope["invalidated_views"][0]["snapshot_id"] == assessed.snapshot_id
+    assert not export_dir.exists()
+
+    with read_database(workspace) as connection:
+        correction = get_raw_log(connection, correction_id)
+        assert correction is not None
+        assert correction.entry_type == "correction"
+        assert correction.corrects_log_id == target.id
+        assert correction.occurred == target.occurred
+        assert correction.project == target.project
+        evidence = connection.execute(
+            "SELECT strength FROM evidence_items WHERE raw_log_id = ?", (correction_id,)
+        ).fetchone()
+        assert evidence[0] == "manual_claim"
+        assert connection.execute(
+            "SELECT superseded_at FROM experience_facts WHERE id = ?", (old_fact.id,)
+        ).fetchone()[0] is not None
+        other_current = [
+            item for item in list_experience_facts(connection) if other.id in item.source_log_ids
+        ]
+        corrected_current = [
+            item
+            for item in list_experience_facts(connection)
+            if correction_id in item.source_log_ids
+        ]
+        assert len(other_current) == len(corrected_current) == 1
+        assert all(
+            connection.execute(
+                f"SELECT superseded_at FROM {table} WHERE id = ?", (entity_id,)
+            ).fetchone()[0]
+            is not None
+            for table, entity_id in (
+                ("gap_questions", detected.created_gap_ids[0]),
+                ("contradictions", detected.created_contradiction_ids[0]),
+                ("self_signals", signaled.created_signal_ids[0]),
+                ("assessment_snapshots", assessed.snapshot_id),
+            )
+        )
+        assert list_assessment_snapshots(connection) == ()
+        runs = connection.execute(
+            "SELECT id, stage, parent_run_id, status FROM processing_runs "
+            f"WHERE id IN ({','.join('?' for _ in envelope['run_ids'])})",
+            envelope["run_ids"],
+        ).fetchall()
+        by_id = {row[0]: row for row in runs}
+        assert by_id[envelope["run_ids"][0]][1:] == ("13.13", None, "completed")
+        assert [by_id[item][2] for item in envelope["run_ids"][1:]] == [
+            envelope["run_ids"][0]
+        ] * 3
+
+    current_facts = list_experience_facts_for(workspace)
+    current_signals = list_self_signals_for(workspace)
+    regenerated = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [
+                assessment_response(
+                    fact_ids=[item.id for item in current_facts],
+                    signal_ids=[item.id for item in current_signals],
+                )
+            ]
+        ),
+        new_id,
+    )
+    assert regenerated.snapshot_id is not None
+    with read_database(workspace) as connection:
+        snapshots = list_assessment_snapshots(connection)
+        assert len(snapshots) == 1 and snapshots[0].scope == "global"
+
+
+def list_self_signals_for(workspace: Path):
+    with read_database(workspace) as connection:
+        return list_self_signals(connection)
+
+
+def test_correction_copy_and_explicit_temporal_project_replacement(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target, _items = add_log(
+        workspace,
+        log_id="log_vera_copy_target",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example original record.",
+        occurred=exact_day(12, confidence="low"),
+        item_specs=(("evi_vera_copy_target", "manual_claim"),),
+        project="Vera Example Original",
+    )
+    _install_lifecycle_runner(monkeypatch)
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+    first_result, first = _invoke_json(
+        workspace,
+        ["--yes", "correction", "add", "--log-id", target.id],
+        input="Vera Example first complete restatement.\n\n\n",
+    )
+    assert first_result.exit_code == 0
+    first_id = next(
+        group["ids"][0]
+        for group in first["affected_ids"]["created"]
+        if group["entity_type"] == "raw_log"
+    )
+    replacement = OccurredAt(
+        start=FIXED_NOW + timedelta(days=2),
+        end=None,
+        precision="exact_datetime",
+        confidence="medium",
+    )
+    second_result, second = _invoke_json(
+        workspace,
+        ["--yes", "correction", "add", "--log-id", first_id],
+        input=(
+            "Vera Example second complete restatement.\n"
+            + replacement.model_dump_json()
+            + "\nVera Example Replacement\n"
+        ),
+    )
+    assert second_result.exit_code == 0
+    second_id = next(
+        group["ids"][0]
+        for group in second["affected_ids"]["created"]
+        if group["entity_type"] == "raw_log"
+    )
+    with read_database(workspace) as connection:
+        first_log = get_raw_log(connection, first_id)
+        second_log = get_raw_log(connection, second_id)
+    assert first_log is not None and second_log is not None
+    assert first_log.occurred == target.occurred
+    assert first_log.project == target.project
+    assert second_log.occurred == replacement
+    assert second_log.project == "Vera Example Replacement"
+
+
+def test_unknown_correction_selector_precedes_prompt_and_adapter(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
+    )
+    monkeypatch.setattr(
+        typer,
+        "prompt",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prompted")),
+    )
+    result, envelope = _invoke_json(
+        workspace,
+        ["correction", "add", "--log-id", "log_vera_missing"],
+    )
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] == "selector_not_found"
+
+
+def test_failed_correction_stays_committed_and_selected_recompute_repairs(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target, items = add_log(
+        workspace,
+        log_id="log_vera_failure_target",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example original failure record.",
+        occurred=exact_day(15),
+        item_specs=(("evi_vera_failure_target", "manual_claim"),),
+    )
+    old = run_stage3(
+        workspace,
+        FakeContractRunner([fact_response([items[0].id])]),
+        SignalIds(),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner([b"{}", b"{}"]),
+        ),
+    )
+    failed_result, failed = _invoke_json(
+        workspace,
+        ["--yes", "correction", "add", "--log-id", target.id],
+        input="Vera Example committed correction before failed recompute.\n\n\n",
+    )
+    assert failed_result.exit_code == 7
+    correction_id = next(
+        group["ids"][0]
+        for group in failed["affected_ids"]["created"]
+        if group["entity_type"] == "raw_log"
+    )
+    assert failed["retry"]["command"].endswith(correction_id)
+    assert len(failed["run_ids"]) == 2
+    with read_database(workspace) as connection:
+        assert get_raw_log(connection, correction_id) is not None
+        assert list_experience_facts(connection) == ()
+        assert connection.execute(
+            "SELECT superseded_at FROM experience_facts WHERE id = ?", (old.created[0],)
+        ).fetchone()[0] is not None
+        orchestration = connection.execute(
+            "SELECT status, failure_code FROM processing_runs WHERE id = ?",
+            (failed["run_ids"][0],),
+        ).fetchone()
+        assert tuple(orchestration) == ("failed", "response_validation_failed")
+
+    _install_lifecycle_runner(monkeypatch)
+    repaired_result, repaired = _invoke_json(
+        workspace,
+        ["--yes", "recompute", "--log-id", correction_id],
+    )
+    assert repaired_result.exit_code == 0
+    assert len(repaired["run_ids"]) == 4
+    with read_database(workspace) as connection:
+        assert len(list_experience_facts(connection)) == 1
+        assert len(list_self_signals(connection)) == 1
+
+
+def test_delete_rebuild_success_failure_zero_survivor_and_bare_recompute(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected, selected_items = add_log(
+        workspace,
+        log_id="log_vera_delete_selected",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example selected deletion record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_delete_selected", "manual_claim"),),
+    )
+    survivor, survivor_items = add_log(
+        workspace,
+        log_id="log_vera_delete_survivor",
+        recorded_at=FIXED_NOW + timedelta(hours=1),
+        raw_text="Vera Example surviving deletion record.",
+        occurred=exact_day(15),
+        item_specs=(("evi_vera_delete_survivor", "manual_claim"),),
+    )
+    run_stage3(
+        workspace,
+        FakeContractRunner(
+            [
+                fact_response([selected_items[0].id]),
+                fact_response([survivor_items[0].id]),
+            ]
+        ),
+        SignalIds(),  # type: ignore[arg-type]
+    )
+    _install_lifecycle_runner(monkeypatch)
+    deleted_result, deleted = _invoke_json(
+        workspace,
+        ["--yes", "logs", "delete", "--log-id", selected.id],
+    )
+    assert deleted_result.exit_code == 0, deleted_result.stderr
+    assert len(deleted["run_ids"]) == 4
+    with read_database(workspace) as connection:
+        assert get_raw_log(connection, selected.id) is None
+        assert get_raw_log(connection, survivor.id) is not None
+        facts = list_experience_facts(connection)
+        assert len(facts) == 1 and survivor.id in facts[0].source_log_ids
+        assert len(list_self_signals(connection)) == 1
+        assert list_assessment_snapshots(connection) == ()
+
+    _install_lifecycle_runner(monkeypatch)
+    bare_result, bare = _invoke_json(workspace, ["--yes", "recompute"])
+    assert bare_result.exit_code == 0
+    assert len(bare["run_ids"]) == 4
+    assert bare["warnings"] == [
+        {
+            "type": "assessment_view_regeneration_required",
+            "message": (
+                "No current assessment view exists; run exp2res assess generate "
+                "after recompute."
+            ),
+        }
+    ]
+
+    only_survivor = survivor.id
+    # §29.2 selection stays eagerly resolved like a direct `extract`, but the
+    # zero-survivor rebuild plans no call: a runner whose every invocation
+    # fails proves the rebuild stayed offline through real empty stage runs.
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (SELECTION, budgets(), FakeContractRunner([])),
+    )
+    zero_result, zero = _invoke_json(
+        workspace,
+        ["--yes", "logs", "delete", "--log-id", only_survivor],
+    )
+    assert zero_result.exit_code == 0
+    assert len(zero["run_ids"]) == 4
+    assert zero["warnings"][0]["type"] == "assessment_view_regeneration_required"
+
+
+def test_delete_rebuild_failure_never_restores_deleted_record(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected, _ = add_log(
+        workspace,
+        log_id="log_vera_delete_failure",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example deletion failure selected record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_delete_failure", "manual_claim"),),
+    )
+    survivor, _ = add_log(
+        workspace,
+        log_id="log_vera_delete_failure_survivor",
+        recorded_at=FIXED_NOW + timedelta(hours=1),
+        raw_text="Vera Example deletion failure survivor.",
+        occurred=exact_day(15),
+        item_specs=(("evi_vera_delete_failure_survivor", "manual_claim"),),
+    )
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner([b"{}", b"{}"]),
+        ),
+    )
+    result, envelope = _invoke_json(
+        workspace,
+        ["--yes", "logs", "delete", "--log-id", selected.id],
+    )
+    assert result.exit_code == 7
+    assert envelope["result"]["selected_log"]["id"] == selected.id
+    assert envelope["retry"] == {"command": "exp2res recompute"}
+    with read_database(workspace) as connection:
+        assert get_raw_log(connection, selected.id) is None
+        assert get_raw_log(connection, survivor.id) is not None
+        assert list_experience_facts(connection) == ()

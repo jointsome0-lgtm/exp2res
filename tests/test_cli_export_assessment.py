@@ -14,6 +14,7 @@ import exp2res.pipeline.stage5 as stage5_module
 import exp2res.pipeline.stage7 as stage7_module
 import exp2res.services.assessment as assessment_service
 import exp2res.services.capture as capture_service
+import exp2res.services.lifecycle as lifecycle_service
 import exp2res.services.signals as signals_service
 from exp2res.cli import app
 from exp2res.errors import ManagedOutputIncompleteError
@@ -23,7 +24,7 @@ from exp2res.storage.workspace import read_database, writer_database
 from conftest import VERA_CORPUS
 from fakes import FakeContractRunner
 from test_stage7_verification import generated_snapshot, run_stage7, verifier_response
-from test_stage3_extraction import SELECTION, budgets
+from test_stage3_extraction import SELECTION, budgets, fact_response
 from test_stage5_signals import signal_response
 
 
@@ -140,7 +141,7 @@ def test_export_selector_resolves_before_preamble_cleanup_or_class_8(
 
 
 def test_logs_delete_clears_a_preamble_residual_it_later_removed(
-    workspace: Path,
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # An ambiguous rollback sibling is a preamble residual, but `logs delete`
     # then removes every entry under the managed parents; a reported path
@@ -176,6 +177,27 @@ def test_logs_delete_clears_a_preamble_residual_it_later_removed(
     assert retained_envelope["residual_paths"] == [str(ambiguous)]
     assert ambiguous.is_dir()
 
+    # The post-purge §13.13 rebuild extracts the surviving lineage offline.
+    surviving_evidence = next(
+        group["ids"][0]
+        for group in retained_envelope["affected_ids"]["created"]
+        if group["entity_type"] == "evidence_item"
+    )
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [
+                    fact_response([surviving_evidence]),
+                    b'{"gap_questions":[],"contradictions":[],"warnings":[]}',
+                    b'{"signals":[],"warnings":[]}',
+                ]
+            ),
+        ),
+    )
     result, envelope = invoke_json(
         workspace, ["--yes", "logs", "delete", "--log-id", log_id]
     )

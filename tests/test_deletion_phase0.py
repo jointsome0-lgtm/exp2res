@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from exp2res.cli import app
+import exp2res.services.lifecycle as lifecycle_service
 import exp2res.services.logs as logs_service
 from exp2res.services.capture import capture_daily
 from exp2res.services.logs import delete_log, list_logs, show_log
@@ -30,6 +31,8 @@ from exp2res.storage.telemetry import (
 from exp2res.storage.workspace import initialize_workspace, writer_database
 
 from conftest import FIXED_NOW, configure_timezone
+from fakes import FakeContractRunner
+from test_stage3_extraction import SELECTION, budgets, fact_response
 
 
 pytestmark = pytest.mark.lifecycle
@@ -360,8 +363,23 @@ def test_cli_owner_delete_reports_global_experience_fact_group(
 ) -> None:
     """§14.14: logs delete reports purged fact IDs in deterministic type order."""
 
-    selected, _retained, facts = _persist_facts_and_completed_calls(workspace)
+    selected, retained, facts = _persist_facts_and_completed_calls(workspace)
     signal = _persist_signal(workspace, facts[0].id)
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [
+                    fact_response([retained.evidence_items[0].id]),
+                    b'{"gap_questions":[],"contradictions":[],"warnings":[]}',
+                    b'{"signals":[],"warnings":[]}',
+                ]
+            ),
+        ),
+    )
     monkeypatch.chdir(workspace)
     result = runner.invoke(
         app,

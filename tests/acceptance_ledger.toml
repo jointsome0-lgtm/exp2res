@@ -15,8 +15,8 @@ issues = []
 status = "partial"
 phases = ["0", "1", "2", "3", "4"]
 evals = ["21.11", "21.14"]
-issues = ["#81", "PR #95"]
-note = "Current tests prove automation cannot mutate raw rows, owner deletion is not FK-blocked, every current and historical ExperienceFact/fact_sources row is globally purged, and every retained LLM call loses both content hashes; the deletion-time Stage 3-5 rebuild and all later derived/export cleanup remain"
+issues = ["#81", "PR #95", "#97"]
+note = "Current tests prove automation cannot mutate raw rows, owner deletion is not FK-blocked, every current and historical derived row is globally purged, retained call hashes are redacted, and surviving lineages rebuild through Stage 5; later branch/JD cleanup remains"
 
 ["24.4"]
 status = "pending"
@@ -106,8 +106,8 @@ issues = []
 status = "partial"
 phases = ["0", "1", "2", "3", "4"]
 evals = ["21.14"]
-issues = ["#81", "PR #95"]
-note = "Owner deletion now proves committed raw/evidence and current/historical derived purge, call-hash redaction, all-entry assessment/branch managed-output removal, invalidated-view reporting, and residual failure; the automatic Stage 3-5 rebuild and later branch/JD lifecycle halves remain"
+issues = ["#81", "PR #95", "#97"]
+note = "Owner deletion now proves committed raw/evidence and current/historical derived purge, call-hash redaction, managed-output removal, invalidated-view reporting, automatic Stage 3-5 rebuild, failure isolation, and offline zero-survivor completion with no provider call; later branch/JD lifecycle halves remain"
 
 ["24.18"]
 status = "partial"
@@ -232,8 +232,8 @@ note = "Covered eval 21.32 executes the exact duplicate-free ID-ordered §15.5 c
 status = "partial"
 phases = ["1", "2", "3"]
 evals = ["21.33"]
-issues = ["#132"]
-note = "Stage 6 covers view identity, stored-key subject selection, and context facts; the remaining correction-CLI slice waits on correction add"
+issues = ["#132", "#97"]
+note = "Stage 6 covers view identity, stored-key subject selection, and context facts; correction add now proves exact project/temporal copy, explicit replacement, and selected-lineage re-extraction"
 
 ["24.37"]
 status = "partial"

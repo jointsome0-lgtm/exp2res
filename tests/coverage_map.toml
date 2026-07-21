@@ -69,17 +69,24 @@ phase = "1"
 note = "Stage 3 and Stage 5 reruns prove coherent current fact and signal generations, and Stage 6 proves one-current-per-view replacement; Stage 7+ verification mixing and managed-export invalidation remain unavailable until their owning phases"
 
 ["21.13"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_cli_correction.py::test_correction_rebuilds_through_artifacts_and_preserves_history",
+  "tests/test_cli_correction.py::test_failed_correction_stays_committed_and_selected_recompute_repairs",
+]
 phase = "4"
+note = "Correction capture, atomic global invalidation, managed assessment-export removal, linked Stage 3-5 orchestration, inspectable superseded history, and failure retry are covered offline; resume branch/bullet invalidation and simultaneous multi-view reporting remain"
 
 ["21.14"]
 status = "partial"
 nodes = [
   "tests/test_deletion_phase0.py::test_automation_cannot_rewrite_or_delete_but_owner_deletion_cascades",
   "tests/test_deletion_phase0.py::test_delete_preserves_external_source_and_does_not_follow_backup_symlink",
+  "tests/test_cli_correction.py::test_delete_rebuild_success_failure_zero_survivor_and_bare_recompute",
+  "tests/test_cli_correction.py::test_delete_rebuild_failure_never_restores_deleted_record",
 ]
 phase = "4"
-note = "Phase 0 proves owner deletion, raw/evidence purge, secure cleanup, and committed deletion with residual paths; derived generations, rebuilds, views, and exports land with later lifecycle phases"
+note = "Owner deletion proves raw/evidence and complete historical derived purge, secure managed cleanup, surviving-lineage Stage 3-5 rebuild, offline zero-survivor completion through empty stage runs, and committed deletion across rebuild failure; resume branch/JD and empty-project-view halves remain"
 
 ["21.15"]
 status = "partial"
@@ -232,9 +239,10 @@ status = "partial"
 nodes = [
   "tests/test_stage6_assessment.py::test_project_input_uses_stored_key_and_supplies_cross_project_context",
   "tests/test_stage6_assessment.py::test_folded_project_view_replacement_preserves_other_views",
+  "tests/test_cli_correction.py::test_correction_copy_and_explicit_temporal_project_replacement",
 ]
 phase = "3"
-note = "Stage 6 proves stored-key subject selection, cross-project context facts, and folded view replacement identity; the §14.4 correction slice waits on the deferred correction add command, while Stage 3 project echo rejection is already enforced"
+note = "Stage 6 proves stored-key subject selection, cross-project context facts, and folded view replacement identity; correction add now proves exact project and temporal copy plus explicit replacement before selected-lineage re-extraction, while broader multi-view coverage remains"
 
 ["21.34"]
 status = "partial"

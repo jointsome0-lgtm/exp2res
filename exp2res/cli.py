@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import shlex
 import sys
 from typing import Callable, cast
 
@@ -20,6 +21,7 @@ from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
 from exp2res.domain.models import (
     ExperienceFact,
+    OccurredAt,
     SelfClaim,
     SelfSignal,
     VerificationFinding,
@@ -40,6 +42,7 @@ from exp2res.domain.results import (
     LogProjection,
     LogsDeleteResult,
     LogsListResult,
+    Retry,
     SchemaProjection,
     SchemaResult,
     SelectedLogProjection,
@@ -48,10 +51,10 @@ from exp2res.domain.results import (
 )
 from exp2res.errors import (
     Exp2ResError,
+    InvalidInputError,
     MigrationFailedError,
     MigrationInterrupted,
     NonInteractiveInputRequired,
-    OperationDeferredError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
@@ -64,6 +67,11 @@ from exp2res.services.capture import (
     capture_retro,
     validate_gap_answer_selection,
     validate_project_label,
+)
+from exp2res.services.correction import (
+    CorrectionOutcome,
+    capture_correction,
+    validate_correction_selection,
 )
 from exp2res.services.assessment import (
     list_current_snapshots,
@@ -82,6 +90,7 @@ from exp2res.services.extraction import run_extract, validate_extract_selection
 from exp2res.services.export import export_assessment, require_export_eligible
 from exp2res.services.facts import list_facts, show_fact
 from exp2res.services.logs import delete_log, list_logs, show_log
+from exp2res.services.lifecycle import LifecycleResult, run_recompute
 from exp2res.services.signals import list_current_signals, run_signals_generate
 from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.storage.repository import get_assessment_snapshot
@@ -167,6 +176,7 @@ class Outcome:
         | None
     ) = None
     human_result: str = ""
+    retry: Retry | None = None
 
 
 def _status_for(exit_code: int) -> str:
@@ -282,11 +292,19 @@ def _run_command(
         outcome = Outcome(
             exit_code=error.exit_code,
             diagnostic_class=error.diagnostic_class,
+            affected_ids=getattr(error, "affected_ids", AffectedIds()),
+            generation_ids=list(getattr(error, "generation_ids", ()) or ()),
             # §14.14 rule 5: a failed §15 invocation still reports the
             # committed processing runs it created (LLMInvocationError
             # carries them; other error classes leave the default empty).
             run_ids=list(getattr(error, "run_ids", ()) or ()),
+            invalidated_views=list(
+                getattr(error, "invalidated_views", ()) or ()
+            ),
             residual_paths=list(getattr(error, "residual_paths", ()) or ()),
+            warnings=list(getattr(error, "warnings", ()) or ()),
+            retry=getattr(error, "retry", None),
+            result=getattr(error, "result", None),
         )
         typer.echo(error.public_message, err=True)
     except Exception:
@@ -351,7 +369,7 @@ def _run_command(
         findings=outcome.findings,
         residual_paths=outcome.residual_paths,
         warnings=outcome.warnings,
-        retry=None,
+        retry=outcome.retry,
         result=outcome.result,
     )
     _emit(envelope, controls, outcome.human_result)
@@ -487,6 +505,126 @@ def _capture_outcome(bundle) -> Outcome:
     )
 
 
+def _merge_affected(*values: AffectedIds) -> AffectedIds:
+    def merge(field_name: str) -> list[EntityIdGroup]:
+        grouped: dict[str, set[str]] = {}
+        for value in values:
+            for group in getattr(value, field_name):
+                grouped.setdefault(group.entity_type, set()).update(group.ids)
+        return [
+            EntityIdGroup(
+                entity_type=entity_type,
+                ids=sorted(ids, key=lambda item: item.encode("utf-8")),
+            )
+            for entity_type, ids in grouped.items()
+        ]
+
+    return AffectedIds(
+        created=merge("created"),
+        superseded=merge("superseded"),
+        deleted=merge("deleted"),
+    )
+
+
+def _correction_affected(captured: CorrectionOutcome) -> AffectedIds:
+    superseded = {
+        "assessment_snapshot": captured.superseded_snapshot_ids,
+        "contradiction": captured.superseded_contradiction_ids,
+        "experience_fact": captured.superseded_fact_ids,
+        "gap_question": captured.superseded_gap_ids,
+        "self_claim": captured.superseded_claim_ids,
+        "self_signal": captured.superseded_signal_ids,
+    }
+    return AffectedIds(
+        created=[
+            EntityIdGroup(
+                entity_type="evidence_item", ids=[captured.evidence_item.id]
+            ),
+            EntityIdGroup(entity_type="raw_log", ids=[captured.raw_log.id]),
+        ],
+        superseded=[
+            EntityIdGroup(entity_type=kind, ids=list(ids))
+            for kind, ids in superseded.items()
+            if ids
+        ],
+        deleted=[],
+    )
+
+
+def _views(*collections) -> list[InvalidatedView]:
+    by_id = {
+        item.snapshot_id: item for collection in collections for item in collection
+    }
+    return [
+        by_id[key] for key in sorted(by_id, key=lambda value: value.encode("utf-8"))
+    ]
+
+
+def _decorate_lifecycle_error(
+    error: Exp2ResError,
+    *,
+    base_affected: AffectedIds | None = None,
+    base_generation_ids: tuple[str, ...] = (),
+    base_invalidated_views: tuple[InvalidatedView, ...] = (),
+    base_residual_paths: tuple[str, ...] = (),
+    retry: Retry | None = None,
+    result=None,
+) -> None:
+    progress = cast(
+        LifecycleResult | None, getattr(error, "lifecycle_result", None)
+    )
+    error.affected_ids = _merge_affected(
+        base_affected or AffectedIds(),
+        progress.affected_ids if progress else AffectedIds(),
+    )
+    error.generation_ids = tuple(
+        sorted(
+            {*base_generation_ids, *(progress.generation_ids if progress else ())},
+            key=lambda value: value.encode("utf-8"),
+        )
+    )
+    error.invalidated_views = tuple(
+        _views(
+            base_invalidated_views,
+            progress.invalidated_views if progress else (),
+        )
+    )
+    error.residual_paths = tuple(
+        sorted(
+            {*base_residual_paths, *(progress.residual_paths if progress else ())},
+            key=os.fsencode,
+        )
+    )
+    error.warnings = progress.warnings if progress else ()
+    error.retry = retry
+    error.result = result
+
+
+def _lifecycle_outcome(recomputed: LifecycleResult) -> Outcome:
+    view_lines = "\n".join(
+        f"Invalidated {item.snapshot_id}: {item.regeneration_command}"
+        for item in recomputed.invalidated_views
+    )
+    no_view = (
+        "\nNo current assessment view exists; run exp2res assess generate."
+        if recomputed.no_current_assessment_view
+        else ""
+    )
+    return Outcome(
+        affected_ids=recomputed.affected_ids,
+        generation_ids=list(recomputed.generation_ids),
+        run_ids=list(recomputed.run_ids),
+        invalidated_views=list(recomputed.invalidated_views),
+        residual_paths=list(recomputed.residual_paths),
+        warnings=list(recomputed.warnings),
+        human_result=(
+            "Recomputed derived state through Stage 5."
+            + (f"\n{view_lines}" if view_lines else "")
+            + no_view
+        ),
+    )
+
+
 @log_app.command("today")
 def log_today(
     context: typer.Context,
@@ -548,11 +686,132 @@ def correction_add(
     context: typer.Context,
     log_id: str = typer.Option(..., "--log-id"),
 ) -> None:
-    def operation(_workspace: Path, _controls: Controls) -> Outcome:
-        _ = log_id
-        raise OperationDeferredError()
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        target = validate_correction_selection(workspace, log_id=log_id)
+        if _noninteractive(controls):
+            raise NonInteractiveInputRequired()
+
+        raw_text = typer.prompt(
+            "Self-contained correction text",
+            err=True,
+        )
+        occurred_seed = target.occurred.model_dump_json()
+        occurred_value = typer.prompt(
+            "OccurredAt JSON (accept to copy the stored placement exactly)",
+            default=occurred_seed,
+            err=True,
+        )
+        if occurred_value == occurred_seed:
+            occurred = target.occurred
+        else:
+            try:
+                occurred = OccurredAt.model_validate_json(occurred_value)
+            except (ValueError, TypeError) as cause:
+                error = InvalidInputError()
+                error.diagnostic_class = "invalid_time_shape"
+                error.public_message = "The temporal shape is invalid."
+                raise error from cause
+
+        project_seed = target.project if target.project is not None else "<none>"
+        project_value = typer.prompt(
+            "Project/activity? (accept to copy; type <clear> to clear)",
+            default=project_seed,
+            err=True,
+        )
+        project = (
+            target.project
+            if project_value == project_seed
+            else None
+            if project_value == "<clear>"
+            else project_value
+        )
+        validate_project_label(project)
+
+        if not controls.yes and not typer.confirm(
+            "Store the correction and recompute derived state through Stage 5?",
+            err=True,
+        ):
+            return Outcome(exit_code=9, diagnostic_class="cancelled")
+
+        captured = capture_correction(
+            workspace,
+            log_id=target.id,
+            raw_text=raw_text,
+            occurred=occurred,
+            project=project,
+        )
+        retry = Retry(
+            command=f"exp2res recompute --log-id {shlex.quote(captured.raw_log.id)}"
+        )
+        try:
+            recomputed = run_recompute(workspace, log_id=captured.raw_log.id)
+        except Exp2ResError as error:
+            _decorate_lifecycle_error(
+                error,
+                base_affected=_correction_affected(captured),
+                base_generation_ids=captured.superseded_generation_ids,
+                base_invalidated_views=captured.invalidated_views,
+                base_residual_paths=captured.residual_paths,
+                retry=retry,
+            )
+            raise
+
+        lifecycle = _lifecycle_outcome(recomputed)
+        lifecycle.affected_ids = _merge_affected(
+            _correction_affected(captured), lifecycle.affected_ids
+        )
+        lifecycle.generation_ids = sorted(
+            {
+                *captured.superseded_generation_ids,
+                *lifecycle.generation_ids,
+            },
+            key=lambda value: value.encode("utf-8"),
+        )
+        lifecycle.invalidated_views = _views(
+            captured.invalidated_views, lifecycle.invalidated_views
+        )
+        lifecycle.residual_paths = sorted(
+            {*captured.residual_paths, *lifecycle.residual_paths},
+            key=os.fsencode,
+        )
+        lifecycle.human_result = (
+            f"Stored correction {captured.raw_log.id}.\n" + lifecycle.human_result
+        )
+        return lifecycle
 
     _run_command(context, "correction add", operation)
+
+
+@app.command("recompute")
+def recompute_command(
+    context: typer.Context,
+    log_id: str | None = typer.Option(None, "--log-id"),
+) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        validate_extract_selection(workspace, log_id=log_id)
+        if not controls.yes:
+            if _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            if not typer.confirm(
+                "Recompute derived state through Stage 5 using the configured model provider?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
+        retry = Retry(
+            command=(
+                "exp2res recompute"
+                if log_id is None
+                else f"exp2res recompute --log-id {shlex.quote(log_id)}"
+            )
+        )
+        try:
+            recomputed = run_recompute(workspace, log_id=log_id)
+        except Exp2ResError as error:
+            _decorate_lifecycle_error(error, retry=retry)
+            raise
+        return _lifecycle_outcome(recomputed)
+
+    _run_command(context, "recompute", operation)
 
 
 @app.command("extract")
@@ -1293,6 +1552,29 @@ def logs_list(context: typer.Context) -> None:
     _run_command(context, "logs list", operation)
 
 
+def _delete_affected(deleted) -> AffectedIds:
+    classes = (
+        ("evidence_item", deleted.evidence_item_ids),
+        ("experience_fact", deleted.purged_fact_ids),
+        ("gap_question", deleted.purged_gap_ids),
+        ("contradiction", deleted.purged_contradiction_ids),
+        ("self_signal", deleted.purged_signal_ids),
+        ("verification_finding", deleted.purged_finding_ids),
+        ("self_claim", deleted.purged_claim_ids),
+        ("assessment_snapshot", deleted.purged_snapshot_ids),
+        ("raw_log", (deleted.selected_log.id,)),
+    )
+    return AffectedIds(
+        created=[],
+        superseded=[],
+        deleted=[
+            EntityIdGroup(entity_type=entity_type, ids=list(ids))
+            for entity_type, ids in classes
+            if ids
+        ],
+    )
+
+
 @logs_app.command("delete")
 def logs_delete(
     context: typer.Context,
@@ -1312,104 +1594,44 @@ def logs_delete(
                 external_ref=deleted.selected_log.external_ref,
             )
         )
-        exit_code = 8 if deleted.residual_paths else 0
+        base_affected = _delete_affected(deleted)
+        retry = Retry(command="exp2res recompute")
+        try:
+            recomputed = run_recompute(workspace, log_id=None)
+        except Exp2ResError as error:
+            _decorate_lifecycle_error(
+                error,
+                base_affected=base_affected,
+                base_generation_ids=deleted.purged_generation_ids,
+                base_invalidated_views=deleted.invalidated_views,
+                base_residual_paths=deleted.residual_paths,
+                retry=retry,
+                result=result,
+            )
+            raise
+        lifecycle = _lifecycle_outcome(recomputed)
+        exit_code = 8 if deleted.residual_paths or lifecycle.residual_paths else 0
         return Outcome(
             exit_code=exit_code,
             diagnostic_class="deletion_incomplete" if exit_code else None,
-            affected_ids=AffectedIds(
-                created=[],
-                superseded=[],
-                deleted=(
-                    [
-                        EntityIdGroup(
-                            entity_type="evidence_item",
-                            ids=list(deleted.evidence_item_ids),
-                        )
-                    ]
-                    + (
-                        [
-                            EntityIdGroup(
-                                entity_type="experience_fact",
-                                ids=list(deleted.purged_fact_ids),
-                            )
-                        ]
-                        if deleted.purged_fact_ids
-                        else []
-                    )
-                    + (
-                        [
-                            EntityIdGroup(
-                                entity_type="gap_question",
-                                ids=list(deleted.purged_gap_ids),
-                            )
-                        ]
-                        if deleted.purged_gap_ids
-                        else []
-                    )
-                    + (
-                        [
-                            EntityIdGroup(
-                                entity_type="contradiction",
-                                ids=list(deleted.purged_contradiction_ids),
-                            )
-                        ]
-                        if deleted.purged_contradiction_ids
-                        else []
-                    )
-                    + (
-                        [
-                            EntityIdGroup(
-                                entity_type="self_signal",
-                                ids=list(deleted.purged_signal_ids),
-                            )
-                        ]
-                        if deleted.purged_signal_ids
-                        else []
-                    )
-                    + (
-                        [
-                            EntityIdGroup(
-                                entity_type="verification_finding",
-                                ids=list(deleted.purged_finding_ids),
-                            )
-                        ]
-                        if deleted.purged_finding_ids
-                        else []
-                    )
-                    + (
-                        [
-                            EntityIdGroup(
-                                entity_type="self_claim",
-                                ids=list(deleted.purged_claim_ids),
-                            )
-                        ]
-                        if deleted.purged_claim_ids
-                        else []
-                    )
-                    + (
-                        [
-                            EntityIdGroup(
-                                entity_type="assessment_snapshot",
-                                ids=list(deleted.purged_snapshot_ids),
-                            )
-                        ]
-                        if deleted.purged_snapshot_ids
-                        else []
-                    )
-                    + [
-                        EntityIdGroup(
-                            entity_type="raw_log",
-                            ids=[deleted.selected_log.id],
-                        )
-                    ]
-                ),
+            affected_ids=_merge_affected(base_affected, lifecycle.affected_ids),
+            generation_ids=sorted(
+                {*deleted.purged_generation_ids, *lifecycle.generation_ids},
+                key=lambda value: value.encode("utf-8"),
             ),
-            residual_paths=list(deleted.residual_paths),
-            invalidated_views=list(deleted.invalidated_views),
+            run_ids=lifecycle.run_ids,
+            residual_paths=sorted(
+                {*deleted.residual_paths, *lifecycle.residual_paths},
+                key=os.fsencode,
+            ),
+            invalidated_views=_views(
+                deleted.invalidated_views, lifecycle.invalidated_views
+            ),
+            warnings=lifecycle.warnings,
             result=result,
             human_result=(
-                f"Deleted raw log {deleted.selected_log.id}."
-                if not deleted.residual_paths
+                f"Deleted raw log {deleted.selected_log.id}; rebuilt through Stage 5."
+                if not deleted.residual_paths and not lifecycle.residual_paths
                 else f"Deleted raw log {deleted.selected_log.id}; cleanup is incomplete."
             )
             + (

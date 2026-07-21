@@ -37,6 +37,7 @@ class DeleteOutcome:
     purged_finding_ids: tuple[str, ...]
     purged_claim_ids: tuple[str, ...]
     purged_snapshot_ids: tuple[str, ...]
+    purged_generation_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
     residual_paths: tuple[str, ...]
 
@@ -168,6 +169,25 @@ def delete_log(
                     "SELECT id FROM assessment_snapshots ORDER BY CAST(id AS BLOB)"
                 )
             )
+            purged_generation_ids = tuple(
+                sorted(
+                    {
+                        row[0]
+                        for table in (
+                            "experience_facts",
+                            "gap_questions",
+                            "contradictions",
+                            "self_signals",
+                            "self_claims",
+                            "assessment_snapshots",
+                        )
+                        for row in connection.execute(
+                            f"SELECT DISTINCT generation_id FROM {table}"
+                        )
+                    },
+                    key=lambda value: value.encode("utf-8"),
+                )
+            )
             residual_paths.extend(_remove_managed_backups(workspace))
             # §13.13 rule 5: owner deletion attempts every final, candidate,
             # rollback, or other entry under both reserved managed parents
@@ -216,6 +236,7 @@ def delete_log(
         purged_finding_ids=purged_finding_ids,
         purged_claim_ids=purged_claim_ids,
         purged_snapshot_ids=purged_snapshot_ids,
+        purged_generation_ids=purged_generation_ids,
         invalidated_views=invalidated_views,
         residual_paths=tuple(sorted(set(residual_paths))),
     )

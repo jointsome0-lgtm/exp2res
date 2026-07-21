@@ -36,6 +36,7 @@ CommandPath = Literal[
     "log today",
     "log retro",
     "correction add",
+    "recompute",
     "extract",
     "logs list",
     "logs delete",
