@@ -512,3 +512,98 @@ def test_delete_rebuild_failure_never_restores_deleted_record(
         assert get_raw_log(connection, selected.id) is None
         assert get_raw_log(connection, survivor.id) is not None
         assert list_experience_facts(connection) == ()
+
+
+def test_recompute_holds_one_writer_authority_across_stages(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # §8.1: the §13.13 lifecycle passes its one held writer connection into
+    # every stage runner; a stage acquiring its own writer authority would
+    # let another business writer interleave between the stage swaps.
+    import exp2res.pipeline.stage3 as stage3_module
+    import exp2res.pipeline.stage4 as stage4_module
+    import exp2res.pipeline.stage5 as stage5_module
+
+    add_log(
+        workspace,
+        log_id="log_vera_lock_scope",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example lock-scope record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_lock_scope", "manual_claim"),),
+    )
+    _install_lifecycle_runner(monkeypatch)
+
+    def refuse_stage_lock(*_args, **_kwargs):
+        raise AssertionError("a stage acquired its own writer authority")
+
+    for module in (stage3_module, stage4_module, stage5_module):
+        monkeypatch.setattr(module, "writer_database", refuse_stage_lock)
+    result, envelope = _invoke_json(workspace, ["--yes", "recompute"])
+    assert result.exit_code == 0, result.output
+    assert len(envelope["run_ids"]) == 4
+
+
+def test_interrupt_between_stages_reports_committed_progress(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # §14.14 rule 6: Ctrl-C after the Stage 3 swap committed still reports
+    # the committed runs, created facts, and the §14.12 retry in the
+    # cancelled envelope instead of an empty class-9 result.
+    add_log(
+        workspace,
+        log_id="log_vera_interrupt",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example interrupt record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_interrupt", "manual_claim"),),
+    )
+    _install_lifecycle_runner(monkeypatch)
+
+    def interrupt_stage4(*_args, **_kwargs):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        lifecycle_service, "run_detection_generation", interrupt_stage4
+    )
+    result, envelope = _invoke_json(workspace, ["--yes", "recompute"])
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    # Orchestration row plus the committed Stage 3 run stay addressable.
+    assert len(envelope["run_ids"]) == 2
+    created = {
+        group["entity_type"] for group in envelope["affected_ids"]["created"]
+    }
+    assert "experience_fact" in created
+    assert envelope["retry"] == {"command": "exp2res recompute"}
+    with read_database(workspace) as connection:
+        row = connection.execute(
+            "SELECT status, failure_code FROM processing_runs "
+            "WHERE stage = '13.13'"
+        ).fetchone()
+    assert (row["status"], row["failure_code"]) == ("failed", "cancelled")
+
+
+def test_interactive_delete_confirmation_names_the_rebuild(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # §14.14 rule 3: the one TTY confirmation covers both the destructive
+    # purge and the cost-bearing rebuild's provider call.
+    selected, _items = add_log(
+        workspace,
+        log_id="log_vera_consent",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example consent record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_consent", "manual_claim"),),
+    )
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+    result, envelope = _invoke_json(
+        workspace, ["logs", "delete", "--log-id", selected.id], input="n\n"
+    )
+    assert result.exit_code == 9
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert "rebuild derived state" in result.output
+    assert "model provider" in result.output
+    with read_database(workspace) as connection:
+        assert get_raw_log(connection, selected.id) is not None

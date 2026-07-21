@@ -11,7 +11,7 @@ from typing import Callable
 
 from exp2res import __version__
 from exp2res.domain.results import AffectedIds, EntityIdGroup, InvalidatedView
-from exp2res.errors import Exp2ResError, LLMInvocationError
+from exp2res.errors import Exp2ResError, LLMCancelledError, LLMInvocationError
 from exp2res.llm.contracts import ContractWarning
 from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
 from exp2res.pipeline.stage4 import Stage4Result, run_detection_generation
@@ -19,7 +19,7 @@ from exp2res.pipeline.stage5 import Stage5Result, run_signal_generation
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import build_llm_execution
 from exp2res.storage.telemetry import create_processing_run, finish_processing_run
-from exp2res.storage.workspace import read_database, require_compatible, writer_database
+from exp2res.storage.workspace import require_compatible, writer_database
 
 
 @dataclass(frozen=True)
@@ -136,28 +136,25 @@ class LifecycleResult:
         return AffectedIds(created=groups(created), superseded=groups(superseded), deleted=[])
 
 
-def _transaction(
-    workspace: Path,
-    operation: Callable[[sqlite3.Connection], None],
-    *,
-    reconcile: bool = True,
+def _held_transaction(
+    connection: sqlite3.Connection, operation: Callable[[sqlite3.Connection], None]
 ) -> None:
-    with writer_database(workspace, reconcile=reconcile) as connection:
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            operation(connection)
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        operation(connection)
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
 
 
-def _committed_runs(workspace: Path, run_ids: list[str]) -> tuple[str, ...]:
+def _committed_runs(
+    connection: sqlite3.Connection, run_ids: list[str]
+) -> tuple[str, ...]:
     placeholders = ",".join("?" for _ in run_ids)
-    with read_database(workspace) as connection:
-        rows = connection.execute(
-            f"SELECT id FROM processing_runs WHERE id IN ({placeholders})", run_ids
-        ).fetchall()
+    rows = connection.execute(
+        f"SELECT id FROM processing_runs WHERE id IN ({placeholders})", run_ids
+    ).fetchall()
     committed = {row[0] for row in rows}
     return tuple(item for item in run_ids if item in committed)
 
@@ -176,28 +173,6 @@ def run_recompute(
     now = clock or (lambda: datetime.now(timezone.utc))
     orchestration_run_id = ids("run")
     allocated_runs = [orchestration_run_id]
-    with read_database(workspace) as connection:
-        input_ids = tuple(
-            row[0]
-            for row in connection.execute(
-                "SELECT id FROM raw_logs ORDER BY CAST(id AS BLOB)"
-            )
-        )
-
-    _transaction(
-        workspace,
-        lambda connection: create_processing_run(
-            connection,  # type: ignore[arg-type]
-            run_id=orchestration_run_id,
-            stage="13.13",
-            started_at=now(),
-            provider=None,
-            model=None,
-            prompt_policy_hash=None,
-            input_ids=(input_ids if log_id is None else (log_id,)),
-            metadata={"mode": "full" if log_id is None else "selected_lineage"},
-        ),
-    )
 
     stage3: Stage3Result | None = None
     stage4: Stage4Result | None = None
@@ -209,99 +184,138 @@ def run_recompute(
             allocated_runs.append(value)
         return value
 
-    try:
-        # §29.2 selection stays eagerly required exactly like a direct
-        # `extract` (PR #125): a zero-lineage recompute still resolves the
-        # configured adapter, while LazyPreflightRunner keeps it offline —
-        # the stage runners plan zero calls and complete empty runs.
-        selection, budgets, runner = build_llm_execution(workspace)
-        stage3 = run_fact_extraction(
-            workspace,
-            log_id=log_id,
-            selection=selection,
-            budgets=budgets,
-            runner=runner,
-            id_factory=tracking_ids,
-            parent_run_id=orchestration_run_id,
-            reconcile=False,
-            clock=now,
-            cli_version=__version__,
+    # §8.1: the whole Stage 3-5 lifecycle runs under one held writer
+    # authority — no other business writer can interleave between the
+    # orchestration row, the stage swaps, and the terminal transition.
+    with writer_database(workspace, reconcile=True) as connection:
+        input_ids = tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT id FROM raw_logs ORDER BY CAST(id AS BLOB)"
+            )
         )
-        stage4 = run_detection_generation(
-            workspace,
-            selection=selection,
-            budgets=budgets,
-            runner=runner,
-            id_factory=tracking_ids,
-            parent_run_id=orchestration_run_id,
-            reconcile=False,
-            clock=now,
-            cli_version=__version__,
-        )
-        stage5 = run_signal_generation(
-            workspace,
-            selection=selection,
-            budgets=budgets,
-            runner=runner,
-            id_factory=tracking_ids,
-            parent_run_id=orchestration_run_id,
-            reconcile=False,
-            clock=now,
-            cli_version=__version__,
-        )
-        partial = LifecycleResult(orchestration_run_id, stage3, stage4, stage5)
-        _transaction(
-            workspace,
-            lambda connection: finish_processing_run(
-                connection,  # type: ignore[arg-type]
+        _held_transaction(
+            connection,
+            lambda held: create_processing_run(
+                held,
                 run_id=orchestration_run_id,
-                finished_at=now(),
-                status="completed",
-                output_ids=tuple(
-                    entity_id
-                    for group in partial.affected_ids.created
-                    for entity_id in group.ids
-                ),
+                stage="13.13",
+                started_at=now(),
+                provider=None,
+                model=None,
+                prompt_policy_hash=None,
+                input_ids=(input_ids if log_id is None else (log_id,)),
+                metadata={
+                    "mode": "full" if log_id is None else "selected_lineage"
+                },
             ),
-            reconcile=False,
         )
-    except BaseException as error:
-        failure_code = (
-            error.failure_code
-            if isinstance(error, LLMInvocationError)
-            else "cancelled"
-            if isinstance(error, KeyboardInterrupt)
-            else error.diagnostic_class
-            if isinstance(error, Exp2ResError)
-            else "internal_error"
-        )
+
         try:
-            _transaction(
+            # §29.2 selection stays eagerly required exactly like a direct
+            # `extract` (PR #125): a zero-lineage recompute still resolves the
+            # configured adapter, while LazyPreflightRunner keeps it offline —
+            # the stage runners plan zero calls and complete empty runs.
+            selection, budgets, runner = build_llm_execution(workspace)
+            stage3 = run_fact_extraction(
                 workspace,
-                lambda connection: finish_processing_run(
-                    connection,  # type: ignore[arg-type]
+                log_id=log_id,
+                selection=selection,
+                budgets=budgets,
+                runner=runner,
+                id_factory=tracking_ids,
+                parent_run_id=orchestration_run_id,
+                connection=connection,
+                clock=now,
+                cli_version=__version__,
+            )
+            stage4 = run_detection_generation(
+                workspace,
+                selection=selection,
+                budgets=budgets,
+                runner=runner,
+                id_factory=tracking_ids,
+                parent_run_id=orchestration_run_id,
+                connection=connection,
+                clock=now,
+                cli_version=__version__,
+            )
+            stage5 = run_signal_generation(
+                workspace,
+                selection=selection,
+                budgets=budgets,
+                runner=runner,
+                id_factory=tracking_ids,
+                parent_run_id=orchestration_run_id,
+                connection=connection,
+                clock=now,
+                cli_version=__version__,
+            )
+            partial = LifecycleResult(orchestration_run_id, stage3, stage4, stage5)
+            _held_transaction(
+                connection,
+                lambda held: finish_processing_run(
+                    held,
                     run_id=orchestration_run_id,
                     finished_at=now(),
-                    status="failed",
-                    failure_code=failure_code,
+                    status="completed",
+                    output_ids=tuple(
+                        entity_id
+                        for group in partial.affected_ids.created
+                        for entity_id in group.ids
+                    ),
                 ),
-                reconcile=False,
             )
-        except Exception:
-            pass
-        progress = LifecycleResult(orchestration_run_id, stage3, stage4, stage5)
-        if isinstance(error, Exp2ResError):
-            error.run_ids = _committed_runs(workspace, allocated_runs)
-            error.lifecycle_result = progress
-        raise
+        except BaseException as error:
+            failure_code = (
+                error.failure_code
+                if isinstance(error, LLMInvocationError)
+                else "cancelled"
+                if isinstance(error, KeyboardInterrupt)
+                else error.diagnostic_class
+                if isinstance(error, Exp2ResError)
+                else "internal_error"
+            )
+            try:
+                _held_transaction(
+                    connection,
+                    lambda held: finish_processing_run(
+                        held,
+                        run_id=orchestration_run_id,
+                        finished_at=now(),
+                        status="failed",
+                        failure_code=failure_code,
+                    ),
+                )
+            except Exception:
+                pass
+            progress = LifecycleResult(orchestration_run_id, stage3, stage4, stage5)
+            if isinstance(error, KeyboardInterrupt):
+                # §14.14 rule 6: an interrupt between committed stage swaps
+                # still reports every committed effect and run — a raw
+                # KeyboardInterrupt would reach the CLI as an empty cancelled
+                # envelope, so it leaves as the same class-9 §15.10 error the
+                # in-stage path raises.
+                cancelled = LLMCancelledError()
+                try:
+                    cancelled.run_ids = _committed_runs(connection, allocated_runs)
+                except Exception:
+                    cancelled.run_ids = ()
+                cancelled.lifecycle_result = progress
+                raise cancelled from error
+            if isinstance(error, Exp2ResError):
+                try:
+                    error.run_ids = _committed_runs(connection, allocated_runs)
+                except Exception:
+                    error.run_ids = ()
+                error.lifecycle_result = progress
+            raise
 
-    has_current_view = False
-    with read_database(workspace) as connection:
         row = connection.execute(
             "SELECT 1 FROM assessment_snapshots WHERE superseded_at IS NULL LIMIT 1"
         ).fetchone()
         has_current_view = row is not None
-    completed = LifecycleResult(
+    return LifecycleResult(
         orchestration_run_id,
         stage3,
         stage4,
@@ -310,4 +324,3 @@ def run_recompute(
             not has_current_view and not partial.invalidated_views
         ),
     )
-    return completed

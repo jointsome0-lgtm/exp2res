@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -194,6 +195,7 @@ def run_signal_generation(
     id_factory: Callable[[str], str] = new_id,
     parent_run_id: str | None = None,
     reconcile: bool = True,
+    connection: sqlite3.Connection | None = None,
     clock: Callable[[], datetime] | None = None,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     cli_version: str = "test-double",
@@ -207,9 +209,15 @@ def run_signal_generation(
     """Run the one-call complete Stage 5 candidate and atomic replacement."""
 
     now = clock or (lambda: datetime.now(timezone.utc))
-    with writer_database(
-        workspace, timeout_ms=timeout_ms, reconcile=reconcile
-    ) as connection:
+    # §8.1: a §13.13 lifecycle holds one writer authority across its whole
+    # Stage 3-5 flow and passes the held connection; a direct command still
+    # acquires its own.
+    held = (
+        nullcontext(connection)
+        if connection is not None
+        else writer_database(workspace, timeout_ms=timeout_ms, reconcile=reconcile)
+    )
+    with held as connection:
         facts = tuple(
             sorted(list_experience_facts(connection), key=lambda fact: _id_key(fact.id))
         )

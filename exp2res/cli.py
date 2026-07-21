@@ -1585,7 +1585,14 @@ def logs_delete(
         if not controls.yes:
             if _noninteractive(controls):
                 raise NonInteractiveInputRequired()
-            if not typer.confirm(f"Delete raw log {selected.id}?", err=True):
+            # §14.14 rule 3: one confirmation names both halves — the
+            # destructive purge and the cost-bearing §13.13 rule 5 rebuild
+            # that may call the configured model provider.
+            if not typer.confirm(
+                f"Delete raw log {selected.id} and rebuild derived state "
+                "with the configured model provider?",
+                err=True,
+            ):
                 return Outcome(exit_code=9, diagnostic_class="cancelled")
         deleted = delete_log(workspace, log_id=log_id)
         result = LogsDeleteResult(
