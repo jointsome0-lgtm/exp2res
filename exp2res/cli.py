@@ -602,10 +602,17 @@ def _decorate_lifecycle_error(
     error.result = result
 
 
-def _lifecycle_outcome(recomputed: LifecycleResult) -> Outcome:
+def _lifecycle_outcome(
+    recomputed: LifecycleResult,
+    *,
+    base_invalidated_views: tuple[InvalidatedView, ...] = (),
+) -> Outcome:
+    invalidated_views = _views(
+        base_invalidated_views, recomputed.invalidated_views
+    )
     view_lines = "\n".join(
         f"Invalidated {item.snapshot_id}: {item.regeneration_command}"
-        for item in recomputed.invalidated_views
+        for item in invalidated_views
     )
     no_view = (
         "\nNo current assessment view exists; run exp2res assess generate."
@@ -616,7 +623,7 @@ def _lifecycle_outcome(recomputed: LifecycleResult) -> Outcome:
         affected_ids=recomputed.affected_ids,
         generation_ids=list(recomputed.generation_ids),
         run_ids=list(recomputed.run_ids),
-        invalidated_views=list(recomputed.invalidated_views),
+        invalidated_views=invalidated_views,
         residual_paths=list(recomputed.residual_paths),
         warnings=list(recomputed.warnings),
         human_result=(
@@ -787,7 +794,9 @@ def correction_add(
                 )
                 raise
 
-        lifecycle = _lifecycle_outcome(recomputed)
+        lifecycle = _lifecycle_outcome(
+            recomputed, base_invalidated_views=captured.invalidated_views
+        )
         lifecycle.affected_ids = _merge_affected(
             _correction_affected(captured), lifecycle.affected_ids
         )
@@ -797,9 +806,6 @@ def correction_add(
                 *lifecycle.generation_ids,
             },
             key=lambda value: value.encode("utf-8"),
-        )
-        lifecycle.invalidated_views = _views(
-            captured.invalidated_views, lifecycle.invalidated_views
         )
         lifecycle.residual_paths = sorted(
             {*captured.residual_paths, *lifecycle.residual_paths},

@@ -160,6 +160,13 @@ def _committed_runs(
     return tuple(item for item in run_ids if item in committed)
 
 
+def _has_current_assessment_view(connection: sqlite3.Connection) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM assessment_snapshots WHERE superseded_at IS NULL LIMIT 1"
+    ).fetchone()
+    return row is not None
+
+
 def run_recompute(
     workspace: Path,
     *,
@@ -261,6 +268,10 @@ def run_recompute(
                 cli_version=__version__,
             )
             partial = LifecycleResult(orchestration_run_id, stage3, stage4, stage5)
+            # This read is part of the lifecycle result, not an unprotected
+            # output tail: a late interrupt or storage failure must still
+            # carry every Stage 3-5 effect that already committed.
+            has_current_view = _has_current_assessment_view(connection)
             _held_transaction(
                 connection,
                 lambda held: finish_processing_run(
@@ -328,12 +339,18 @@ def run_recompute(
                 except Exception:
                     error.run_ids = ()
                 error.lifecycle_result = progress
+                raise
+            if isinstance(error, Exception):
+                # Keep unexpected failures secret-safe while preserving the
+                # committed lifecycle result for the class-1 envelope.
+                internal = Exp2ResError()
+                try:
+                    internal.run_ids = _committed_runs(connection, allocated_runs)
+                except Exception:
+                    internal.run_ids = ()
+                internal.lifecycle_result = progress
+                raise internal from error
             raise
-
-        row = connection.execute(
-            "SELECT 1 FROM assessment_snapshots WHERE superseded_at IS NULL LIMIT 1"
-        ).fetchone()
-        has_current_view = row is not None
     return LifecycleResult(
         orchestration_run_id,
         stage3,

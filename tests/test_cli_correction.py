@@ -82,7 +82,12 @@ def _invoke_json(workspace: Path, arguments: list[str], *, input: str | None = N
     return result, json.loads(result.stdout.splitlines()[-1])
 
 
-def _prepare_full_graph(workspace: Path):
+def _prepare_full_graph(
+    workspace: Path,
+    *,
+    assessment_scope: str = "global",
+    assessment_target: str | None = None,
+):
     ids = SignalIds()
     target, target_items = add_log(
         workspace,
@@ -133,7 +138,11 @@ def _prepare_full_graph(workspace: Path):
         FakeContractRunner([signal_response([target_fact.id])]),
         ids,
     )
-    fact_ids = [item.id for item in list_experience_facts_for(workspace)]
+    fact_ids = (
+        [target_fact.id]
+        if assessment_scope == "project"
+        else [item.id for item in list_experience_facts_for(workspace)]
+    )
     signal_ids = [item.id for item in signaled.current_signals]
     assessed = run_stage6(
         workspace,
@@ -141,6 +150,8 @@ def _prepare_full_graph(workspace: Path):
             [assessment_response(fact_ids=fact_ids, signal_ids=signal_ids)]
         ),
         ids,
+        scope=assessment_scope,
+        target=assessment_target,
     )
     assert assessed.snapshot_id is not None
     run_stage7(
@@ -249,6 +260,40 @@ def test_correction_rebuilds_through_artifacts_and_preserves_history(
     with read_database(workspace) as connection:
         snapshots = list_assessment_snapshots(connection)
         assert len(snapshots) == 1 and snapshots[0].scope == "global"
+
+
+def test_correction_human_output_includes_captured_project_view_command(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target, _other, _fact, _detected, _signaled, assessed, _export_dir = (
+        _prepare_full_graph(
+            workspace,
+            assessment_scope="project",
+            assessment_target="Vera Example Project",
+        )
+    )
+    _install_lifecycle_runner(monkeypatch)
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+
+    result = runner.invoke(
+        app,
+        [
+            "--workspace",
+            str(workspace),
+            "--yes",
+            "correction",
+            "add",
+            "--log-id",
+            target.id,
+        ],
+        input="Vera Example corrected and fully restated the workflow.\n\n\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        f"Invalidated {assessed.snapshot_id}: exp2res assess generate "
+        "--scope project --project 'Vera Example Project'"
+    ) in result.stdout
 
 
 def list_self_signals_for(workspace: Path):
@@ -582,6 +627,63 @@ def test_interrupt_between_stages_reports_committed_progress(
             "WHERE stage = '13.13'"
         ).fetchone()
     assert (row["status"], row["failure_code"]) == ("failed", "cancelled")
+
+
+@pytest.mark.parametrize(
+    ("error", "exit_code", "status", "diagnostic_class", "failure_code"),
+    [
+        (KeyboardInterrupt(), 9, "cancelled", "cancelled", "cancelled"),
+        (
+            RuntimeError("late view read failed"),
+            1,
+            "failed",
+            "internal_error",
+            "internal_error",
+        ),
+    ],
+)
+def test_final_view_check_failure_reports_committed_progress(
+    workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: BaseException,
+    exit_code: int,
+    status: str,
+    diagnostic_class: str,
+    failure_code: str,
+) -> None:
+    add_log(
+        workspace,
+        log_id="log_vera_final_view_check",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example final-view-check record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_final_view_check", "manual_claim"),),
+    )
+    _install_lifecycle_runner(monkeypatch)
+
+    def fail_view_check(_connection):
+        raise error
+
+    monkeypatch.setattr(
+        lifecycle_service, "_has_current_assessment_view", fail_view_check
+    )
+    result, envelope = _invoke_json(workspace, ["--yes", "recompute"])
+
+    assert result.exit_code == exit_code
+    assert envelope["status"] == status
+    assert envelope["diagnostic_class"] == diagnostic_class
+    assert len(envelope["run_ids"]) == 4
+    assert "experience_fact" in {
+        group["entity_type"] for group in envelope["affected_ids"]["created"]
+    }
+    assert envelope["generation_ids"]
+    assert envelope["retry"] == {"command": "exp2res recompute"}
+    with read_database(workspace) as connection:
+        row = connection.execute(
+            "SELECT status, failure_code FROM processing_runs "
+            "WHERE stage = '13.13'"
+        ).fetchone()
+    assert (row["status"], row["failure_code"]) == ("failed", failure_code)
 
 
 def test_interactive_delete_confirmation_names_the_rebuild(
