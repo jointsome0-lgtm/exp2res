@@ -17,6 +17,7 @@ from exp2res.domain.models import EvidenceItem, ExperienceFact, SelfSignal
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.domain.temporal import confidence_exceeds
 from exp2res.errors import IntegrityFailureError
+from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.llm.contracts import (
     ContractValidationError,
     ContractWarning,
@@ -42,9 +43,17 @@ from exp2res.storage.repository import (
     mark_self_signals_superseded,
     mark_self_claims_superseded,
 )
-from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
+from exp2res.storage.workspace import (
+    DEFAULT_BUSY_TIMEOUT_MS,
+    report_managed_residuals,
+    writer_database,
+)
 
-from .orchestration import PlannedCall, run_complete_stage
+from .orchestration import (
+    PlannedCall,
+    run_complete_stage,
+    withdraw_pending_unless_superseded,
+)
 from .evidence_context import project_evidence_context
 
 
@@ -56,6 +65,7 @@ class Stage5Result:
     superseded_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
+    residual_paths: tuple[str, ...]
     generation_id: str | None
     superseded_generation_ids: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
@@ -312,9 +322,21 @@ def run_signal_generation(
             created_signal_ids = tuple(
                 sorted((signal.id for signal in candidate.signals), key=_id_key)
             )
+            # Pre-commit pending report: the paths this supersession makes
+            # stale are reported before COMMIT, so an interrupt anywhere in
+            # the commit-to-cleanup window still reports the retained set. A
+            # completed removal clears the report through the existence
+            # re-check; a rolled-back transaction withdraws it below.
+            nonlocal pending_stale_paths
+            pending_stale_paths = assessment_set_paths(
+                workspace, superseded_snapshot_ids
+            )
+            report_managed_residuals(pending_stale_paths)
             return created_signal_ids
 
-        outcome = run_complete_stage(
+        pending_stale_paths: tuple[str, ...] = ()
+        try:
+            outcome = run_complete_stage(
             workspace,
             connection,
             stage="13.5",
@@ -332,7 +354,18 @@ def run_signal_generation(
             sleeper=sleeper,
             jitter=jitter,
             token_patterns=token_patterns,
-            resolved_credentials=resolved_credentials,
+                resolved_credentials=resolved_credentials,
+            )
+        except BaseException:
+            # Withdraw the pre-commit pending report only when the rollback
+            # is proven; an interrupt after a durable commit keeps the
+            # stale-set report in the cancelled envelope.
+            withdraw_pending_unless_superseded(
+                connection, pending_stale_paths, superseded_snapshot_ids
+            )
+            raise
+        residual_paths = remove_assessment_sets(
+            workspace, superseded_snapshot_ids
         )
         current_signals = tuple(
             sorted(list_self_signals(connection), key=lambda signal: _id_key(signal.id))
@@ -352,6 +385,7 @@ def run_signal_generation(
         invalidated_views=tuple(
             sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
         ),
+        residual_paths=residual_paths,
         generation_id=generation_id,
         superseded_generation_ids=tuple(
             sorted(superseded_generation_ids, key=_id_key)

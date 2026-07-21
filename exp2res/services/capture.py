@@ -25,6 +25,7 @@ from exp2res.errors import (
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
+from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.time_input import today_occurred, workspace_zone
@@ -38,7 +39,9 @@ from exp2res.storage.repository import (
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     read_database,
+    report_managed_residuals,
     require_compatible,
+    withdraw_managed_residuals,
     writer_database,
 )
 
@@ -317,10 +320,43 @@ def capture_gap_answer(
                     last_collision = error
                     continue
                 connection.execute(f"RELEASE {savepoint}")
-                # §13's stale-export trigger is vacuous in schema v4: no
-                # managed snapshot or branch export tables exist yet.
-                connection.commit()
-                return RawLogBundle(raw_log, (evidence_item,))
+                # §13 stale-export trigger: answering a gap keeps every view
+                # current, but its rendered answer state changed. The current
+                # snapshot sets are enumerated and reported pending before
+                # COMMIT, so an interrupt in the commit-to-cleanup window
+                # still reports the retained stale set; rollback withdraws
+                # the report. Cleanup failure never rolls the answer back.
+                snapshot_ids = tuple(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT id FROM assessment_snapshots "
+                        "WHERE superseded_at IS NULL ORDER BY CAST(id AS BLOB)"
+                    )
+                )
+                pending = assessment_set_paths(workspace, snapshot_ids)
+                report_managed_residuals(pending)
+                try:
+                    connection.commit()
+                except BaseException:
+                    # Withdraw only on a proven rollback: an interrupt can
+                    # arrive after SQLite durably committed, and the stale
+                    # sets must then stay reported. Indeterminate keeps the
+                    # report (a spurious residual is recoverable).
+                    committed = True
+                    try:
+                        if not connection.in_transaction:
+                            row = connection.execute(
+                                "SELECT answered FROM gap_questions WHERE id = ?",
+                                (gap.id,),
+                            ).fetchone()
+                            committed = bool(row and row[0])
+                    except Exception:
+                        committed = True
+                    if not committed:
+                        withdraw_managed_residuals(pending)
+                    raise
+                residuals = remove_assessment_sets(workspace, snapshot_ids)
+                return RawLogBundle(raw_log, (evidence_item,), residuals)
             raise IdCollisionError() from last_collision
         except sqlite3.OperationalError as error:
             connection.rollback()

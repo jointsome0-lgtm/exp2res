@@ -20,6 +20,7 @@ from exp2res.domain.temporal import (
     occurred_interval,
     placement_supports,
 )
+from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.llm.contracts import (
     ContractValidationError,
     ContractWarning,
@@ -47,10 +48,18 @@ from exp2res.storage.repository import (
     mark_self_signals_superseded,
     mark_self_claims_superseded,
 )
-from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
+from exp2res.storage.workspace import (
+    DEFAULT_BUSY_TIMEOUT_MS,
+    report_managed_residuals,
+    writer_database,
+)
 
 from .lineage import LineageContext, plan_lineages
-from .orchestration import PlannedCall, run_complete_stage
+from .orchestration import (
+    PlannedCall,
+    run_complete_stage,
+    withdraw_pending_unless_superseded,
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +75,7 @@ class Stage3Result:
     superseded_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
+    residual_paths: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
 
 
@@ -438,9 +448,21 @@ def run_fact_extraction(
                 mark_assessment_snapshots_superseded(
                     held, superseded_snapshot_ids, swap_time
                 )
+            # Pre-commit pending report: the paths this supersession makes
+            # stale are reported before COMMIT, so an interrupt anywhere in
+            # the commit-to-cleanup window still reports the retained set. A
+            # completed removal clears the report through the existence
+            # re-check; a rolled-back transaction withdraws it below.
+            nonlocal pending_stale_paths
+            pending_stale_paths = assessment_set_paths(
+                workspace, superseded_snapshot_ids
+            )
+            report_managed_residuals(pending_stale_paths)
             return created_ids
 
-        outcome = run_complete_stage(
+        pending_stale_paths: tuple[str, ...] = ()
+        try:
+            outcome = run_complete_stage(
             workspace,
             connection,
             stage="13.3",
@@ -458,7 +480,20 @@ def run_fact_extraction(
             sleeper=sleeper,
             jitter=jitter,
             token_patterns=token_patterns,
-            resolved_credentials=resolved_credentials,
+                resolved_credentials=resolved_credentials,
+            )
+        except BaseException:
+            # Withdraw the pre-commit pending report only when the rollback
+            # is proven; an interrupt after a durable commit keeps the
+            # stale-set report in the cancelled envelope.
+            withdraw_pending_unless_superseded(
+                connection, pending_stale_paths, superseded_snapshot_ids
+            )
+            raise
+        # §13 stale-export trigger class 1: business supersession is already
+        # committed; cleanup failure is returned and never rolls it back.
+        residual_paths = remove_assessment_sets(
+            workspace, superseded_snapshot_ids
         )
 
     resolved_lineages = tuple(cast(_ResolvedLineage, item) for item in outcome.resolved)
@@ -486,6 +521,7 @@ def run_fact_extraction(
         invalidated_views=tuple(
             sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
         ),
+        residual_paths=residual_paths,
         warnings=tuple(
             warning
             for item in resolved_lineages

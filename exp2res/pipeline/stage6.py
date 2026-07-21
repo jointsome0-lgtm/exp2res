@@ -22,6 +22,7 @@ from exp2res.domain.models import (
 )
 from exp2res.domain.temporal import confidence_exceeds
 from exp2res.errors import EmptyAssessmentViewError, IntegrityFailureError
+from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.llm.assessment_writer import (
     ASSESSMENT_WRITER_CONTRACT,
     AssessmentWriterInput,
@@ -45,9 +46,17 @@ from exp2res.storage.repository import (
     mark_assessment_snapshots_superseded,
     mark_self_claims_superseded,
 )
-from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
+from exp2res.storage.workspace import (
+    DEFAULT_BUSY_TIMEOUT_MS,
+    report_managed_residuals,
+    writer_database,
+)
 
-from .orchestration import PlannedCall, run_complete_stage
+from .orchestration import (
+    PlannedCall,
+    run_complete_stage,
+    withdraw_pending_unless_superseded,
+)
 from .view_selection import select_assessment_view
 
 
@@ -68,6 +77,7 @@ class Stage6Result:
     generation_id: str | None
     superseded_generation_ids: tuple[str, ...]
     replaced_view: ReplacedAssessmentView | None
+    residual_paths: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
     snapshot: AssessmentSnapshot | None
     claims: tuple[SelfClaim, ...]
@@ -417,9 +427,21 @@ def run_assessment_generation(
             # §13.6: branch/bullet supersession joins this swap when those tables land.
             snapshot_id = candidate.snapshot.id
             created_claim_ids = tuple(sorted((item.id for item in candidate.claims), key=_id_key))
+            # Pre-commit pending report: the paths this supersession makes
+            # stale are reported before COMMIT, so an interrupt anywhere in
+            # the commit-to-cleanup window still reports the retained set. A
+            # completed removal clears the report through the existence
+            # re-check; a rolled-back transaction withdraws it below.
+            nonlocal pending_stale_paths
+            pending_stale_paths = assessment_set_paths(
+                workspace, superseded_snapshot_ids
+            )
+            report_managed_residuals(pending_stale_paths)
             return (snapshot_id, *created_claim_ids)
 
-        outcome = run_complete_stage(
+        pending_stale_paths: tuple[str, ...] = ()
+        try:
+            outcome = run_complete_stage(
             workspace,
             connection,
             stage="13.6",
@@ -437,7 +459,18 @@ def run_assessment_generation(
             sleeper=sleeper,
             jitter=jitter,
             token_patterns=token_patterns,
-            resolved_credentials=resolved_credentials,
+                resolved_credentials=resolved_credentials,
+            )
+        except BaseException:
+            # Withdraw the pre-commit pending report only when the rollback
+            # is proven; an interrupt after a durable commit keeps the
+            # stale-set report in the cancelled envelope.
+            withdraw_pending_unless_superseded(
+                connection, pending_stale_paths, superseded_snapshot_ids
+            )
+            raise
+        residual_paths = remove_assessment_sets(
+            workspace, superseded_snapshot_ids
         )
         snapshot = (
             None
@@ -460,6 +493,7 @@ def run_assessment_generation(
         generation_id=generation_id,
         superseded_generation_ids=tuple(sorted(superseded_generation_ids, key=_id_key)),
         replaced_view=replaced_view,
+        residual_paths=residual_paths,
         warnings=resolved.warnings,
         snapshot=snapshot,
         claims=claims,

@@ -30,6 +30,13 @@ _ASSESSMENT_EXPORT_ALLOWLIST = frozenset(
 )
 
 
+def require_export_eligible(verification_status: str) -> None:
+    """Apply the §16.11 assessment-export allowlist to a loaded status."""
+
+    if verification_status not in _ASSESSMENT_EXPORT_ALLOWLIST:
+        raise AssessmentExportBlockedError()
+
+
 @dataclass(frozen=True)
 class AssessmentExportResult:
     manifest_path: str
@@ -65,8 +72,7 @@ def export_assessment(
         try:
             connection.execute("BEGIN IMMEDIATE")
             snapshot_row, snapshot = load_current_snapshot(connection, snapshot_id)
-            if snapshot.verification_status not in _ASSESSMENT_EXPORT_ALLOWLIST:
-                raise AssessmentExportBlockedError()
+            require_export_eligible(snapshot.verification_status)
             graph = load_assessment_graph(
                 connection,
                 snapshot_row=snapshot_row,

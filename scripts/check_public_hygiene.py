@@ -67,7 +67,25 @@ DENIED_BASENAME_PATTERNS = (
     "delivery-registry",
 )
 
-FIXTURE_PATH_PATTERNS = ("fixtures/**", "examples/vera/corpus/**")
+FIXTURE_PATH_PATTERNS = (
+    "fixtures/**",
+    "examples/vera/corpus/**",
+    "tests/goldens/**",
+)
+
+MARKER_EXEMPT_PATHS: frozenset[str] = frozenset(
+    {
+        # Add only exact paths here, with a comment explaining each exception.
+        # The closed version-1 assessment evidence map (§13.12) is structural
+        # by design: every field is an opaque entity ID or enum, the model is
+        # extra=forbid, and the entity-ID charset cannot spell the marker.
+        # Its invented provenance is still enforced — the sibling goldens
+        # report.md and self_claims.json from the same rendered set carry the
+        # marker, and the golden test derives all three from marker-checked
+        # corpus inputs in one replay.
+        "tests/goldens/assessment/evidence_map.json",
+    }
+)
 
 DENIED_PATH_ALLOWLIST: frozenset[str] = frozenset(
     {
@@ -176,7 +194,10 @@ def main() -> int:
                 detail = str(exc).replace("\n", " ")
                 errors.append(f"cannot read fixture {path}: {detail}")
             else:
-                if b"Vera Example" not in fixture:
+                if (
+                    b"Vera Example" not in fixture
+                    and path not in MARKER_EXEMPT_PATHS
+                ):
                     errors.append(
                         f"fixture lacks required marker 'Vera Example': {path}"
                     )

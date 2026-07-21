@@ -14,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.models import Contradiction, GapQuestion
 from exp2res.domain.results import InvalidatedView, invalidated_view
+from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.llm.contracts import (
     ContractValidationError,
     ContractWarning,
@@ -45,10 +46,18 @@ from exp2res.storage.repository import (
     mark_self_signals_superseded,
     mark_self_claims_superseded,
 )
-from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
+from exp2res.storage.workspace import (
+    DEFAULT_BUSY_TIMEOUT_MS,
+    report_managed_residuals,
+    writer_database,
+)
 
 from .lineage import plan_lineages
-from .orchestration import PlannedCall, run_complete_stage
+from .orchestration import (
+    PlannedCall,
+    run_complete_stage,
+    withdraw_pending_unless_superseded,
+)
 
 
 GapStructuralKey = tuple[str, str, str, str]
@@ -67,6 +76,7 @@ class Stage4Result:
     superseded_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
+    residual_paths: tuple[str, ...]
     generation_id: str | None
     superseded_generation_ids: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
@@ -441,9 +451,21 @@ def run_detection_generation(
             created_contradiction_ids = tuple(
                 item.id for item in candidate.contradictions
             )
+            # Pre-commit pending report: the paths this supersession makes
+            # stale are reported before COMMIT, so an interrupt anywhere in
+            # the commit-to-cleanup window still reports the retained set. A
+            # completed removal clears the report through the existence
+            # re-check; a rolled-back transaction withdraws it below.
+            nonlocal pending_stale_paths
+            pending_stale_paths = assessment_set_paths(
+                workspace, superseded_snapshot_ids
+            )
+            report_managed_residuals(pending_stale_paths)
             return (*created_gap_ids, *created_contradiction_ids)
 
-        outcome = run_complete_stage(
+        pending_stale_paths: tuple[str, ...] = ()
+        try:
+            outcome = run_complete_stage(
             workspace,
             connection,
             stage="13.4",
@@ -461,7 +483,18 @@ def run_detection_generation(
             sleeper=sleeper,
             jitter=jitter,
             token_patterns=token_patterns,
-            resolved_credentials=resolved_credentials,
+                resolved_credentials=resolved_credentials,
+            )
+        except BaseException:
+            # Withdraw the pre-commit pending report only when the rollback
+            # is proven; an interrupt after a durable commit keeps the
+            # stale-set report in the cancelled envelope.
+            withdraw_pending_unless_superseded(
+                connection, pending_stale_paths, superseded_snapshot_ids
+            )
+            raise
+        residual_paths = remove_assessment_sets(
+            workspace, superseded_snapshot_ids
         )
         # Capture the complete post-run sets while the command still owns the
         # writer lock, so the §14.7 result cannot race a following writer.
@@ -491,6 +524,7 @@ def run_detection_generation(
         invalidated_views=tuple(
             sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
         ),
+        residual_paths=residual_paths,
         generation_id=generation_id,
         superseded_generation_ids=tuple(
             sorted(superseded_generation_ids, key=_id_key)

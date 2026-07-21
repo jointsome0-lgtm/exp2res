@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from exp2res.cli import app
+import exp2res.services.logs as logs_service
 from exp2res.services.capture import capture_daily
 from exp2res.services.logs import delete_log, list_logs, show_log
 from exp2res.domain.models import EvidenceItem, ExperienceFact, RawLog, SelfSignal
@@ -217,6 +218,48 @@ def test_delete_preserves_external_source_and_does_not_follow_backup_symlink(
     assert outside.read_text(encoding="utf-8") == "Vera Example outside target\n"
     assert planted.exists()
     assert outcome.residual_paths == (str(planted.absolute()),)
+
+
+def test_logs_delete_removes_every_managed_set_and_reports_cleanup_residual(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example managed-output deletion source",
+        clock=lambda: FIXED_NOW,
+    )
+    managed_entries = []
+    for parent_name, entry_name in (
+        ("assessment", "snapshot_vera_delete"),
+        ("branch", "branch_vera_delete"),
+    ):
+        parent = workspace / "out" / parent_name
+        parent.mkdir(mode=0o700, exist_ok=True)
+        entry = parent / entry_name
+        entry.mkdir(mode=0o700)
+        (entry / "Vera Example member").write_text(
+            "Vera Example managed member\n", encoding="utf-8"
+        )
+        managed_entries.append(entry)
+
+    removed = delete_log(workspace, log_id=bundle.raw_log.id)
+    assert removed.residual_paths == ()
+    assert all(not path.exists() for path in managed_entries)
+
+    second = capture_daily(
+        workspace,
+        raw_text="Vera Example residual deletion source",
+        clock=lambda: FIXED_NOW.replace(hour=13),
+    )
+    residual = str(workspace / "out" / "branch" / "branch_vera_residual")
+    monkeypatch.setattr(
+        logs_service,
+        "remove_all_managed_output_entries",
+        lambda _workspace: (residual,),
+    )
+    incomplete = delete_log(workspace, log_id=second.raw_log.id)
+    assert incomplete.residual_paths == (residual,)
+    assert list_logs(workspace) == ()
 
 
 def test_owner_delete_re_roots_retained_correction_without_fk_block(

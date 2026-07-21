@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Callable, cast
@@ -25,6 +26,7 @@ from exp2res.domain.models import (
 )
 from exp2res.domain.results import (
     AffectedIds,
+    AssessmentExportResult,
     AssessListResult,
     AssessShowResult,
     CLIEnvelope,
@@ -77,6 +79,7 @@ from exp2res.services.detection import (
     show_contradiction,
 )
 from exp2res.services.extraction import run_extract, validate_extract_selection
+from exp2res.services.export import export_assessment, require_export_eligible
 from exp2res.services.facts import list_facts, show_fact
 from exp2res.services.logs import delete_log, list_logs, show_log
 from exp2res.services.signals import list_current_signals, run_signals_generate
@@ -90,6 +93,7 @@ from exp2res.storage.workspace import (
     migrate_workspace,
     read_database,
     require_compatible,
+    collect_preamble_residuals,
 )
 
 
@@ -113,6 +117,7 @@ contradictions_app = typer.Typer(
 )
 signals_app = typer.Typer(help="Generate and inspect current self-signals.")
 assess_app = typer.Typer(help="Generate and inspect self-assessment views.")
+export_app = typer.Typer(help="Publish deterministic managed exports.")
 app.add_typer(db_app, name="db")
 app.add_typer(log_app, name="log")
 app.add_typer(logs_app, name="logs")
@@ -123,6 +128,7 @@ app.add_typer(gaps_app, name="gaps")
 app.add_typer(contradictions_app, name="contradictions")
 app.add_typer(signals_app, name="signals")
 app.add_typer(assess_app, name="assess")
+app.add_typer(export_app, name="export")
 
 
 @dataclass(frozen=True)
@@ -157,6 +163,7 @@ class Outcome:
         | SignalsListResult
         | AssessListResult
         | AssessShowResult
+        | AssessmentExportResult
         | None
     ) = None
     human_result: str = ""
@@ -224,6 +231,7 @@ def _run_command(
 ) -> None:
     controls = cast(Controls, context.obj)
     workspace: Path | None = None
+    preamble_residuals: list[str] = []
     try:
         if controls.verbose and controls.quiet:
             error = Exp2ResError()
@@ -243,7 +251,8 @@ def _run_command(
             workspace = discover_workspace(
                 cwd=Path.cwd(), override=controls.workspace_override
             )
-        outcome = operation(workspace, controls)
+        with collect_preamble_residuals(preamble_residuals):
+            outcome = operation(workspace, controls)
     except KeyboardInterrupt:
         outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
     except Abort:
@@ -277,11 +286,56 @@ def _run_command(
             # committed processing runs it created (LLMInvocationError
             # carries them; other error classes leave the default empty).
             run_ids=list(getattr(error, "run_ids", ()) or ()),
+            residual_paths=list(getattr(error, "residual_paths", ()) or ()),
         )
         typer.echo(error.public_message, err=True)
     except Exception:
         outcome = Outcome(exit_code=1, diagnostic_class="internal_error")
         typer.echo("The operation failed unexpectedly.", err=True)
+
+    observed_residuals: list[str] = []
+    for path in preamble_residuals:
+        # A reported path that a later successful destructive or invalidation
+        # step removed is no longer residual; anything unreadable stays
+        # reported (fail closed). `lstat` never follows a final symlink.
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            pass
+        observed_residuals.append(path)
+    # Undecodable POSIX names surface as surrogateescape'd strings that
+    # neither UTF-8 stdout nor the JSON envelope can carry; escape them into
+    # backslash form so the committed result and every residual stay
+    # reportable in both modes.
+    residual_paths = sorted(
+        {
+            path.encode("utf-8", "surrogateescape").decode(
+                "utf-8", "backslashreplace"
+            )
+            for path in {*outcome.residual_paths, *observed_residuals}
+        },
+        key=os.fsencode,
+    )
+    outcome.residual_paths = residual_paths
+    if residual_paths and outcome.exit_code in {0, 10}:
+        # §14.14 rule 4: a non-cancelled completion that reports a residual is
+        # class 8, including verifier findings that would otherwise be 10. A
+        # failed class (1-7) is not a completion and keeps its own code while
+        # still reporting the residual paths.
+        outcome.exit_code = 8
+        outcome.diagnostic_class = "managed_output_incomplete"
+    if residual_paths:
+        # One diagnostic for every residual-carrying envelope — promoted,
+        # direct class 8, cancelled, or failed — so a human-mode user always
+        # sees the paths that still need cleanup.
+        typer.echo(
+            "Managed-output cleanup did not complete; residual paths:",
+            err=True,
+        )
+        for path in residual_paths:
+            typer.echo(f"  {path}", err=True)
 
     envelope = CLIEnvelope(
         command=command,
@@ -586,6 +640,7 @@ def extract_command(
             ),
             run_ids=[extracted.run_id],
             invalidated_views=invalidated_views,
+            residual_paths=list(extracted.residual_paths),
             warnings=list(extracted.warnings),
             human_result=(
                 f"Extracted {len(created)} facts ({len(superseded)} superseded)."
@@ -707,6 +762,7 @@ def detections_generate(context: typer.Context) -> None:
             run_ids=[generated.run_id],
             warnings=list(generated.warnings),
             invalidated_views=invalidated_views,
+            residual_paths=list(generated.residual_paths),
             result=DetectionsGenerateResult(
                 gaps=gaps,
                 contradictions=contradictions,
@@ -785,6 +841,7 @@ def signals_generate(context: typer.Context) -> None:
             ),
             run_ids=[generated.run_id],
             invalidated_views=invalidated_views,
+            residual_paths=list(generated.residual_paths),
             warnings=list(generated.warnings),
             result=None,
             human_result=(
@@ -920,6 +977,7 @@ def assess_generate(
                 key=lambda value: value.encode("utf-8"),
             ),
             run_ids=[generated.run_id],
+            residual_paths=list(generated.residual_paths),
             warnings=list(generated.warnings),
             result=None,
             human_result=(
@@ -982,6 +1040,7 @@ def assess_verify(
             generation_ids=[],
             run_ids=[verified.run_id],
             findings=findings,
+            residual_paths=list(verified.residual_paths),
             result=None,
             human_result=_verification_human_result(
                 verified.snapshot_id, verified.snapshot_status, findings
@@ -1043,6 +1102,53 @@ def assess_show(
     _run_command(context, "assess show", operation)
 
 
+@export_app.command("assessment")
+def export_assessment_command(
+    context: typer.Context,
+    snapshot_id: str = typer.Option(..., "--snapshot"),
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.14 rule 3: resolve the selector read-only before the writer
+        # path, so a missing or superseded snapshot reports class 2 even when
+        # a managed-output residual would stop publication with class 8. The
+        # export service re-validates the stored row under the writer lock.
+        require_compatible(workspace)
+        with read_database(workspace) as connection:
+            snapshot = get_assessment_snapshot(
+                connection, snapshot_id, current_only=False
+            )
+        if snapshot is None:
+            raise SelectorNotFoundError()
+        if snapshot.superseded_at is not None:
+            raise SnapshotNotCurrentError()
+        # §16.11 gate on the already-loaded row: a status-ineligible export is
+        # class 10 before the writer path, so a managed residual cannot turn
+        # the refusal into class 8. The service re-applies the gate under the
+        # writer lock against the stored row.
+        require_export_eligible(snapshot.verification_status)
+
+        exported = export_assessment(workspace, snapshot_id=snapshot_id)
+        result = AssessmentExportResult(
+            manifest_path=exported.manifest_path,
+            managed_paths=exported.managed_paths,
+        )
+        return Outcome(
+            result=result,
+            human_result="\n".join(
+                [
+                    result.manifest_path,
+                    *(
+                        path
+                        for path in result.managed_paths
+                        if path != result.manifest_path
+                    ),
+                ]
+            ),
+        )
+
+    _run_command(context, "export assessment", operation)
+
+
 @gaps_app.command("list")
 def gaps_list(context: typer.Context) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
@@ -1083,11 +1189,9 @@ def gaps_answer(
                 workspace, gap_id=gap_id, raw_text=raw_text
             )
         evidence_ids = [item.id for item in bundle.evidence_items]
-        # §13/§14.7 gap-answer stale-export trigger: when §13.12/§13.14 managed
-        # exports land, this transaction enumerates and removes the affected
-        # out/assessment and out/branch sets. It supersedes no snapshot row and
-        # reports no §13.13 rule 9 regeneration command — the still-current
-        # snapshot needs re-export, not regeneration.
+        # §13/§14.7: capture removed every current snapshot's assessment set
+        # after commit. It supersedes no snapshot and reports no §13.13 rule 9
+        # regeneration command — the view needs re-export, not regeneration.
         return Outcome(
             affected_ids=AffectedIds(
                 created=[
@@ -1097,6 +1201,7 @@ def gaps_answer(
                 superseded=[],
                 deleted=[],
             ),
+            residual_paths=list(bundle.residual_paths),
             human_result=(
                 f"Answered gap {gap_id} with raw log {bundle.raw_log.id}."
             ),

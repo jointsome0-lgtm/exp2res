@@ -11,6 +11,7 @@ import stat
 from exp2res.domain.models import RawLog
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.errors import SelectorNotFoundError, WorkspaceBusyError
+from exp2res.exports.managed import remove_all_managed_output_entries
 from exp2res.storage.repository import (
     RawLogBundle,
     get_bundle,
@@ -168,6 +169,10 @@ def delete_log(
                 )
             )
             residual_paths.extend(_remove_managed_backups(workspace))
+            # §13.13 rule 5: owner deletion attempts every final, candidate,
+            # rollback, or other entry under both reserved managed parents
+            # before the privacy purge; database deletion still commits.
+            residual_paths.extend(remove_all_managed_output_entries(workspace))
             # §13.13 rule 5: detections and signals are generated prose and
             # leave with the facts; purging before the raw_logs delete keeps the
             # answer_log_id ON DELETE SET NULL action from firing into the

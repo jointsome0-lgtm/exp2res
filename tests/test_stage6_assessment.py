@@ -118,6 +118,17 @@ def run_stage6(
     )
 
 
+def plant_assessment_set(workspace: Path, snapshot_id: str) -> Path:
+    parent = workspace / "out" / "assessment"
+    parent.mkdir(mode=0o700, exist_ok=True)
+    path = parent / snapshot_id
+    path.mkdir(mode=0o700)
+    (path / "Vera Example stale member").write_text(
+        "Vera Example stale member\n", encoding="utf-8"
+    )
+    return path
+
+
 def test_global_happy_path_shares_generation_and_summary(workspace: Path) -> None:
     ids, facts, signals = prepare_graph(workspace)
     result = run_stage6(
@@ -402,6 +413,21 @@ def test_global_atlas_and_exp2res_views_coexist_and_only_folded_match_replaces(
         target="Exp2Res",
     )
     assert exp2res_view.superseded_snapshot_ids == ()
+    assessment_parent = workspace / "out" / "assessment"
+    assessment_parent.mkdir(mode=0o700, exist_ok=True)
+    view_sets = {
+        snapshot_id: assessment_parent / snapshot_id
+        for snapshot_id in (
+            global_view.snapshot_id,
+            atlas_view.snapshot_id,
+            exp2res_view.snapshot_id,
+        )
+    }
+    for path in view_sets.values():
+        path.mkdir(mode=0o700)
+        (path / "Vera Example stale member").write_text(
+            "Vera Example stale member\n", encoding="utf-8"
+        )
     replacement = run_stage6(
         workspace,
         FakeContractRunner(
@@ -412,6 +438,9 @@ def test_global_atlas_and_exp2res_views_coexist_and_only_folded_match_replaces(
         target="exp2res",
     )
     assert replacement.superseded_snapshot_ids == (exp2res_view.snapshot_id,)
+    assert not view_sets[exp2res_view.snapshot_id].exists()
+    assert view_sets[global_view.snapshot_id].is_dir()
+    assert view_sets[atlas_view.snapshot_id].is_dir()
     with read_database(workspace) as connection:
         current_ids = {item.id for item in list_assessment_snapshots(connection)}
     assert current_ids == {global_view.snapshot_id, atlas_view.snapshot_id, replacement.snapshot_id}
@@ -593,6 +622,7 @@ def test_stage5_replacement_invalidates_claims_snapshot_and_reports_view(
         FakeContractRunner([assessment_response(fact_ids=list(facts), signal_ids=list(signals))]),
         ids,
     )
+    stale_set = plant_assessment_set(workspace, assessed.snapshot_id)
     replaced = run_stage5(
         workspace,
         FakeContractRunner([signal_response(list(facts), statement="Vera Example replacement signal.")]),
@@ -601,6 +631,7 @@ def test_stage5_replacement_invalidates_claims_snapshot_and_reports_view(
     assert replaced.superseded_snapshot_ids == (assessed.snapshot_id,)
     assert set(replaced.superseded_claim_ids) == set(assessed.created_claim_ids)
     assert replaced.invalidated_views[0].regeneration_command == "exp2res assess generate"
+    assert not stale_set.exists()
     with read_database(workspace) as connection:
         assert list_assessment_snapshots(connection) == ()
 
@@ -614,6 +645,7 @@ def test_stage4_retention_preserves_view_but_changed_generation_invalidates_it(
         FakeContractRunner([assessment_response(fact_ids=list(facts), signal_ids=list(signals))]),
         ids,
     )
+    stale_set = plant_assessment_set(workspace, assessed.snapshot_id)
     empty = json.dumps(
         {"gap_questions": [], "contradictions": [], "warnings": []},
         separators=(",", ":"),
@@ -621,6 +653,7 @@ def test_stage4_retention_preserves_view_but_changed_generation_invalidates_it(
     retained = run_stage4(workspace, FakeContractRunner([empty]), ids)
     assert retained.retained is True
     assert retained.superseded_snapshot_ids == retained.superseded_claim_ids == ()
+    assert stale_set.is_dir()
     changed = run_stage4(
         workspace,
         FakeContractRunner(
@@ -637,6 +670,7 @@ def test_stage4_retention_preserves_view_but_changed_generation_invalidates_it(
     assert changed.retained is False
     assert changed.superseded_snapshot_ids == (assessed.snapshot_id,)
     assert changed.invalidated_views[0].snapshot_id == assessed.snapshot_id
+    assert not stale_set.exists()
 
 
 def test_stage3_replacement_and_log_delete_cover_assessment_lifecycle(
@@ -648,6 +682,7 @@ def test_stage3_replacement_and_log_delete_cover_assessment_lifecycle(
         FakeContractRunner([assessment_response(fact_ids=list(facts), signal_ids=list(signals))]),
         ids,
     )
+    stale_set = plant_assessment_set(workspace, assessed.snapshot_id)
     extracted = run_stage3(
         workspace,
         FakeContractRunner([fact_response(["evi_vera_signal_0"])]),
@@ -656,6 +691,7 @@ def test_stage3_replacement_and_log_delete_cover_assessment_lifecycle(
     )
     assert extracted.superseded_snapshot_ids == (assessed.snapshot_id,)
     assert extracted.invalidated_views[0].regeneration_command == "exp2res assess generate"
+    assert not stale_set.exists()
 
     current_fact = extracted.created[0]
     signals2 = run_stage5(
