@@ -68,7 +68,7 @@ status = "partial"
 phases = ["3"]
 evals = ["21.16", "21.48"]
 issues = []
-note = "The assessment export service now renders and publishes deterministic report.md through the managed writer; the public CLI command and lifecycle invalidation wiring remain in the follow-up slice"
+note = "The public export assessment CLI now publishes deterministic golden-matched report.md through the managed writer and closed envelope; the shared eval remains partial because the verified bullet-pack export half is pending"
 
 ["24.12"]
 status = "pending"
@@ -94,7 +94,7 @@ status = "partial"
 phases = ["1", "2", "3", "4"]
 evals = ["21.12"]
 issues = ["#82", "PR #125"]
-note = "Stage 3 service and Vera CLI reruns replace each lineage with one coherent current fact generation; downstream generation mixing and managed-export invalidation remain for later phases"
+note = "Stage 3 service and Vera CLI reruns replace each lineage coherently, and Stage 3-6 supersession now removes each affected assessment set or reports residual failure; downstream branch/bullet generation mixing and export invalidation remain"
 
 ["24.16"]
 status = "pending"
@@ -107,7 +107,7 @@ status = "partial"
 phases = ["0", "1", "2", "3", "4"]
 evals = ["21.14"]
 issues = ["#81", "PR #95"]
-note = "Current tests prove committed owner deletion, raw/evidence purge, global current-and-historical ExperienceFact/fact_sources purge, global LLM-call hash redaction, secure path handling, and residual-path reporting; the Stage 3-5 rebuild, later derived tables, view reporting, and managed exports remain"
+note = "Owner deletion now proves committed raw/evidence and current/historical derived purge, call-hash redaction, all-entry assessment/branch managed-output removal, invalidated-view reporting, and residual failure; the automatic Stage 3-5 rebuild and later branch/JD lifecycle halves remain"
 
 ["24.18"]
 status = "partial"
@@ -181,10 +181,11 @@ evals = ["21.25"]
 issues = []
 
 ["24.29"]
-status = "pending"
+status = "partial"
 phases = ["2", "3", "4"]
 evals = ["21.26", "21.33"]
 issues = []
+note = "Current Stage 6 tests prove canonical folded project-view identity, simultaneous global/project views, complete current unknown membership, and typed counterevidence rendering; the remaining cross-eval Stage 10 and broader language/rendering halves are pending"
 
 ["24.30"]
 status = "partial"
@@ -239,7 +240,7 @@ status = "partial"
 phases = ["3", "4"]
 evals = ["21.34", "21.47"]
 issues = []
-note = "Assessment sets are opaque-snapshot-ID keyed, manifest-validated, lifecycle-hash-sensitive, and same-view replaced without touching other views; resume paths and branch-name separation remain"
+note = "Assessment sets are opaque-snapshot-ID keyed, manifest-validated, lifecycle-hash-sensitive, invalidated by verification and gap answers, and same-view replaced without touching other views; resume paths, branch replacement, and branch-name separation remain"
 
 ["24.38"]
 status = "partial"
@@ -332,14 +333,14 @@ status = "partial"
 phases = ["3", "4"]
 evals = ["21.34", "21.47"]
 issues = []
-note = "The assessment half proves private candidate construction, manifest-last flush, portable rollback publication, no-follow containment, residual reporting, and deterministic preamble recovery; resume publication remains"
+note = "The assessment half proves private candidate construction, manifest-last flush, rollback publication, no-follow containment, lock-held every-writer preamble recovery/reporting, stale cleanup, and deletion; resume publication remains"
 
 ["24.51"]
 status = "partial"
 phases = ["3", "4"]
 evals = ["21.48"]
 issues = []
-note = "Assessment report.md, self_claims.json, evidence_map.json, manifest hashes, closed schemas, hostile-Markdown escaping, and repeat bytes are covered; every bullet-pack member and CLI envelope half remains"
+note = "Assessment report.md, self_claims.json, evidence_map.json, closed export envelope, pinned Vera E6 goldens, repeated bytes/member hashes, and answered-since-synthesis replay are covered; every bullet-pack member and its CLI envelope half remain"
 
 ["24.52"]
 status = "pending"

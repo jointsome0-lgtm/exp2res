@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import fcntl
@@ -38,6 +39,9 @@ from .schema import (
 
 CURRENT_SCHEMA_VERSION = 7
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
+_CLI_PREAMBLE_RESIDUALS: ContextVar[list[str] | None] = ContextVar(
+    "exp2res_cli_preamble_residuals", default=None
+)
 CONFIG_TEMPLATE = """[workspace]
 timezone = ""
 
@@ -561,6 +565,16 @@ def migrate_workspace(
                     or not migration_available(locked_status.stored_version)
                 ):
                     raise SchemaCompatibilityError()
+                # §8.1 includes migration in the business-writer set. Apply
+                # the same lock-held filesystem preamble before backup/DDL;
+                # residuals are surfaced by the enclosing CLI operation and
+                # do not block the schema mutation itself.
+                from exp2res.exports.managed import reconcile_managed_outputs
+
+                managed_residuals = reconcile_managed_outputs(workspace)
+                sink = _CLI_PREAMBLE_RESIDUALS.get()
+                if sink is not None:
+                    sink.extend(managed_residuals)
                 path = _migration_path(locked_status.stored_version)
                 if not path:
                     raise SchemaCompatibilityError()
@@ -707,12 +721,24 @@ def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -
 
 
 @contextmanager
+def collect_preamble_residuals(residuals: list[str]) -> Iterator[None]:
+    """Collect §13.14 preamble residuals across one CLI operation."""
+
+    token = _CLI_PREAMBLE_RESIDUALS.set(residuals)
+    try:
+        yield
+    finally:
+        _CLI_PREAMBLE_RESIDUALS.reset(token)
+
+
+@contextmanager
 def writer_database(
     workspace: Path,
     *,
     owner_delete: bool = False,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     reconcile: bool = True,
+    preamble_residuals: list[str] | None = None,
 ) -> Iterator[sqlite3.Connection]:
     # The first compatibility gate precedes lock acquisition and write I/O.
     require_compatible(workspace)
@@ -745,6 +771,21 @@ def writer_database(
                 except BaseException:
                     connection.rollback()
                     raise
+                # §8.1: every business writer applies the managed-output
+                # preamble after telemetry reconciliation and before its own
+                # operation, while the same writer lock remains held. A
+                # residual is report-only here: it does not block a database
+                # mutation, although export publication rechecks and refuses.
+                from exp2res.exports.managed import reconcile_managed_outputs
+
+                managed_residuals = reconcile_managed_outputs(workspace)
+                sink = (
+                    preamble_residuals
+                    if preamble_residuals is not None
+                    else _CLI_PREAMBLE_RESIDUALS.get()
+                )
+                if sink is not None:
+                    sink.extend(managed_residuals)
             yield connection
         finally:
             connection.close()

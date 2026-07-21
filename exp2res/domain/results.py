@@ -48,6 +48,7 @@ CommandPath = Literal[
     "assess verify",
     "assess list",
     "assess show",
+    "export assessment",
     "gaps list",
     "gaps answer",
     "contradictions list",
@@ -167,6 +168,11 @@ class AssessShowResult(StrictModel):
     contradictions: list[Contradiction]
 
 
+class AssessmentExportResult(StrictModel):
+    manifest_path: str
+    managed_paths: list[str]
+
+
 ResultPayload = (
     SchemaResult
     | LogsListResult
@@ -178,6 +184,7 @@ ResultPayload = (
     | SignalsListResult
     | AssessListResult
     | AssessShowResult
+    | AssessmentExportResult
 )
 
 

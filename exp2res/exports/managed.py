@@ -462,6 +462,35 @@ def _remove_tree(path: Path, out_root: Path) -> bool:
         return False
 
 
+def _remove_entry(path: Path, out_root: Path) -> bool:
+    """Remove one contained real file/tree without following any link."""
+
+    info = _lstat(path)
+    if info is None:
+        return True
+    if stat.S_ISLNK(info.st_mode):
+        return False
+    if stat.S_ISDIR(info.st_mode):
+        return _remove_tree(path, out_root)
+    if not stat.S_ISREG(info.st_mode):
+        return False
+    try:
+        _validate_existing_path(path, out_root, directory=False)
+        parent_descriptor = _open_directory_fd(path.parent, out_root)
+        try:
+            current = os.stat(
+                path.name, dir_fd=parent_descriptor, follow_symlinks=False
+            )
+            if not stat.S_ISREG(current.st_mode):
+                return False
+            os.unlink(path.name, dir_fd=parent_descriptor)
+        finally:
+            os.close(parent_descriptor)
+        return True
+    except OSError:
+        return False
+
+
 def _directory_names(path: Path, out_root: Path) -> list[str]:
     _validate_existing_path(path, out_root, directory=True)
     descriptor = _open_directory_fd(path, out_root)
@@ -591,6 +620,81 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
                 except OSError:
                     residuals.add(str(parent))
     return tuple(sorted(residuals, key=lambda value: value.encode("utf-8")))
+
+
+def remove_assessment_sets(
+    workspace: Path, snapshot_ids: tuple[str, ...] | list[str]
+) -> tuple[str, ...]:
+    """Remove exactly the selected ID-keyed assessment sets after commit."""
+
+    selected = tuple(sorted(set(snapshot_ids), key=id_key))
+    for snapshot_id in selected:
+        if ENTITY_ID.fullmatch(snapshot_id) is None:
+            raise IntegrityFailureError("managed_output_entity_id_invalid")
+    if not selected:
+        return ()
+
+    try:
+        _root, out_root = _canonical_roots(workspace)
+    except ManagedOutputIncompleteError as error:
+        return error.residual_paths
+    parent = out_root / "assessment"
+    if _lstat(parent) is None:
+        return ()
+    try:
+        _validate_existing_path(parent, out_root, directory=True)
+    except OSError:
+        return tuple(str(parent / snapshot_id) for snapshot_id in selected)
+
+    residuals: set[str] = set()
+    removed = False
+    for snapshot_id in selected:
+        path = parent / snapshot_id
+        if _lstat(path) is None:
+            continue
+        if _remove_entry(path, out_root):
+            removed = True
+        else:
+            residuals.add(str(path))
+    if removed:
+        try:
+            _fsync_directory(parent, out_root)
+        except OSError:
+            residuals.add(str(parent))
+    return tuple(sorted(residuals, key=id_key))
+
+
+def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
+    """Remove every contained entry below both reserved managed parents."""
+
+    try:
+        _root, out_root = _canonical_roots(workspace)
+    except ManagedOutputIncompleteError as error:
+        return error.residual_paths
+
+    residuals: set[str] = set()
+    for parent_name in ("assessment", "branch"):
+        parent = out_root / parent_name
+        if _lstat(parent) is None:
+            continue
+        try:
+            names = _directory_names(parent, out_root)
+        except OSError:
+            residuals.add(str(parent))
+            continue
+        removed = False
+        for name in names:
+            path = parent / name
+            if _remove_entry(path, out_root):
+                removed = True
+            else:
+                residuals.add(str(path))
+        if removed:
+            try:
+                _fsync_directory(parent, out_root)
+            except OSError:
+                residuals.add(str(parent))
+    return tuple(sorted(residuals, key=id_key))
 
 
 def _candidate_cleanup(path: Path, out_root: Path) -> None:

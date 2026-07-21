@@ -38,6 +38,7 @@ from exp2res.errors import HydrationFailureError, IdCollisionError, IntegrityFai
 class RawLogBundle:
     raw_log: RawLog
     evidence_items: tuple[EvidenceItem, ...]
+    residual_paths: tuple[str, ...] = ()
 
 
 def _json(value: object) -> str:

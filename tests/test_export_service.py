@@ -1128,7 +1128,7 @@ def test_unreconciled_preamble_residual_stops_before_rendering(
         generated.snapshot_id,
     )
     assessment_parent = workspace / "out" / "assessment"
-    assessment_parent.mkdir(mode=0o700)
+    assessment_parent.mkdir(mode=0o700, exist_ok=True)
     target = workspace.parent / "Vera Example residual target"
     target.mkdir()
     candidate = assessment_parent / (

@@ -22,6 +22,7 @@ from exp2res.domain.models import (
 )
 from exp2res.domain.temporal import confidence_exceeds
 from exp2res.errors import EmptyAssessmentViewError, IntegrityFailureError
+from exp2res.exports.managed import remove_assessment_sets
 from exp2res.llm.assessment_writer import (
     ASSESSMENT_WRITER_CONTRACT,
     AssessmentWriterInput,
@@ -68,6 +69,7 @@ class Stage6Result:
     generation_id: str | None
     superseded_generation_ids: tuple[str, ...]
     replaced_view: ReplacedAssessmentView | None
+    residual_paths: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
     snapshot: AssessmentSnapshot | None
     claims: tuple[SelfClaim, ...]
@@ -439,6 +441,9 @@ def run_assessment_generation(
             token_patterns=token_patterns,
             resolved_credentials=resolved_credentials,
         )
+        residual_paths = remove_assessment_sets(
+            workspace, superseded_snapshot_ids
+        )
         snapshot = (
             None
             if snapshot_id is None
@@ -460,6 +465,7 @@ def run_assessment_generation(
         generation_id=generation_id,
         superseded_generation_ids=tuple(sorted(superseded_generation_ids, key=_id_key)),
         replaced_view=replaced_view,
+        residual_paths=residual_paths,
         warnings=resolved.warnings,
         snapshot=snapshot,
         claims=claims,

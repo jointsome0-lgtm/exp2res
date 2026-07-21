@@ -28,6 +28,7 @@ from exp2res.errors import (
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
+from exp2res.exports.managed import remove_assessment_sets
 from exp2res.llm.assessment_verifier import (
     ASSESSMENT_VERIFIER_CONTRACT,
     AssessmentVerifierInput,
@@ -76,6 +77,7 @@ class Stage7Result:
     snapshot_status: VerificationStatus
     findings: tuple[VerificationFinding, ...]
     claim_statuses: tuple[tuple[str, VerificationStatus], ...]
+    residual_paths: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -367,6 +369,13 @@ def run_assessment_verification(
             raise SnapshotNotCurrentError()
 
         claims = _require_current_members(connection, snapshot_id=snapshot_id)
+        prior_verification_state = (
+            snapshot.verification_status,
+            tuple(
+                (claim.id, claim.verification_status, claim.counterevidence)
+                for claim in claims
+            ),
+        )
         _check_snapshot_integrity(connection, snapshot=snapshot, claims=claims)
 
         view = select_assessment_view(
@@ -456,8 +465,6 @@ def run_assessment_verification(
             stored = get_assessment_snapshot(held, snapshot_id)
             if stored is None or stored.verification_status != fresh_aggregate:
                 raise IntegrityFailureError("snapshot_aggregate_mismatch")
-            # §13.7: dependent branch/bullet supersession and stale managed-set
-            # removal join this transaction when those tables and exports land.
             return tuple(candidate.finding.id for candidate in candidates)
 
         run_complete_stage(
@@ -490,6 +497,21 @@ def run_assessment_verification(
         current_snapshot = get_assessment_snapshot(connection, snapshot_id)
         if current_snapshot is None:
             raise IntegrityFailureError("snapshot_missing_after_verification")
+        current_verification_state = (
+            current_snapshot.verification_status,
+            tuple(
+                (claim.id, claim.verification_status, claim.counterevidence)
+                for claim in current_claims
+            ),
+        )
+        # §13.7 stale-export trigger: only a committed verification-field
+        # change invalidates this snapshot's ID-keyed set. Finding history by
+        # itself does not change the renderer state.
+        residual_paths = (
+            remove_assessment_sets(workspace, (snapshot_id,))
+            if current_verification_state != prior_verification_state
+            else ()
+        )
 
     return Stage7Result(
         run_id=run_id,
@@ -499,4 +521,5 @@ def run_assessment_verification(
         claim_statuses=tuple(
             (item.id, item.verification_status) for item in current_claims
         ),
+        residual_paths=residual_paths,
     )

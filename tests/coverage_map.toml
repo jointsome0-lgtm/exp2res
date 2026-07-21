@@ -237,8 +237,15 @@ phase = "3"
 note = "Stage 6 proves stored-key subject selection, cross-project context facts, and folded view replacement identity; the §14.4 correction slice waits on the deferred correction add command, while Stage 3 project echo rejection is already enforced"
 
 ["21.34"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_cli_export_assessment.py::test_export_assessment_closed_success_envelope_needs_no_yes",
+  "tests/test_cli_export_assessment.py::test_reverification_cleanup_residual_takes_class_8_over_blocked_findings",
+  "tests/test_stage6_assessment.py::test_global_atlas_and_exp2res_views_coexist_and_only_folded_match_replaces",
+  "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
+]
 phase = "4"
+note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and Stage 3-6 supersession, same-view isolation, and lifecycle-sensitive re-export are covered; resume ID-keyed paths, branch-name cases, and shell consumption remain"
 
 ["21.35"]
 status = "partial"
@@ -370,9 +377,12 @@ nodes = [
   "tests/test_managed_output.py::test_preamble_candidate_restore_remove_and_ambiguous_matrix",
   "tests/test_managed_output.py::test_preamble_planted_symlink_candidate_is_reported_once",
   "tests/test_export_service.py::test_repeated_service_export_keeps_fixed_members_identical_and_writes_no_rows",
+  "tests/test_cli_export_assessment.py::test_non_export_writer_commits_but_preamble_residual_forces_class_8",
+  "tests/test_deletion_phase0.py::test_logs_delete_removes_every_managed_set_and_reports_cleanup_residual",
+  "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
 phase = "4"
-note = "Assessment publication proves the ID-keyed manifest writer, owner-only modes, atomic candidate/rollback fallback, idempotency, same-view replacement, no-follow symlink residuals, preamble recovery, and database-read-only service boundary; resume-set publication and the later CLI/invalidation wiring remain"
+note = "Assessment publication proves the ID-keyed manifest writer, owner-only modes, atomic candidate/rollback fallback, idempotency, same-view replacement, no-follow residuals, every-writer preamble reporting, stale invalidation, managed deletion, and the CLI boundary; resume-set publication remains"
 
 ["21.48"]
 status = "partial"
@@ -388,9 +398,11 @@ nodes = [
   "tests/test_export_service.py::test_assessment_export_gate_matrix_all_eight_statuses[contradicted-True]",
   "tests/test_export_service.py::test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity",
   "tests/test_export_service.py::test_repeated_service_export_keeps_fixed_members_identical_and_writes_no_rows",
+  "tests/test_cli_export_assessment.py::test_export_assessment_closed_success_envelope_needs_no_yes",
+  "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
 phase = "4"
-note = "The assessment half proves deterministic §17 Markdown, strict version-1 companions, complete typed link projections, lifecycle-sensitive render hashing, all-status export gating, graph integrity, and byte-identical repeat export; the bullet-pack members, CLI result wiring, and cross-kind end-to-end contract remain"
+note = "The assessment half proves deterministic §17 Markdown, strict version-1 companions, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and repeated bytes/hashes; every bullet-pack member remains"
 
 ["21.49"]
 status = "pending"

@@ -20,6 +20,7 @@ from exp2res.domain.temporal import (
     occurred_interval,
     placement_supports,
 )
+from exp2res.exports.managed import remove_assessment_sets
 from exp2res.llm.contracts import (
     ContractValidationError,
     ContractWarning,
@@ -66,6 +67,7 @@ class Stage3Result:
     superseded_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
+    residual_paths: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
 
 
@@ -460,6 +462,11 @@ def run_fact_extraction(
             token_patterns=token_patterns,
             resolved_credentials=resolved_credentials,
         )
+        # §13 stale-export trigger class 1: business supersession is already
+        # committed; cleanup failure is returned and never rolls it back.
+        residual_paths = remove_assessment_sets(
+            workspace, superseded_snapshot_ids
+        )
 
     resolved_lineages = tuple(cast(_ResolvedLineage, item) for item in outcome.resolved)
     return Stage3Result(
@@ -486,6 +493,7 @@ def run_fact_extraction(
         invalidated_views=tuple(
             sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
         ),
+        residual_paths=residual_paths,
         warnings=tuple(
             warning
             for item in resolved_lineages

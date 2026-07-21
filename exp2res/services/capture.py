@@ -25,6 +25,7 @@ from exp2res.errors import (
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
+from exp2res.exports.managed import remove_assessment_sets
 from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.time_input import today_occurred, workspace_zone
@@ -317,10 +318,20 @@ def capture_gap_answer(
                     last_collision = error
                     continue
                 connection.execute(f"RELEASE {savepoint}")
-                # §13's stale-export trigger is vacuous in schema v4: no
-                # managed snapshot or branch export tables exist yet.
                 connection.commit()
-                return RawLogBundle(raw_log, (evidence_item,))
+                # §13 stale-export trigger: answering a gap keeps every view
+                # current, but its rendered answer state changed. Enumerate
+                # after the capture commit and remove only current snapshot
+                # sets; cleanup failure never rolls the answer back.
+                snapshot_ids = tuple(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT id FROM assessment_snapshots "
+                        "WHERE superseded_at IS NULL ORDER BY CAST(id AS BLOB)"
+                    )
+                )
+                residuals = remove_assessment_sets(workspace, snapshot_ids)
+                return RawLogBundle(raw_log, (evidence_item,), residuals)
             raise IdCollisionError() from last_collision
         except sqlite3.OperationalError as error:
             connection.rollback()
