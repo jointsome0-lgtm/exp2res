@@ -412,9 +412,10 @@ nodes = [
   "tests/test_export_service.py::test_repeated_service_export_keeps_fixed_members_identical_and_writes_no_rows",
   "tests/test_cli_export_assessment.py::test_export_assessment_closed_success_envelope_needs_no_yes",
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
+  "tests/test_demo.py::test_vera_first_mirror_demo_is_closed_current_blocking_and_deterministic",
 ]
 phase = "4"
-note = "The assessment half proves deterministic §17 Markdown, strict version-1 companions, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and repeated bytes/hashes; every bullet-pack member remains"
+note = "The assessment half proves deterministic §17 Markdown, strict version-1 companions, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure plus repeated transcript and member bytes; every bullet-pack member remains"
 
 ["21.49"]
 status = "pending"

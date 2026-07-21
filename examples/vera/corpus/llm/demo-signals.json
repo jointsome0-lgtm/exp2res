@@ -1,0 +1,17 @@
+{
+  "signals": [
+    {
+      "confidence": "medium",
+      "counter_fact_ids": [
+        "fact_demo_0002"
+      ],
+      "signal_type": "execution_pattern",
+      "statement": "Vera Example checks documentation claims against stored evidence and corrects premature completion reports.",
+      "supporting_fact_ids": [
+        "fact_demo_0001",
+        "fact_demo_0003"
+      ]
+    }
+  ],
+  "warnings": []
+}

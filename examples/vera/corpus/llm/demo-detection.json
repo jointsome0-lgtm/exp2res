@@ -1,0 +1,22 @@
+{
+  "contradictions": [
+    {
+      "description": "One stored log says the guide was finished; a later stored log says placeholder TLS text remained.",
+      "left_ref_id": "log_demo_0002",
+      "left_ref_type": "raw_log",
+      "right_ref_id": "log_demo_0003",
+      "right_ref_type": "raw_log",
+      "title": "Vera Example ingress completion conflict"
+    }
+  ],
+  "gap_questions": [
+    {
+      "priority": "medium",
+      "question": "What external outcome followed Vera Example's runbook validation?",
+      "reason": "missing_metric",
+      "target_id": "fact_demo_0001",
+      "target_type": "experience_fact"
+    }
+  ],
+  "warnings": []
+}

@@ -1,0 +1,31 @@
+{
+  "self_claims": [
+    {
+      "claim": "Vera Example operated production Kubernetes systems for ten years.",
+      "claim_kind": "pattern_signal",
+      "confidence": "medium",
+      "dimension": "technical_skill",
+      "source_fact_ids": [
+        "fact_demo_0001"
+      ],
+      "source_signal_ids": [
+        "signal_demo_0001"
+      ],
+      "uncertainty": null
+    },
+    {
+      "claim": "Current evidence proves Vera Example is a senior production Kubernetes expert.",
+      "claim_kind": "narrative_summary",
+      "confidence": "medium",
+      "dimension": "trajectory",
+      "source_fact_ids": [
+        "fact_demo_0001"
+      ],
+      "source_signal_ids": [
+        "signal_demo_0001"
+      ],
+      "uncertainty": null
+    }
+  ],
+  "warnings": []
+}

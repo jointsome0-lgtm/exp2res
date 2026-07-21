@@ -1,0 +1,223 @@
+Vera Example — deterministic first-mirror demo
+corpus=0.3.0 schema=7 envelope=1
+mode=no-cost offline canned responses; network/provider calls=0
+workspace=demo/workspace (external temporary workspace; display alias only)
+
+== Setup and invented Vera corpus capture ==
+
+$ exp2res init
+Initialized schema version 7 at demo/workspace.
+
+Configured demo/workspace timezone: Europe/Berlin
+
+$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-06-02.md
+Created raw log log_demo_0001 with evidence evi_demo_0001.
+
+$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-06-25.md
+Created raw log log_demo_0002 with evidence evi_demo_0002.
+
+$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-07-02.md
+Created raw log log_demo_0003 with evidence evi_demo_0003.
+
+== Act 1 — supported first mirror and export ==
+
+$ exp2res --workspace demo/workspace --yes extract
+Extracted 3 facts (0 superseded).
+
+$ exp2res --workspace demo/workspace --yes detections generate
+Replaced both complete detection sets. Current gaps (1): gap_demo_0001. Current contradictions (1): contradiction_demo_0001. Invalidated artifact classes: none.
+
+$ exp2res --workspace demo/workspace gaps list
+gap_demo_0001	medium	missing_metric	false
+
+$ exp2res --workspace demo/workspace contradictions show --contradiction-id contradiction_demo_0001
+contradiction_demo_0001	Vera Example ingress completion conflict	2026-07-11T10:05:00+02:00
+
+$ exp2res --workspace demo/workspace --yes signals generate
+Created 1 signals; superseded 0. Invalidated 0 assessment views.
+
+$ exp2res --workspace demo/workspace --yes assess generate
+Created snapshot_demo_0001 — Self-Assessment — Global; 2 claims.
+
+$ exp2res --workspace demo/workspace --yes assess verify --snapshot snapshot_demo_0001
+Snapshot snapshot_demo_0001: supported
+
+Finding finding_demo_0001
+Target claim: claim_demo_0001
+Status: supported
+Reason: The Vera Example claim resolves to the supplied fact, evidence-item, and raw-log closure.
+Unsupported phrases:
+- none
+Counterevidence:
+- none
+
+Finding finding_demo_0002
+Target claim: claim_demo_0002
+Status: supported
+Reason: The Vera Example claim resolves to the supplied fact, evidence-item, and raw-log closure.
+Unsupported phrases:
+- none
+Counterevidence:
+- none
+
+$ exp2res --workspace demo/workspace assess show --snapshot snapshot_demo_0001
+Self-Assessment — Global
+claim_demo_0001	pattern_signal	working_style	medium	supported
+claim_demo_0002	narrative_summary	trajectory	medium	supported
+
+$ exp2res --workspace demo/workspace export assessment --snapshot snapshot_demo_0001
+demo/workspace/out/assessment/snapshot_demo_0001/manifest.json
+demo/workspace/out/assessment/snapshot_demo_0001/evidence_map.json
+demo/workspace/out/assessment/snapshot_demo_0001/report.md
+demo/workspace/out/assessment/snapshot_demo_0001/self_claims.json
+
+Claim claim_demo_0001 -> fact fact_demo_0001 -> evidence evi_demo_0001 -> raw log log_demo_0001
+
+$ exp2res --workspace demo/workspace logs show --log-id log_demo_0001
+{
+  "log": {
+    "id": "log_demo_0001",
+    "recorded_at": "2026-06-02T21:00:00+02:00",
+    "entry_type": "manual_daily",
+    "source_type": "manual_entry",
+    "occurred": {
+      "start": "2026-06-02T00:00:00+02:00",
+      "end": null,
+      "precision": "exact_day",
+      "confidence": "high"
+    },
+    "project": "K8s Playbook",
+    "corrects_log_id": null,
+    "external_ref": "examples/vera/corpus/logs/daily-2026-06-02.md"
+  },
+  "evidence_items": [
+    {
+      "id": "evi_demo_0001",
+      "created_at": "2026-06-02T21:00:00+02:00",
+      "raw_log_id": "log_demo_0001",
+      "title": null,
+      "summary": "Owner-authored manual claim.",
+      "uri": null,
+      "path": null,
+      "strength": "manual_claim"
+    }
+  ]
+}
+# Daily log — 2026-06-02 — Vera Example
+
+Drafted the kubectl troubleshooting runbook for the K8s Playbook.
+Walked every step on the toy three-node cluster before writing it down.
+The crashloopbackoff section still needs a real example.
+
+Contradiction contradiction_demo_0001 -> raw logs log_demo_0002 and log_demo_0003
+
+$ exp2res --workspace demo/workspace logs show --log-id log_demo_0002
+{
+  "log": {
+    "id": "log_demo_0002",
+    "recorded_at": "2026-06-25T22:00:00+02:00",
+    "entry_type": "manual_daily",
+    "source_type": "manual_entry",
+    "occurred": {
+      "start": "2026-06-25T00:00:00+02:00",
+      "end": null,
+      "precision": "exact_day",
+      "confidence": "high"
+    },
+    "project": "K8s Playbook",
+    "corrects_log_id": null,
+    "external_ref": "examples/vera/corpus/logs/daily-2026-06-25.md"
+  },
+  "evidence_items": [
+    {
+      "id": "evi_demo_0002",
+      "created_at": "2026-06-25T22:00:00+02:00",
+      "raw_log_id": "log_demo_0002",
+      "title": null,
+      "summary": "Owner-authored manual claim.",
+      "uri": null,
+      "path": null,
+      "strength": "manual_claim"
+    }
+  ]
+}
+# Daily log — 2026-06-25 — Vera Example
+
+Finished the ingress guide today. Merged the last section and closed my
+checklist item. Feels done.
+
+$ exp2res --workspace demo/workspace logs show --log-id log_demo_0003
+{
+  "log": {
+    "id": "log_demo_0003",
+    "recorded_at": "2026-07-02T21:00:00+02:00",
+    "entry_type": "manual_daily",
+    "source_type": "manual_entry",
+    "occurred": {
+      "start": "2026-07-02T00:00:00+02:00",
+      "end": null,
+      "precision": "exact_day",
+      "confidence": "high"
+    },
+    "project": "K8s Playbook",
+    "corrects_log_id": null,
+    "external_ref": "examples/vera/corpus/logs/daily-2026-07-02.md"
+  },
+  "evidence_items": [
+    {
+      "id": "evi_demo_0003",
+      "created_at": "2026-07-02T21:00:00+02:00",
+      "raw_log_id": "log_demo_0003",
+      "title": null,
+      "summary": "Owner-authored manual claim.",
+      "uri": null,
+      "path": null,
+      "strength": "manual_claim"
+    }
+  ]
+}
+# Daily log — 2026-07-02 — Vera Example
+
+Opened the ingress guide to add a link and found half the TLS section is
+still placeholder text. It was not actually finished. Picked the
+drafting back up today.
+
+== Act 2 — rejected overclaim and first-class export refusal ==
+
+$ exp2res --workspace demo/workspace --yes assess generate --scope project --project 'K8s Playbook'
+Created snapshot_demo_0002 — Self-Assessment — K8s Playbook; 2 claims.
+
+$ exp2res --workspace demo/workspace assess show --snapshot snapshot_demo_0002
+Self-Assessment — K8s Playbook
+claim_demo_0003	pattern_signal	technical_skill	medium	unverified
+claim_demo_0004	narrative_summary	trajectory	medium	unverified
+
+$ exp2res --workspace demo/workspace --yes assess verify --snapshot snapshot_demo_0002
+Assessment verification completed, but assessment export is blocked.
+Snapshot snapshot_demo_0002: rejected
+
+Finding finding_demo_0003
+Target claim: claim_demo_0003
+Status: rejected
+Reason: The Vera Example corpus contains no production-tenure or seniority evidence.
+Unsupported phrases:
+- operated production Kubernetes systems for ten years
+Suggested rewrite: Vera Example drafted and validated a kubectl troubleshooting runbook on an invented toy cluster.
+Counterevidence:
+- Vera Example only walked steps on an invented toy cluster. [experience_fact:fact_demo_0001]
+
+Finding finding_demo_0004
+Target claim: claim_demo_0004
+Status: supported
+Reason: The narrower Vera Example evidence-bound summary is supported.
+Unsupported phrases:
+- none
+Counterevidence:
+- none
+
+$ exp2res --workspace demo/workspace export assessment --snapshot snapshot_demo_0002
+Assessment export is blocked by its verification-status gate.
+
+Act 2 result: verifier exit 10; assessment export exit 10; no blocked export published.
+
+Demo run complete. Run make demo-verify for closure and determinism proof.

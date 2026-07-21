@@ -1,0 +1,31 @@
+{
+  "facts": [
+    {
+      "action": "drafted and validated",
+      "claim": "Vera Example drafted and validated a kubectl troubleshooting runbook.",
+      "claim_kind": "observed_fact",
+      "company": null,
+      "confidence": "medium",
+      "context": "independent_project",
+      "evidence_item_ids": [
+        "evi_demo_0001"
+      ],
+      "object": "a kubectl troubleshooting runbook",
+      "occurred": null,
+      "outcome": "Every step was walked on an invented toy cluster.",
+      "ownership_level": "implemented",
+      "role": null,
+      "skills": [
+        "technical writing"
+      ],
+      "technologies": [
+        "Kubernetes",
+        "kubectl"
+      ],
+      "themes": [
+        "evidence-grounded documentation"
+      ]
+    }
+  ],
+  "warnings": []
+}

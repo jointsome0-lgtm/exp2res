@@ -24,3 +24,6 @@ plans/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Human-facing alias only; the runnable demo workspace lives outside the checkout.
+demo/workspace/
