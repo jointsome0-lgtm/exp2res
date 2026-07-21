@@ -51,6 +51,7 @@ from exp2res.storage.repository import (
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     report_managed_residuals,
+    withdraw_managed_residuals,
     writer_database,
 )
 
@@ -444,9 +445,21 @@ def run_fact_extraction(
                 mark_assessment_snapshots_superseded(
                     held, superseded_snapshot_ids, swap_time
                 )
+            # Pre-commit pending report: the paths this supersession makes
+            # stale are reported before COMMIT, so an interrupt anywhere in
+            # the commit-to-cleanup window still reports the retained set. A
+            # completed removal clears the report through the existence
+            # re-check; a rolled-back transaction withdraws it below.
+            nonlocal pending_stale_paths
+            pending_stale_paths = assessment_set_paths(
+                workspace, superseded_snapshot_ids
+            )
+            report_managed_residuals(pending_stale_paths)
             return created_ids
 
-        outcome = run_complete_stage(
+        pending_stale_paths: tuple[str, ...] = ()
+        try:
+            outcome = run_complete_stage(
             workspace,
             connection,
             stage="13.3",
@@ -464,16 +477,16 @@ def run_fact_extraction(
             sleeper=sleeper,
             jitter=jitter,
             token_patterns=token_patterns,
-            resolved_credentials=resolved_credentials,
-        )
+                resolved_credentials=resolved_credentials,
+            )
+        except BaseException:
+            # The transaction did not commit (or the stage failed before its
+            # cleanup); the pre-commit pending report must not survive as a
+            # residual for sets that are still valid current output.
+            withdraw_managed_residuals(pending_stale_paths)
+            raise
         # §13 stale-export trigger class 1: business supersession is already
         # committed; cleanup failure is returned and never rolls it back.
-        # The affected paths are reported before this interruptible
-        # post-commit cleanup so an interrupt cannot silently retain a stale
-        # published set; a completed removal clears its own pending report.
-        report_managed_residuals(
-            assessment_set_paths(workspace, superseded_snapshot_ids)
-        )
         residual_paths = remove_assessment_sets(
             workspace, superseded_snapshot_ids
         )

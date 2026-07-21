@@ -41,6 +41,7 @@ from exp2res.storage.workspace import (
     read_database,
     report_managed_residuals,
     require_compatible,
+    withdraw_managed_residuals,
     writer_database,
 )
 
@@ -319,11 +320,12 @@ def capture_gap_answer(
                     last_collision = error
                     continue
                 connection.execute(f"RELEASE {savepoint}")
-                connection.commit()
                 # §13 stale-export trigger: answering a gap keeps every view
-                # current, but its rendered answer state changed. Enumerate
-                # after the capture commit and remove only current snapshot
-                # sets; cleanup failure never rolls the answer back.
+                # current, but its rendered answer state changed. The current
+                # snapshot sets are enumerated and reported pending before
+                # COMMIT, so an interrupt in the commit-to-cleanup window
+                # still reports the retained stale set; rollback withdraws
+                # the report. Cleanup failure never rolls the answer back.
                 snapshot_ids = tuple(
                     row[0]
                     for row in connection.execute(
@@ -331,9 +333,13 @@ def capture_gap_answer(
                         "WHERE superseded_at IS NULL ORDER BY CAST(id AS BLOB)"
                     )
                 )
-                report_managed_residuals(
-                    assessment_set_paths(workspace, snapshot_ids)
-                )
+                pending = assessment_set_paths(workspace, snapshot_ids)
+                report_managed_residuals(pending)
+                try:
+                    connection.commit()
+                except BaseException:
+                    withdraw_managed_residuals(pending)
+                    raise
                 residuals = remove_assessment_sets(workspace, snapshot_ids)
                 return RawLogBundle(raw_log, (evidence_item,), residuals)
             raise IdCollisionError() from last_collision

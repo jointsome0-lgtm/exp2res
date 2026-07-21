@@ -306,17 +306,24 @@ def _run_command(
             pass
         observed_residuals.append(path)
     residual_paths = sorted(
-        {*outcome.residual_paths, *observed_residuals},
-        key=lambda value: value.encode("utf-8"),
+        {*outcome.residual_paths, *observed_residuals}, key=os.fsencode
     )
     outcome.residual_paths = residual_paths
     if residual_paths and outcome.exit_code in {0, 10}:
         # §14.14 rule 4: a non-cancelled completion that reports a residual is
         # class 8, including verifier findings that would otherwise be 10. A
         # failed class (1-7) is not a completion and keeps its own code while
-        # still reporting the residual paths.
+        # still reporting the residual paths. The diagnostic below is the
+        # required human-mode explanation of the changed exit; committed
+        # business effects stay reported through the primary result.
         outcome.exit_code = 8
         outcome.diagnostic_class = "managed_output_incomplete"
+        typer.echo(
+            "Managed-output cleanup did not complete; residual paths:",
+            err=True,
+        )
+        for path in residual_paths:
+            typer.echo(f"  {path}", err=True)
 
     envelope = CLIEnvelope(
         command=command,

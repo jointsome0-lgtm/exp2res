@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -11,10 +12,11 @@ from typer.testing import CliRunner
 import exp2res.cli as cli_module
 import exp2res.pipeline.stage7 as stage7_module
 import exp2res.services.assessment as assessment_service
+import exp2res.services.capture as capture_service
 from exp2res.cli import app
 from exp2res.errors import ManagedOutputIncompleteError
 from exp2res.storage.repository import list_raw_logs
-from exp2res.storage.workspace import read_database
+from exp2res.storage.workspace import read_database, writer_database
 
 from conftest import VERA_CORPUS
 from fakes import FakeContractRunner
@@ -248,6 +250,79 @@ def test_interrupted_invalidation_reports_the_stale_set_in_the_cancelled_envelop
     assert envelope["diagnostic_class"] == "cancelled"
     assert envelope["residual_paths"] == [str(final_set)]
     assert final_set.is_dir()
+
+
+def test_undecodable_managed_entry_does_not_block_writers(
+    workspace: Path,
+) -> None:
+    # A stray non-UTF-8 POSIX name under a managed parent must not raise out
+    # of the every-writer preamble; it is not a reserved sibling, so ordinary
+    # captures proceed and the entry is left in place.
+    assessment = workspace / "out" / "assessment"
+    assessment.mkdir(mode=0o700, parents=True, exist_ok=True)
+    stray = assessment / os.fsdecode(b"vera-\xff-stray")
+    stray.mkdir(mode=0o700)
+
+    source = VERA_CORPUS / "logs" / "daily-2026-06-09.md"
+    result, envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    assert result.exit_code == 0
+    assert envelope["residual_paths"] == []
+    assert stray.is_dir()
+
+
+def test_interrupted_gap_answer_cleanup_reports_the_stale_set(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot_id = verified_snapshot(workspace)
+    exported, _envelope = invoke_json(
+        workspace, ["export", "assessment", "--snapshot", snapshot_id]
+    )
+    assert exported.exit_code == 0
+    final_set = workspace / "out" / "assessment" / snapshot_id
+
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        fact_id = connection.execute(
+            "SELECT id FROM experience_facts LIMIT 1"
+        ).fetchone()[0]
+        run_id = connection.execute(
+            "SELECT id FROM processing_runs LIMIT 1"
+        ).fetchone()[0]
+        connection.execute(
+            "INSERT INTO gap_questions (id, created_at, target_type, "
+            "target_id, question, reason, priority, answered, "
+            "produced_by_run_id, generation_id) VALUES "
+            "('gap_vera_interrupt', '2026-07-15T12:00:00+00:00', "
+            "'experience_fact', ?, 'Which Vera Example scale applies?', "
+            "'missing_scale', 'medium', 0, ?, 'generation_vera_interrupt')",
+            (fact_id, run_id),
+        )
+        connection.commit()
+
+    def interrupt_removal(_workspace: Path, snapshot_ids):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        capture_service, "remove_assessment_sets", interrupt_removal
+    )
+    source = VERA_CORPUS / "logs" / "daily-2026-06-20.md"
+    result, envelope = invoke_json(
+        workspace,
+        ["gaps", "answer", "--gap-id", "gap_vera_interrupt", "--file", str(source)],
+    )
+    # The answer transaction committed before the interrupt; the cancelled
+    # envelope keeps class 9 and reports the retained stale set.
+    assert result.exit_code == 9
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert envelope["residual_paths"] == [str(final_set)]
+    assert final_set.is_dir()
+    with read_database(workspace) as connection:
+        answered = connection.execute(
+            "SELECT answered FROM gap_questions WHERE id = 'gap_vera_interrupt'"
+        ).fetchone()[0]
+    assert answered == 1
 
 
 def test_non_export_writer_commits_but_preamble_residual_forces_class_8(

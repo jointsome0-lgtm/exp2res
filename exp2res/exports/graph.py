@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import os
 import sqlite3
 from typing import Generic, Literal, TypeVar, cast
 
@@ -54,7 +55,10 @@ _AGGREGATE_PRECEDENCE = (
 
 
 def id_key(value: str) -> bytes:
-    return value.encode("utf-8")
+    # Filesystem-derived names may carry surrogateescape'd undecodable bytes;
+    # fsencode round-trips them and equals UTF-8 for every valid string, so a
+    # stray non-UTF-8 managed entry sorts instead of raising.
+    return os.fsencode(value)
 
 
 def _reduce_verification_status(

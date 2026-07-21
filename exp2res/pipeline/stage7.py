@@ -55,6 +55,7 @@ from exp2res.storage.repository import (
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     report_managed_residuals,
+    withdraw_managed_residuals,
     writer_database,
 )
 
@@ -436,7 +437,7 @@ def run_assessment_verification(
         def commit(
             held: sqlite3.Connection, resolved: Sequence[object]
         ) -> Iterable[str]:
-            nonlocal snapshot_status
+            nonlocal snapshot_status, pending_stale_paths
             candidates = tuple(cast(_ResolvedVerification, item) for item in resolved)
             if tuple(item.claim_id for item in candidates) != tuple(
                 item.id for item in claims
@@ -469,9 +470,26 @@ def run_assessment_verification(
             stored = get_assessment_snapshot(held, snapshot_id)
             if stored is None or stored.verification_status != fresh_aggregate:
                 raise IntegrityFailureError("snapshot_aggregate_mismatch")
+            fresh_state = (
+                fresh_aggregate,
+                tuple(
+                    (item.id, item.verification_status, item.counterevidence)
+                    for item in fresh_claims
+                ),
+            )
+            if fresh_state != prior_verification_state:
+                # Pre-commit pending report (same pattern as Stages 3-6): an
+                # interrupt in the commit-to-cleanup window still reports the
+                # now-stale published set; rollback withdraws it below.
+                pending_stale_paths = assessment_set_paths(
+                    workspace, (snapshot_id,)
+                )
+                report_managed_residuals(pending_stale_paths)
             return tuple(candidate.finding.id for candidate in candidates)
 
-        run_complete_stage(
+        pending_stale_paths: tuple[str, ...] = ()
+        try:
+            run_complete_stage(
             workspace,
             connection,
             stage="13.7",
@@ -489,8 +507,11 @@ def run_assessment_verification(
             sleeper=sleeper,
             jitter=jitter,
             token_patterns=token_patterns,
-            resolved_credentials=resolved_credentials,
-        )
+                resolved_credentials=resolved_credentials,
+            )
+        except BaseException:
+            withdraw_managed_residuals(pending_stale_paths)
+            raise
         findings = tuple(
             sorted(
                 list_verification_findings(connection, run_id=run_id),
@@ -512,12 +533,6 @@ def run_assessment_verification(
         # change invalidates this snapshot's ID-keyed set. Finding history by
         # itself does not change the renderer state.
         if current_verification_state != prior_verification_state:
-            # Report before the interruptible cleanup (same pattern as the
-            # Stage 3-6 trigger sites): an interrupt here cannot silently
-            # retain the stale published set.
-            report_managed_residuals(
-                assessment_set_paths(workspace, (snapshot_id,))
-            )
             residual_paths = remove_assessment_sets(workspace, (snapshot_id,))
         else:
             residual_paths = ()

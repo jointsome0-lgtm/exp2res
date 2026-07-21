@@ -732,6 +732,17 @@ def report_managed_residuals(paths) -> None:
         sink.extend(paths)
 
 
+def withdraw_managed_residuals(paths) -> None:
+    """Withdraw pending residual reports whose owning transaction rolled back."""
+
+    sink = _CLI_PREAMBLE_RESIDUALS.get()
+    if sink is None:
+        return
+    for path in paths:
+        while path in sink:
+            sink.remove(path)
+
+
 @contextmanager
 def collect_preamble_residuals(residuals: list[str]) -> Iterator[None]:
     """Collect §13.14 preamble residuals across one CLI operation."""

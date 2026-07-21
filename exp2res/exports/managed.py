@@ -619,7 +619,7 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
                     _fsync_directory(parent, out_root)
                 except OSError:
                     residuals.add(str(parent))
-    return tuple(sorted(residuals, key=lambda value: value.encode("utf-8")))
+    return tuple(sorted(residuals, key=id_key))
 
 
 def assessment_set_paths(

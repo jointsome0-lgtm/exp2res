@@ -49,6 +49,7 @@ from exp2res.storage.repository import (
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     report_managed_residuals,
+    withdraw_managed_residuals,
     writer_database,
 )
 
@@ -447,9 +448,21 @@ def run_detection_generation(
             created_contradiction_ids = tuple(
                 item.id for item in candidate.contradictions
             )
+            # Pre-commit pending report: the paths this supersession makes
+            # stale are reported before COMMIT, so an interrupt anywhere in
+            # the commit-to-cleanup window still reports the retained set. A
+            # completed removal clears the report through the existence
+            # re-check; a rolled-back transaction withdraws it below.
+            nonlocal pending_stale_paths
+            pending_stale_paths = assessment_set_paths(
+                workspace, superseded_snapshot_ids
+            )
+            report_managed_residuals(pending_stale_paths)
             return (*created_gap_ids, *created_contradiction_ids)
 
-        outcome = run_complete_stage(
+        pending_stale_paths: tuple[str, ...] = ()
+        try:
+            outcome = run_complete_stage(
             workspace,
             connection,
             stage="13.4",
@@ -467,14 +480,14 @@ def run_detection_generation(
             sleeper=sleeper,
             jitter=jitter,
             token_patterns=token_patterns,
-            resolved_credentials=resolved_credentials,
-        )
-        # The affected paths are reported before this interruptible
-        # post-commit cleanup so an interrupt cannot silently retain a stale
-        # published set; a completed removal clears its own pending report.
-        report_managed_residuals(
-            assessment_set_paths(workspace, superseded_snapshot_ids)
-        )
+                resolved_credentials=resolved_credentials,
+            )
+        except BaseException:
+            # The transaction did not commit (or the stage failed before its
+            # cleanup); the pre-commit pending report must not survive as a
+            # residual for sets that are still valid current output.
+            withdraw_managed_residuals(pending_stale_paths)
+            raise
         residual_paths = remove_assessment_sets(
             workspace, superseded_snapshot_ids
         )
