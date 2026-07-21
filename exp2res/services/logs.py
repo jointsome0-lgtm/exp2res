@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -10,7 +11,11 @@ import stat
 
 from exp2res.domain.models import RawLog
 from exp2res.domain.results import InvalidatedView, invalidated_view
-from exp2res.errors import SelectorNotFoundError, WorkspaceBusyError
+from exp2res.errors import (
+    OperationCancelledError,
+    SelectorNotFoundError,
+    WorkspaceBusyError,
+)
 from exp2res.exports.managed import remove_all_managed_output_entries
 from exp2res.storage.repository import (
     RawLogBundle,
@@ -37,6 +42,7 @@ class DeleteOutcome:
     purged_finding_ids: tuple[str, ...]
     purged_claim_ids: tuple[str, ...]
     purged_snapshot_ids: tuple[str, ...]
+    purged_generation_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
     residual_paths: tuple[str, ...]
 
@@ -56,6 +62,17 @@ def show_log(
         if bundle is None:
             raise SelectorNotFoundError()
         return bundle
+
+
+def _delete_checkpoint_residuals(
+    connection: sqlite3.Connection, database: Path
+) -> tuple[str, ...]:
+    wal_path = str(database.with_name(database.name + "-wal"))
+    try:
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        return () if checkpoint is not None and checkpoint[0] == 0 else (wal_path,)
+    except sqlite3.DatabaseError:
+        return (wal_path,)
 
 
 def _remove_managed_backups(workspace: Path) -> list[str]:
@@ -78,7 +95,7 @@ def _remove_managed_backups(workspace: Path) -> list[str]:
 
         residual: list[str] = []
         with os.scandir(backup_fd) as iterator:
-            entries = sorted(iterator, key=lambda entry: entry.name.encode("utf-8"))
+            entries = sorted(iterator, key=lambda entry: os.fsencode(entry.name))
         for entry in entries:
             managed_path = str((backup_root / entry.name).absolute())
             try:
@@ -100,12 +117,22 @@ def _remove_managed_backups(workspace: Path) -> list[str]:
 
 
 def delete_log(
-    workspace: Path, *, log_id: str, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS
+    workspace: Path,
+    *,
+    log_id: str,
+    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    connection: sqlite3.Connection | None = None,
 ) -> DeleteOutcome:
     residual_paths: list[str] = []
-    with writer_database(
-        workspace, owner_delete=True, timeout_ms=timeout_ms
-    ) as connection:
+    # §8.1: `logs delete` holds one owner-delete writer authority across the
+    # purge and its §13.13 rule 5 rebuild and passes it here; a direct call
+    # still acquires its own.
+    held = (
+        nullcontext(connection)
+        if connection is not None
+        else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
+    )
+    with held as connection:
         try:
             connection.execute("BEGIN IMMEDIATE")
             selected = get_raw_log(connection, log_id)
@@ -168,6 +195,25 @@ def delete_log(
                     "SELECT id FROM assessment_snapshots ORDER BY CAST(id AS BLOB)"
                 )
             )
+            purged_generation_ids = tuple(
+                sorted(
+                    {
+                        row[0]
+                        for table in (
+                            "experience_facts",
+                            "gap_questions",
+                            "contradictions",
+                            "self_signals",
+                            "self_claims",
+                            "assessment_snapshots",
+                        )
+                        for row in connection.execute(
+                            f"SELECT DISTINCT generation_id FROM {table}"
+                        )
+                    },
+                    key=lambda value: value.encode("utf-8"),
+                )
+            )
             residual_paths.extend(_remove_managed_backups(workspace))
             # §13.13 rule 5: owner deletion attempts every final, candidate,
             # rollback, or other entry under both reserved managed parents
@@ -198,24 +244,38 @@ def delete_log(
             connection.rollback()
             raise
 
+        def build_outcome(residuals: tuple[str, ...]) -> DeleteOutcome:
+            return DeleteOutcome(
+                selected_log=selected,
+                evidence_item_ids=evidence_ids,
+                purged_fact_ids=purged_fact_ids,
+                purged_gap_ids=purged_gap_ids,
+                purged_contradiction_ids=purged_contradiction_ids,
+                purged_signal_ids=purged_signal_ids,
+                purged_finding_ids=purged_finding_ids,
+                purged_claim_ids=purged_claim_ids,
+                purged_snapshot_ids=purged_snapshot_ids,
+                purged_generation_ids=purged_generation_ids,
+                invalidated_views=invalidated_views,
+                residual_paths=tuple(sorted(set(residuals), key=os.fsencode)),
+            )
+
         database = workspace / ".exp2res" / "exp2res.sqlite"
         try:
-            checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-            if checkpoint is None or checkpoint[0] != 0:
-                residual_paths.append(str(database.with_name(database.name + "-wal")))
-        except sqlite3.DatabaseError:
-            residual_paths.append(str(database.with_name(database.name + "-wal")))
+            residual_paths.extend(
+                _delete_checkpoint_residuals(connection, database)
+            )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the privacy purge committed before checkpoint
+            # work, so cancellation carries the complete durable deletion and
+            # treats the WAL as residual until a later writer proves erasure.
+            cancelled = OperationCancelledError()
+            cancelled.delete_outcome = build_outcome(
+                (
+                    *residual_paths,
+                    str(database.with_name(database.name + "-wal")),
+                )
+            )
+            raise cancelled from None
 
-    return DeleteOutcome(
-        selected_log=selected,
-        evidence_item_ids=evidence_ids,
-        purged_fact_ids=purged_fact_ids,
-        purged_gap_ids=purged_gap_ids,
-        purged_contradiction_ids=purged_contradiction_ids,
-        purged_signal_ids=purged_signal_ids,
-        purged_finding_ids=purged_finding_ids,
-        purged_claim_ids=purged_claim_ids,
-        purged_snapshot_ids=purged_snapshot_ids,
-        invalidated_views=invalidated_views,
-        residual_paths=tuple(sorted(set(residual_paths))),
-    )
+        return build_outcome(tuple(residual_paths))

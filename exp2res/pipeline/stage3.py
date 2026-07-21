@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -13,6 +14,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.models import ExperienceFact, RawLog
+from exp2res.errors import LLMCancelledError
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.domain.temporal import (
     confidence_exceeds,
@@ -320,6 +322,9 @@ def run_fact_extraction(
     budgets: CallBudgets,
     runner: ContractRunner,
     id_factory: Callable[[str], str] = new_id,
+    parent_run_id: str | None = None,
+    reconcile: bool = True,
+    connection: sqlite3.Connection | None = None,
     clock: Callable[[], datetime] | None = None,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     cli_version: str = "test-double",
@@ -333,9 +338,15 @@ def run_fact_extraction(
     """Run one complete Stage 3 replacement over the selected lineages."""
 
     now = clock or (lambda: datetime.now(timezone.utc))
-    with writer_database(
-        workspace, timeout_ms=timeout_ms, reconcile=True
-    ) as connection:
+    # §8.1: a §13.13 lifecycle holds one writer authority across its whole
+    # Stage 3-5 flow and passes the held connection; a direct command still
+    # acquires its own.
+    held = (
+        nullcontext(connection)
+        if connection is not None
+        else writer_database(workspace, timeout_ms=timeout_ms, reconcile=reconcile)
+    )
+    with held as connection:
         contexts = plan_lineages(connection, log_id=log_id)
         run_id = id_factory("run")
         generation_ids = tuple(id_factory("gen") for _ in contexts)
@@ -473,6 +484,7 @@ def run_fact_extraction(
             planned=planned,
             commit=commit,
             run_id=run_id,
+            parent_run_id=parent_run_id,
             clock=now,
             cli_version=cli_version,
             capability_check=capability_check,
@@ -490,41 +502,61 @@ def run_fact_extraction(
                 connection, pending_stale_paths, superseded_snapshot_ids
             )
             raise
+
+        def build_result(residuals: tuple[str, ...]) -> Stage3Result:
+            resolved_lineages = tuple(
+                cast(_ResolvedLineage, item) for item in outcome.resolved
+            )
+            return Stage3Result(
+                run_id=run_id,
+                created=outcome.output_ids,
+                superseded=tuple(superseded_ids),
+                generation_ids=tuple(
+                    item.generation_id for item in resolved_lineages if item.facts
+                ),
+                superseded_generation_ids=tuple(
+                    sorted(superseded_generation_ids, key=_id_key)
+                ),
+                # §14.14 rule 5: envelope ID collections are ID-byte-ordered;
+                # the listing helpers return creation-time order.
+                superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
+                superseded_contradiction_ids=tuple(
+                    sorted(superseded_contradiction_ids, key=_id_key)
+                ),
+                superseded_signal_ids=tuple(
+                    sorted(superseded_signal_ids, key=_id_key)
+                ),
+                superseded_claim_ids=tuple(
+                    sorted(superseded_claim_ids, key=_id_key)
+                ),
+                superseded_snapshot_ids=tuple(
+                    sorted(superseded_snapshot_ids, key=_id_key)
+                ),
+                invalidated_views=tuple(
+                    sorted(
+                        invalidated_views,
+                        key=lambda item: _id_key(item.snapshot_id),
+                    )
+                ),
+                residual_paths=residuals,
+                warnings=tuple(
+                    warning
+                    for item in resolved_lineages
+                    for warning in item.warnings
+                ),
+            )
+
         # §13 stale-export trigger class 1: business supersession is already
         # committed; cleanup failure is returned and never rolls it back.
-        residual_paths = remove_assessment_sets(
-            workspace, superseded_snapshot_ids
-        )
-
-    resolved_lineages = tuple(cast(_ResolvedLineage, item) for item in outcome.resolved)
-    return Stage3Result(
-        run_id=run_id,
-        created=outcome.output_ids,
-        superseded=tuple(superseded_ids),
-        generation_ids=tuple(
-            item.generation_id for item in resolved_lineages if item.facts
-        ),
-        superseded_generation_ids=tuple(
-            sorted(superseded_generation_ids, key=_id_key)
-        ),
-        # §14.14 rule 5: envelope ID collections are ID-byte-ordered; the
-        # listing helpers return creation-time order.
-        superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
-        superseded_contradiction_ids=tuple(
-            sorted(superseded_contradiction_ids, key=_id_key)
-        ),
-        superseded_signal_ids=tuple(sorted(superseded_signal_ids, key=_id_key)),
-        superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
-        superseded_snapshot_ids=tuple(
-            sorted(superseded_snapshot_ids, key=_id_key)
-        ),
-        invalidated_views=tuple(
-            sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
-        ),
-        residual_paths=residual_paths,
-        warnings=tuple(
-            warning
-            for item in resolved_lineages
-            for warning in item.warnings
-        ),
-    )
+        try:
+            residual_paths = remove_assessment_sets(
+                workspace, superseded_snapshot_ids
+            )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the swap committed before cleanup, so the
+            # class-9 error carries the complete committed result; the
+            # pending stale paths stay reported as residuals.
+            cancelled = LLMCancelledError()
+            cancelled.stage_result = build_result(tuple(pending_stale_paths))
+            raise cancelled from None
+        return build_result(residual_paths)

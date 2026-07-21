@@ -35,11 +35,6 @@ class NonInteractiveInputRequired(InvalidInputError):
     public_message = "Required input was not supplied in non-interactive mode."
 
 
-class OperationDeferredError(InvalidInputError):
-    diagnostic_class = "operation_deferred_phase_2"
-    public_message = "Correction capture is deferred until Phase 2."
-
-
 class ForbiddenPathError(InvalidInputError):
     diagnostic_class = "forbidden_path"
     public_message = "The selected source path is not permitted."
@@ -182,6 +177,16 @@ class LLMSelectionMissingError(ConfigurationError):
     diagnostic_class = "llm_selection_missing"
     public_message = (
         "Select [llm].adapter and [llm].model explicitly before LLM use."
+    )
+
+
+class OperationCancelledError(Exp2ResError):
+    """§14.14 rule 6 class-9 exit after a committed §13.13 lifecycle boundary."""
+
+    exit_code = 9
+    diagnostic_class = "cancelled"
+    public_message = (
+        "The operation was cancelled; the committed lifecycle boundary remains."
     )
 
 

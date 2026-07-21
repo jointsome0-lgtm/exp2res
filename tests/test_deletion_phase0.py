@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sqlite3
 
@@ -10,6 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 from exp2res.cli import app
+import exp2res.services.lifecycle as lifecycle_service
 import exp2res.services.logs as logs_service
 from exp2res.services.capture import capture_daily
 from exp2res.services.logs import delete_log, list_logs, show_log
@@ -30,6 +32,8 @@ from exp2res.storage.telemetry import (
 from exp2res.storage.workspace import initialize_workspace, writer_database
 
 from conftest import FIXED_NOW, configure_timezone
+from fakes import FakeContractRunner
+from test_stage3_extraction import SELECTION, budgets, fact_response
 
 
 pytestmark = pytest.mark.lifecycle
@@ -220,6 +224,32 @@ def test_delete_preserves_external_source_and_does_not_follow_backup_symlink(
     assert outcome.residual_paths == (str(planted.absolute()),)
 
 
+def test_delete_reports_undecodable_backup_entry_without_blocking_purge(
+    workspace: Path, tmp_path: Path
+) -> None:
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example undecodable backup-entry source",
+        clock=lambda: FIXED_NOW,
+    )
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700)
+    outside = tmp_path / "Vera Example undecodable backup target"
+    outside.write_text("Vera Example outside target\n", encoding="utf-8")
+    planted = backup_root / os.fsdecode(b"exp2res-v1-Vera-Example-\xfe.sqlite")
+    planted.symlink_to(outside)
+
+    outcome = delete_log(workspace, log_id=bundle.raw_log.id)
+
+    assert list_logs(workspace) == ()
+    assert planted.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "Vera Example outside target\n"
+    assert len(outcome.residual_paths) == 1
+    assert os.fsencode(outcome.residual_paths[0]) == os.fsencode(
+        str(planted.absolute())
+    )
+
+
 def test_logs_delete_removes_every_managed_set_and_reports_cleanup_residual(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -360,8 +390,23 @@ def test_cli_owner_delete_reports_global_experience_fact_group(
 ) -> None:
     """§14.14: logs delete reports purged fact IDs in deterministic type order."""
 
-    selected, _retained, facts = _persist_facts_and_completed_calls(workspace)
+    selected, retained, facts = _persist_facts_and_completed_calls(workspace)
     signal = _persist_signal(workspace, facts[0].id)
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [
+                    fact_response([retained.evidence_items[0].id]),
+                    b'{"gap_questions":[],"contradictions":[],"warnings":[]}',
+                    b'{"signals":[],"warnings":[]}',
+                ]
+            ),
+        ),
+    )
     monkeypatch.chdir(workspace)
     result = runner.invoke(
         app,

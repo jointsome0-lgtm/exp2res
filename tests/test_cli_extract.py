@@ -311,14 +311,8 @@ def test_extract_on_empty_workspace_completes_without_adapter_preflight(
             classify_failure=registered.classify_failure,
         ),
     )
-    # §29.2 selection stays required — only the environment probe is deferred.
-    config = workspace / ".exp2res" / "config.toml"
-    config.write_text(
-        config.read_text(encoding="utf-8")
-        + '\n[llm]\nadapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n'
-        'codex_home_env = "CODEX_HOME"\n',
-        encoding="utf-8",
-    )
+    # §29.2 selection stays required — the fixture config already carries it;
+    # only the environment probe is deferred.
     result, envelope = invoke_json(workspace, ["--yes", "extract"])
     assert result.exit_code == 0
     assert envelope["status"] == "ok"

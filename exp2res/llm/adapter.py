@@ -80,6 +80,7 @@ def invoke_contract(
     budgets: CallBudgets,
     run_id: str,
     stage: str,
+    parent_run_id: str | None = None,
     call_index: int = 1,
     finish_run: bool = True,
     cli_version: str = "test-double",
@@ -186,6 +187,7 @@ def invoke_contract(
                 provider=selection.adapter,
                 model=selection.model,
                 prompt_policy_hash=policy_hash,
+                parent_run_id=parent_run_id,
                 input_ids=input_ids,
                 metadata=initial_metadata,
             )

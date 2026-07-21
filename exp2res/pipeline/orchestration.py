@@ -114,6 +114,7 @@ def run_complete_stage(
     planned: Sequence[PlannedCall],
     commit: Callable[[sqlite3.Connection, Sequence[object]], Iterable[str]],
     run_id: str,
+    parent_run_id: str | None = None,
     clock: Callable[[], datetime] | None = None,
     cli_version: str = "test-double",
     capability_check: Callable[[], None] | None = None,
@@ -151,6 +152,7 @@ def run_complete_stage(
                 provider=selection.adapter,
                 model=selection.model,
                 prompt_policy_hash=prompt_policy_hash(contract),
+                parent_run_id=parent_run_id,
                 input_ids=(),
                 metadata={
                     "adapter_id": selection.adapter,
@@ -195,6 +197,7 @@ def run_complete_stage(
                 budgets=adjusted_budgets,
                 run_id=run_id,
                 stage=stage,
+                parent_run_id=parent_run_id,
                 call_index=call_index,
                 finish_run=False,
                 cli_version=cli_version,
