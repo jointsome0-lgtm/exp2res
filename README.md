@@ -76,6 +76,7 @@ Version pin: Vera corpus `0.3.0`; SQLite schema `7`; CLI `envelope_version = 1`.
 The checked recording is [`demo.cast`](demo.cast). Replay it locally with `asciinema play demo.cast`. Regenerate it after an incompatible demo change with the pinned 110×32 terminal shape:
 
 ```bash
+make demo-reset
 asciinema rec --overwrite --cols 110 --rows 32 -c "make demo-reset demo-run" demo.cast
 ```
 
