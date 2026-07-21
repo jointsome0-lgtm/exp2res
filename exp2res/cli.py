@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Callable, cast
@@ -78,7 +79,7 @@ from exp2res.services.detection import (
     show_contradiction,
 )
 from exp2res.services.extraction import run_extract, validate_extract_selection
-from exp2res.services.export import export_assessment
+from exp2res.services.export import export_assessment, require_export_eligible
 from exp2res.services.facts import list_facts, show_fact
 from exp2res.services.logs import delete_log, list_logs, show_log
 from exp2res.services.signals import list_current_signals, run_signals_generate
@@ -292,8 +293,20 @@ def _run_command(
         outcome = Outcome(exit_code=1, diagnostic_class="internal_error")
         typer.echo("The operation failed unexpectedly.", err=True)
 
+    observed_residuals: list[str] = []
+    for path in preamble_residuals:
+        # A reported path that a later successful destructive or invalidation
+        # step removed is no longer residual; anything unreadable stays
+        # reported (fail closed). `lstat` never follows a final symlink.
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            pass
+        observed_residuals.append(path)
     residual_paths = sorted(
-        {*outcome.residual_paths, *preamble_residuals},
+        {*outcome.residual_paths, *observed_residuals},
         key=lambda value: value.encode("utf-8"),
     )
     outcome.residual_paths = residual_paths
@@ -1089,6 +1102,11 @@ def export_assessment_command(
             raise SelectorNotFoundError()
         if snapshot.superseded_at is not None:
             raise SnapshotNotCurrentError()
+        # §16.11 gate on the already-loaded row: a status-ineligible export is
+        # class 10 before the writer path, so a managed residual cannot turn
+        # the refusal into class 8. The service re-applies the gate under the
+        # writer lock against the stored row.
+        require_export_eligible(snapshot.verification_status)
 
         exported = export_assessment(workspace, snapshot_id=snapshot_id)
         result = AssessmentExportResult(

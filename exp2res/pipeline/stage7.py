@@ -28,7 +28,7 @@ from exp2res.errors import (
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
-from exp2res.exports.managed import remove_assessment_sets
+from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.llm.assessment_verifier import (
     ASSESSMENT_VERIFIER_CONTRACT,
     AssessmentVerifierInput,
@@ -52,7 +52,11 @@ from exp2res.storage.repository import (
     update_assessment_snapshot_verification,
     update_self_claim_verification,
 )
-from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
+from exp2res.storage.workspace import (
+    DEFAULT_BUSY_TIMEOUT_MS,
+    report_managed_residuals,
+    writer_database,
+)
 
 from .evidence_context import project_evidence_context
 from .orchestration import PlannedCall, run_complete_stage
@@ -507,11 +511,16 @@ def run_assessment_verification(
         # §13.7 stale-export trigger: only a committed verification-field
         # change invalidates this snapshot's ID-keyed set. Finding history by
         # itself does not change the renderer state.
-        residual_paths = (
-            remove_assessment_sets(workspace, (snapshot_id,))
-            if current_verification_state != prior_verification_state
-            else ()
-        )
+        if current_verification_state != prior_verification_state:
+            # Report before the interruptible cleanup (same pattern as the
+            # Stage 3-6 trigger sites): an interrupt here cannot silently
+            # retain the stale published set.
+            report_managed_residuals(
+                assessment_set_paths(workspace, (snapshot_id,))
+            )
+            residual_paths = remove_assessment_sets(workspace, (snapshot_id,))
+        else:
+            residual_paths = ()
 
     return Stage7Result(
         run_id=run_id,

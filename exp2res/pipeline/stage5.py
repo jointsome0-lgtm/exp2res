@@ -17,7 +17,7 @@ from exp2res.domain.models import EvidenceItem, ExperienceFact, SelfSignal
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.domain.temporal import confidence_exceeds
 from exp2res.errors import IntegrityFailureError
-from exp2res.exports.managed import remove_assessment_sets
+from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.llm.contracts import (
     ContractValidationError,
     ContractWarning,
@@ -43,7 +43,11 @@ from exp2res.storage.repository import (
     mark_self_signals_superseded,
     mark_self_claims_superseded,
 )
-from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS, writer_database
+from exp2res.storage.workspace import (
+    DEFAULT_BUSY_TIMEOUT_MS,
+    report_managed_residuals,
+    writer_database,
+)
 
 from .orchestration import PlannedCall, run_complete_stage
 from .evidence_context import project_evidence_context
@@ -335,6 +339,12 @@ def run_signal_generation(
             jitter=jitter,
             token_patterns=token_patterns,
             resolved_credentials=resolved_credentials,
+        )
+        # The affected paths are reported before this interruptible
+        # post-commit cleanup so an interrupt cannot silently retain a stale
+        # published set; a completed removal clears its own pending report.
+        report_managed_residuals(
+            assessment_set_paths(workspace, superseded_snapshot_ids)
         )
         residual_paths = remove_assessment_sets(
             workspace, superseded_snapshot_ids

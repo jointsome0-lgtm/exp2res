@@ -25,7 +25,7 @@ from exp2res.errors import (
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
-from exp2res.exports.managed import remove_assessment_sets
+from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.time_input import today_occurred, workspace_zone
@@ -39,6 +39,7 @@ from exp2res.storage.repository import (
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     read_database,
+    report_managed_residuals,
     require_compatible,
     writer_database,
 )
@@ -329,6 +330,9 @@ def capture_gap_answer(
                         "SELECT id FROM assessment_snapshots "
                         "WHERE superseded_at IS NULL ORDER BY CAST(id AS BLOB)"
                     )
+                )
+                report_managed_residuals(
+                    assessment_set_paths(workspace, snapshot_ids)
                 )
                 residuals = remove_assessment_sets(workspace, snapshot_ids)
                 return RawLogBundle(raw_log, (evidence_item,), residuals)

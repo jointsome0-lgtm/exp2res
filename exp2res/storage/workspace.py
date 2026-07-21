@@ -720,6 +720,18 @@ def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -
             os.close(descriptor)
 
 
+def report_managed_residuals(paths) -> None:
+    """Report managed paths whose §13 cleanup is pending or incomplete.
+
+    No-op outside a CLI operation; envelope assembly re-checks existence, so
+    a path removed by a later successful cleanup is not reported.
+    """
+
+    sink = _CLI_PREAMBLE_RESIDUALS.get()
+    if sink is not None:
+        sink.extend(paths)
+
+
 @contextmanager
 def collect_preamble_residuals(residuals: list[str]) -> Iterator[None]:
     """Collect §13.14 preamble residuals across one CLI operation."""

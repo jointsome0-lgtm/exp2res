@@ -75,7 +75,7 @@ def test_export_assessment_selector_blocked_and_residual_classes(
     assert missing_envelope["diagnostic_class"] == "selector_not_found"
     assert missing_envelope["result"] is None
 
-    _ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
     blocked, blocked_envelope = invoke_json(
         workspace,
         ["export", "assessment", "--snapshot", generated.snapshot_id],
@@ -84,6 +84,14 @@ def test_export_assessment_selector_blocked_and_residual_classes(
     assert blocked_envelope["diagnostic_class"] == "assessment_export_blocked"
     assert blocked_envelope["result"] is None
 
+    # The residual class needs an export-eligible snapshot: the read-only
+    # §16.11 gate now refuses ineligible ones before the writer path runs.
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response() for _ in generated.claims]),
+        ids,
+        generated.snapshot_id,
+    )
     residual = str(workspace / "out" / "assessment" / "snapshot_vera_residual")
 
     def incomplete(_workspace: Path, *, snapshot_id: str):
@@ -124,6 +132,122 @@ def test_export_selector_resolves_before_preamble_cleanup_or_class_8(
     assert envelope["diagnostic_class"] == "selector_not_found"
     assert envelope["residual_paths"] == []
     assert candidate.is_symlink()
+
+
+def test_logs_delete_clears_a_preamble_residual_it_later_removed(
+    workspace: Path,
+) -> None:
+    # An ambiguous rollback sibling is a preamble residual, but `logs delete`
+    # then removes every entry under the managed parents; a reported path
+    # that no longer exists at envelope assembly is not residual, so the
+    # committed deletion reports success rather than class 8.
+    source = VERA_CORPUS / "logs" / "daily-2026-06-09.md"
+    captured, captured_envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    assert captured.exit_code == 0
+    log_id = next(
+        group["ids"][0]
+        for group in captured_envelope["affected_ids"]["created"]
+        if group["entity_type"] == "raw_log"
+    )
+
+    assessment = workspace / "out" / "assessment"
+    assessment.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ambiguous = assessment / (
+        ".exp2res-rollback-snapshot_vera_ambiguous-" + "d" * 32
+    )
+    ambiguous.mkdir(mode=0o700)
+    (ambiguous / "Vera Example junk").write_text(
+        "Vera Example not a manifest\n", encoding="utf-8"
+    )
+
+    # Non-vacuity: a non-destructive writer leaves the ambiguous sibling in
+    # place and reports it, exactly the state the deletion must clear.
+    retained, retained_envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    assert retained.exit_code == 8
+    assert retained_envelope["residual_paths"] == [str(ambiguous)]
+    assert ambiguous.is_dir()
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "logs", "delete", "--log-id", log_id]
+    )
+    assert result.exit_code == 0
+    assert envelope["residual_paths"] == []
+    assert not ambiguous.exists()
+
+
+def test_unverified_snapshot_is_blocked_before_the_writer_path(
+    workspace: Path,
+) -> None:
+    # §16.11 refusal on a current-but-ineligible snapshot is class 10 even
+    # when an unreconciliable residual would stop publication with class 8:
+    # the gate applies read-only before the writer preamble runs.
+    _ids, _facts, _signals, generated = generated_snapshot(workspace)
+    assessment = workspace / "out" / "assessment"
+    assessment.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = workspace.parent / "Vera Example blocked target"
+    target.mkdir()
+    candidate = assessment / (
+        ".exp2res-candidate-snapshot_vera_blocked-" + "c" * 32
+    )
+    candidate.symlink_to(target, target_is_directory=True)
+
+    result, envelope = invoke_json(
+        workspace,
+        ["export", "assessment", "--snapshot", generated.snapshot_id],
+    )
+    assert result.exit_code == 10
+    assert envelope["diagnostic_class"] == "assessment_export_blocked"
+    assert envelope["residual_paths"] == []
+    assert candidate.is_symlink()
+
+
+def test_interrupted_invalidation_reports_the_stale_set_in_the_cancelled_envelope(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response() for _ in generated.claims]),
+        ids,
+        generated.snapshot_id,
+    )
+    exported, _envelope = invoke_json(
+        workspace,
+        ["export", "assessment", "--snapshot", generated.snapshot_id],
+    )
+    assert exported.exit_code == 0
+    final_set = workspace / "out" / "assessment" / generated.snapshot_id
+
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [verifier_response("unsupported") for _ in generated.claims]
+            ),
+        ),
+    )
+
+    def interrupt_removal(_workspace: Path, snapshot_ids):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(stage7_module, "remove_assessment_sets", interrupt_removal)
+    result, envelope = invoke_json(
+        workspace,
+        ["--yes", "assess", "verify", "--snapshot", generated.snapshot_id],
+    )
+    # §14.14: the interrupt keeps class 9 precedence while the committed
+    # verification change and the known stale-set path stay reported.
+    assert result.exit_code == 9
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert envelope["residual_paths"] == [str(final_set)]
+    assert final_set.is_dir()
 
 
 def test_non_export_writer_commits_but_preamble_residual_forces_class_8(

@@ -622,6 +622,35 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
     return tuple(sorted(residuals, key=lambda value: value.encode("utf-8")))
 
 
+def assessment_set_paths(
+    workspace: Path, snapshot_ids: tuple[str, ...] | list[str]
+) -> tuple[str, ...]:
+    """Report-only paths of existing ID-keyed sets an invalidation affects.
+
+    A trigger site records these through the CLI residual sink *before* its
+    interruptible post-commit cleanup, so an interrupt between the business
+    commit and `remove_assessment_sets` still reports the retained stale set
+    (§13 stale-export invalidation rule). Envelope assembly drops any
+    reported path that no longer exists, so a completed removal clears its
+    own pending report.
+    """
+
+    selected = tuple(sorted(set(snapshot_ids), key=id_key))
+    try:
+        _root, out_root = _canonical_roots(workspace)
+    except ManagedOutputIncompleteError:
+        out_root = (workspace / "out").absolute()
+    parent = out_root / "assessment"
+    paths = []
+    for snapshot_id in selected:
+        if ENTITY_ID.fullmatch(snapshot_id) is None:
+            continue
+        path = parent / snapshot_id
+        if _lstat(path) is not None:
+            paths.append(str(path))
+    return tuple(paths)
+
+
 def remove_assessment_sets(
     workspace: Path, snapshot_ids: tuple[str, ...] | list[str]
 ) -> tuple[str, ...]:
