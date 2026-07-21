@@ -343,7 +343,7 @@ issues = ["#79"]
 nodes = [
   "tests/test_demo.py::test_vera_first_mirror_demo_is_closed_current_blocking_and_deterministic",
 ]
-note = "Assessment report.md, self_claims.json, evidence_map.json, closed export envelope, pinned Vera E6 goldens, and the Vera first-mirror demo's clean-workspace closure, blocked-overclaim refusal, and repeated transcript/member bytes are covered; every bullet-pack member and its CLI envelope half remain"
+note = "Assessment report.md, self_claims.json, evidence_map.json, closed export envelope, pinned Vera E6 goldens, and the Vera first-mirror demo's clean-workspace closure, blocked-overclaim refusal, checked asciinema stream, and repeated transcript/member bytes are covered; every bullet-pack member and its CLI envelope half remain"
 
 ["24.52"]
 status = "pending"
