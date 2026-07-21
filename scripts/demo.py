@@ -55,6 +55,7 @@ from exp2res.storage.workspace import (
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / "examples" / "vera" / "corpus"
 GOLDEN_TRANSCRIPT = ROOT / "demo" / "transcript.txt"
+GOLDEN_CAST = ROOT / "demo.cast"
 WORKSPACE_LABEL = "demo/workspace"
 FIXED_CLOCK = datetime.fromisoformat("2026-07-15T12:30:00+00:00")
 CORPUS_VERSION = "0.3.0"
@@ -579,9 +580,50 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
     return members, transcript
 
 
+def _verify_cast() -> None:
+    lines = GOLDEN_CAST.read_text(encoding="utf-8").splitlines()
+    if len(lines) < 2:
+        raise AssertionError("Vera Example asciinema recording is missing or empty")
+    header = json.loads(lines[0])
+    if header != {
+        "version": 2,
+        "width": 110,
+        "height": 32,
+        "timestamp": header.get("timestamp"),
+        "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"},
+    } or not isinstance(header["timestamp"], int):
+        raise AssertionError("Vera Example asciinema metadata pin is invalid")
+
+    events = [json.loads(line) for line in lines[1:]]
+    if any(
+        not isinstance(event, list)
+        or len(event) != 3
+        or not isinstance(event[0], (int, float))
+        or event[0] < 0
+        or event[1] != "o"
+        or not isinstance(event[2], str)
+        for event in events
+    ):
+        raise AssertionError("Vera Example asciinema event stream is invalid")
+    times = [event[0] for event in events]
+    if times != sorted(times):
+        raise AssertionError("Vera Example asciinema event times are not monotonic")
+
+    output = "".join(event[2] for event in events).replace("\r\n", "\n")
+    expected = "demo/workspace is already reset.\n" + GOLDEN_TRANSCRIPT.read_text(
+        encoding="utf-8"
+    )
+    if output != expected:
+        raise AssertionError("Vera Example asciinema recording is stale")
+    raw = GOLDEN_CAST.read_bytes()
+    if any(marker in raw for marker in PRIVATE_HOME_MARKERS):
+        raise AssertionError("Vera Example asciinema recording exposes a private path")
+
+
 def verify_demo(workspace: Path, *, check_golden: bool = True, determinism: bool = True) -> None:
     golden = GOLDEN_TRANSCRIPT.read_bytes() if check_golden else None
     current_members, current_transcript = _verify_one(workspace, golden=golden)
+    _verify_cast()
     if determinism:
         with tempfile.TemporaryDirectory(prefix="exp2res-vera-demo-verify-") as root:
             first, second = Path(root) / "first", Path(root) / "second"
@@ -595,7 +637,8 @@ def verify_demo(workspace: Path, *, check_golden: bool = True, determinism: bool
                 raise AssertionError("Vera Example current demo differs from clean deterministic run")
     print(
         "OK: Vera Example evidence closure, current generations, blocked export, "
-        "manifest hashes, transcript, and repeated-run byte determinism verified"
+        "manifest hashes, transcript, asciinema recording, and repeated-run byte "
+        "determinism verified"
     )
 
 

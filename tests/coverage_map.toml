@@ -415,7 +415,7 @@ nodes = [
   "tests/test_demo.py::test_vera_first_mirror_demo_is_closed_current_blocking_and_deterministic",
 ]
 phase = "4"
-note = "The assessment half proves deterministic §17 Markdown, strict version-1 companions, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure plus repeated transcript and member bytes; every bullet-pack member remains"
+note = "The assessment half proves deterministic §17 Markdown, strict version-1 companions, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; every bullet-pack member remains"
 
 ["21.49"]
 status = "pending"

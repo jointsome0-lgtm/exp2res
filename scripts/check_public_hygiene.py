@@ -73,10 +73,12 @@ FIXTURE_PATH_PATTERNS = (
     "examples/vera/corpus/**",
     "tests/goldens/**",
     "demo/**",
+    "demo.cast",
 )
 
 DEMO_PUBLIC_PATH_PATTERNS = (
     "demo/**",
+    "demo.cast",
 )
 
 PRIVATE_HOME_MARKERS = (b"/home/", b"/Users/", b"/root/", b"\\Users\\")
