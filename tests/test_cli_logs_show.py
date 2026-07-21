@@ -68,24 +68,24 @@ def _seed_bundle(
     )
     evidence_items = (
         EvidenceItem(
-            id=f"evi_vera_{suffix}_a",
+            id=f"evi_vera_{suffix}_z",
             created_at=recorded_at,
             raw_log_id=raw_log.id,
             title="Vera Example primary evidence",
             summary="Vera Example owner-authored summary.",
-            uri=f"vera-example://evidence/{suffix}/a",
-            path=f"examples/vera/{suffix}-a.md",
+            uri=f"vera-example://evidence/{suffix}/z",
+            path=f"examples/vera/{suffix}-z.md",
             strength="manual_claim",
             metadata={"metadata": "Vera Example hidden evidence metadata"},
         ),
         EvidenceItem(
-            id=f"evi_vera_{suffix}_b",
+            id=f"evi_vera_{suffix}_a",
             created_at=recorded_at + timedelta(microseconds=1),
             raw_log_id=raw_log.id,
             title=None,
             summary="Vera Example linked artifact summary.",
             uri=None,
-            path=f"examples/vera/{suffix}-b.md",
+            path=f"examples/vera/{suffix}-a.md",
             strength="artifact_reference",
             metadata={"raw_text": "Vera Example hidden evidence raw metadata"},
         ),
@@ -139,7 +139,7 @@ def test_logs_show_human_prints_only_selected_complete_raw_text(
     assert projection["log"]["id"] == selected.id
     assert [item["id"] for item in projection["evidence_items"]] == [
         "evi_vera_selected_a",
-        "evi_vera_selected_b",
+        "evi_vera_selected_z",
     ]
     assert other_text not in shown.stdout + shown.stderr
 
@@ -172,7 +172,7 @@ def test_logs_show_json_is_closed_raw_free_and_includes_linked_evidence(
         "corrects_log_id",
     }
     assert [item["id"] for item in envelope["result"]["evidence_items"]] == [
-        item.id for item in evidence_items
+        item.id for item in reversed(evidence_items)
     ]
     assert all(
         set(item)

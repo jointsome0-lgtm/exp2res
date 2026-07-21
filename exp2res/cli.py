@@ -1645,7 +1645,11 @@ def logs_show(
         result = LogsShowResult(
             log=_selected_log_projection(bundle.raw_log),
             evidence_items=[
-                _evidence_projection(item) for item in bundle.evidence_items
+                _evidence_projection(item)
+                for item in sorted(
+                    bundle.evidence_items,
+                    key=lambda value: value.id.encode("utf-8"),
+                )
             ],
         )
         projection = json.dumps(
