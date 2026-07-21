@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sqlite3
 
@@ -221,6 +222,32 @@ def test_delete_preserves_external_source_and_does_not_follow_backup_symlink(
     assert outside.read_text(encoding="utf-8") == "Vera Example outside target\n"
     assert planted.exists()
     assert outcome.residual_paths == (str(planted.absolute()),)
+
+
+def test_delete_reports_undecodable_backup_entry_without_blocking_purge(
+    workspace: Path, tmp_path: Path
+) -> None:
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example undecodable backup-entry source",
+        clock=lambda: FIXED_NOW,
+    )
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700)
+    outside = tmp_path / "Vera Example undecodable backup target"
+    outside.write_text("Vera Example outside target\n", encoding="utf-8")
+    planted = backup_root / os.fsdecode(b"exp2res-v1-Vera-Example-\xfe.sqlite")
+    planted.symlink_to(outside)
+
+    outcome = delete_log(workspace, log_id=bundle.raw_log.id)
+
+    assert list_logs(workspace) == ()
+    assert planted.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "Vera Example outside target\n"
+    assert len(outcome.residual_paths) == 1
+    assert os.fsencode(outcome.residual_paths[0]) == os.fsencode(
+        str(planted.absolute())
+    )
 
 
 def test_logs_delete_removes_every_managed_set_and_reports_cleanup_residual(

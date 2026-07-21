@@ -95,7 +95,7 @@ def _remove_managed_backups(workspace: Path) -> list[str]:
 
         residual: list[str] = []
         with os.scandir(backup_fd) as iterator:
-            entries = sorted(iterator, key=lambda entry: entry.name.encode("utf-8"))
+            entries = sorted(iterator, key=lambda entry: os.fsencode(entry.name))
         for entry in entries:
             managed_path = str((backup_root / entry.name).absolute())
             try:
