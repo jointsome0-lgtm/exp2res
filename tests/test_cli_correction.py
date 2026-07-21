@@ -607,3 +607,133 @@ def test_interactive_delete_confirmation_names_the_rebuild(
     assert "model provider" in result.output
     with read_database(workspace) as connection:
         assert get_raw_log(connection, selected.id) is not None
+
+
+def test_correction_and_delete_hold_one_writer_acquisition(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # §8.1: the CLI command acquires the writer authority exactly once and
+    # both the committed lifecycle boundary and the rebuild share it.
+    import exp2res.services.correction as correction_service
+    import exp2res.services.logs as logs_service
+
+    target, _items = add_log(
+        workspace,
+        log_id="log_vera_one_lock",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example one-lock record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_one_lock", "manual_claim"),),
+    )
+    _install_lifecycle_runner(monkeypatch)
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("a service acquired its own writer authority")
+
+    for module in (correction_service, logs_service, lifecycle_service):
+        monkeypatch.setattr(module, "writer_database", refuse)
+
+    acquisitions = []
+    real_writer = cli_module.writer_database
+
+    def counting_writer(*args, **kwargs):
+        acquisitions.append(kwargs)
+        return real_writer(*args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "writer_database", counting_writer)
+
+    corrected_result, _ = _invoke_json(
+        workspace,
+        ["--yes", "correction", "add", "--log-id", target.id],
+        input="Vera Example one-lock restatement.\n\n\n",
+    )
+    assert corrected_result.exit_code == 0, corrected_result.output
+    assert len(acquisitions) == 1
+
+    acquisitions.clear()
+    deleted_result, _ = _invoke_json(
+        workspace, ["--yes", "logs", "delete", "--log-id", target.id]
+    )
+    assert deleted_result.exit_code == 0, deleted_result.output
+    assert len(acquisitions) == 1
+    assert acquisitions[0]["owner_delete"] is True
+
+
+def test_interrupted_correction_cleanup_reports_committed_capture(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # §14.14 rule 6: Ctrl-C during post-commit managed cleanup still reports
+    # the durable correction, its invalidations, and the §14.12 retry.
+    import exp2res.services.correction as correction_service
+
+    target, _items = add_log(
+        workspace,
+        log_id="log_vera_cleanup_interrupt",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example cleanup-interrupt record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_cleanup_interrupt", "manual_claim"),),
+    )
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+
+    def interrupt_cleanup(*_args, **_kwargs):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        correction_service, "remove_assessment_sets", interrupt_cleanup
+    )
+    result, envelope = _invoke_json(
+        workspace,
+        ["--yes", "correction", "add", "--log-id", target.id],
+        input="Vera Example interrupted restatement.\n\n\n",
+    )
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    correction_id = created["raw_log"][0]
+    assert created["evidence_item"]
+    assert envelope["retry"] == {
+        "command": f"exp2res recompute --log-id {correction_id}"
+    }
+    with read_database(workspace) as connection:
+        stored = get_raw_log(connection, correction_id)
+    assert stored is not None and stored.corrects_log_id == target.id
+
+
+def test_interrupted_stage_cleanup_keeps_committed_swap_in_envelope(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # §14.14 rule 6: Ctrl-C during Stage 3's post-commit cleanup still
+    # reports the committed fact generation through the carried result.
+    import exp2res.pipeline.stage3 as stage3_module
+
+    add_log(
+        workspace,
+        log_id="log_vera_stage_cleanup",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example stage-cleanup record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_stage_cleanup", "manual_claim"),),
+    )
+    _install_lifecycle_runner(monkeypatch)
+
+    def interrupt_cleanup(*_args, **_kwargs):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        stage3_module, "remove_assessment_sets", interrupt_cleanup
+    )
+    result, envelope = _invoke_json(workspace, ["--yes", "recompute"])
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = {
+        group["entity_type"] for group in envelope["affected_ids"]["created"]
+    }
+    assert "experience_fact" in created
+    assert envelope["generation_ids"]
+    assert len(envelope["run_ids"]) == 2
+    assert envelope["retry"] == {"command": "exp2res recompute"}

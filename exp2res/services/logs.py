@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -101,12 +102,22 @@ def _remove_managed_backups(workspace: Path) -> list[str]:
 
 
 def delete_log(
-    workspace: Path, *, log_id: str, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS
+    workspace: Path,
+    *,
+    log_id: str,
+    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    connection: sqlite3.Connection | None = None,
 ) -> DeleteOutcome:
     residual_paths: list[str] = []
-    with writer_database(
-        workspace, owner_delete=True, timeout_ms=timeout_ms
-    ) as connection:
+    # §8.1: `logs delete` holds one owner-delete writer authority across the
+    # purge and its §13.13 rule 5 rebuild and passes it here; a direct call
+    # still acquires its own.
+    held = (
+        nullcontext(connection)
+        if connection is not None
+        else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
+    )
+    with held as connection:
         try:
             connection.execute("BEGIN IMMEDIATE")
             selected = get_raw_log(connection, log_id)

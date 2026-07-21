@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -165,6 +166,7 @@ def run_recompute(
     log_id: str | None,
     id_factory: Callable[[str], str] | None = None,
     clock: Callable[[], datetime] | None = None,
+    connection: sqlite3.Connection | None = None,
 ) -> LifecycleResult:
     """Replace selected/all lineages, then rebuild the global Stage 4-5 graph."""
 
@@ -186,8 +188,15 @@ def run_recompute(
 
     # §8.1: the whole Stage 3-5 lifecycle runs under one held writer
     # authority — no other business writer can interleave between the
-    # orchestration row, the stage swaps, and the terminal transition.
-    with writer_database(workspace, reconcile=True) as connection:
+    # orchestration row, the stage swaps, and the terminal transition. A
+    # correction or deletion command passes the authority it already holds
+    # so its committed lifecycle boundary and this rebuild share one lock.
+    held = (
+        nullcontext(connection)
+        if connection is not None
+        else writer_database(workspace, reconcile=True)
+    )
+    with held as connection:
         input_ids = tuple(
             row[0]
             for row in connection.execute(
@@ -289,6 +298,16 @@ def run_recompute(
                 )
             except Exception:
                 pass
+            # §14.14 rule 6: a stage interrupted after its committed swap
+            # carries its complete result on the class-9 error; fold it in
+            # so the cancelled envelope reports the committed effects.
+            carried = getattr(error, "stage_result", None)
+            if isinstance(carried, Stage3Result) and stage3 is None:
+                stage3 = carried
+            elif isinstance(carried, Stage4Result) and stage4 is None:
+                stage4 = carried
+            elif isinstance(carried, Stage5Result) and stage5 is None:
+                stage5 = carried
             progress = LifecycleResult(orchestration_run_id, stage3, stage4, stage5)
             if isinstance(error, KeyboardInterrupt):
                 # §14.14 rule 6: an interrupt between committed stage swaps

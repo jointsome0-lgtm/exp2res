@@ -55,6 +55,7 @@ from exp2res.errors import (
     MigrationFailedError,
     MigrationInterrupted,
     NonInteractiveInputRequired,
+    OperationCancelledError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
@@ -103,6 +104,7 @@ from exp2res.storage.workspace import (
     read_database,
     require_compatible,
     collect_preamble_residuals,
+    writer_database,
 )
 
 
@@ -733,28 +735,57 @@ def correction_add(
         ):
             return Outcome(exit_code=9, diagnostic_class="cancelled")
 
-        captured = capture_correction(
-            workspace,
-            log_id=target.id,
-            raw_text=raw_text,
-            occurred=occurred,
-            project=project,
-        )
-        retry = Retry(
-            command=f"exp2res recompute --log-id {shlex.quote(captured.raw_log.id)}"
-        )
-        try:
-            recomputed = run_recompute(workspace, log_id=captured.raw_log.id)
-        except Exp2ResError as error:
-            _decorate_lifecycle_error(
-                error,
-                base_affected=_correction_affected(captured),
-                base_generation_ids=captured.superseded_generation_ids,
-                base_invalidated_views=captured.invalidated_views,
-                base_residual_paths=captured.residual_paths,
-                retry=retry,
+        # §8.1: one writer authority covers the §13.13 rule 4 capture
+        # boundary and the selected-lineage rebuild — no other business
+        # writer can interleave between them. Prompts and consent stay
+        # outside the lock.
+        with writer_database(workspace, reconcile=True) as connection:
+            try:
+                captured = capture_correction(
+                    workspace,
+                    log_id=target.id,
+                    raw_text=raw_text,
+                    occurred=occurred,
+                    project=project,
+                    connection=connection,
+                )
+            except OperationCancelledError as error:
+                committed = cast(
+                    CorrectionOutcome | None,
+                    getattr(error, "correction_outcome", None),
+                )
+                if committed is not None:
+                    # §14.14 rule 6: the committed capture is reported in
+                    # the cancelled envelope with its §14.12 retry.
+                    _decorate_lifecycle_error(
+                        error,
+                        base_affected=_correction_affected(committed),
+                        base_generation_ids=committed.superseded_generation_ids,
+                        base_invalidated_views=committed.invalidated_views,
+                        base_residual_paths=committed.residual_paths,
+                        retry=Retry(
+                            command="exp2res recompute --log-id "
+                            + shlex.quote(committed.raw_log.id)
+                        ),
+                    )
+                raise
+            retry = Retry(
+                command=f"exp2res recompute --log-id {shlex.quote(captured.raw_log.id)}"
             )
-            raise
+            try:
+                recomputed = run_recompute(
+                    workspace, log_id=captured.raw_log.id, connection=connection
+                )
+            except Exp2ResError as error:
+                _decorate_lifecycle_error(
+                    error,
+                    base_affected=_correction_affected(captured),
+                    base_generation_ids=captured.superseded_generation_ids,
+                    base_invalidated_views=captured.invalidated_views,
+                    base_residual_paths=captured.residual_paths,
+                    retry=retry,
+                )
+                raise
 
         lifecycle = _lifecycle_outcome(recomputed)
         lifecycle.affected_ids = _merge_affected(
@@ -1594,28 +1625,36 @@ def logs_delete(
                 err=True,
             ):
                 return Outcome(exit_code=9, diagnostic_class="cancelled")
-        deleted = delete_log(workspace, log_id=log_id)
-        result = LogsDeleteResult(
-            selected_log=SelectedLogProjection(
-                **_log_projection(deleted.selected_log).model_dump(),
-                external_ref=deleted.selected_log.external_ref,
+        # §8.1: one owner-delete writer authority covers the committed
+        # privacy purge and its §13.13 rule 5 rebuild — no other business
+        # writer can interleave between them.
+        with writer_database(
+            workspace, owner_delete=True, reconcile=True
+        ) as connection:
+            deleted = delete_log(workspace, log_id=log_id, connection=connection)
+            result = LogsDeleteResult(
+                selected_log=SelectedLogProjection(
+                    **_log_projection(deleted.selected_log).model_dump(),
+                    external_ref=deleted.selected_log.external_ref,
+                )
             )
-        )
-        base_affected = _delete_affected(deleted)
-        retry = Retry(command="exp2res recompute")
-        try:
-            recomputed = run_recompute(workspace, log_id=None)
-        except Exp2ResError as error:
-            _decorate_lifecycle_error(
-                error,
-                base_affected=base_affected,
-                base_generation_ids=deleted.purged_generation_ids,
-                base_invalidated_views=deleted.invalidated_views,
-                base_residual_paths=deleted.residual_paths,
-                retry=retry,
-                result=result,
-            )
-            raise
+            base_affected = _delete_affected(deleted)
+            retry = Retry(command="exp2res recompute")
+            try:
+                recomputed = run_recompute(
+                    workspace, log_id=None, connection=connection
+                )
+            except Exp2ResError as error:
+                _decorate_lifecycle_error(
+                    error,
+                    base_affected=base_affected,
+                    base_generation_ids=deleted.purged_generation_ids,
+                    base_invalidated_views=deleted.invalidated_views,
+                    base_residual_paths=deleted.residual_paths,
+                    retry=retry,
+                    result=result,
+                )
+                raise
         lifecycle = _lifecycle_outcome(recomputed)
         exit_code = 8 if deleted.residual_paths or lifecycle.residual_paths else 0
         return Outcome(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,7 @@ from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.errors import (
     IdCollisionError,
     InvalidInputError,
+    OperationCancelledError,
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
@@ -134,6 +136,7 @@ def capture_correction(
     clock: Clock | None = None,
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    connection: sqlite3.Connection | None = None,
 ) -> CorrectionOutcome:
     """Commit correction + complete current-graph invalidation in one transaction."""
 
@@ -142,7 +145,14 @@ def capture_correction(
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     last_collision: IdCollisionError | None = None
 
-    with writer_database(workspace, timeout_ms=timeout_ms) as connection:
+    # §8.1: `correction add` holds one writer authority across capture and
+    # rebuild and passes it here; a direct call still acquires its own.
+    held = (
+        nullcontext(connection)
+        if connection is not None
+        else writer_database(workspace, timeout_ms=timeout_ms)
+    )
+    with held as connection:
         try:
             connection.execute("BEGIN IMMEDIATE")
             target = get_raw_log(connection, log_id)
@@ -263,24 +273,45 @@ def capture_correction(
             connection.rollback()
             raise
 
-        residual_paths = remove_assessment_sets(workspace, superseded_snapshot_ids)
+        def build_outcome(residuals: tuple[str, ...]) -> CorrectionOutcome:
+            return CorrectionOutcome(
+                raw_log=raw_log,
+                evidence_item=evidence_item,
+                superseded_fact_ids=superseded_fact_ids,
+                superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
+                superseded_contradiction_ids=tuple(
+                    sorted(superseded_contradiction_ids, key=_id_key)
+                ),
+                superseded_signal_ids=tuple(
+                    sorted(superseded_signal_ids, key=_id_key)
+                ),
+                superseded_claim_ids=tuple(
+                    sorted(superseded_claim_ids, key=_id_key)
+                ),
+                superseded_snapshot_ids=tuple(
+                    sorted(superseded_snapshot_ids, key=_id_key)
+                ),
+                superseded_generation_ids=superseded_generation_ids,
+                invalidated_views=tuple(
+                    sorted(
+                        invalidated_views,
+                        key=lambda item: _id_key(item.snapshot_id),
+                    )
+                ),
+                residual_paths=residuals,
+            )
 
-    return CorrectionOutcome(
-        raw_log=raw_log,
-        evidence_item=evidence_item,
-        superseded_fact_ids=superseded_fact_ids,
-        superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
-        superseded_contradiction_ids=tuple(
-            sorted(superseded_contradiction_ids, key=_id_key)
-        ),
-        superseded_signal_ids=tuple(sorted(superseded_signal_ids, key=_id_key)),
-        superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
-        superseded_snapshot_ids=tuple(
-            sorted(superseded_snapshot_ids, key=_id_key)
-        ),
-        superseded_generation_ids=superseded_generation_ids,
-        invalidated_views=tuple(
-            sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
-        ),
-        residual_paths=residual_paths,
-    )
+        try:
+            residual_paths = remove_assessment_sets(
+                workspace, superseded_snapshot_ids
+            )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the correction transaction committed before this
+            # cleanup, so the class-9 error carries the committed outcome and
+            # the pending stale paths stay reported as residuals.
+            cancelled = OperationCancelledError()
+            cancelled.correction_outcome = build_outcome(
+                tuple(pending_stale_paths)
+            )
+            raise cancelled from None
+        return build_outcome(residual_paths)

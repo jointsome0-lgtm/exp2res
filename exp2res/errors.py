@@ -180,6 +180,16 @@ class LLMSelectionMissingError(ConfigurationError):
     )
 
 
+class OperationCancelledError(Exp2ResError):
+    """§14.14 rule 6 class-9 exit after a committed §13.13 lifecycle boundary."""
+
+    exit_code = 9
+    diagnostic_class = "cancelled"
+    public_message = (
+        "The operation was cancelled; the committed lifecycle boundary remains."
+    )
+
+
 class LLMInvocationError(Exp2ResError):
     """Privacy-safe §15 failure carrying only a stable machine code."""
 

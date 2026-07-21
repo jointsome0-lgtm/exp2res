@@ -14,6 +14,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.models import ExperienceFact, RawLog
+from exp2res.errors import LLMCancelledError
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.domain.temporal import (
     confidence_exceeds,
@@ -501,41 +502,61 @@ def run_fact_extraction(
                 connection, pending_stale_paths, superseded_snapshot_ids
             )
             raise
+
+        def build_result(residuals: tuple[str, ...]) -> Stage3Result:
+            resolved_lineages = tuple(
+                cast(_ResolvedLineage, item) for item in outcome.resolved
+            )
+            return Stage3Result(
+                run_id=run_id,
+                created=outcome.output_ids,
+                superseded=tuple(superseded_ids),
+                generation_ids=tuple(
+                    item.generation_id for item in resolved_lineages if item.facts
+                ),
+                superseded_generation_ids=tuple(
+                    sorted(superseded_generation_ids, key=_id_key)
+                ),
+                # §14.14 rule 5: envelope ID collections are ID-byte-ordered;
+                # the listing helpers return creation-time order.
+                superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
+                superseded_contradiction_ids=tuple(
+                    sorted(superseded_contradiction_ids, key=_id_key)
+                ),
+                superseded_signal_ids=tuple(
+                    sorted(superseded_signal_ids, key=_id_key)
+                ),
+                superseded_claim_ids=tuple(
+                    sorted(superseded_claim_ids, key=_id_key)
+                ),
+                superseded_snapshot_ids=tuple(
+                    sorted(superseded_snapshot_ids, key=_id_key)
+                ),
+                invalidated_views=tuple(
+                    sorted(
+                        invalidated_views,
+                        key=lambda item: _id_key(item.snapshot_id),
+                    )
+                ),
+                residual_paths=residuals,
+                warnings=tuple(
+                    warning
+                    for item in resolved_lineages
+                    for warning in item.warnings
+                ),
+            )
+
         # §13 stale-export trigger class 1: business supersession is already
         # committed; cleanup failure is returned and never rolls it back.
-        residual_paths = remove_assessment_sets(
-            workspace, superseded_snapshot_ids
-        )
-
-    resolved_lineages = tuple(cast(_ResolvedLineage, item) for item in outcome.resolved)
-    return Stage3Result(
-        run_id=run_id,
-        created=outcome.output_ids,
-        superseded=tuple(superseded_ids),
-        generation_ids=tuple(
-            item.generation_id for item in resolved_lineages if item.facts
-        ),
-        superseded_generation_ids=tuple(
-            sorted(superseded_generation_ids, key=_id_key)
-        ),
-        # §14.14 rule 5: envelope ID collections are ID-byte-ordered; the
-        # listing helpers return creation-time order.
-        superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
-        superseded_contradiction_ids=tuple(
-            sorted(superseded_contradiction_ids, key=_id_key)
-        ),
-        superseded_signal_ids=tuple(sorted(superseded_signal_ids, key=_id_key)),
-        superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
-        superseded_snapshot_ids=tuple(
-            sorted(superseded_snapshot_ids, key=_id_key)
-        ),
-        invalidated_views=tuple(
-            sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
-        ),
-        residual_paths=residual_paths,
-        warnings=tuple(
-            warning
-            for item in resolved_lineages
-            for warning in item.warnings
-        ),
-    )
+        try:
+            residual_paths = remove_assessment_sets(
+                workspace, superseded_snapshot_ids
+            )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the swap committed before cleanup, so the
+            # class-9 error carries the complete committed result; the
+            # pending stale paths stay reported as residuals.
+            cancelled = LLMCancelledError()
+            cancelled.stage_result = build_result(tuple(pending_stale_paths))
+            raise cancelled from None
+        return build_result(residual_paths)

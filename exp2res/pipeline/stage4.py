@@ -15,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.models import Contradiction, GapQuestion
 from exp2res.domain.results import InvalidatedView, invalidated_view
+from exp2res.errors import LLMCancelledError
 from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.llm.contracts import (
     ContractValidationError,
@@ -504,9 +505,6 @@ def run_detection_generation(
                 connection, pending_stale_paths, superseded_snapshot_ids
             )
             raise
-        residual_paths = remove_assessment_sets(
-            workspace, superseded_snapshot_ids
-        )
         # Capture the complete post-run sets while the command still owns the
         # writer lock, so the §14.7 result cannot race a following writer.
         current_gaps = tuple(
@@ -519,30 +517,55 @@ def run_detection_generation(
             )
         )
 
-    resolved = tuple(cast(_ResolvedDetection, item) for item in outcome.resolved)
-    return Stage4Result(
-        run_id=run_id,
-        retained=retained,
-        created_gap_ids=created_gap_ids,
-        created_contradiction_ids=created_contradiction_ids,
-        superseded_gap_ids=superseded_gap_ids,
-        superseded_contradiction_ids=superseded_contradiction_ids,
-        superseded_signal_ids=tuple(sorted(superseded_signal_ids, key=_id_key)),
-        superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
-        superseded_snapshot_ids=tuple(
-            sorted(superseded_snapshot_ids, key=_id_key)
-        ),
-        invalidated_views=tuple(
-            sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
-        ),
-        residual_paths=residual_paths,
-        generation_id=generation_id,
-        superseded_generation_ids=tuple(
-            sorted(superseded_generation_ids, key=_id_key)
-        ),
-        warnings=tuple(
-            warning for candidate in resolved for warning in candidate.warnings
-        ),
-        current_gaps=current_gaps,
-        current_contradictions=current_contradictions,
-    )
+        def build_result(residuals: tuple[str, ...]) -> Stage4Result:
+            resolved = tuple(
+                cast(_ResolvedDetection, item) for item in outcome.resolved
+            )
+            return Stage4Result(
+                run_id=run_id,
+                retained=retained,
+                created_gap_ids=created_gap_ids,
+                created_contradiction_ids=created_contradiction_ids,
+                superseded_gap_ids=superseded_gap_ids,
+                superseded_contradiction_ids=superseded_contradiction_ids,
+                superseded_signal_ids=tuple(
+                    sorted(superseded_signal_ids, key=_id_key)
+                ),
+                superseded_claim_ids=tuple(
+                    sorted(superseded_claim_ids, key=_id_key)
+                ),
+                superseded_snapshot_ids=tuple(
+                    sorted(superseded_snapshot_ids, key=_id_key)
+                ),
+                invalidated_views=tuple(
+                    sorted(
+                        invalidated_views,
+                        key=lambda item: _id_key(item.snapshot_id),
+                    )
+                ),
+                residual_paths=residuals,
+                generation_id=generation_id,
+                superseded_generation_ids=tuple(
+                    sorted(superseded_generation_ids, key=_id_key)
+                ),
+                warnings=tuple(
+                    warning
+                    for candidate in resolved
+                    for warning in candidate.warnings
+                ),
+                current_gaps=current_gaps,
+                current_contradictions=current_contradictions,
+            )
+
+        try:
+            residual_paths = remove_assessment_sets(
+                workspace, superseded_snapshot_ids
+            )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the swap committed before cleanup, so the
+            # class-9 error carries the complete committed result; the
+            # pending stale paths stay reported as residuals.
+            cancelled = LLMCancelledError()
+            cancelled.stage_result = build_result(tuple(pending_stale_paths))
+            raise cancelled from None
+        return build_result(residual_paths)

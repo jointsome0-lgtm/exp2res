@@ -17,7 +17,7 @@ from exp2res.domain.calibration import signal_confidence_cap
 from exp2res.domain.models import EvidenceItem, ExperienceFact, SelfSignal
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.domain.temporal import confidence_exceeds
-from exp2res.errors import IntegrityFailureError
+from exp2res.errors import IntegrityFailureError, LLMCancelledError
 from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.llm.contracts import (
     ContractValidationError,
@@ -375,34 +375,54 @@ def run_signal_generation(
                 connection, pending_stale_paths, superseded_snapshot_ids
             )
             raise
-        residual_paths = remove_assessment_sets(
-            workspace, superseded_snapshot_ids
-        )
         current_signals = tuple(
             sorted(list_self_signals(connection), key=lambda signal: _id_key(signal.id))
         )
 
-    resolved = tuple(cast(_ResolvedSignals, item) for item in outcome.resolved)
-    return Stage5Result(
-        run_id=run_id,
-        created_signal_ids=created_signal_ids,
-        superseded_signal_ids=tuple(
-            sorted(superseded_signal_ids, key=_id_key)
-        ),
-        superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
-        superseded_snapshot_ids=tuple(
-            sorted(superseded_snapshot_ids, key=_id_key)
-        ),
-        invalidated_views=tuple(
-            sorted(invalidated_views, key=lambda item: _id_key(item.snapshot_id))
-        ),
-        residual_paths=residual_paths,
-        generation_id=generation_id,
-        superseded_generation_ids=tuple(
-            sorted(superseded_generation_ids, key=_id_key)
-        ),
-        warnings=tuple(
-            warning for candidate in resolved for warning in candidate.warnings
-        ),
-        current_signals=current_signals,
-    )
+        def build_result(residuals: tuple[str, ...]) -> Stage5Result:
+            resolved = tuple(
+                cast(_ResolvedSignals, item) for item in outcome.resolved
+            )
+            return Stage5Result(
+                run_id=run_id,
+                created_signal_ids=created_signal_ids,
+                superseded_signal_ids=tuple(
+                    sorted(superseded_signal_ids, key=_id_key)
+                ),
+                superseded_claim_ids=tuple(
+                    sorted(superseded_claim_ids, key=_id_key)
+                ),
+                superseded_snapshot_ids=tuple(
+                    sorted(superseded_snapshot_ids, key=_id_key)
+                ),
+                invalidated_views=tuple(
+                    sorted(
+                        invalidated_views,
+                        key=lambda item: _id_key(item.snapshot_id),
+                    )
+                ),
+                residual_paths=residuals,
+                generation_id=generation_id,
+                superseded_generation_ids=tuple(
+                    sorted(superseded_generation_ids, key=_id_key)
+                ),
+                warnings=tuple(
+                    warning
+                    for candidate in resolved
+                    for warning in candidate.warnings
+                ),
+                current_signals=current_signals,
+            )
+
+        try:
+            residual_paths = remove_assessment_sets(
+                workspace, superseded_snapshot_ids
+            )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the swap committed before cleanup, so the
+            # class-9 error carries the complete committed result; the
+            # pending stale paths stay reported as residuals.
+            cancelled = LLMCancelledError()
+            cancelled.stage_result = build_result(tuple(pending_stale_paths))
+            raise cancelled from None
+        return build_result(residual_paths)
