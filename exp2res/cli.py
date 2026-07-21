@@ -35,6 +35,7 @@ from exp2res.domain.results import (
     CommandPath,
     ContradictionsResult,
     DetectionsGenerateResult,
+    EvidenceItemProjection,
     EntityIdGroup,
     FactsListResult,
     GapsListResult,
@@ -42,6 +43,7 @@ from exp2res.domain.results import (
     LogProjection,
     LogsDeleteResult,
     LogsListResult,
+    LogsShowResult,
     Retry,
     SchemaProjection,
     SchemaResult,
@@ -170,6 +172,7 @@ class Outcome:
     result: (
         SchemaResult
         | LogsListResult
+        | LogsShowResult
         | LogsDeleteResult
         | FactsListResult
         | DetectionsGenerateResult
@@ -221,6 +224,26 @@ def _log_projection(raw_log) -> LogProjection:
         occurred=raw_log.occurred,
         project=raw_log.project,
         corrects_log_id=raw_log.corrects_log_id,
+    )
+
+
+def _selected_log_projection(raw_log) -> SelectedLogProjection:
+    return SelectedLogProjection(
+        **_log_projection(raw_log).model_dump(),
+        external_ref=raw_log.external_ref,
+    )
+
+
+def _evidence_projection(item) -> EvidenceItemProjection:
+    return EvidenceItemProjection(
+        id=item.id,
+        created_at=item.created_at,
+        raw_log_id=item.raw_log_id,
+        title=item.title,
+        summary=item.summary,
+        uri=item.uri,
+        path=item.path,
+        strength=item.strength,
     )
 
 
@@ -1612,12 +1635,35 @@ def logs_list(context: typer.Context) -> None:
     _run_command(context, "logs list", operation)
 
 
+@logs_app.command("show")
+def logs_show(
+    context: typer.Context,
+    log_id: str = typer.Option(..., "--log-id"),
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        bundle = show_log(workspace, log_id=log_id)
+        result = LogsShowResult(
+            log=_selected_log_projection(bundle.raw_log),
+            evidence_items=[
+                _evidence_projection(item) for item in bundle.evidence_items
+            ],
+        )
+        projection = json.dumps(
+            result.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+        )
+        return Outcome(
+            result=result,
+            human_result=f"{projection}\n{bundle.raw_log.raw_text}",
+        )
+
+    _run_command(context, "logs show", operation)
+
+
 def _delete_result(deleted: DeleteOutcome) -> LogsDeleteResult:
     return LogsDeleteResult(
-        selected_log=SelectedLogProjection(
-            **_log_projection(deleted.selected_log).model_dump(),
-            external_ref=deleted.selected_log.external_ref,
-        )
+        selected_log=_selected_log_projection(deleted.selected_log)
     )
 
 

@@ -318,6 +318,10 @@ phase = "4"
 status = "partial"
 nodes = [
   "tests/test_cli_phase0.py::test_cli_daily_demo_lists_only_raw_text_free_projection",
+  "tests/test_cli_logs_show.py::test_logs_show_human_prints_only_selected_complete_raw_text",
+  "tests/test_cli_logs_show.py::test_logs_show_json_is_closed_raw_free_and_includes_linked_evidence",
+  "tests/test_cli_logs_show.py::test_logs_show_inspects_displaced_record_by_id_in_both_modes",
+  "tests/test_cli_logs_show.py::test_logs_show_unknown_id_uses_stable_selector_failure_envelope",
   "tests/test_cli_phase0.py::test_noninteractive_capture_and_delete_never_prompt_or_block",
   "tests/test_cli_phase0.py::test_json_workspace_failure_is_one_closed_envelope",
   "tests/test_cli_phase0.py::test_confirmed_owner_delete_reports_closed_raw_free_result",
@@ -327,7 +331,7 @@ nodes = [
   "tests/test_workspace_phase0.py::test_incompatible_workspace_blocks_file_capture_before_source_read",
 ]
 phase = "4"
-note = "Phase 0 covers discovery, compatibility ordering, non-interactive controls, stable exit classes, closed JSON envelopes, raw-text-free projections, and secret-safe diagnostics; later command projections and lifecycle reports remain"
+note = "Phase 0 plus logs show cover discovery, compatibility ordering, non-interactive controls, stable exit classes, closed JSON envelopes, raw-text-free machine projections, selected-record-only human raw text, linked evidence, and retained displaced-record inspection; later command projections and lifecycle reports remain"
 
 ["21.42"]
 status = "partial"
