@@ -442,6 +442,46 @@ def test_failed_correction_stays_committed_and_selected_recompute_repairs(
         assert len(list_self_signals(connection)) == 1
 
 
+def test_lifecycle_failure_prints_retry_in_human_mode(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target, _items = add_log(
+        workspace,
+        log_id="log_vera_human_retry",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example human-retry record.",
+        occurred=exact_day(15),
+        item_specs=(("evi_vera_human_retry", "manual_claim"),),
+    )
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner([b"{}", b"{}"]),
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "--workspace",
+            str(workspace),
+            "--yes",
+            "correction",
+            "add",
+            "--log-id",
+            target.id,
+        ],
+        input="Vera Example committed correction needing retry.\n\n\n",
+    )
+
+    assert result.exit_code == 7
+    assert "Retry: exp2res recompute --log-id log_" in result.stderr
+
+
 def test_delete_rebuild_success_failure_zero_survivor_and_bare_recompute(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -556,6 +596,46 @@ def test_delete_rebuild_failure_never_restores_deleted_record(
     with read_database(workspace) as connection:
         assert get_raw_log(connection, selected.id) is None
         assert get_raw_log(connection, survivor.id) is not None
+        assert list_experience_facts(connection) == ()
+
+
+def test_interrupted_delete_checkpoint_reports_committed_purge(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import exp2res.services.logs as logs_service
+
+    target, _other, _fact, _detected, _signaled, assessed, _export_dir = (
+        _prepare_full_graph(workspace)
+    )
+
+    def interrupt_checkpoint(*_args, **_kwargs):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        logs_service, "_delete_checkpoint_residuals", interrupt_checkpoint
+    )
+    result, envelope = _invoke_json(
+        workspace,
+        ["--yes", "logs", "delete", "--log-id", target.id],
+    )
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["result"]["selected_log"]["id"] == target.id
+    assert envelope["retry"] == {"command": "exp2res recompute"}
+    assert envelope["generation_ids"]
+    assert envelope["invalidated_views"][0]["snapshot_id"] == assessed.snapshot_id
+    assert envelope["residual_paths"] == [
+        str(workspace / ".exp2res" / "exp2res.sqlite-wal")
+    ]
+    deleted = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["deleted"]
+    }
+    assert deleted["raw_log"] == [target.id]
+    assert deleted["evidence_item"]
+    with read_database(workspace) as connection:
+        assert get_raw_log(connection, target.id) is None
         assert list_experience_facts(connection) == ()
 
 

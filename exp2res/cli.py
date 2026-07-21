@@ -90,7 +90,7 @@ from exp2res.services.detection import (
 from exp2res.services.extraction import run_extract, validate_extract_selection
 from exp2res.services.export import export_assessment, require_export_eligible
 from exp2res.services.facts import list_facts, show_fact
-from exp2res.services.logs import delete_log, list_logs, show_log
+from exp2res.services.logs import DeleteOutcome, delete_log, list_logs, show_log
 from exp2res.services.lifecycle import LifecycleResult, run_recompute
 from exp2res.services.signals import list_current_signals, run_signals_generate
 from exp2res.services.time_input import parse_occurred, workspace_zone
@@ -312,6 +312,11 @@ def _run_command(
     except Exception:
         outcome = Outcome(exit_code=1, diagnostic_class="internal_error")
         typer.echo("The operation failed unexpectedly.", err=True)
+
+    if outcome.exit_code and outcome.retry is not None and not controls.json_output:
+        # §13.13 retry guidance is an operator diagnostic in human mode; the
+        # JSON path carries the same executable command in the closed field.
+        typer.echo(f"Retry: {outcome.retry.command}", err=True)
 
     observed_residuals: list[str] = []
     for path in preamble_residuals:
@@ -1589,7 +1594,16 @@ def logs_list(context: typer.Context) -> None:
     _run_command(context, "logs list", operation)
 
 
-def _delete_affected(deleted) -> AffectedIds:
+def _delete_result(deleted: DeleteOutcome) -> LogsDeleteResult:
+    return LogsDeleteResult(
+        selected_log=SelectedLogProjection(
+            **_log_projection(deleted.selected_log).model_dump(),
+            external_ref=deleted.selected_log.external_ref,
+        )
+    )
+
+
+def _delete_affected(deleted: DeleteOutcome) -> AffectedIds:
     classes = (
         ("evidence_item", deleted.evidence_item_ids),
         ("experience_fact", deleted.purged_fact_ids),
@@ -1637,15 +1651,29 @@ def logs_delete(
         with writer_database(
             workspace, owner_delete=True, reconcile=True
         ) as connection:
-            deleted = delete_log(workspace, log_id=log_id, connection=connection)
-            result = LogsDeleteResult(
-                selected_log=SelectedLogProjection(
-                    **_log_projection(deleted.selected_log).model_dump(),
-                    external_ref=deleted.selected_log.external_ref,
-                )
-            )
-            base_affected = _delete_affected(deleted)
             retry = Retry(command="exp2res recompute")
+            try:
+                deleted = delete_log(
+                    workspace, log_id=log_id, connection=connection
+                )
+            except OperationCancelledError as error:
+                committed = cast(
+                    DeleteOutcome | None,
+                    getattr(error, "delete_outcome", None),
+                )
+                if committed is not None:
+                    _decorate_lifecycle_error(
+                        error,
+                        base_affected=_delete_affected(committed),
+                        base_generation_ids=committed.purged_generation_ids,
+                        base_invalidated_views=committed.invalidated_views,
+                        base_residual_paths=committed.residual_paths,
+                        retry=retry,
+                        result=_delete_result(committed),
+                    )
+                raise
+            result = _delete_result(deleted)
+            base_affected = _delete_affected(deleted)
             try:
                 recomputed = run_recompute(
                     workspace, log_id=None, connection=connection

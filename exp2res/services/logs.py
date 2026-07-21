@@ -11,7 +11,11 @@ import stat
 
 from exp2res.domain.models import RawLog
 from exp2res.domain.results import InvalidatedView, invalidated_view
-from exp2res.errors import SelectorNotFoundError, WorkspaceBusyError
+from exp2res.errors import (
+    OperationCancelledError,
+    SelectorNotFoundError,
+    WorkspaceBusyError,
+)
 from exp2res.exports.managed import remove_all_managed_output_entries
 from exp2res.storage.repository import (
     RawLogBundle,
@@ -58,6 +62,17 @@ def show_log(
         if bundle is None:
             raise SelectorNotFoundError()
         return bundle
+
+
+def _delete_checkpoint_residuals(
+    connection: sqlite3.Connection, database: Path
+) -> tuple[str, ...]:
+    wal_path = str(database.with_name(database.name + "-wal"))
+    try:
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        return () if checkpoint is not None and checkpoint[0] == 0 else (wal_path,)
+    except sqlite3.DatabaseError:
+        return (wal_path,)
 
 
 def _remove_managed_backups(workspace: Path) -> list[str]:
@@ -229,25 +244,38 @@ def delete_log(
             connection.rollback()
             raise
 
+        def build_outcome(residuals: tuple[str, ...]) -> DeleteOutcome:
+            return DeleteOutcome(
+                selected_log=selected,
+                evidence_item_ids=evidence_ids,
+                purged_fact_ids=purged_fact_ids,
+                purged_gap_ids=purged_gap_ids,
+                purged_contradiction_ids=purged_contradiction_ids,
+                purged_signal_ids=purged_signal_ids,
+                purged_finding_ids=purged_finding_ids,
+                purged_claim_ids=purged_claim_ids,
+                purged_snapshot_ids=purged_snapshot_ids,
+                purged_generation_ids=purged_generation_ids,
+                invalidated_views=invalidated_views,
+                residual_paths=tuple(sorted(set(residuals), key=os.fsencode)),
+            )
+
         database = workspace / ".exp2res" / "exp2res.sqlite"
         try:
-            checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-            if checkpoint is None or checkpoint[0] != 0:
-                residual_paths.append(str(database.with_name(database.name + "-wal")))
-        except sqlite3.DatabaseError:
-            residual_paths.append(str(database.with_name(database.name + "-wal")))
+            residual_paths.extend(
+                _delete_checkpoint_residuals(connection, database)
+            )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the privacy purge committed before checkpoint
+            # work, so cancellation carries the complete durable deletion and
+            # treats the WAL as residual until a later writer proves erasure.
+            cancelled = OperationCancelledError()
+            cancelled.delete_outcome = build_outcome(
+                (
+                    *residual_paths,
+                    str(database.with_name(database.name + "-wal")),
+                )
+            )
+            raise cancelled from None
 
-    return DeleteOutcome(
-        selected_log=selected,
-        evidence_item_ids=evidence_ids,
-        purged_fact_ids=purged_fact_ids,
-        purged_gap_ids=purged_gap_ids,
-        purged_contradiction_ids=purged_contradiction_ids,
-        purged_signal_ids=purged_signal_ids,
-        purged_finding_ids=purged_finding_ids,
-        purged_claim_ids=purged_claim_ids,
-        purged_snapshot_ids=purged_snapshot_ids,
-        purged_generation_ids=purged_generation_ids,
-        invalidated_views=invalidated_views,
-        residual_paths=tuple(sorted(set(residual_paths))),
-    )
+        return build_outcome(tuple(residual_paths))
