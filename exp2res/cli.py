@@ -305,19 +305,31 @@ def _run_command(
         except OSError:
             pass
         observed_residuals.append(path)
+    # Undecodable POSIX names surface as surrogateescape'd strings that
+    # neither UTF-8 stdout nor the JSON envelope can carry; escape them into
+    # backslash form so the committed result and every residual stay
+    # reportable in both modes.
     residual_paths = sorted(
-        {*outcome.residual_paths, *observed_residuals}, key=os.fsencode
+        {
+            path.encode("utf-8", "surrogateescape").decode(
+                "utf-8", "backslashreplace"
+            )
+            for path in {*outcome.residual_paths, *observed_residuals}
+        },
+        key=os.fsencode,
     )
     outcome.residual_paths = residual_paths
     if residual_paths and outcome.exit_code in {0, 10}:
         # §14.14 rule 4: a non-cancelled completion that reports a residual is
         # class 8, including verifier findings that would otherwise be 10. A
         # failed class (1-7) is not a completion and keeps its own code while
-        # still reporting the residual paths. The diagnostic below is the
-        # required human-mode explanation of the changed exit; committed
-        # business effects stay reported through the primary result.
+        # still reporting the residual paths.
         outcome.exit_code = 8
         outcome.diagnostic_class = "managed_output_incomplete"
+    if residual_paths:
+        # One diagnostic for every residual-carrying envelope — promoted,
+        # direct class 8, cancelled, or failed — so a human-mode user always
+        # sees the paths that still need cleanup.
         typer.echo(
             "Managed-output cleanup did not complete; residual paths:",
             err=True,

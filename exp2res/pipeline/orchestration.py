@@ -34,6 +34,40 @@ class StageOutcome:
     resolved: tuple[object, ...]
 
 
+def withdraw_pending_unless_superseded(
+    connection: sqlite3.Connection,
+    pending_paths: Sequence[str],
+    snapshot_ids: Sequence[str],
+) -> None:
+    """Withdraw a pre-commit stale-set report only on a proven rollback.
+
+    An interrupt can arrive after SQLite durably committed but before the
+    stage returns; the supersession of the listed snapshots is atomic, so any
+    listed snapshot that is still current proves the rollback. An
+    indeterminate read keeps the report (fail closed: a spurious residual is
+    recoverable, an unreported stale set is not).
+    """
+
+    from exp2res.storage.workspace import withdraw_managed_residuals
+
+    if not pending_paths:
+        return
+    rolled_back = False
+    try:
+        if not connection.in_transaction and snapshot_ids:
+            placeholders = ",".join("?" for _ in snapshot_ids)
+            row = connection.execute(
+                "SELECT COUNT(*) FROM assessment_snapshots "
+                f"WHERE superseded_at IS NULL AND id IN ({placeholders})",
+                tuple(snapshot_ids),
+            ).fetchone()
+            rolled_back = bool(row and row[0])
+    except Exception:
+        rolled_back = False
+    if rolled_back:
+        withdraw_managed_residuals(pending_paths)
+
+
 def _transaction(
     connection: sqlite3.Connection, operation: Callable[[], object]
 ) -> object:

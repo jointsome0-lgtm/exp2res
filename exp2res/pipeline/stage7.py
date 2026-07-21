@@ -510,7 +510,29 @@ def run_assessment_verification(
                 resolved_credentials=resolved_credentials,
             )
         except BaseException:
-            withdraw_managed_residuals(pending_stale_paths)
+            # Withdraw the pre-commit pending report only on a proven
+            # rollback: Stage 7 supersedes nothing, so the committed marker is
+            # the verification-state change itself.
+            if pending_stale_paths:
+                committed = True
+                try:
+                    if not connection.in_transaction:
+                        stored = get_assessment_snapshot(connection, snapshot_id)
+                        stored_claims = _require_current_members(
+                            connection, snapshot_id=snapshot_id
+                        )
+                        stored_state = (
+                            None if stored is None else stored.verification_status,
+                            tuple(
+                                (item.id, item.verification_status, item.counterevidence)
+                                for item in stored_claims
+                            ),
+                        )
+                        committed = stored_state != prior_verification_state
+                except Exception:
+                    committed = True
+                if not committed:
+                    withdraw_managed_residuals(pending_stale_paths)
             raise
         findings = tuple(
             sorted(

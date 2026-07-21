@@ -10,9 +10,11 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
+import exp2res.pipeline.stage5 as stage5_module
 import exp2res.pipeline.stage7 as stage7_module
 import exp2res.services.assessment as assessment_service
 import exp2res.services.capture as capture_service
+import exp2res.services.signals as signals_service
 from exp2res.cli import app
 from exp2res.errors import ManagedOutputIncompleteError
 from exp2res.storage.repository import list_raw_logs
@@ -22,6 +24,7 @@ from conftest import VERA_CORPUS
 from fakes import FakeContractRunner
 from test_stage7_verification import generated_snapshot, run_stage7, verifier_response
 from test_stage3_extraction import SELECTION, budgets
+from test_stage5_signals import signal_response
 
 
 runner = CliRunner()
@@ -323,6 +326,88 @@ def test_interrupted_gap_answer_cleanup_reports_the_stale_set(
             "SELECT answered FROM gap_questions WHERE id = 'gap_vera_interrupt'"
         ).fetchone()[0]
     assert answered == 1
+
+
+def test_interrupt_after_committed_stage_replacement_keeps_the_stale_report(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An interrupt can land after the stage transaction durably committed but
+    # before the stage returns; the pre-commit pending report must survive
+    # into the cancelled envelope because the published set really is stale.
+    ids, facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner([verifier_response() for _ in generated.claims]),
+        ids,
+        generated.snapshot_id,
+    )
+    exported, _envelope = invoke_json(
+        workspace, ["export", "assessment", "--snapshot", generated.snapshot_id]
+    )
+    assert exported.exit_code == 0
+    final_set = workspace / "out" / "assessment" / generated.snapshot_id
+
+    fact_id = list(facts)[0]
+    monkeypatch.setattr(
+        signals_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner([signal_response([fact_id])]),
+        ),
+    )
+    real_run = stage5_module.run_complete_stage
+
+    def interrupt_after_commit(*args, **kwargs):
+        real_run(*args, **kwargs)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(stage5_module, "run_complete_stage", interrupt_after_commit)
+    result, envelope = invoke_json(workspace, ["--yes", "signals", "generate"])
+    assert result.exit_code == 9
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert envelope["residual_paths"] == [str(final_set)]
+    assert final_set.is_dir()
+    with read_database(workspace) as connection:
+        superseded = connection.execute(
+            "SELECT superseded_at FROM assessment_snapshots WHERE id = ?",
+            (generated.snapshot_id,),
+        ).fetchone()[0]
+    assert superseded is not None
+
+
+def test_undecodable_residual_path_is_escaped_in_the_envelope(
+    workspace: Path,
+) -> None:
+    # A non-removable managed entry with a non-UTF-8 name must not crash the
+    # envelope: the committed deletion reports the path in backslash-escaped
+    # form instead of surrogates that UTF-8 output cannot carry.
+    source = VERA_CORPUS / "logs" / "daily-2026-06-09.md"
+    captured, captured_envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    assert captured.exit_code == 0
+    log_id = next(
+        group["ids"][0]
+        for group in captured_envelope["affected_ids"]["created"]
+        if group["entity_type"] == "raw_log"
+    )
+
+    branch = workspace / "out" / "branch"
+    branch.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = workspace.parent / "Vera Example undecodable target"
+    target.mkdir()
+    stray = branch / os.fsdecode(b"vera-\xfe-stray")
+    stray.symlink_to(target, target_is_directory=True)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "logs", "delete", "--log-id", log_id]
+    )
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str(branch / "vera-\\xfe-stray")]
+    assert stray.is_symlink()
 
 
 def test_non_export_writer_commits_but_preamble_residual_forces_class_8(

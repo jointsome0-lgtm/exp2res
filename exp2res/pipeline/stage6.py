@@ -49,11 +49,14 @@ from exp2res.storage.repository import (
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     report_managed_residuals,
-    withdraw_managed_residuals,
     writer_database,
 )
 
-from .orchestration import PlannedCall, run_complete_stage
+from .orchestration import (
+    PlannedCall,
+    run_complete_stage,
+    withdraw_pending_unless_superseded,
+)
 from .view_selection import select_assessment_view
 
 
@@ -459,10 +462,12 @@ def run_assessment_generation(
                 resolved_credentials=resolved_credentials,
             )
         except BaseException:
-            # The transaction did not commit (or the stage failed before its
-            # cleanup); the pre-commit pending report must not survive as a
-            # residual for sets that are still valid current output.
-            withdraw_managed_residuals(pending_stale_paths)
+            # Withdraw the pre-commit pending report only when the rollback
+            # is proven; an interrupt after a durable commit keeps the
+            # stale-set report in the cancelled envelope.
+            withdraw_pending_unless_superseded(
+                connection, pending_stale_paths, superseded_snapshot_ids
+            )
             raise
         residual_paths = remove_assessment_sets(
             workspace, superseded_snapshot_ids

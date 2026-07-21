@@ -338,7 +338,22 @@ def capture_gap_answer(
                 try:
                     connection.commit()
                 except BaseException:
-                    withdraw_managed_residuals(pending)
+                    # Withdraw only on a proven rollback: an interrupt can
+                    # arrive after SQLite durably committed, and the stale
+                    # sets must then stay reported. Indeterminate keeps the
+                    # report (a spurious residual is recoverable).
+                    committed = True
+                    try:
+                        if not connection.in_transaction:
+                            row = connection.execute(
+                                "SELECT answered FROM gap_questions WHERE id = ?",
+                                (gap.id,),
+                            ).fetchone()
+                            committed = bool(row and row[0])
+                    except Exception:
+                        committed = True
+                    if not committed:
+                        withdraw_managed_residuals(pending)
                     raise
                 residuals = remove_assessment_sets(workspace, snapshot_ids)
                 return RawLogBundle(raw_log, (evidence_item,), residuals)
