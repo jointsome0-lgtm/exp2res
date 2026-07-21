@@ -91,7 +91,11 @@ from exp2res.services.extraction import run_extract, validate_extract_selection
 from exp2res.services.export import export_assessment, require_export_eligible
 from exp2res.services.facts import list_facts, show_fact
 from exp2res.services.logs import DeleteOutcome, delete_log, list_logs, show_log
-from exp2res.services.lifecycle import LifecycleResult, run_recompute
+from exp2res.services.lifecycle import (
+    LifecycleResult,
+    record_cancelled_lifecycle,
+    run_recompute,
+)
 from exp2res.services.signals import list_current_signals, run_signals_generate
 from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.storage.repository import get_assessment_snapshot
@@ -745,7 +749,8 @@ def correction_add(
         validate_project_label(project)
 
         if not controls.yes and not typer.confirm(
-            "Store the correction and recompute derived state through Stage 5?",
+            "Store the correction and rebuild derived state through Stage 5 "
+            "with the configured model provider?",
             err=True,
         ):
             return Outcome(exit_code=9, diagnostic_class="cancelled")
@@ -770,8 +775,18 @@ def correction_add(
                     getattr(error, "correction_outcome", None),
                 )
                 if committed is not None:
+                    try:
+                        progress = record_cancelled_lifecycle(
+                            connection, log_id=committed.raw_log.id
+                        )
+                    except Exception:
+                        progress = None
+                    if progress is not None:
+                        error.run_ids = progress.run_ids
+                        error.lifecycle_result = progress
                     # §14.14 rule 6: the committed capture is reported in
-                    # the cancelled envelope with its §14.12 retry.
+                    # the cancelled envelope with its failed `13.13` run and
+                    # §14.12 retry.
                     _decorate_lifecycle_error(
                         error,
                         base_affected=_correction_affected(committed),
@@ -1665,6 +1680,15 @@ def logs_delete(
                     getattr(error, "delete_outcome", None),
                 )
                 if committed is not None:
+                    try:
+                        progress = record_cancelled_lifecycle(
+                            connection, log_id=None
+                        )
+                    except Exception:
+                        progress = None
+                    if progress is not None:
+                        error.run_ids = progress.run_ids
+                        error.lifecycle_result = progress
                     _decorate_lifecycle_error(
                         error,
                         base_affected=_delete_affected(committed),

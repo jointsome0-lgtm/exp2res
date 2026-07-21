@@ -669,6 +669,7 @@ def test_interrupted_delete_checkpoint_reports_committed_purge(
 
     assert result.exit_code == 9
     assert envelope["status"] == "cancelled"
+    assert len(envelope["run_ids"]) == 1
     assert envelope["result"]["selected_log"]["id"] == target.id
     assert envelope["retry"] == {"command": "exp2res recompute"}
     assert envelope["generation_ids"]
@@ -685,6 +686,11 @@ def test_interrupted_delete_checkpoint_reports_committed_purge(
     with read_database(workspace) as connection:
         assert get_raw_log(connection, target.id) is None
         assert list_experience_facts(connection) == ()
+        orchestration = connection.execute(
+            "SELECT status, failure_code FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
+    assert tuple(orchestration) == ("failed", "cancelled")
 
 
 def test_recompute_holds_one_writer_authority_across_stages(
@@ -755,6 +761,46 @@ def test_interrupt_between_stages_reports_committed_progress(
             "WHERE stage = '13.13'"
         ).fetchone()
     assert (row["status"], row["failure_code"]) == ("failed", "cancelled")
+
+
+def test_interrupt_after_orchestration_creation_reports_committed_run(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_log(
+        workspace,
+        log_id="log_vera_orchestration_interrupt",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example orchestration-interrupt record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_orchestration_interrupt", "manual_claim"),),
+    )
+    _install_lifecycle_runner(monkeypatch)
+    real_transaction = lifecycle_service._held_transaction
+    transaction_count = 0
+
+    def interrupt_after_first_commit(connection, operation):
+        nonlocal transaction_count
+        result = real_transaction(connection, operation)
+        transaction_count += 1
+        if transaction_count == 1:
+            raise KeyboardInterrupt()
+        return result
+
+    monkeypatch.setattr(
+        lifecycle_service, "_held_transaction", interrupt_after_first_commit
+    )
+    result, envelope = _invoke_json(workspace, ["--yes", "recompute"])
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert len(envelope["run_ids"]) == 1
+    assert envelope["retry"] == {"command": "exp2res recompute"}
+    with read_database(workspace) as connection:
+        orchestration = connection.execute(
+            "SELECT status, failure_code FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
+    assert tuple(orchestration) == ("failed", "cancelled")
 
 
 @pytest.mark.parametrize(
@@ -837,6 +883,40 @@ def test_interactive_delete_confirmation_names_the_rebuild(
     assert "model provider" in result.output
     with read_database(workspace) as connection:
         assert get_raw_log(connection, selected.id) is not None
+
+
+def test_interactive_correction_confirmation_names_model_provider(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target, _items = add_log(
+        workspace,
+        log_id="log_vera_correction_consent",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example correction-consent record.",
+        occurred=exact_day(14),
+        item_specs=(("evi_vera_correction_consent", "manual_claim"),),
+    )
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
+    )
+
+    result, envelope = _invoke_json(
+        workspace,
+        ["correction", "add", "--log-id", target.id],
+        input="Vera Example declined correction restatement.\n\n\nn\n",
+    )
+
+    assert result.exit_code == 9
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert "configured model provider" in result.output
+    with read_database(workspace) as connection:
+        rows = connection.execute(
+            "SELECT id FROM raw_logs ORDER BY CAST(id AS BLOB)"
+        ).fetchall()
+    assert [row[0] for row in rows] == [target.id]
 
 
 def test_correction_and_delete_hold_one_writer_acquisition(
@@ -929,9 +1009,15 @@ def test_interrupted_correction_cleanup_reports_committed_capture(
     assert envelope["retry"] == {
         "command": f"exp2res recompute --log-id {correction_id}"
     }
+    assert len(envelope["run_ids"]) == 1
     with read_database(workspace) as connection:
         stored = get_raw_log(connection, correction_id)
+        orchestration = connection.execute(
+            "SELECT status, failure_code FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
     assert stored is not None and stored.corrects_log_id == target.id
+    assert tuple(orchestration) == ("failed", "cancelled")
 
 
 def test_interrupted_stage_cleanup_keeps_committed_swap_in_envelope(

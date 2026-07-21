@@ -167,6 +167,56 @@ def _has_current_assessment_view(connection: sqlite3.Connection) -> bool:
     return row is not None
 
 
+def _lifecycle_input_ids(
+    connection: sqlite3.Connection, log_id: str | None
+) -> tuple[str, ...]:
+    if log_id is not None:
+        return (log_id,)
+    return tuple(
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM raw_logs ORDER BY CAST(id AS BLOB)"
+        )
+    )
+
+
+def record_cancelled_lifecycle(
+    connection: sqlite3.Connection,
+    *,
+    log_id: str | None,
+    id_factory: Callable[[str], str] | None = None,
+    clock: Callable[[], datetime] | None = None,
+) -> LifecycleResult:
+    """Record a committed source lifecycle cancelled before rebuild began."""
+
+    ids = id_factory or new_id
+    now = clock or (lambda: datetime.now(timezone.utc))
+    orchestration_run_id = ids("run")
+
+    def record(held: sqlite3.Connection) -> None:
+        create_processing_run(
+            held,
+            run_id=orchestration_run_id,
+            stage="13.13",
+            started_at=now(),
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+            input_ids=_lifecycle_input_ids(held, log_id),
+            metadata={"mode": "full" if log_id is None else "selected_lineage"},
+        )
+        finish_processing_run(
+            held,
+            run_id=orchestration_run_id,
+            finished_at=now(),
+            status="failed",
+            failure_code="cancelled",
+        )
+
+    _held_transaction(connection, record)
+    return LifecycleResult(orchestration_run_id)
+
+
 def run_recompute(
     workspace: Path,
     *,
@@ -204,30 +254,26 @@ def run_recompute(
         else writer_database(workspace, reconcile=True)
     )
     with held as connection:
-        input_ids = tuple(
-            row[0]
-            for row in connection.execute(
-                "SELECT id FROM raw_logs ORDER BY CAST(id AS BLOB)"
-            )
-        )
-        _held_transaction(
-            connection,
-            lambda held: create_processing_run(
-                held,
-                run_id=orchestration_run_id,
-                stage="13.13",
-                started_at=now(),
-                provider=None,
-                model=None,
-                prompt_policy_hash=None,
-                input_ids=(input_ids if log_id is None else (log_id,)),
-                metadata={
-                    "mode": "full" if log_id is None else "selected_lineage"
-                },
-            ),
-        )
-
         try:
+            # Initial telemetry creation is inside the same decorated error
+            # boundary as every stage: an interrupt after its commit must
+            # report and terminally fail that durable `13.13` row.
+            _held_transaction(
+                connection,
+                lambda held: create_processing_run(
+                    held,
+                    run_id=orchestration_run_id,
+                    stage="13.13",
+                    started_at=now(),
+                    provider=None,
+                    model=None,
+                    prompt_policy_hash=None,
+                    input_ids=_lifecycle_input_ids(held, log_id),
+                    metadata={
+                        "mode": "full" if log_id is None else "selected_lineage"
+                    },
+                ),
+            )
             # §29.2 selection stays eagerly required exactly like a direct
             # `extract` (PR #125): a zero-lineage recompute still resolves the
             # configured adapter, while LazyPreflightRunner keeps it offline —
