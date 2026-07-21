@@ -14,6 +14,7 @@ from .enums import (
     AssessmentScope,
     CLIResultStatus,
     EntryType,
+    EvidenceStrength,
     SourceType,
     VerificationStatus,
 )
@@ -39,6 +40,7 @@ CommandPath = Literal[
     "recompute",
     "extract",
     "logs list",
+    "logs show",
     "logs delete",
     "facts list",
     "facts show",
@@ -101,6 +103,22 @@ class SelectedLogProjection(LogProjection):
 
 class LogsListResult(StrictModel):
     logs: list[LogProjection]
+
+
+class EvidenceItemProjection(StrictModel):
+    id: str
+    created_at: datetime
+    raw_log_id: str
+    title: str | None
+    summary: str
+    uri: str | None
+    path: str | None
+    strength: EvidenceStrength
+
+
+class LogsShowResult(StrictModel):
+    log: SelectedLogProjection
+    evidence_items: list[EvidenceItemProjection]
 
 
 class LogsDeleteResult(StrictModel):
@@ -177,6 +195,7 @@ class AssessmentExportResult(StrictModel):
 ResultPayload = (
     SchemaResult
     | LogsListResult
+    | LogsShowResult
     | LogsDeleteResult
     | FactsListResult
     | DetectionsGenerateResult

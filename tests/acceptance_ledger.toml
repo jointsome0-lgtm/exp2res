@@ -293,8 +293,8 @@ note = "Stage 3 and Vera E1 prove deterministic correction displacement, effecti
 status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.41"]
-issues = ["#81", "PR #95", "#69", "PR #101", "#82", "PR #125"]
-note = "Discovery, schema gating, non-interactive controls, stable exit classes, closed envelopes, extraction consent/cancellation, standard Stage 3 affected/generation/run/warning fields, and complete read-only facts list/show projections are proven; later command families and lifecycle reports remain"
+issues = ["#81", "PR #95", "#69", "PR #101", "#82", "PR #125", "#96"]
+note = "Discovery, schema gating, non-interactive controls, stable exit classes, closed envelopes, extraction consent/cancellation, standard Stage 3 affected/generation/run/warning fields, complete read-only facts list/show projections, and logs show current/displaced inspection with linked evidence and its single-record human raw-text carve-out are proven; later command families and lifecycle reports remain"
 
 ["24.45"]
 status = "partial"
