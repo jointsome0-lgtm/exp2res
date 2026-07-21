@@ -101,6 +101,31 @@ def test_export_assessment_selector_blocked_and_residual_classes(
     assert failed_envelope["result"] is None
 
 
+def test_export_selector_resolves_before_preamble_cleanup_or_class_8(
+    workspace: Path,
+) -> None:
+    # §14.14 rule 3: an unresolvable selector is class 2 even when an
+    # unreconciliable residual would stop publication; the read-only resolve
+    # runs before the writer preamble, which is neither run nor reported.
+    assessment = workspace / "out" / "assessment"
+    assessment.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = workspace.parent / "Vera Example selector target"
+    target.mkdir()
+    candidate = assessment / (
+        ".exp2res-candidate-snapshot_vera_selector-" + "b" * 32
+    )
+    candidate.symlink_to(target, target_is_directory=True)
+
+    result, envelope = invoke_json(
+        workspace,
+        ["export", "assessment", "--snapshot", "snapshot_vera_missing"],
+    )
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] == "selector_not_found"
+    assert envelope["residual_paths"] == []
+    assert candidate.is_symlink()
+
+
 def test_non_export_writer_commits_but_preamble_residual_forces_class_8(
     workspace: Path,
 ) -> None:

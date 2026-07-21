@@ -1076,6 +1076,20 @@ def export_assessment_command(
     snapshot_id: str = typer.Option(..., "--snapshot"),
 ) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.14 rule 3: resolve the selector read-only before the writer
+        # path, so a missing or superseded snapshot reports class 2 even when
+        # a managed-output residual would stop publication with class 8. The
+        # export service re-validates the stored row under the writer lock.
+        require_compatible(workspace)
+        with read_database(workspace) as connection:
+            snapshot = get_assessment_snapshot(
+                connection, snapshot_id, current_only=False
+            )
+        if snapshot is None:
+            raise SelectorNotFoundError()
+        if snapshot.superseded_at is not None:
+            raise SnapshotNotCurrentError()
+
         exported = export_assessment(workspace, snapshot_id=snapshot_id)
         result = AssessmentExportResult(
             manifest_path=exported.manifest_path,
