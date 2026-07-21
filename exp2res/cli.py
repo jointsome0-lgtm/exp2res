@@ -726,19 +726,22 @@ def correction_add(
                 error.public_message = "The temporal shape is invalid."
                 raise error from cause
 
-        project_seed = target.project if target.project is not None else "<none>"
-        project_value = typer.prompt(
-            "Project/activity? (accept to copy; type <clear> to clear)",
-            default=project_seed,
+        project_display = target.project if target.project is not None else "<none>"
+        if typer.confirm(
+            f"Copy stored project/activity exactly ({project_display})?",
+            default=True,
             err=True,
-        )
-        project = (
-            target.project
-            if project_value == project_seed
-            else None
-            if project_value == "<clear>"
-            else project_value
-        )
+        ):
+            project = target.project
+        else:
+            project = (
+                typer.prompt(
+                    "Replacement project/activity? (leave blank to clear)",
+                    default="",
+                    err=True,
+                )
+                or None
+            )
         validate_project_label(project)
 
         if not controls.yes and not typer.confirm(

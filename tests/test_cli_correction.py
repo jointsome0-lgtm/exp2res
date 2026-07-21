@@ -338,7 +338,7 @@ def test_correction_copy_and_explicit_temporal_project_replacement(
         input=(
             "Vera Example second complete restatement.\n"
             + replacement.model_dump_json()
-            + "\nVera Example Replacement\n"
+            + "\nn\nVera Example Replacement\n"
         ),
     )
     assert second_result.exit_code == 0
@@ -355,6 +355,54 @@ def test_correction_copy_and_explicit_temporal_project_replacement(
     assert first_log.project == target.project
     assert second_log.occurred == replacement
     assert second_log.project == "Vera Example Replacement"
+
+
+@pytest.mark.parametrize(
+    ("stored_project", "replacement_input", "expected_project"),
+    [
+        ("<clear>", "\n", None),
+        (None, "<none>\n", "<none>"),
+    ],
+)
+def test_correction_project_choice_has_no_sentinel_collisions(
+    workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stored_project: str | None,
+    replacement_input: str,
+    expected_project: str | None,
+) -> None:
+    target, _items = add_log(
+        workspace,
+        log_id="log_vera_project_sentinel",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example project-sentinel record.",
+        occurred=exact_day(12),
+        item_specs=(("evi_vera_project_sentinel", "manual_claim"),),
+        project=stored_project,
+    )
+    _install_lifecycle_runner(monkeypatch)
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+
+    result, envelope = _invoke_json(
+        workspace,
+        ["--yes", "correction", "add", "--log-id", target.id],
+        input=(
+            "Vera Example complete project-sentinel restatement.\n"
+            "\n"
+            "n\n"
+            + replacement_input
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    correction_id = next(
+        group["ids"][0]
+        for group in envelope["affected_ids"]["created"]
+        if group["entity_type"] == "raw_log"
+    )
+    with read_database(workspace) as connection:
+        corrected = get_raw_log(connection, correction_id)
+    assert corrected is not None and corrected.project == expected_project
 
 
 def test_unknown_correction_selector_precedes_prompt_and_adapter(
