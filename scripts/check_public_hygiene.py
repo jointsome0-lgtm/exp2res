@@ -79,6 +79,8 @@ DEMO_PUBLIC_PATH_PATTERNS = (
     "demo/**",
 )
 
+PRIVATE_HOME_MARKERS = (b"/home/", b"/Users/", b"/root/", b"\\Users\\")
+
 MARKER_EXEMPT_PATHS: frozenset[str] = frozenset(
     {
         # Add only exact paths here, with a comment explaining each exception.
@@ -215,7 +217,7 @@ def main() -> int:
                 detail = str(exc).replace("\n", " ")
                 errors.append(f"cannot read demo artifact {path}: {detail}")
             else:
-                if b"/home/" in demo_artifact:
+                if any(marker in demo_artifact for marker in PRIVATE_HOME_MARKERS):
                     errors.append(f"demo artifact exposes an absolute home path: {path}")
 
     if errors:

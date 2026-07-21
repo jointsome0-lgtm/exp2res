@@ -60,6 +60,7 @@ FIXED_CLOCK = datetime.fromisoformat("2026-07-15T12:30:00+00:00")
 CORPUS_VERSION = "0.3.0"
 ENVELOPE_VERSION = 1
 EXPORT_MEMBERS = ("report.md", "self_claims.json", "evidence_map.json", "manifest.json")
+PRIVATE_HOME_MARKERS = (b"/home/", b"/Users/", b"/root/", b"\\Users\\")
 
 
 def default_workspace() -> Path:
@@ -327,6 +328,8 @@ def _current_snapshot(workspace: Path, scope: str) -> str:
 
 def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     workspace = workspace.resolve()
+    if workspace.is_relative_to(ROOT.resolve()):
+        raise ValueError("Vera Example demo workspace must stay outside the public checkout")
     if workspace.exists():
         raise FileExistsError(f"{WORKSPACE_LABEL} already exists; run make demo-reset")
     workspace.mkdir(parents=True, mode=0o700)
@@ -566,7 +569,10 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
         raise AssertionError("Vera Example report does not visibly render contradiction")
 
     transcript = (workspace / "demo-transcript.txt").read_bytes()
-    if b"/home/" in transcript or str(workspace).encode("utf-8") in transcript:
+    if (
+        any(marker in transcript for marker in PRIVATE_HOME_MARKERS)
+        or str(workspace).encode("utf-8") in transcript
+    ):
         raise AssertionError("Vera Example transcript exposes an absolute private path")
     if golden is not None and transcript != golden:
         raise AssertionError("Vera Example checked transcript is stale; regenerate it")
