@@ -20,16 +20,16 @@ Adversarial security / threat-model reviews — red-teaming a spec §, abuse-cas
 
 ## Picking the right models for workflows and subagents
 
-Rankings, higher = better. Cost reflects what I actually pay (OpenAI has really
-generous limits), not list price. Intelligence is how hard a problem you can
-hand the model unsupervised. Taste covers UI/UX, code quality, API design, and
-copy.
+Rankings on a 0–10 scale, higher = better. Cost reflects what I actually pay
+(OpenAI has really generous limits), not list price. Intelligence is how hard a
+problem you can hand the model unsupervised. Taste covers UI/UX, code quality,
+API design, and copy.
 
 | model    | cost | intelligence | taste |
 |----------|------|--------------|-------|
 | gpt-5.6  | 9    | 8.9          | 7     |
 | sonnet-5 | 5    | 5            | 7     |
-| opus-4.8 | 4    | 7            | 8     |
+| opus-5   | 3    | 8.5          | 8.5   |
 | fable-5  | 2    | 9            | 9     |
 
 How to apply:
@@ -46,9 +46,12 @@ How to apply:
 - Bulk/mechanical work (clear-spec implementation, data analysis, migrations):
   gpt-5.6 — it's effectively free.
 - Anything user-facing (UI, copy, API design) needs taste ≥ 7.
-- Reviews of plans/implementations: fable-5 or opus-4.8, optionally gpt-5.6 as
+- Reviews of plans/implementations: fable-5 or opus-5, optionally gpt-5.6 as
   an extra independent perspective.
-- Never use Haiku.
+- Fallback when Fable limits run out: fable-5 → opus-5 → gpt-5.6. Never use
+  Haiku. When gpt-5.6 held the pen, independent review of that work goes to a
+  Claude session (fable-5, otherwise opus-5); degrading never weakens review
+  independence.
 - Mechanics: gpt-5.6 is only reachable through the Codex CLI — `codex exec` /
   `codex review` (my `~/.codex/config.toml` defaults to `gpt-5.6-sol` at xhigh
   effort). Always run `codex exec` directly via Bash
@@ -69,7 +72,7 @@ How to apply:
 - Parallel codex execs are fragile (atlas 2026-07-16: an exec hung
   ~35 min behind parallel sessions) — prefer one lighter run over a
   fan-out; whole-diff consistency doesn't decompose per-finding.
-- Claude models (sonnet-5, opus-4.8, fable-5) run via the Agent/Workflow model
+- Claude models (sonnet-5, opus-5, fable-5) run via the Agent/Workflow model
   parameter.
 
 Using gpt-5.6 inside workflows and subagents (the model parameter only takes
