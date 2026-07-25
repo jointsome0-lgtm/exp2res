@@ -40,7 +40,14 @@ URI_AUTHORITY = re.compile(
     r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@\[\]-]|%[0-9A-Fa-f]{2})*$"
 )
 MAX_ARTIFACT_LOCATORS = 16
-PROMPT_LOCATOR_FIELDS = frozenset({"path", "uri", "url", "external_ref"})
+# §29.4's re-check covers the locator fields this branch produces and every
+# persisted `path`/`uri`/`url` it can reach. `RawLog.external_ref` is excluded
+# until issue #171 settles which form is persisted: §14.2 stores the supplied
+# spelling, so a relative value would resolve against whatever directory the
+# later stage runs in, and canonicalizing it embeds the checkout path in the
+# byte-identical demo transcript. Excluding it leaves the pre-existing gap
+# exactly where it was rather than adding a working-directory dependency.
+PROMPT_LOCATOR_FIELDS = frozenset({"path", "uri", "url"})
 DENIED_COMPONENTS = {
     "secrets",
     "credentials",
@@ -283,9 +290,15 @@ def reauthorize_prompt_locators(
                         if scheme_match is not None
                         else None
                     )
-                    if scheme is not None and scheme != "file":
+                    # A Windows drive letter parses as a one-character scheme,
+                    # so the unsupported-form check precedes the remote
+                    # shortcut exactly as capture-time authorization does.
+                    windows_form = _forbidden_supplied_form(child)
+                    if scheme is not None and scheme != "file" and not windows_form:
                         continue
                     try:
+                        if windows_form:
+                            raise ArtifactLocatorUnsupportedPathError()
                         local_value = (
                             _file_uri_path(child)
                             if scheme == "file"

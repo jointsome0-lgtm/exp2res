@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
 from exp2res.cli import app
+from exp2res.config import load_workspace_config
 from exp2res.domain.models import EvidenceItem, RawLog, STRING_LIMIT
 from exp2res.errors import (
     InvalidInputError,
@@ -24,7 +25,8 @@ from exp2res.errors import (
 )
 from exp2res.services.capture import capture_daily
 from exp2res.services.correction import capture_correction
-from exp2res.services.logs import show_log
+from exp2res.services.logs import delete_log, show_log
+from exp2res.services.source_files import reauthorize_prompt_locators
 from exp2res.storage.repository import (
     insert_evidence_item,
     insert_raw_log,
@@ -657,3 +659,61 @@ def test_owner_only_corrected_lineage_reaches_unchanged_high_ceiling(
         corrected.raw_log.id,
     }
 
+
+
+def test_prompt_reauthorization_rejects_windows_forms_and_skips_external_ref(
+    workspace: Path,
+) -> None:
+    """§21.51 / §29.4: a drive letter is not a remote scheme; #171 owns external_ref.
+
+    A Windows drive letter parses as a one-character URI scheme, so the
+    unsupported-form check must precede the remote-scheme shortcut or the form
+    reaches the provider. `RawLog.external_ref` stays outside this boundary
+    while issue #171 settles whether the supplied or canonical spelling is
+    persisted — re-checking a relative spelling here would resolve it against
+    the working directory of whichever later command runs the stage.
+    """
+
+    config = load_workspace_config(workspace)
+    for value in ("C:/Vera Example/artifact.md", r"C:\Vera Example\artifact.md"):
+        with pytest.raises(LocatorReauthorizationFailedError) as failure:
+            reauthorize_prompt_locators({"path": value}, config=config)
+        assert failure.value.diagnostic_class == "locator_reauthorization_failed"
+
+    reauthorize_prompt_locators(
+        {"external_ref": "Vera Example notes/missing-today.md"}, config=config
+    )
+
+
+def test_deletion_report_orders_evidence_ids_by_identity(
+    workspace: Path,
+    tmp_path: Path,
+) -> None:
+    """§14.14 rule 5: reported ID groups use stable identity, not §13.1 order."""
+
+    artifacts = []
+    for name in ("zeta", "alpha"):
+        source = tmp_path / f"Vera Example {name} artifact.md"
+        source.write_text(f"Vera Example {name} artifact.\n", encoding="utf-8")
+        artifacts.append(str(source))
+
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example deletion report ordering.",
+        artifacts=tuple(artifacts),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_deletion_order",
+            "evi_vera_deletion_manual",
+            "evi_vera_deletion_alpha",
+            "evi_vera_deletion_zeta",
+        ),
+    )
+    presented = [item.id for item in captured.evidence_items]
+
+    deleted = delete_log(workspace, log_id=captured.raw_log.id)
+    assert sorted(deleted.evidence_item_ids) == sorted(presented)
+    assert list(deleted.evidence_item_ids) == sorted(
+        presented, key=lambda value: value.encode("utf-8")
+    )
+    assert list(deleted.evidence_item_ids) != presented
