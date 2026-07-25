@@ -389,8 +389,13 @@ def _run_command(
         # One diagnostic for every residual-carrying envelope — promoted,
         # direct class 8, cancelled, or failed — so a human-mode user always
         # sees the paths that still need cleanup.
+        # Not every residual is a file to delete: §8.1's erasure sequence
+        # reports the live database or its WAL when a checkpoint or `VACUUM`
+        # cannot complete, and §14.16 requires that database to remain. The
+        # wording therefore states that the paths are unresolved and never
+        # prescribes removing them.
         typer.echo(
-            "Managed-output cleanup did not complete; residual paths:",
+            "Cleanup did not complete; unresolved paths:",
             err=True,
         )
         for path in residual_paths:
@@ -401,8 +406,8 @@ def _run_command(
             # the preamble alone would otherwise leave a human-mode success
             # sentence standing against an incomplete class-8 envelope.
             outcome.human_result += (
-                "\nManaged cleanup is incomplete; "
-                "the residual paths above still need removal."
+                "\nCleanup is incomplete; the paths reported above are "
+                "unresolved."
             )
 
     envelope = CLIEnvelope(

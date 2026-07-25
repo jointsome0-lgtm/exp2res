@@ -141,12 +141,30 @@ def purge_workspace(
             )
             connection.commit()
         except sqlite3.OperationalError as error:
-            connection.rollback()
+            if connection.in_transaction:
+                connection.rollback()
             if "locked" in str(error).lower() or "busy" in str(error).lower():
                 raise WorkspaceBusyError() from error
             raise
-        except BaseException:
-            connection.rollback()
+        except BaseException as error:
+            if connection.in_transaction:
+                connection.rollback()
+                raise
+            # SQLite already ended the transaction, so the purge and its fresh
+            # schema_meta row are durable even though control never reached the
+            # erasure region — an interrupt delivered on `commit()`'s return is
+            # the reachable case. §14.14 rule 6: report the committed deletion
+            # and the unproven erasure paths, never an empty cancelled
+            # envelope.
+            if isinstance(error, KeyboardInterrupt):
+                cancelled = OperationCancelledError()
+                cancelled.purge_outcome = outcome(
+                    (
+                        str(database),
+                        str(database.with_name(database.name + "-wal")),
+                    )
+                )
+                raise cancelled from None
             raise
 
         # §8.1: checkpoint, VACUUM outside any transaction, then checkpoint

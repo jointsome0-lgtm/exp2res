@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import sqlite3
@@ -480,8 +481,7 @@ def test_preamble_residual_makes_the_human_result_report_incompleteness(
     assert result.exit_code == 8
     assert result.stdout == (
         "Purged the workspace database; the initialized workspace remains.\n"
-        "Managed cleanup is incomplete; "
-        "the residual paths above still need removal.\n"
+        "Cleanup is incomplete; the paths reported above are unresolved.\n"
     )
     assert candidate.is_symlink()
     with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
@@ -569,3 +569,91 @@ def test_managed_enumeration_is_total_when_an_entry_cannot_be_inspected(
     residuals = managed_outputs.remove_all_managed_output_entries(workspace)
 
     assert residuals == (str(assessment / "snapshot_vera_unreadable"),)
+
+
+def test_interrupt_on_commit_return_still_reports_the_durable_purge(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: an interrupt delivered as `commit()` returns finds the
+    transaction already ended, so the envelope carries the durable purge
+    instead of a no-op rollback and an empty cancelled result."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example commit-return interrupt",
+        clock=lambda: FIXED_NOW,
+    )
+
+    class InterruptOnCommitReturn:
+        """Commit for real, then raise as the C call returns to Python."""
+
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self._connection = connection
+
+        def __getattr__(self, name: str):
+            return getattr(self._connection, name)
+
+        def commit(self) -> None:
+            self._connection.commit()
+            raise KeyboardInterrupt()
+
+    real_writer = workspace_service.writer_database
+
+    @contextmanager
+    def wrapped(target: Path, **keywords):
+        with real_writer(target, **keywords) as connection:
+            yield InterruptOnCommitReturn(connection)
+
+    monkeypatch.setattr(workspace_service, "writer_database", wrapped)
+
+    result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    deleted = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["deleted"]
+    }
+    assert deleted["raw_log"] == [bundle.raw_log.id]
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    assert str(database) in envelope["residual_paths"]
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_logs").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT version FROM schema_meta"
+        ).fetchall() == [(CURRENT_SCHEMA_VERSION,)]
+
+
+def test_erasure_residual_never_tells_the_owner_to_remove_the_database(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.16: the initialized database must remain, so a failed VACUUM or
+    checkpoint reports an unresolved path without prescribing its removal."""
+
+    capture_daily(
+        workspace,
+        raw_text="Vera Example vacuum residual wording",
+        clock=lambda: FIXED_NOW,
+    )
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    monkeypatch.setattr(
+        workspace_service,
+        "vacuum_residuals",
+        lambda _connection, path: (str(path),),
+    )
+
+    result = runner.invoke(
+        app,
+        ["--workspace", str(workspace), "workspace", "purge", "--yes"],
+    )
+
+    assert result.exit_code == 8
+    assert "removal" not in result.stdout
+    assert "remove" not in result.stdout
+    assert result.stdout == (
+        "Purged the workspace database; the initialized workspace remains.\n"
+        "Cleanup is incomplete; the paths reported above are unresolved.\n"
+    )
+    assert "Cleanup did not complete; unresolved paths:" in result.stderr
+    assert str(database) in result.stderr
+    assert database.is_file()
