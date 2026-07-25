@@ -1024,6 +1024,96 @@ def test_ignore_matcher_supports_every_git_posix_named_class() -> None:
     assert negated.fullmatch("ab/cd") is None
 
 
+def test_trailing_space_ignore_rule_applies_at_both_privacy_boundaries(
+    workspace: Path,
+) -> None:
+    """§21.51 / §29.4: unescaped trailing spaces do not weaken either gate."""
+
+    private = workspace / "private"
+    private.mkdir()
+    artifact = private / "secret.txt"
+    artifact.write_text("Vera Example trailing-space secret.\n", encoding="utf-8")
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured provenance before a trailing-space rule.",
+        artifacts=(str(artifact),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_trailing_space",
+            "evi_vera_trailing_space_manual",
+            "evi_vera_trailing_space_artifact",
+        ),
+    )
+
+    _set_ignore_paths(workspace, "private/secret.txt ")
+    config = load_workspace_config(workspace)
+    with pytest.raises(LocatorReauthorizationFailedError) as prompt_failure:
+        reauthorize_prompt_locators(
+            {"path": captured.evidence_items[1].path},
+            config=config,
+        )
+    assert prompt_failure.value.diagnostic_class == "locator_reauthorization_failed"
+
+    with pytest.raises(InvalidInputError) as capture_failure:
+        capture_daily(
+            workspace,
+            raw_text="Vera Example attempted capture after a trailing-space rule.",
+            artifacts=(str(artifact),),
+            clock=lambda: FIXED_NOW,
+        )
+    assert capture_failure.value.diagnostic_class == "artifact_locator_ignored"
+    assert _counts(workspace) == (1, 2)
+
+    directory, _anchored, directory_only = _ignore_matcher("private/ ")
+    assert directory_only is True
+    assert directory.fullmatch("private") is not None
+
+
+def test_consecutive_ignore_separators_stay_nonmatching_at_both_boundaries(
+    workspace: Path,
+) -> None:
+    """§21.51 / §29.4: `//` never collapses into a broader privacy rule."""
+
+    private = workspace / "private"
+    private.mkdir()
+    artifact = private / "secret.txt"
+    artifact.write_text("Vera Example separator-safe artifact.\n", encoding="utf-8")
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured before a double-separator rule.",
+        artifacts=(str(artifact),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_double_separator_before",
+            "evi_vera_double_separator_before_manual",
+            "evi_vera_double_separator_before_artifact",
+        ),
+    )
+
+    _set_ignore_paths(workspace, "private//secret.txt")
+    config = load_workspace_config(workspace)
+    reauthorize_prompt_locators(
+        {"path": captured.evidence_items[1].path},
+        config=config,
+    )
+    accepted = capture_daily(
+        workspace,
+        raw_text="Vera Example captured after a double-separator rule.",
+        artifacts=(str(artifact),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_double_separator_after",
+            "evi_vera_double_separator_after_manual",
+            "evi_vera_double_separator_after_artifact",
+        ),
+    )
+    assert accepted.evidence_items[1].path == str(artifact.resolve())
+
+    repeated_trailing, _anchored, directory_only = _ignore_matcher("private//")
+    assert directory_only is True
+    assert repeated_trailing.fullmatch("private") is None
+
+
 def test_repeated_recursive_segments_collapse_to_one_matcher() -> None:
     """§21.51 / §29.4: adjacent `**` segments cannot multiply the match cost."""
 

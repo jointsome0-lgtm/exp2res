@@ -237,13 +237,25 @@ def _ignore_matcher(
     depth.
     """
 
-    normalized = pattern.rstrip("/")
-    directory_only = normalized != pattern
+    # Gitignore discards unescaped trailing U+0020 spaces. Backslashes are
+    # rejected at the config boundary, so no accepted pattern can carry an
+    # escaped trailing space.
+    without_trailing_spaces = pattern.rstrip(" ")
+    directory_only = without_trailing_spaces.endswith("/")
+    normalized = (
+        without_trailing_spaces[:-1]
+        if directory_only
+        else without_trailing_spaces
+    )
     anchored = "/" in normalized
+    raw_segments = normalized.split("/")
+    # A canonical POSIX path has no empty component. Preserve gitignore's
+    # non-match for consecutive separators instead of silently collapsing
+    # them into a different, broader pattern.
+    if any(not segment for segment in raw_segments):
+        return re.compile(r"(?!)"), anchored, directory_only
     segments: list[str] = []
-    for segment in normalized.split("/"):
-        if not segment:
-            continue
+    for segment in raw_segments:
         # Consecutive `**` segments mean exactly what one means; keeping them
         # apart would make one check partition the same components in
         # combinatorially many ways.
