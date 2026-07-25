@@ -128,20 +128,52 @@ def _mandatory_denied(path: Path, *, folded: bool) -> bool:
     return False
 
 
+def _ignore_targets(
+    path: Path, *, root: Path, anchored: bool
+) -> tuple[str, ...]:
+    """The §29.4 comparison values one user pattern is matched against."""
+
+    # An anchored pattern (one carrying a separator, as in `private/**`) is
+    # gitignore-style relative to the selected root, which for every Exp2Res
+    # boundary is the workspace root: capture and the §15 pre-serialization
+    # re-check must reach the same verdict for the same canonical path
+    # regardless of the directory the later action runs in. An unanchored
+    # pattern matches a component at any depth, so an ignored directory name
+    # covers the paths beneath it. The canonical absolute value stays in the
+    # set so an already-matching pattern never stops matching.
+    targets = [path.as_posix()]
+    try:
+        targets.append(path.relative_to(root).as_posix())
+    except ValueError:
+        # Outside the workspace root a root-relative form does not exist;
+        # anchored patterns simply do not apply there.
+        pass
+    if not anchored:
+        targets.extend(
+            PurePosixPath(component).as_posix() for component in path.parts[1:]
+        )
+    return tuple(targets)
+
+
 def _ignored(path: Path, *, config: WorkspaceConfig, folded: bool) -> bool:
-    selected_value = PurePosixPath(path.name).as_posix()
-    resolved_value = path.as_posix()
-    return any(
-        fnmatchcase(
-            selected_value.casefold() if folded else selected_value,
-            pattern.casefold() if folded else pattern,
+    for pattern in config.ignore_paths:
+        # A trailing separator is gitignore's directory marker, so the entry
+        # matches that directory and everything beneath it.
+        normalized = pattern.rstrip("/")
+        candidates = (normalized,) + (
+            (f"{normalized}/*",) if normalized != pattern else ()
         )
-        or fnmatchcase(
-            resolved_value.casefold() if folded else resolved_value,
-            pattern.casefold() if folded else pattern,
+        targets = _ignore_targets(
+            path, root=config.root, anchored="/" in normalized
         )
-        for pattern in config.ignore_paths
-    )
+        for candidate in candidates:
+            compared_pattern = candidate.casefold() if folded else candidate
+            for target in targets:
+                if fnmatchcase(
+                    target.casefold() if folded else target, compared_pattern
+                ):
+                    return True
+    return False
 
 
 def validate_artifact_locator_count(supplied: tuple[str, ...]) -> None:

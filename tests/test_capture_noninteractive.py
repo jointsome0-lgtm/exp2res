@@ -379,3 +379,45 @@ def test_stdin_capture_is_bounded_utf8_and_atomic(
     assert result.exit_code == 2
     assert envelope["diagnostic_class"] == diagnostic
     assert list_logs(workspace) == ()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "unwanted_prompt"),
+    [
+        (
+            ["--precision", "", "--period", "2026-07-15", "--confidence", "low"],
+            "How precise is this?",
+        ),
+        (
+            ["--precision", "exact_day", "--period", "", "--confidence", "low"],
+            "What period are we reconstructing?",
+        ),
+        (
+            ["--precision", "exact_day", "--period", "2026-07-15", "--confidence", ""],
+            "How confident are you?",
+        ),
+    ],
+    ids=["precision", "period", "confidence"],
+)
+def test_interactive_retro_rejects_explicitly_empty_typed_options(
+    workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: list[str],
+    unwanted_prompt: str,
+) -> None:
+    """§21.52 / §24.56: an empty option is owner input, not an absent one."""
+
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+    prompts: list[str] = []
+
+    def prompt(label: str, **_kwargs: object) -> str:
+        prompts.append(label)
+        return "Vera Example reconstructed record."
+
+    monkeypatch.setattr(typer, "prompt", prompt)
+    result, envelope = invoke_json(workspace, ["log", "retro", *arguments])
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] in {"invalid_time", "invalid_time_shape"}
+    # The supplied value is never replaced by a prompted one.
+    assert unwanted_prompt not in prompts
+    assert list_logs(workspace) == ()

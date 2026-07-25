@@ -496,6 +496,8 @@ nodes = [
   "tests/test_capture_artifact_locators.py::test_owner_only_corrected_lineage_reaches_unchanged_high_ceiling",
   "tests/test_cli_detections.py::test_gap_answer_is_atomic_self_contained_and_fails_closed",
   "tests/test_cli_correction.py::test_correction_rebuilds_through_artifacts_and_preserves_history",
+  "tests/test_capture_artifact_locators.py::test_root_relative_ignore_pattern_binds_capture_wherever_it_runs",
+  "tests/test_capture_artifact_locators.py::test_root_relative_ignore_pattern_binds_prompt_reauthorization",
 ]
 
 ["21.52"]
@@ -509,6 +511,9 @@ nodes = [
   "tests/test_capture_noninteractive.py::test_noninteractive_retro_rejects_unknown_period_and_missing_typed_values",
   "tests/test_capture_noninteractive.py::test_stdin_capture_is_bounded_utf8_and_atomic[oversize]",
   "tests/test_capture_noninteractive.py::test_stdin_capture_is_bounded_utf8_and_atomic[invalid-utf8]",
+  "tests/test_capture_noninteractive.py::test_interactive_retro_rejects_explicitly_empty_typed_options[precision]",
+  "tests/test_capture_noninteractive.py::test_interactive_retro_rejects_explicitly_empty_typed_options[period]",
+  "tests/test_capture_noninteractive.py::test_interactive_retro_rejects_explicitly_empty_typed_options[confidence]",
 ]
 phase = "1"
 note = "All three non-prompt capture forms prove explicit pre-acquisition affirmation, multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate."

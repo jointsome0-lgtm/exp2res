@@ -714,3 +714,84 @@ def test_deletion_report_orders_evidence_ids_by_identity(
         presented, key=lambda value: value.encode("utf-8")
     )
     assert list(deleted.evidence_item_ids) != presented
+
+
+def test_root_relative_ignore_pattern_binds_capture_wherever_it_runs(
+    workspace: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§21.51 / §29.4: user patterns anchor to the workspace root, not the cwd."""
+
+    private = workspace / "private"
+    private.mkdir()
+    ignored = private / "Vera Example board.md"
+    ignored.write_text("Vera Example private board.\n", encoding="utf-8")
+    public = workspace / "public"
+    public.mkdir()
+    accepted = public / "Vera Example board.md"
+    accepted.write_text("Vera Example shared board.\n", encoding="utf-8")
+    _set_ignore_paths(workspace, "private/**")
+    # The gate is evaluated from an unrelated directory: an anchored pattern
+    # binds the workspace-root-relative path, so the verdict cannot depend on
+    # where the owner happened to stand.
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(InvalidInputError) as failure:
+        capture_daily(
+            workspace,
+            raw_text="Vera Example captured a root-relative ignored locator.",
+            artifacts=(str(ignored),),
+            clock=lambda: FIXED_NOW,
+        )
+    assert failure.value.exit_code == 2
+    assert failure.value.diagnostic_class == "artifact_locator_ignored"
+    assert _counts(workspace) == (0, 0)
+
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured a locator outside the ignored subtree.",
+        artifacts=(str(accepted),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_root_relative_ignore",
+            "evi_vera_root_relative_manual",
+            "evi_vera_root_relative_artifact",
+        ),
+    )
+    assert captured.evidence_items[1].path == str(accepted.resolve())
+
+
+def test_root_relative_ignore_pattern_binds_prompt_reauthorization(
+    workspace: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§21.51 / §29.4: the same anchored pattern holds at the §15 boundary."""
+
+    private = workspace / "private"
+    private.mkdir()
+    artifact = private / "Vera Example later ignored board.md"
+    artifact.write_text("Vera Example private board.\n", encoding="utf-8")
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured provenance before the ignore rule.",
+        artifacts=(str(artifact),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_anchored_reauthorization",
+            "evi_vera_anchored_manual",
+            "evi_vera_anchored_artifact",
+        ),
+    )
+    _set_ignore_paths(workspace, "private/**")
+    monkeypatch.chdir(tmp_path)
+
+    fake = FakeContractRunner([])
+    with pytest.raises(LocatorReauthorizationFailedError) as failure:
+        run_stage3(workspace, fake, TestIds(), log_id=captured.raw_log.id)
+    assert failure.value.exit_code == 7
+    assert failure.value.diagnostic_class == "locator_reauthorization_failed"
+    assert fake.calls == []
+    inspected = show_log(workspace, log_id=captured.raw_log.id)
+    assert inspected.evidence_items == captured.evidence_items

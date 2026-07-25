@@ -789,17 +789,26 @@ def log_retro(
         # Fail closed on the local-time contract before collecting owner text.
         timezone_name = require_timezone(load_workspace_config(workspace))
         workspace_zone(timezone_name)
-        precision_value = precision or typer.prompt(
-            "How precise is this?", err=True
+        # An explicitly supplied value is owner input even when it is empty:
+        # prompting for a replacement would discard it silently, so only an
+        # absent option is prompted for and `parse_occurred` rejects the rest.
+        precision_value = (
+            precision
+            if precision is not None
+            else typer.prompt("How precise is this?", err=True)
         )
         if precision_value == "unknown":
             period_value = period
         else:
-            period_value = period or typer.prompt(
-                "What period are we reconstructing?", err=True
+            period_value = (
+                period
+                if period is not None
+                else typer.prompt("What period are we reconstructing?", err=True)
             )
-        confidence_value = confidence or typer.prompt(
-            "How confident are you?", err=True
+        confidence_value = (
+            confidence
+            if confidence is not None
+            else typer.prompt("How confident are you?", err=True)
         )
         project_value = (
             project
