@@ -11,6 +11,7 @@ from urllib.parse import quote
 import urllib.request
 
 import pytest
+from typer.main import get_command
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
@@ -287,15 +288,28 @@ def test_repeatable_cli_artifacts_reach_logs_show_projection(
 def test_every_owner_capture_command_exposes_artifact_option() -> None:
     """§14.2–§14.4 / §14.7: all four decided command forms parse the option."""
 
-    for command in (
-        ["log", "today", "--help"],
-        ["log", "retro", "--help"],
-        ["correction", "add", "--help"],
-        ["gaps", "answer", "--help"],
+    # Declared parameters, not rendered help: help output wraps and truncates
+    # at the terminal width, which is not part of the §14 command contract.
+    root = get_command(app)
+    for path in (
+        ("log", "today"),
+        ("log", "retro"),
+        ("correction", "add"),
+        ("gaps", "answer"),
     ):
-        result = runner.invoke(app, command)
-        assert result.exit_code == 0, result.output
-        assert "--artifact" in result.output
+        command = root
+        for name in path:
+            command = command.commands[name]
+        options = {
+            option
+            for parameter in command.params
+            for option in parameter.opts
+        }
+        assert "--artifact" in options, path
+        parameter = next(
+            item for item in command.params if "--artifact" in item.opts
+        )
+        assert parameter.multiple, path
 
 
 def test_retro_cli_accepts_artifact_locator(
