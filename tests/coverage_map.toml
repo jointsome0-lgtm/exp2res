@@ -511,6 +511,8 @@ nodes = [
   "tests/test_capture_artifact_locators.py::test_ignore_matcher_supports_every_git_posix_named_class",
   "tests/test_capture_artifact_locators.py::test_trailing_space_ignore_rule_applies_at_both_privacy_boundaries",
   "tests/test_capture_artifact_locators.py::test_consecutive_ignore_separators_stay_nonmatching_at_both_boundaries",
+  "tests/test_capture_artifact_locators.py::test_ignore_wildcards_compare_utf8_bytes_at_both_privacy_boundaries",
+  "tests/test_capture_artifact_locators.py::test_trailing_separator_anchors_both_privacy_boundaries_to_root",
   "tests/test_capture_artifact_locators.py::test_repeated_recursive_segments_collapse_to_one_matcher",
 ]
 

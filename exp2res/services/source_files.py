@@ -195,6 +195,12 @@ def _class_regex(
     return None
 
 
+def _utf8_byte_view(value: str) -> str:
+    """Expose each UTF-8 byte as one regex character without changing `/`."""
+
+    return value.encode("utf-8").decode("latin-1")
+
+
 def _segment_regex(segment: str, *, folded: bool = False) -> str:
     """Translate one gitignore path segment; wildcards never cross `/`."""
 
@@ -234,7 +240,9 @@ def _ignore_matcher(
     the selected root and whether a trailing separator restricts it to
     directories. A `**` segment spans zero or more directories, every other
     wildcard stops at a separator, and an unanchored pattern may start at any
-    depth.
+    depth. Pattern literals and targets use a one-character-per-UTF-8-byte
+    view so wildcard width follows Git wildmatch rather than Unicode code
+    points.
     """
 
     # Gitignore discards unescaped trailing U+0020 spaces. Backslashes are
@@ -242,12 +250,14 @@ def _ignore_matcher(
     # escaped trailing space.
     without_trailing_spaces = pattern.rstrip(" ")
     directory_only = without_trailing_spaces.endswith("/")
+    # The directory marker is still a separator for anchoring even though it
+    # is removed from the expression matched against the path.
+    anchored = "/" in without_trailing_spaces
     normalized = (
         without_trailing_spaces[:-1]
         if directory_only
         else without_trailing_spaces
     )
-    anchored = "/" in normalized
     raw_segments = normalized.split("/")
     # A canonical POSIX path has no empty component. Preserve gitignore's
     # non-match for consecutive separators instead of silently collapsing
@@ -269,7 +279,9 @@ def _ignore_matcher(
             # The group consumes its own separator, so none is appended.
             parts.append(".+" if last else "(?:[^/]+/)*")
             continue
-        parts.append(_segment_regex(segment, folded=folded))
+        parts.append(
+            _segment_regex(_utf8_byte_view(segment), folded=folded)
+        )
         if not last:
             parts.append("/")
     return re.compile("".join(parts)), anchored, directory_only
@@ -312,7 +324,7 @@ def _ignored(path: Path, *, config: WorkspaceConfig, folded: bool) -> bool:
                 continue
             compared = target.casefold() if folded else target
             for prefix in _match_prefixes(
-                compared,
+                _utf8_byte_view(compared),
                 include_whole=not directory_only or selected_is_directory,
             ):
                 if matcher.fullmatch(prefix):

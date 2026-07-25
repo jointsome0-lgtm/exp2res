@@ -1114,6 +1114,99 @@ def test_consecutive_ignore_separators_stay_nonmatching_at_both_boundaries(
     assert repeated_trailing.fullmatch("private") is None
 
 
+def test_ignore_wildcards_compare_utf8_bytes_at_both_privacy_boundaries(
+    workspace: Path,
+) -> None:
+    """§21.51 / §29.4: one `?` consumes one UTF-8 byte at both gates."""
+
+    artifact = workspace / "é.txt"
+    artifact.write_text("Vera Example UTF-8 artifact.\n", encoding="utf-8")
+    _set_ignore_paths(workspace, "?.txt")
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured through a one-byte wildcard.",
+        artifacts=(str(artifact),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_utf8_before",
+            "evi_vera_utf8_before_manual",
+            "evi_vera_utf8_before_artifact",
+        ),
+    )
+
+    _set_ignore_paths(workspace, "??.txt")
+    config = load_workspace_config(workspace)
+    with pytest.raises(LocatorReauthorizationFailedError) as prompt_failure:
+        reauthorize_prompt_locators(
+            {"path": captured.evidence_items[1].path},
+            config=config,
+        )
+    assert prompt_failure.value.diagnostic_class == "locator_reauthorization_failed"
+
+    with pytest.raises(InvalidInputError) as capture_failure:
+        capture_daily(
+            workspace,
+            raw_text="Vera Example attempted capture through two byte wildcards.",
+            artifacts=(str(artifact),),
+            clock=lambda: FIXED_NOW,
+        )
+    assert capture_failure.value.diagnostic_class == "artifact_locator_ignored"
+    assert _counts(workspace) == (1, 2)
+
+
+def test_trailing_separator_anchors_both_privacy_boundaries_to_root(
+    workspace: Path,
+) -> None:
+    """§21.51 / §29.4: `private/` never binds a nested same-name directory."""
+
+    root_private = workspace / "private"
+    root_private.mkdir()
+    root_artifact = root_private / "Vera Example root.md"
+    root_artifact.write_text("Vera Example root-private artifact.\n", encoding="utf-8")
+    nested_private = workspace / "nested" / "private"
+    nested_private.mkdir(parents=True)
+    nested_artifact = nested_private / "Vera Example nested.md"
+    nested_artifact.write_text(
+        "Vera Example nested-private artifact.\n",
+        encoding="utf-8",
+    )
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured root provenance before an anchored rule.",
+        artifacts=(str(root_artifact),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_trailing_anchor_before",
+            "evi_vera_trailing_anchor_before_manual",
+            "evi_vera_trailing_anchor_before_artifact",
+        ),
+    )
+
+    _set_ignore_paths(workspace, "private/")
+    config = load_workspace_config(workspace)
+    with pytest.raises(LocatorReauthorizationFailedError):
+        reauthorize_prompt_locators(
+            {"path": captured.evidence_items[1].path},
+            config=config,
+        )
+    reauthorize_prompt_locators(
+        {"path": str(nested_artifact.resolve())},
+        config=config,
+    )
+    accepted = capture_daily(
+        workspace,
+        raw_text="Vera Example captured a nested same-name directory.",
+        artifacts=(str(nested_artifact),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_trailing_anchor_nested",
+            "evi_vera_trailing_anchor_nested_manual",
+            "evi_vera_trailing_anchor_nested_artifact",
+        ),
+    )
+    assert accepted.evidence_items[1].path == str(nested_artifact.resolve())
+
+
 def test_repeated_recursive_segments_collapse_to_one_matcher() -> None:
     """§21.51 / §29.4: adjacent `**` segments cannot multiply the match cost."""
 
