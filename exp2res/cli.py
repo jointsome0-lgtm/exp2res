@@ -58,6 +58,8 @@ from exp2res.errors import (
     MigrationInterrupted,
     NonInteractiveInputRequired,
     OperationCancelledError,
+    OwnerAuthorshipRequired,
+    PeriodNotAllowedError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
@@ -68,9 +70,11 @@ from exp2res.services.capture import (
     capture_gap_answer,
     capture_gap_answer_file,
     capture_retro,
+    capture_retro_file,
     validate_gap_answer_selection,
     validate_project_label,
 )
+from exp2res.services.source_files import validate_artifact_locator_count
 from exp2res.services.correction import (
     CorrectionOutcome,
     capture_correction,
@@ -545,17 +549,23 @@ def db_migrate(context: typer.Context) -> None:
 
 def _capture_outcome(bundle) -> Outcome:
     evidence_ids = [item.id for item in bundle.evidence_items]
+    reported_evidence_ids = sorted(
+        evidence_ids, key=lambda value: value.encode("utf-8")
+    )
     return Outcome(
         affected_ids=AffectedIds(
             created=[
-                EntityIdGroup(entity_type="evidence_item", ids=evidence_ids),
+                EntityIdGroup(
+                    entity_type="evidence_item", ids=reported_evidence_ids
+                ),
                 EntityIdGroup(entity_type="raw_log", ids=[bundle.raw_log.id]),
             ],
             superseded=[],
             deleted=[],
         ),
         human_result=(
-            f"Created raw log {bundle.raw_log.id} with evidence {evidence_ids[0]}."
+            f"Created raw log {bundle.raw_log.id} with evidence "
+            f"{', '.join(evidence_ids)}."
         ),
     )
 
@@ -593,7 +603,11 @@ def _correction_affected(captured: CorrectionOutcome) -> AffectedIds:
     return AffectedIds(
         created=[
             EntityIdGroup(
-                entity_type="evidence_item", ids=[captured.evidence_item.id]
+                entity_type="evidence_item",
+                ids=sorted(
+                    (item.id for item in captured.evidence_items),
+                    key=lambda value: value.encode("utf-8"),
+                ),
             ),
             EntityIdGroup(entity_type="raw_log", ids=[captured.raw_log.id]),
         ],
@@ -692,12 +706,21 @@ def log_today(
     context: typer.Context,
     project: str | None = typer.Option(None, "--project"),
     source_file: str | None = typer.Option(None, "--file"),
+    owner_authored: bool = typer.Option(False, "--owner-authored"),
+    artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
+        artifact_values = tuple(artifacts or ())
+        validate_artifact_locator_count(artifact_values)
         if source_file is not None:
+            if not owner_authored:
+                raise OwnerAuthorshipRequired()
             return _capture_outcome(
                 capture_daily_file(
-                    workspace, source_path=source_file, project=project
+                    workspace,
+                    source_path=source_file,
+                    project=project,
+                    artifacts=artifact_values,
                 )
             )
         if _noninteractive(controls):
@@ -707,36 +730,106 @@ def log_today(
         workspace_zone(require_timezone(load_workspace_config(workspace)))
         raw_text = typer.prompt("Describe what happened", err=True)
         return _capture_outcome(
-            capture_daily(workspace, raw_text=raw_text, project=project)
+            capture_daily(
+                workspace,
+                raw_text=raw_text,
+                project=project,
+                artifacts=artifact_values,
+            )
         )
 
     _run_command(context, "log today", operation)
 
 
 @log_app.command("retro")
-def log_retro(context: typer.Context) -> None:
+def log_retro(
+    context: typer.Context,
+    source_file: str | None = typer.Option(None, "--file"),
+    period: str | None = typer.Option(None, "--period"),
+    precision: str | None = typer.Option(None, "--precision"),
+    confidence: str | None = typer.Option(None, "--confidence"),
+    project: str | None = typer.Option(None, "--project"),
+    owner_authored: bool = typer.Option(False, "--owner-authored"),
+    artifacts: list[str] | None = typer.Option(None, "--artifact"),
+) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
+        artifact_values = tuple(artifacts or ())
+        validate_artifact_locator_count(artifact_values)
+        if source_file is not None:
+            if not owner_authored:
+                raise OwnerAuthorshipRequired()
+            if precision is None or confidence is None:
+                raise NonInteractiveInputRequired()
+            if precision == "unknown":
+                if period is not None:
+                    raise PeriodNotAllowedError()
+            elif period is None:
+                raise NonInteractiveInputRequired()
+            validate_project_label(project)
+            require_compatible(workspace)
+            timezone_name = require_timezone(load_workspace_config(workspace))
+            occurred = parse_occurred(
+                period=period,
+                precision=cast(TemporalPrecision, precision),
+                confidence=cast(TemporalConfidence, confidence),
+                timezone_name=timezone_name,
+            )
+            return _capture_outcome(
+                capture_retro_file(
+                    workspace,
+                    source_path=source_file,
+                    occurred=occurred,
+                    project=project,
+                    artifacts=artifact_values,
+                )
+            )
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
         require_compatible(workspace)
         # Fail closed on the local-time contract before collecting owner text.
         timezone_name = require_timezone(load_workspace_config(workspace))
         workspace_zone(timezone_name)
-        period = typer.prompt("What period are we reconstructing?", err=True)
-        precision_value = typer.prompt("How precise is this?", err=True)
-        confidence_value = typer.prompt("How confident are you?", err=True)
-        project = typer.prompt("Project/activity?", default="", err=True) or None
-        validate_project_label(project)
+        # An explicitly supplied value is owner input even when it is empty:
+        # prompting for a replacement would discard it silently, so only an
+        # absent option is prompted for and `parse_occurred` rejects the rest.
+        precision_value = (
+            precision
+            if precision is not None
+            else typer.prompt("How precise is this?", err=True)
+        )
+        if precision_value == "unknown":
+            period_value = period
+        else:
+            period_value = (
+                period
+                if period is not None
+                else typer.prompt("What period are we reconstructing?", err=True)
+            )
+        confidence_value = (
+            confidence
+            if confidence is not None
+            else typer.prompt("How confident are you?", err=True)
+        )
+        project_value = (
+            project
+            if project is not None
+            else typer.prompt("Project/activity?", default="", err=True) or None
+        )
+        validate_project_label(project_value)
         raw_text = typer.prompt("Describe what you remember.", err=True)
         occurred = parse_occurred(
-            period=period,
+            period=period_value,
             precision=cast(TemporalPrecision, precision_value),
             confidence=cast(TemporalConfidence, confidence_value),
             timezone_name=timezone_name,
         )
         return _capture_outcome(
             capture_retro(
-                workspace, occurred=occurred, raw_text=raw_text, project=project
+                workspace,
+                occurred=occurred,
+                raw_text=raw_text,
+                project=project_value,
+                artifacts=artifact_values,
             )
         )
 
@@ -747,8 +840,11 @@ def log_retro(context: typer.Context) -> None:
 def correction_add(
     context: typer.Context,
     log_id: str = typer.Option(..., "--log-id"),
+    artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
+        artifact_values = tuple(artifacts or ())
+        validate_artifact_locator_count(artifact_values)
         target = validate_correction_selection(workspace, log_id=log_id)
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
@@ -811,6 +907,7 @@ def correction_add(
                     raw_text=raw_text,
                     occurred=occurred,
                     project=project,
+                    artifacts=artifact_values,
                     connection=connection,
                 )
             except OperationCancelledError as error:
@@ -1533,14 +1630,23 @@ def gaps_answer(
     context: typer.Context,
     gap_id: str = typer.Option(..., "--gap-id"),
     source_file: str | None = typer.Option(None, "--file"),
+    owner_authored: bool = typer.Option(False, "--owner-authored"),
+    artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
+        artifact_values = tuple(artifacts or ())
+        validate_artifact_locator_count(artifact_values)
+        if source_file is not None and not owner_authored:
+            raise OwnerAuthorshipRequired()
         # Resolve before file acquisition or prompt; capture re-checks under
         # the writer lock so this read-only validation cannot race the write.
         validate_gap_answer_selection(workspace, gap_id=gap_id)
         if source_file is not None:
             bundle = capture_gap_answer_file(
-                workspace, gap_id=gap_id, source_path=source_file
+                workspace,
+                gap_id=gap_id,
+                source_path=source_file,
+                artifacts=artifact_values,
             )
         else:
             if _noninteractive(controls):
@@ -1549,7 +1655,10 @@ def gaps_answer(
             workspace_zone(require_timezone(load_workspace_config(workspace)))
             raw_text = typer.prompt("Answer the gap question", err=True)
             bundle = capture_gap_answer(
-                workspace, gap_id=gap_id, raw_text=raw_text
+                workspace,
+                gap_id=gap_id,
+                raw_text=raw_text,
+                artifacts=artifact_values,
             )
         evidence_ids = [item.id for item in bundle.evidence_items]
         # §13/§14.7: capture removed every current snapshot's assessment set
@@ -1558,7 +1667,13 @@ def gaps_answer(
         return Outcome(
             affected_ids=AffectedIds(
                 created=[
-                    EntityIdGroup(entity_type="evidence_item", ids=evidence_ids),
+                    EntityIdGroup(
+                        entity_type="evidence_item",
+                        ids=sorted(
+                            evidence_ids,
+                            key=lambda value: value.encode("utf-8"),
+                        ),
+                    ),
                     EntityIdGroup(entity_type="raw_log", ids=[bundle.raw_log.id]),
                 ],
                 superseded=[],
@@ -1667,10 +1782,7 @@ def logs_show(
             log=_selected_log_projection(bundle.raw_log),
             evidence_items=[
                 _evidence_projection(item)
-                for item in sorted(
-                    bundle.evidence_items,
-                    key=lambda value: value.id.encode("utf-8"),
-                )
+                for item in bundle.evidence_items
             ],
         )
         projection = json.dumps(

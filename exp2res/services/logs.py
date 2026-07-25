@@ -89,8 +89,13 @@ def delete_log(
             selected = get_raw_log(connection, log_id)
             if selected is None:
                 raise SelectorNotFoundError()
+            # §14.14 rule 5 orders reported ID groups by stable identity, not
+            # by §13.1's presentation order for a record's evidence bundle.
             evidence_ids = tuple(
-                item.id for item in get_evidence_for_log(connection, log_id)
+                sorted(
+                    (item.id for item in get_evidence_for_log(connection, log_id)),
+                    key=lambda value: value.encode("utf-8"),
+                )
             )
             purged_fact_ids = tuple(
                 row[0]

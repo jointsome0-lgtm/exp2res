@@ -138,8 +138,8 @@ def test_logs_show_human_prints_only_selected_complete_raw_text(
     projection = json.loads(projection_text)
     assert projection["log"]["id"] == selected.id
     assert [item["id"] for item in projection["evidence_items"]] == [
-        "evi_vera_selected_a",
         "evi_vera_selected_z",
+        "evi_vera_selected_a",
     ]
     assert other_text not in shown.stdout + shown.stderr
 
@@ -172,7 +172,7 @@ def test_logs_show_json_is_closed_raw_free_and_includes_linked_evidence(
         "corrects_log_id",
     }
     assert [item["id"] for item in envelope["result"]["evidence_items"]] == [
-        item.id for item in reversed(evidence_items)
+        item.id for item in evidence_items
     ]
     assert all(
         set(item)

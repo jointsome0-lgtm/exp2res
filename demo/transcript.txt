@@ -10,13 +10,13 @@ Initialized schema version 7 at demo/workspace.
 
 Configured demo/workspace timezone: Europe/Berlin
 
-$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-06-02.md
+$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-06-02.md --owner-authored
 Created raw log log_demo_0001 with evidence evi_demo_0001.
 
-$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-06-25.md
+$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-06-25.md --owner-authored
 Created raw log log_demo_0002 with evidence evi_demo_0002.
 
-$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-07-02.md
+$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-07-02.md --owner-authored
 Created raw log log_demo_0003 with evidence evi_demo_0003.
 
 == Act 1 — supported first mirror and export ==

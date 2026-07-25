@@ -64,6 +64,10 @@ class LLMConfig:
 @dataclass(frozen=True)
 class WorkspaceConfig:
     timezone: str | None
+    # §29.4 anchors gitignore-style user patterns to the workspace root — the
+    # canonical directory holding `.exp2res/` — so the config travels with the
+    # root every ignore comparison is evaluated against.
+    root: Path
     ignore_paths: tuple[str, ...]
     llm: LLMConfig
 
@@ -80,7 +84,7 @@ DEFAULT_LLM_CONFIG = LLMConfig(
     transport_attempt_cap=2,
     backoff_lower_seconds=0.25,
     backoff_upper_seconds=2.0,
-    invocation_deadline_seconds=120.0,
+    invocation_deadline_seconds=600.0,
     max_input_bytes=1_048_576,
     input_token_budget=120_000,
     output_token_budget=8_192,
@@ -334,8 +338,14 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
         ),
     )
 
+    try:
+        root = workspace.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise ConfigurationError() from error
+
     return WorkspaceConfig(
         timezone=timezone,
+        root=root,
         ignore_paths=tuple(validated),
         llm=llm,
     )

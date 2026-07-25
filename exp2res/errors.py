@@ -35,9 +35,56 @@ class NonInteractiveInputRequired(InvalidInputError):
     public_message = "Required input was not supplied in non-interactive mode."
 
 
+class OwnerAuthorshipRequired(InvalidInputError):
+    diagnostic_class = "owner_authorship_required"
+    public_message = (
+        "Non-prompt capture requires the explicit --owner-authored affirmation."
+    )
+
+
+class PeriodNotAllowedError(InvalidInputError):
+    diagnostic_class = "period_not_allowed"
+    public_message = "A period cannot be supplied when precision is unknown."
+
+
 class ForbiddenPathError(InvalidInputError):
     diagnostic_class = "forbidden_path"
     public_message = "The selected source path is not permitted."
+
+
+class ArtifactLocatorLimitError(InvalidInputError):
+    diagnostic_class = "artifact_locator_limit"
+    public_message = "At most 16 artifact locators may be supplied."
+
+
+class ArtifactLocatorDuplicateError(InvalidInputError):
+    diagnostic_class = "artifact_locator_duplicate"
+    public_message = "Artifact locators must resolve to distinct stored values."
+
+
+class ArtifactLocatorInvalidError(InvalidInputError):
+    diagnostic_class = "artifact_locator_invalid"
+    public_message = "An artifact locator is not a valid bounded absolute URI or POSIX path."
+
+
+class ArtifactLocatorUnsupportedPathError(InvalidInputError):
+    diagnostic_class = "artifact_locator_path_unsupported"
+    public_message = "An artifact locator uses an unsupported non-POSIX path form."
+
+
+class ArtifactLocatorUnresolvableError(InvalidInputError):
+    diagnostic_class = "artifact_locator_unresolved"
+    public_message = "A local artifact locator could not be resolved."
+
+
+class ArtifactLocatorDeniedError(InvalidInputError):
+    diagnostic_class = "artifact_locator_denied"
+    public_message = "A local artifact locator is in the mandatory deny set."
+
+
+class ArtifactLocatorIgnoredError(InvalidInputError):
+    diagnostic_class = "artifact_locator_ignored"
+    public_message = "A local artifact locator is excluded by workspace privacy rules."
 
 
 class PublicCheckoutError(InvalidInputError):
@@ -82,6 +129,11 @@ class IntegrityFailureError(Exp2ResError):
     exit_code = 7
     diagnostic_class = "integrity_failure"
     public_message = "Validation or storage integrity failed."
+
+
+class LocatorReauthorizationFailedError(IntegrityFailureError):
+    diagnostic_class = "locator_reauthorization_failed"
+    public_message = "A persisted local locator is no longer authorized."
 
 
 class ManagedOutputIncompleteError(Exp2ResError):

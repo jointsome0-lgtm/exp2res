@@ -78,7 +78,7 @@ The checked recording is [`demo.cast`](demo.cast). Replay it locally with `ascii
 
 ```bash
 make demo-reset
-asciinema rec --overwrite --cols 110 --rows 32 -c "make demo-reset demo-run" demo.cast
+TERM=xterm-256color SHELL=/bin/bash python -m asciinema rec --overwrite --cols 110 --rows 32 -c "make demo-reset demo-run" demo.cast
 ```
 
 ## Public hygiene

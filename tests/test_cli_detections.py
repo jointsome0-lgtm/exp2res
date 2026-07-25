@@ -272,7 +272,17 @@ def test_gap_answer_is_atomic_self_contained_and_fails_closed(
 
     answered, envelope = invoke_json(
         workspace,
-        ["gaps", "answer", "--gap-id", gap["id"], "--file", str(answer_file)],
+        [
+            "gaps",
+            "answer",
+            "--gap-id",
+            gap["id"],
+            "--file",
+            str(answer_file),
+            "--owner-authored",
+            "--artifact",
+            "https://example.invalid/Vera-Example-gap-artifact",
+        ],
     )
     assert answered.exit_code == 0
     assert [group["entity_type"] for group in envelope["affected_ids"]["created"]] == [
@@ -302,13 +312,25 @@ def test_gap_answer_is_atomic_self_contained_and_fails_closed(
         "question_text": gap["question"],
         "question_reason": gap["reason"],
     }
-    assert len(evidence) == 1 and evidence[0].strength == "manual_claim"
+    assert [item.strength for item in evidence] == [
+        "manual_claim",
+        "artifact_reference",
+    ]
+    assert evidence[1].uri == "https://example.invalid/Vera-Example-gap-artifact"
     assert current_gap.answered is True
     assert current_gap.answer_log_id == answer_log_id
 
     second, second_envelope = invoke_json(
         workspace,
-        ["gaps", "answer", "--gap-id", gap["id"], "--file", str(answer_file)],
+        [
+            "gaps",
+            "answer",
+            "--gap-id",
+            gap["id"],
+            "--file",
+            str(answer_file),
+            "--owner-authored",
+        ],
     )
     assert second.exit_code == 2
     assert second_envelope["diagnostic_class"] == "gap_already_answered"
@@ -326,6 +348,7 @@ def test_gap_answer_is_atomic_self_contained_and_fails_closed(
             "gap_vera_missing",
             "--file",
             str(tmp_path / "does-not-exist.txt"),
+            "--owner-authored",
         ],
     )
     assert unknown.exit_code == 2
@@ -351,7 +374,15 @@ def test_answered_gap_key_equal_cli_rerun_replaces_without_relinking(
     answer_file.write_text("Vera Example supplied the missing scale.", encoding="utf-8")
     answered, _ = invoke_json(
         workspace,
-        ["gaps", "answer", "--gap-id", old_gap_id, "--file", str(answer_file)],
+        [
+            "gaps",
+            "answer",
+            "--gap-id",
+            old_gap_id,
+            "--file",
+            str(answer_file),
+            "--owner-authored",
+        ],
     )
     assert answered.exit_code == 0
 

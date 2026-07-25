@@ -14,8 +14,10 @@ import uuid
 
 from pydantic import BaseModel
 
+from exp2res.config import load_workspace_config
 from exp2res.domain.canonical import canonical_model_hash
 from exp2res.errors import LLMCancelledError, LLMInvocationError
+from exp2res.services.source_files import reauthorize_prompt_locators
 from exp2res.storage.telemetry import (
     create_llm_call,
     create_processing_run,
@@ -141,6 +143,12 @@ def invoke_contract(
 
     writer = connection
     registration = registration_for(selection)
+    # §29.4's common prompt-assembly gate reloads current ignore policy and
+    # checks every persisted locator immediately before typed serialization.
+    reauthorize_prompt_locators(
+        input_payload.model_dump(mode="python"),
+        config=load_workspace_config(workspace),
+    )
     # §11's datetime normalization governs hash bytes only: the provider
     # sees the declared typed input with its offsets preserved, while the
     # §12.15 hashes stay canonical for exact-recomputation identity.

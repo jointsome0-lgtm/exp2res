@@ -11,6 +11,7 @@ from typing import Callable
 
 from pydantic import ValidationError
 
+from exp2res.config import load_workspace_config
 from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.errors import (
@@ -23,7 +24,12 @@ from exp2res.errors import (
 from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.pipeline.lineage import plan_lineages
 from exp2res.pipeline.orchestration import withdraw_pending_unless_superseded
-from exp2res.services.capture import new_id, validate_project_label
+from exp2res.services.capture import (
+    build_capture_evidence_items,
+    new_id,
+    validate_project_label,
+)
+from exp2res.services.source_files import authorize_artifact_locators
 from exp2res.storage.repository import (
     get_raw_log,
     insert_evidence_item,
@@ -56,7 +62,7 @@ Clock = Callable[[], datetime]
 @dataclass(frozen=True)
 class CorrectionOutcome:
     raw_log: RawLog
-    evidence_item: EvidenceItem
+    evidence_items: tuple[EvidenceItem, ...]
     superseded_fact_ids: tuple[str, ...]
     superseded_gap_ids: tuple[str, ...]
     superseded_contradiction_ids: tuple[str, ...]
@@ -133,6 +139,7 @@ def capture_correction(
     raw_text: str,
     occurred: OccurredAt,
     project: str | None,
+    artifacts: tuple[str, ...] = (),
     clock: Clock | None = None,
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
@@ -142,6 +149,9 @@ def capture_correction(
 
     require_compatible(workspace)
     validate_project_label(project)
+    authorized_artifacts = authorize_artifact_locators(
+        artifacts, config=load_workspace_config(workspace)
+    )
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     last_collision: IdCollisionError | None = None
 
@@ -194,10 +204,9 @@ def capture_correction(
             )
 
             raw_log: RawLog | None = None
-            evidence_item: EvidenceItem | None = None
+            evidence_items: tuple[EvidenceItem, ...] | None = None
             for attempt in range(3):
                 raw_id = id_factory("raw_log")
-                evidence_id = id_factory("evidence_item")
                 try:
                     raw_log = RawLog(
                         id=raw_id,
@@ -211,16 +220,11 @@ def capture_correction(
                         corrects_log_id=target.id,
                         metadata={},
                     )
-                    evidence_item = EvidenceItem(
-                        id=evidence_id,
-                        created_at=now,
+                    evidence_items = build_capture_evidence_items(
                         raw_log_id=raw_id,
-                        title=None,
-                        summary="Owner-authored manual claim.",
-                        uri=None,
-                        path=None,
-                        strength="manual_claim",
-                        metadata={},
+                        created_at=now,
+                        artifacts=authorized_artifacts,
+                        id_factory=id_factory,
                     )
                 except (ValidationError, ValueError, TypeError) as error:
                     raise _capture_error(error) from error
@@ -228,7 +232,8 @@ def capture_correction(
                 connection.execute(f"SAVEPOINT {savepoint}")
                 try:
                     insert_raw_log(connection, raw_log)
-                    insert_evidence_item(connection, evidence_item)
+                    for evidence_item in evidence_items:
+                        insert_evidence_item(connection, evidence_item)
                 except IdCollisionError as error:
                     connection.execute(f"ROLLBACK TO {savepoint}")
                     connection.execute(f"RELEASE {savepoint}")
@@ -239,7 +244,7 @@ def capture_correction(
             else:
                 raise IdCollisionError() from last_collision
 
-            assert raw_log is not None and evidence_item is not None
+            assert raw_log is not None and evidence_items is not None
             mark_facts_superseded(connection, superseded_fact_ids, now)
             mark_gap_questions_superseded(connection, superseded_gap_ids, now)
             mark_contradictions_superseded(
@@ -276,7 +281,7 @@ def capture_correction(
         def build_outcome(residuals: tuple[str, ...]) -> CorrectionOutcome:
             return CorrectionOutcome(
                 raw_log=raw_log,
-                evidence_item=evidence_item,
+                evidence_items=evidence_items,
                 superseded_fact_ids=superseded_fact_ids,
                 superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
                 superseded_contradiction_ids=tuple(

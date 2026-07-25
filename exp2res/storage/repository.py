@@ -1473,11 +1473,17 @@ def get_evidence_for_log(
     connection: sqlite3.Connection, log_id: str
 ) -> tuple[EvidenceItem, ...]:
     rows = connection.execute(
-        "SELECT * FROM evidence_items WHERE raw_log_id = ?", (log_id,)
+        # §13.1's canonical order over stable columns alone: the manual claim
+        # first, then locator items by classification and stored bytes. No
+        # storage artifact such as rowid participates, so a table rebuild
+        # under §12.14 or §14.16 cannot silently reorder the reported bundle.
+        "SELECT * FROM evidence_items WHERE raw_log_id = ? "
+        "ORDER BY CASE WHEN strength = 'manual_claim' THEN 0 ELSE 1 END, "
+        "CASE WHEN path IS NULL THEN 1 ELSE 0 END, "
+        "CAST(COALESCE(path, uri, '') AS BLOB), CAST(id AS BLOB)",
+        (log_id,),
     ).fetchall()
-    items = [hydrate_evidence_item(row) for row in rows]
-    items.sort(key=lambda item: (item.created_at.astimezone(timezone.utc), item.id))
-    return tuple(items)
+    return tuple(hydrate_evidence_item(row) for row in rows)
 
 
 def get_bundle(connection: sqlite3.Connection, log_id: str) -> RawLogBundle | None:

@@ -142,4 +142,12 @@ Enforces §11's field-authorship policy, §12.13 and §12.15, §13.3 rule 10, §
 
 Enforces §15.10 rule 4, §15.12, §29.2, §29.4, and §29.6; extends §21.43's transport coverage and §21.49's injection matrix.
 
+## §21.51 Owner-Controlled Artifact Locators Stay Inert and Calibrated
+
+Enforces §9.4, §11's Model validation policy, §13.1, §13.3 rule 10, §14.2–§14.4, §14.7, §14.14 rules 4–5, and §29.4.
+
+## §21.52 Non-Prompt Owner Capture Is Affirmed, Lossless, and Uncertainty-Preserving
+
+Enforces §5.2, §5.5, §11's Model validation policy and §11.1, §13.1, §14.2–§14.3, §14.7, §14.14 rules 2–4 and 8, and §29.4.
+
 ---

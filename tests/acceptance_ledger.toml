@@ -384,3 +384,17 @@ nodes = [
   "tests/test_cli_extract.py::test_build_llm_execution_uses_workspace_selection_and_budget_defaults",
 ]
 note = "Config-only selection, model, and adapter-specific reasoning effort now reach both shipped agent-backed runners, including a double-opt-in Claude full-stack smoke; openai-compat remains the one unimplemented V1 adapter and keeps this criterion partial"
+
+["24.55"]
+status = "met"
+phases = ["0", "1"]
+evals = ["21.51"]
+issues = ["#159"]
+note = "Covered eval 21.51 proves every owner-capture command surface, ordered atomic persistence and logs-show projection, strict byte-preserving remote URI validation, slash-prefixed drive rejection, shared current-policy prompt reauthorization for captured and imported local paths without row mutation, remote non-resolution, and both unchanged §9.4 calibration outcomes."
+
+["24.56"]
+status = "met"
+phases = ["0"]
+evals = ["21.52"]
+issues = ["#161", "#163"]
+note = "Covered eval 21.52 proves uniform explicit affirmation before acquisition, bounded byte-identical multiline file/stdin capture with unchanged classifications and artifact composition, and the unknown-precision prompt and typed-value carve-outs."
