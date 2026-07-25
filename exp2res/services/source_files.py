@@ -42,6 +42,11 @@ URI_AUTHORITY = re.compile(
     r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@\[\]-]|%[0-9A-Fa-f]{2})*$"
 )
 MAX_ARTIFACT_LOCATORS = 16
+RECURSIVE_SEGMENT = "**/"
+# Bounds the expansion of an ignore pattern carrying many `**/` segments: the
+# unexpanded form still matches everything it matched before, so the cap can
+# only leave a deeper zero-directory reading unmatched, never widen access.
+MAX_RECURSIVE_SEGMENT_EXPANSIONS = 6
 # §29.4 names exactly these persisted locator fields. `external_ref` is
 # included even though §14.2 persists the supplied spelling, so a relative
 # value re-resolves against the directory the later stage runs in: failing
@@ -155,24 +160,55 @@ def _ignore_targets(
     return tuple(targets)
 
 
+def _zero_directory_variants(pattern: str) -> tuple[str, ...]:
+    """Give a `**/` segment gitignore's zero-or-more-directories meaning.
+
+    `fnmatch` reads `private/**/secret.txt` as requiring an intermediate
+    component, so the segment is additionally expanded away: matching the
+    expansions covers the zero-directory case without narrowing any form the
+    pattern already matched.
+    """
+
+    variants = {pattern}
+    for _ in range(MAX_RECURSIVE_SEGMENT_EXPANSIONS):
+        expanded = set()
+        for candidate in variants:
+            index = candidate.find(RECURSIVE_SEGMENT)
+            while index != -1:
+                if index == 0 or candidate[index - 1] == "/":
+                    expanded.add(
+                        candidate[:index]
+                        + candidate[index + len(RECURSIVE_SEGMENT) :]
+                    )
+                index = candidate.find(
+                    RECURSIVE_SEGMENT, index + len(RECURSIVE_SEGMENT)
+                )
+        if expanded <= variants:
+            break
+        variants |= expanded
+    return tuple(variants)
+
+
 def _ignored(path: Path, *, config: WorkspaceConfig, folded: bool) -> bool:
     for pattern in config.ignore_paths:
         # A trailing separator is gitignore's directory marker, so the entry
         # matches that directory and everything beneath it.
         normalized = pattern.rstrip("/")
-        candidates = (normalized,) + (
-            (f"{normalized}/*",) if normalized != pattern else ()
-        )
-        targets = _ignore_targets(
-            path, root=config.root, anchored="/" in normalized
-        )
-        for candidate in candidates:
-            compared_pattern = candidate.casefold() if folded else candidate
-            for target in targets:
-                if fnmatchcase(
-                    target.casefold() if folded else target, compared_pattern
-                ):
-                    return True
+        directory_marked = normalized != pattern
+        for variant in _zero_directory_variants(normalized):
+            candidates = (variant,) + (
+                (f"{variant}/*",) if directory_marked else ()
+            )
+            targets = _ignore_targets(
+                path, root=config.root, anchored="/" in variant
+            )
+            for candidate in candidates:
+                compared_pattern = candidate.casefold() if folded else candidate
+                for target in targets:
+                    if fnmatchcase(
+                        target.casefold() if folded else target, compared_pattern
+                    ):
+                        return True
     return False
 
 

@@ -498,6 +498,10 @@ nodes = [
   "tests/test_cli_correction.py::test_correction_rebuilds_through_artifacts_and_preserves_history",
   "tests/test_capture_artifact_locators.py::test_root_relative_ignore_pattern_binds_capture_wherever_it_runs",
   "tests/test_capture_artifact_locators.py::test_root_relative_ignore_pattern_binds_prompt_reauthorization",
+  "tests/test_capture_artifact_locators.py::test_gitignore_pattern_forms_ignore_the_same_workspace_artifact[recursive]",
+  "tests/test_capture_artifact_locators.py::test_gitignore_pattern_forms_ignore_the_same_workspace_artifact[directory-marker]",
+  "tests/test_capture_artifact_locators.py::test_gitignore_pattern_forms_ignore_the_same_workspace_artifact[zero-directory]",
+  "tests/test_capture_artifact_locators.py::test_gitignore_pattern_forms_ignore_the_same_workspace_artifact[any-depth]",
 ]
 
 ["21.52"]

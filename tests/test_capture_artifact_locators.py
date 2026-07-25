@@ -795,3 +795,37 @@ def test_root_relative_ignore_pattern_binds_prompt_reauthorization(
     assert fake.calls == []
     inspected = show_log(workspace, log_id=captured.raw_log.id)
     assert inspected.evidence_items == captured.evidence_items
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "private/**",
+        "private/",
+        "private/**/Vera Example board.md",
+        "**/Vera Example board.md",
+    ],
+    ids=["recursive", "directory-marker", "zero-directory", "any-depth"],
+)
+def test_gitignore_pattern_forms_ignore_the_same_workspace_artifact(
+    workspace: Path,
+    pattern: str,
+) -> None:
+    """§21.51 / §29.4: every equivalent gitignore form reaches one verdict."""
+
+    private = workspace / "private"
+    private.mkdir()
+    artifact = private / "Vera Example board.md"
+    artifact.write_text("Vera Example private board.\n", encoding="utf-8")
+    _set_ignore_paths(workspace, pattern)
+
+    with pytest.raises(InvalidInputError) as failure:
+        capture_daily(
+            workspace,
+            raw_text="Vera Example captured an ignored locator form.",
+            artifacts=(str(artifact),),
+            clock=lambda: FIXED_NOW,
+        )
+    assert failure.value.exit_code == 2
+    assert failure.value.diagnostic_class == "artifact_locator_ignored"
+    assert _counts(workspace) == (0, 0)
