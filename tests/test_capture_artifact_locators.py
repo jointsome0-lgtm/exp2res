@@ -804,8 +804,15 @@ def test_root_relative_ignore_pattern_binds_prompt_reauthorization(
         "private/",
         "private/**/Vera Example board.md",
         "**/Vera Example board.md",
+        "private/**/**/**/**/**/**/**/Vera Example board.md",
     ],
-    ids=["recursive", "directory-marker", "zero-directory", "any-depth"],
+    ids=[
+        "recursive",
+        "directory-marker",
+        "zero-directory",
+        "any-depth",
+        "repeated-recursive",
+    ],
 )
 def test_gitignore_pattern_forms_ignore_the_same_workspace_artifact(
     workspace: Path,
@@ -829,3 +836,39 @@ def test_gitignore_pattern_forms_ignore_the_same_workspace_artifact(
     assert failure.value.exit_code == 2
     assert failure.value.diagnostic_class == "artifact_locator_ignored"
     assert _counts(workspace) == (0, 0)
+
+
+def test_ignore_wildcards_do_not_cross_path_separators(
+    workspace: Path,
+) -> None:
+    """§21.51 / §29.4: a single-star segment matches exactly one component."""
+
+    nested = workspace / "private" / "one" / "two"
+    nested.mkdir(parents=True)
+    matched = workspace / "private" / "one" / "Vera Example board.md"
+    matched.write_text("Vera Example one-level board.\n", encoding="utf-8")
+    deeper = nested / "Vera Example board.md"
+    deeper.write_text("Vera Example two-level board.\n", encoding="utf-8")
+    _set_ignore_paths(workspace, "private/*/Vera Example board.md")
+
+    with pytest.raises(InvalidInputError) as failure:
+        capture_daily(
+            workspace,
+            raw_text="Vera Example captured the one-level ignored locator.",
+            artifacts=(str(matched),),
+            clock=lambda: FIXED_NOW,
+        )
+    assert failure.value.diagnostic_class == "artifact_locator_ignored"
+
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured the deeper unmatched locator.",
+        artifacts=(str(deeper),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_single_star",
+            "evi_vera_single_star_manual",
+            "evi_vera_single_star_artifact",
+        ),
+    )
+    assert captured.evidence_items[1].path == str(deeper.resolve())

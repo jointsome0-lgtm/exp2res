@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from fnmatch import fnmatchcase
+from functools import lru_cache
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 import stat
 import sys
@@ -42,11 +42,6 @@ URI_AUTHORITY = re.compile(
     r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@\[\]-]|%[0-9A-Fa-f]{2})*$"
 )
 MAX_ARTIFACT_LOCATORS = 16
-RECURSIVE_SEGMENT = "**/"
-# Bounds the expansion of an ignore pattern carrying many `**/` segments: the
-# unexpanded form still matches everything it matched before, so the cap can
-# only leave a deeper zero-directory reading unmatched, never widen access.
-MAX_RECURSIVE_SEGMENT_EXPANSIONS = 6
 # §29.4 names exactly these persisted locator fields. `external_ref` is
 # included even though §14.2 persists the supplied spelling, so a relative
 # value re-resolves against the directory the later stage runs in: failing
@@ -133,82 +128,100 @@ def _mandatory_denied(path: Path, *, folded: bool) -> bool:
     return False
 
 
-def _ignore_targets(
-    path: Path, *, root: Path, anchored: bool
-) -> tuple[str, ...]:
-    """The §29.4 comparison values one user pattern is matched against."""
+def _segment_regex(segment: str) -> str:
+    """Translate one gitignore path segment; wildcards never cross `/`."""
 
-    # An anchored pattern (one carrying a separator, as in `private/**`) is
-    # gitignore-style relative to the selected root, which for every Exp2Res
-    # boundary is the workspace root: capture and the §15 pre-serialization
-    # re-check must reach the same verdict for the same canonical path
-    # regardless of the directory the later action runs in. An unanchored
-    # pattern matches a component at any depth, so an ignored directory name
-    # covers the paths beneath it. The canonical absolute value stays in the
-    # set so an already-matching pattern never stops matching.
-    targets = [path.as_posix()]
-    try:
-        targets.append(path.relative_to(root).as_posix())
-    except ValueError:
-        # Outside the workspace root a root-relative form does not exist;
-        # anchored patterns simply do not apply there.
-        pass
-    if not anchored:
-        targets.extend(
-            PurePosixPath(component).as_posix() for component in path.parts[1:]
-        )
-    return tuple(targets)
+    parts: list[str] = []
+    index = 0
+    while index < len(segment):
+        char = segment[index]
+        if char == "*":
+            while index < len(segment) and segment[index] == "*":
+                index += 1
+            parts.append("[^/]*")
+            continue
+        if char == "?":
+            parts.append("[^/]")
+        elif char == "[":
+            close = segment.find("]", index + 1)
+            if close != -1:
+                body = segment[index + 1 : close]
+                if body[:1] in {"!", "^"}:
+                    body = "^" + body[1:]
+                # §11 hygiene and the config gate keep backslashes out of a
+                # pattern, so the class body needs no further escaping.
+                parts.append(f"[{body}]")
+                index = close + 1
+                continue
+            parts.append(re.escape(char))
+        else:
+            parts.append(re.escape(char))
+        index += 1
+    return "".join(parts)
 
 
-def _zero_directory_variants(pattern: str) -> tuple[str, ...]:
-    """Give a `**/` segment gitignore's zero-or-more-directories meaning.
+@lru_cache(maxsize=256)
+def _ignore_matcher(pattern: str) -> tuple[re.Pattern[str], bool, bool]:
+    """Compile one §29.4 user pattern under gitignore matching rules.
 
-    `fnmatch` reads `private/**/secret.txt` as requiring an intermediate
-    component, so the segment is additionally expanded away: matching the
-    expansions covers the zero-directory case without narrowing any form the
-    pattern already matched.
+    Returns the compiled expression plus whether the pattern is anchored to
+    the selected root and whether a trailing separator restricts it to
+    directories. A `**` segment spans zero or more directories, every other
+    wildcard stops at a separator, and an unanchored pattern may start at any
+    depth.
     """
 
-    variants = {pattern}
-    for _ in range(MAX_RECURSIVE_SEGMENT_EXPANSIONS):
-        expanded = set()
-        for candidate in variants:
-            index = candidate.find(RECURSIVE_SEGMENT)
-            while index != -1:
-                if index == 0 or candidate[index - 1] == "/":
-                    expanded.add(
-                        candidate[:index]
-                        + candidate[index + len(RECURSIVE_SEGMENT) :]
-                    )
-                index = candidate.find(
-                    RECURSIVE_SEGMENT, index + len(RECURSIVE_SEGMENT)
-                )
-        if expanded <= variants:
-            break
-        variants |= expanded
-    return tuple(variants)
+    normalized = pattern.rstrip("/")
+    directory_only = normalized != pattern
+    anchored = "/" in normalized
+    segments = [segment for segment in normalized.split("/") if segment]
+    parts: list[str] = [] if anchored else ["(?:[^/]+/)*"]
+    for position, segment in enumerate(segments):
+        last = position == len(segments) - 1
+        if segment == "**":
+            # The group consumes its own separator, so none is appended.
+            parts.append(".+" if last else "(?:[^/]+/)*")
+            continue
+        parts.append(_segment_regex(segment))
+        if not last:
+            parts.append("/")
+    return re.compile("".join(parts)), anchored, directory_only
+
+
+def _match_prefixes(value: str, *, include_whole: bool) -> tuple[str, ...]:
+    """The path itself and each ancestor directory, as gitignore compares."""
+
+    segments = value.split("/")
+    upper = len(segments) if include_whole else len(segments) - 1
+    return tuple("/".join(segments[:count]) for count in range(1, upper + 1))
 
 
 def _ignored(path: Path, *, config: WorkspaceConfig, folded: bool) -> bool:
+    # §29.4 anchors user patterns to the workspace root: capture and the §15
+    # pre-serialization re-check must reach the same verdict for the same
+    # canonical path regardless of the directory the later action runs in. An
+    # unanchored pattern additionally applies at any depth, including to a
+    # canonical path outside the root, which an anchored pattern never
+    # reaches. Matching an ancestor prefix ignores everything beneath an
+    # ignored directory.
+    try:
+        relative: str | None = path.relative_to(config.root).as_posix()
+    except ValueError:
+        relative = None
+    absolute = path.as_posix().lstrip("/")
     for pattern in config.ignore_paths:
-        # A trailing separator is gitignore's directory marker, so the entry
-        # matches that directory and everything beneath it.
-        normalized = pattern.rstrip("/")
-        directory_marked = normalized != pattern
-        for variant in _zero_directory_variants(normalized):
-            candidates = (variant,) + (
-                (f"{variant}/*",) if directory_marked else ()
-            )
-            targets = _ignore_targets(
-                path, root=config.root, anchored="/" in variant
-            )
-            for candidate in candidates:
-                compared_pattern = candidate.casefold() if folded else candidate
-                for target in targets:
-                    if fnmatchcase(
-                        target.casefold() if folded else target, compared_pattern
-                    ):
-                        return True
+        compared_pattern = pattern.casefold() if folded else pattern
+        matcher, anchored, directory_only = _ignore_matcher(compared_pattern)
+        targets = (relative,) if anchored else (relative, absolute)
+        for target in targets:
+            if target is None:
+                continue
+            compared = target.casefold() if folded else target
+            for prefix in _match_prefixes(
+                compared, include_whole=not directory_only
+            ):
+                if matcher.fullmatch(prefix):
+                    return True
     return False
 
 
