@@ -1,4 +1,4 @@
-"""§29.4 local source acquisition gate for manual capture files."""
+"""§29.4 local-source and persisted-locator authorization gates."""
 
 from __future__ import annotations
 
@@ -26,11 +26,21 @@ from exp2res.errors import (
     ArtifactLocatorUnsupportedPathError,
     ForbiddenPathError,
     InvalidInputError,
+    LocatorReauthorizationFailedError,
 )
 
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+SLASH_WINDOWS_DRIVE = re.compile(r"^/[A-Za-z]:[\\/]")
 URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+URI_COMPONENT = re.compile(
+    r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*$"
+)
+URI_AUTHORITY = re.compile(
+    r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@\[\]-]|%[0-9A-Fa-f]{2})*$"
+)
 MAX_ARTIFACT_LOCATORS = 16
+PROMPT_LOCATOR_FIELDS = frozenset({"path", "uri", "url", "external_ref"})
 DENIED_COMPONENTS = {
     "secrets",
     "credentials",
@@ -133,6 +143,7 @@ def validate_artifact_locator_count(supplied: tuple[str, ...]) -> None:
 
 def _file_uri_path(value: str) -> str:
     try:
+        _validate_absolute_uri(value)
         parsed = urlsplit(value)
         if (
             parsed.scheme.casefold() != "file"
@@ -145,10 +156,69 @@ def _file_uri_path(value: str) -> str:
         ):
             raise ValueError("file URI does not resolve to one POSIX path")
         decoded = unquote(parsed.path, encoding="utf-8", errors="strict")
+        if SLASH_WINDOWS_DRIVE.match(decoded) is not None:
+            raise ValueError("file URI contains a Windows drive path")
         validate_posix_path(decoded)
     except (UnicodeError, ValueError, TypeError) as error:
         raise ArtifactLocatorUnsupportedPathError() from error
     return decoded
+
+
+def _validate_absolute_uri(value: str) -> None:
+    """Validate RFC 3986 URI syntax without rewriting the supplied bytes."""
+
+    if (
+        not value.isascii()
+        or any(char.isspace() for char in value)
+        or INVALID_PERCENT_ESCAPE.search(value) is not None
+        or value.count("#") > 1
+    ):
+        raise ValueError("invalid absolute URI syntax")
+    scheme_match = URI_SCHEME.match(value)
+    if scheme_match is None:
+        raise ValueError("absolute URI requires a scheme")
+    parsed = urlsplit(value)
+    if not parsed.scheme or parsed.scheme.casefold() != value[
+        : scheme_match.end() - 1
+    ].casefold():
+        raise ValueError("absolute URI scheme mismatch")
+    if URI_AUTHORITY.fullmatch(parsed.netloc) is None:
+        raise ValueError("invalid URI authority")
+    if URI_COMPONENT.fullmatch(parsed.path) is None:
+        raise ValueError("invalid URI path")
+    if URI_COMPONENT.fullmatch(parsed.query) is None:
+        raise ValueError("invalid URI query")
+    if URI_COMPONENT.fullmatch(parsed.fragment) is None:
+        raise ValueError("invalid URI fragment")
+    try:
+        parsed.hostname
+        parsed.port
+    except ValueError as error:
+        raise ValueError("invalid URI authority") from error
+
+
+def _authorize_local_locator(
+    value: str, *, config: WorkspaceConfig
+) -> str:
+    if _forbidden_supplied_form(value):
+        raise ArtifactLocatorUnsupportedPathError()
+    try:
+        validate_posix_path(value)
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise ArtifactLocatorUnsupportedPathError() from error
+    try:
+        resolved = Path(value).resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise ArtifactLocatorUnresolvableError() from error
+    folded = _case_insensitive_lookup(resolved)
+    if _mandatory_denied(resolved, folded=folded):
+        raise ArtifactLocatorDeniedError()
+    if _ignored(resolved, config=config, folded=folded):
+        raise ArtifactLocatorIgnoredError()
+    try:
+        return validate_posix_path(resolved.as_posix())
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise ArtifactLocatorInvalidError() from error
 
 
 def authorize_artifact_locators(
@@ -175,33 +245,13 @@ def authorize_artifact_locators(
             raise ArtifactLocatorUnsupportedPathError()
         if scheme is not None and scheme != "file":
             try:
-                parsed = urlsplit(value)
+                _validate_absolute_uri(value)
             except ValueError as error:
                 raise ArtifactLocatorInvalidError() from error
-            if not parsed.scheme:
-                raise ArtifactLocatorInvalidError()
             locator = ArtifactLocator(uri=value, path=None)
         else:
             local_value = _file_uri_path(value) if scheme is not None else value
-            if _forbidden_supplied_form(local_value):
-                raise ArtifactLocatorUnsupportedPathError()
-            try:
-                validate_posix_path(local_value)
-            except (UnicodeError, ValueError, TypeError) as error:
-                raise ArtifactLocatorUnsupportedPathError() from error
-            try:
-                resolved = Path(local_value).resolve(strict=True)
-            except (OSError, RuntimeError) as error:
-                raise ArtifactLocatorUnresolvableError() from error
-            folded = _case_insensitive_lookup(resolved)
-            if _mandatory_denied(resolved, folded=folded):
-                raise ArtifactLocatorDeniedError()
-            if _ignored(resolved, config=config, folded=folded):
-                raise ArtifactLocatorIgnoredError()
-            try:
-                canonical = validate_posix_path(resolved.as_posix())
-            except (UnicodeError, ValueError, TypeError) as error:
-                raise ArtifactLocatorInvalidError() from error
+            canonical = _authorize_local_locator(local_value, config=config)
             locator = ArtifactLocator(uri=None, path=canonical)
 
         if locator.stored_key in stored_keys:
@@ -212,6 +262,44 @@ def authorize_artifact_locators(
     # the persisted bundle and every later read agree without depending on an
     # insertion-order storage artifact.
     return tuple(sorted(accepted, key=lambda locator: locator.order_key))
+
+
+def reauthorize_prompt_locators(
+    payload: object, *, config: WorkspaceConfig
+) -> None:
+    """Fail closed if a persisted local locator cannot enter a §15 prompt."""
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if (
+                    key in PROMPT_LOCATOR_FIELDS
+                    and child is not None
+                    and isinstance(child, str)
+                ):
+                    scheme_match = URI_SCHEME.match(child)
+                    scheme = (
+                        child[: scheme_match.end() - 1].casefold()
+                        if scheme_match is not None
+                        else None
+                    )
+                    if scheme is not None and scheme != "file":
+                        continue
+                    try:
+                        local_value = (
+                            _file_uri_path(child)
+                            if scheme == "file"
+                            else child
+                        )
+                        _authorize_local_locator(local_value, config=config)
+                    except InvalidInputError as error:
+                        raise LocatorReauthorizationFailedError() from error
+                visit(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                visit(child)
+
+    visit(payload)
 
 
 def read_capture_file(

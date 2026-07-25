@@ -119,6 +119,11 @@ class IntegrityFailureError(Exp2ResError):
     public_message = "Validation or storage integrity failed."
 
 
+class LocatorReauthorizationFailedError(IntegrityFailureError):
+    diagnostic_class = "locator_reauthorization_failed"
+    public_message = "A persisted local locator is no longer authorized."
+
+
 class ManagedOutputIncompleteError(Exp2ResError):
     exit_code = 8
     diagnostic_class = "managed_output_incomplete"

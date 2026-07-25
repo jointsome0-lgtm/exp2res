@@ -1664,10 +1664,20 @@ Given file-open, network-transport, probe, and scheme-handler seams fail the tes
 When local and remote artifact locators are captured and later inspected or supplied as displaced-record support
 Then no locator is opened, fetched, probed, or otherwise dereferenced
 
-Given an unresolvable path, a mandatory-denied path, a privacy-ignored path, a Windows drive-letter, UNC, or backslash form, a structurally invalid or oversized remote URI, more than 16 locators, or two locators yielding the same stored field/value pair
+Given an unresolvable path, a mandatory-denied path, a privacy-ignored path, a Windows drive-letter including a slash-prefixed drive decoded from file:///C:/..., UNC, or backslash form, a structurally invalid or oversized remote URI including raw whitespace or a malformed percent escape, more than 16 locators, or two locators yielding the same stored field/value pair
 When any owner-authored capture form validates the candidate
 Then it fails with exit class 2 and its stable artifact-locator diagnostic before persistence
 And no RawLog or EvidenceItem from the rejected candidate exists
+
+Given an owner-captured local artifact locator or an import file path was authorized and persisted
+And the owner later adds a matching privacy.ignore_paths rule, the path becomes unresolvable, or its canonical path enters the mandatory deny set
+When a §15 stage assembles a required input carrying that persisted locator
+Then the common invocation boundary fails the complete stage before prompt transport with exit class 7 and locator_reauthorization_failed
+And it neither silently omits the object nor mutates or clears the RawLog or EvidenceItem row
+
+Given a persisted locator carries an absolute non-file URI
+When the same common invocation boundary serializes its complete typed input
+Then the URI remains byte-for-byte unchanged and no filesystem resolution, file read, network request, probe, or scheme handler is invoked
 
 Given one owner-captured RawLog whose complete linked set contains its manual_claim and one artifact_reference
 When Stage 3 validates a fact selecting items only from that raw log

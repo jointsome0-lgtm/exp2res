@@ -16,17 +16,30 @@ from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
 from exp2res.cli import app
-from exp2res.domain.models import STRING_LIMIT
-from exp2res.errors import InvalidInputError, LLMInvocationError
+from exp2res.domain.models import EvidenceItem, RawLog, STRING_LIMIT
+from exp2res.errors import (
+    InvalidInputError,
+    LLMInvocationError,
+    LocatorReauthorizationFailedError,
+)
 from exp2res.services.capture import capture_daily
 from exp2res.services.correction import capture_correction
 from exp2res.services.logs import show_log
-from exp2res.storage.repository import list_experience_facts
-from exp2res.storage.workspace import read_database
+from exp2res.storage.repository import (
+    insert_evidence_item,
+    insert_raw_log,
+    list_experience_facts,
+)
+from exp2res.storage.workspace import read_database, writer_database
 
 from conftest import FIXED_NOW, configure_timezone
 from fakes import FakeContractRunner
-from test_stage3_extraction import TestIds, fact_response, run_stage3
+from test_stage3_extraction import (
+    TestIds,
+    exact_day,
+    fact_response,
+    run_stage3,
+)
 
 
 pytestmark = [pytest.mark.contract, pytest.mark.lifecycle, pytest.mark.invariant]
@@ -56,6 +69,18 @@ def _invoke_json(workspace: Path, arguments: list[str]):
         ["--json", "--workspace", str(workspace), *arguments],
     )
     return result, json.loads(result.stdout)
+
+
+def _set_ignore_paths(workspace: Path, *patterns: str) -> None:
+    config = workspace / ".exp2res" / "config.toml"
+    encoded_patterns = ", ".join(json.dumps(pattern) for pattern in patterns)
+    config.write_text(
+        '[workspace]\ntimezone = "Etc/UTC"\n\n'
+        '[llm]\nadapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n\n'
+        f"[privacy]\nignore_paths = [{encoded_patterns}]\n",
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
 
 
 def test_artifact_locators_round_trip_in_canonical_order_without_dereference(
@@ -134,6 +159,7 @@ def test_artifact_locators_round_trip_in_canonical_order_without_dereference(
         ("denied", "artifact_locator_denied"),
         ("ignored", "artifact_locator_ignored"),
         ("drive", "artifact_locator_path_unsupported"),
+        ("slash_drive_file_uri", "artifact_locator_path_unsupported"),
         ("unc", "artifact_locator_path_unsupported"),
         ("backslash", "artifact_locator_path_unsupported"),
     ],
@@ -167,6 +193,8 @@ def test_rejected_local_artifact_locator_is_atomic(
         locator = str(ignored)
     elif case == "drive":
         locator = r"C:\Vera Example\artifact.md"
+    elif case == "slash_drive_file_uri":
+        locator = "file:///C:/Vera-Example/artifact.md"
     elif case == "unc":
         locator = r"\\server\Vera Example\artifact.md"
     else:
@@ -181,6 +209,31 @@ def test_rejected_local_artifact_locator_is_atomic(
         )
     assert failure.value.exit_code == 2
     assert failure.value.diagnostic_class == diagnostic
+    assert _counts(workspace) == (0, 0)
+
+
+@pytest.mark.parametrize(
+    "locator",
+    (
+        "https://example.invalid/a b",
+        "https://example.invalid/%ZZ",
+    ),
+    ids=("whitespace", "malformed-percent"),
+)
+def test_malformed_remote_artifact_uri_is_rejected(
+    workspace: Path,
+    locator: str,
+) -> None:
+    """§21.51: complete absolute-URI syntax is checked without normalization."""
+
+    with pytest.raises(InvalidInputError) as failure:
+        capture_daily(
+            workspace,
+            raw_text="Vera Example rejected malformed remote provenance.",
+            artifacts=(locator,),
+            clock=lambda: FIXED_NOW,
+        )
+    assert failure.value.diagnostic_class == "artifact_locator_invalid"
     assert _counts(workspace) == (0, 0)
 
 
@@ -217,6 +270,173 @@ def test_remote_hygiene_and_count_fail_before_persistence(
         )
     assert failure.value.diagnostic_class == diagnostic
     assert _counts(workspace) == (0, 0)
+
+
+def test_captured_local_locator_is_reauthorized_before_prompt_serialization(
+    workspace: Path,
+    tmp_path: Path,
+) -> None:
+    """§21.51 / §24.55: a later ignore rule fails Stage 3 without row mutation."""
+
+    artifact = tmp_path / "Vera Example later ignored artifact.md"
+    artifact.write_text(
+        "Vera Example inert artifact retained at its owner path.\n",
+        encoding="utf-8",
+    )
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured local artifact provenance.",
+        artifacts=(str(artifact),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_reauthorization_capture",
+            "evi_vera_reauthorization_manual",
+            "evi_vera_reauthorization_artifact",
+        ),
+    )
+    persisted_path = captured.evidence_items[1].path
+    assert persisted_path == str(artifact.resolve())
+    capture_correction(
+        workspace,
+        log_id=captured.raw_log.id,
+        raw_text="Vera Example corrected the captured artifact statement.",
+        occurred=captured.raw_log.occurred,
+        project=captured.raw_log.project,
+        clock=lambda: FIXED_NOW.replace(hour=13),
+        id_factory=_capture_ids(
+            "log_vera_reauthorization_correction",
+            "evi_vera_reauthorization_correction",
+        ),
+    )
+    _set_ignore_paths(workspace, "*later ignored artifact.md")
+
+    fake = FakeContractRunner([])
+    with pytest.raises(LocatorReauthorizationFailedError) as failure:
+        run_stage3(
+            workspace,
+            fake,
+            TestIds(),
+            log_id=captured.raw_log.id,
+        )
+    assert failure.value.exit_code == 7
+    assert failure.value.diagnostic_class == "locator_reauthorization_failed"
+    assert fake.calls == []
+    inspected = show_log(workspace, log_id=captured.raw_log.id)
+    assert inspected.raw_log == captured.raw_log
+    assert inspected.evidence_items == captured.evidence_items
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM processing_runs"
+        ).fetchone()[0] == 0
+
+
+def test_import_file_locators_share_prompt_reauthorization_boundary(
+    workspace: Path,
+    tmp_path: Path,
+) -> None:
+    """§21.51 / §24.55: imported path fields fail closed under current policy."""
+
+    source = tmp_path / "Vera Example imported design.md"
+    source.write_text(
+        "Vera Example synthetic imported design evidence.\n",
+        encoding="utf-8",
+    )
+    stored_path = str(source.resolve())
+    raw_log = RawLog(
+        id="log_vera_import_reauthorization",
+        recorded_at=FIXED_NOW,
+        entry_type="design_doc",
+        source_type="imported_artifact",
+        occurred=exact_day(15),
+        raw_text="Vera Example synthetic imported design evidence.",
+        project="Vera Example Project",
+        external_ref=stored_path,
+        corrects_log_id=None,
+        metadata={},
+    )
+    evidence = EvidenceItem(
+        id="evi_vera_import_reauthorization",
+        created_at=FIXED_NOW,
+        raw_log_id=raw_log.id,
+        title="Vera Example imported design",
+        summary="Vera Example imported design support.",
+        uri=None,
+        path=stored_path,
+        strength="design_doc",
+        metadata={},
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        insert_raw_log(connection, raw_log)
+        insert_evidence_item(connection, evidence)
+        connection.commit()
+    _set_ignore_paths(workspace, "*imported design.md")
+
+    fake = FakeContractRunner([])
+    with pytest.raises(LocatorReauthorizationFailedError) as failure:
+        run_stage3(workspace, fake, TestIds(), log_id=raw_log.id)
+    assert failure.value.diagnostic_class == "locator_reauthorization_failed"
+    assert fake.calls == []
+    with read_database(workspace) as connection:
+        stored_log = connection.execute(
+            "SELECT external_ref FROM raw_logs WHERE id = ?",
+            (raw_log.id,),
+        ).fetchone()
+        stored_evidence = connection.execute(
+            "SELECT path, uri FROM evidence_items WHERE id = ?",
+            (evidence.id,),
+        ).fetchone()
+        assert tuple(stored_log) == (stored_path,)
+        assert tuple(stored_evidence) == (stored_path, None)
+
+
+def test_remote_persisted_locators_are_not_resolved_again(
+    workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§21.51 / §24.55: non-local schemes remain inert provenance."""
+
+    remote = "https://example.invalid/Vera-Example-remote-artifact"
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured remote artifact provenance.",
+        external_ref=remote,
+        artifacts=(remote,),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_remote_reauthorization",
+            "evi_vera_remote_manual",
+            "evi_vera_remote_artifact",
+        ),
+    )
+    original_resolve = Path.resolve
+
+    def reject_remote_path(
+        path: Path, *args: object, **kwargs: object
+    ) -> Path:
+        if str(path).startswith("https:"):
+            raise AssertionError("a remote locator reached path resolution")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", reject_remote_path)
+    fake = FakeContractRunner(
+        [fact_response([captured.evidence_items[1].id])]
+    )
+    result = run_stage3(
+        workspace,
+        fake,
+        TestIds(),
+        log_id=captured.raw_log.id,
+    )
+    assert len(result.created) == 1
+    serialized = json.loads(fake.calls[0].serialized_input)
+    assert serialized["raw_logs"][0]["external_ref"] == remote
+    serialized_artifact = next(
+        item
+        for item in serialized["evidence_items"]
+        if item["id"] == captured.evidence_items[1].id
+    )
+    assert serialized_artifact["uri"] == remote
 
 
 def test_equivalent_local_locators_are_rejected_not_deduplicated(

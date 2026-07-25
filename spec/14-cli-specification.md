@@ -235,7 +235,7 @@ This contract binds every command-specific form above and every later §14 addit
    | 4 | `failed` | Incompatible or unrecognized schema under §12.14, including a partial initialization or `init` version mismatch. |
    | 5 | `failed` | Concurrency conflict in the §8.1 `workspace_busy` class. |
    | 6 | `failed` | Provider or transport failure under §15.10, including capability mismatch or budget/context-overflow preflight refusal. |
-   | 7 | `failed` | Validation or integrity failure, including §15.1 invalid-after-retry, §12 rule 10, hydration, or migration validation failure. |
+   | 7 | `failed` | Validation or integrity failure, including §15.1 invalid-after-retry, §12 rule 10, hydration, migration validation failure, or §29.4's `locator_reauthorization_failed` pre-serialization refusal. |
    | 8 | `failed` | Incomplete managed-output cleanup or privacy deletion at non-cancelled completion, including `deletion_incomplete` and any reported residual path. |
    | 9 | `cancelled` | User interruption under §15.10/§13.13. |
    | 10 | `blocked` | A completed semantic result whose verifier or consumer gate does not pass: non-passing `assess verify` or `bullets verify` findings, or export refused by a §16.11 allowlist. |

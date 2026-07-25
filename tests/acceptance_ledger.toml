@@ -389,4 +389,4 @@ status = "met"
 phases = ["0", "1"]
 evals = ["21.51"]
 issues = ["#159"]
-note = "Covered eval 21.51 proves every owner-capture command surface, ordered atomic persistence and logs-show projection, local/remote classification, fail-closed diagnostics, permanent non-dereference, and both unchanged §9.4 calibration outcomes."
+note = "Covered eval 21.51 proves every owner-capture command surface, ordered atomic persistence and logs-show projection, strict byte-preserving remote URI validation, slash-prefixed drive rejection, shared current-policy prompt reauthorization for captured and imported local paths without row mutation, remote non-resolution, and both unchanged §9.4 calibration outcomes."

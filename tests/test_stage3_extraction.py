@@ -124,8 +124,18 @@ def add_log(
         corrects_log_id=corrects_log_id,
         metadata={},
     )
-    items = tuple(
-        EvidenceItem(
+    def build_item(item_id: str, strength: str) -> EvidenceItem:
+        local_path: str | None = None
+        if strength == "design_doc":
+            source_root = workspace / "Vera Example imported sources"
+            source_root.mkdir(exist_ok=True)
+            source = source_root / f"{item_id}.md"
+            source.write_text(
+                "Vera Example synthetic imported design evidence.\n",
+                encoding="utf-8",
+            )
+            local_path = str(source.resolve())
+        return EvidenceItem(
             id=item_id,
             created_at=recorded_at,
             raw_log_id=log_id,
@@ -136,10 +146,13 @@ def add_log(
                 if strength != "manual_claim"
                 else None
             ),
-            path=(f"vera/{item_id}.md" if strength == "design_doc" else None),
+            path=local_path,
             strength=strength,
             metadata={},
         )
+
+    items = tuple(
+        build_item(item_id, strength)
         for item_id, strength in item_specs
     )
     with writer_database(workspace) as connection:
