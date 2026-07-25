@@ -189,6 +189,68 @@ def test_fake_runner_valid_round_trip_persists_content_free_exact_hashes(
     every_object_is_closed(schema)
 
 
+def test_shipped_contract_schemas_declare_every_property_required() -> None:
+    """Every §15 contract must satisfy native structured-output constraints.
+
+    Providers reject a `required` list that omits any declared property, so a
+    Pydantic default silently made the fact-extractor schema unusable against
+    a real endpoint while every fake-backed test stayed green. §15.11 wants the
+    same shape for its own reason: an omitted key is a missing judgment, an
+    explicit null is an authored decision.
+    """
+
+    from exp2res.llm.assessment_verifier import ASSESSMENT_VERIFIER_CONTRACT
+    from exp2res.llm.assessment_writer import ASSESSMENT_WRITER_CONTRACT
+    from exp2res.llm.detector import DETECTOR_CONTRACT
+    from exp2res.llm.fact_extractor import FACT_EXTRACTOR_CONTRACT
+    from exp2res.llm.signal_extractor import SIGNAL_EXTRACTOR_CONTRACT
+
+    shipped = (
+        FACT_EXTRACTOR_CONTRACT,
+        DETECTOR_CONTRACT,
+        SIGNAL_EXTRACTOR_CONTRACT,
+        ASSESSMENT_WRITER_CONTRACT,
+        ASSESSMENT_VERIFIER_CONTRACT,
+    )
+
+    def every_object_declares_its_properties(value: object, path: str) -> None:
+        if isinstance(value, dict):
+            properties = value.get("properties")
+            if isinstance(properties, dict):
+                assert value.get("additionalProperties") is False, path
+                assert set(value.get("required", ())) == set(properties), path
+            for key, child in value.items():
+                every_object_declares_its_properties(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                every_object_declares_its_properties(child, f"{path}[{index}]")
+
+    for contract in shipped:
+        every_object_declares_its_properties(
+            strict_output_schema(contract), contract.contract_id
+        )
+
+
+def test_service_owned_fields_stay_absent_from_required_and_properties() -> None:
+    """Declaring every property required must not resurrect a stripped field."""
+
+    class Output(StrictModel):
+        service_id: str = Field(default="")
+        authored: str
+
+    contract = ContractDefinition(
+        contract_id="required-strip-probe",
+        output_model=Output,
+        fixed_instructions="Probe contract.",
+        schema_revision="1",
+        service_owned_fields=frozenset({"service_id"}),
+    )
+
+    schema = strict_output_schema(contract)
+    assert "service_id" not in schema["properties"]
+    assert set(schema["required"]) == {"authored"}
+
+
 def test_loaded_selection_drives_fake_runner_processing_identity(
     workspace: Path,
 ) -> None:
