@@ -64,9 +64,13 @@ def _close_and_strip_schema(node: Any, service_owned: frozenset[str]) -> None:
         if isinstance(properties, dict):
             for field in service_owned:
                 properties.pop(field, None)
-            required = node.get("required")
-            if isinstance(required, list):
-                node["required"] = [field for field in required if field not in service_owned]
+            # §15.11: every field the model authors is required on the wire.
+            # A Pydantic default makes a field optional for local construction
+            # only; on the wire an omitted key is a missing judgment, while an
+            # explicit null is an authored conservative decision. Declaring the
+            # full property set keeps those two distinguishable — and native
+            # structured-output providers reject a partial `required` outright.
+            node["required"] = [field for field in properties]
             node["additionalProperties"] = False
         elif node.get("type") == "object":
             node["additionalProperties"] = False
