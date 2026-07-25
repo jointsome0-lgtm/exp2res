@@ -113,10 +113,24 @@ def purge_workspace(
             clock=clock,
         )
     except KeyboardInterrupt:
-        if not committed:
+        if committed:
+            interrupted = committed[-1]
+        elif residual_paths:
+            # Interrupted inside the pre-transaction cleanup. No row was
+            # purged, so there are no deleted IDs, but managed removal already
+            # ran and its unresolved paths must survive the cancellation
+            # instead of being dropped as an effect-free interrupt. Managed
+            # entries this run did remove are unrepresentable in the version-1
+            # envelope, which declares no removed-path field for this command.
+            interrupted = PurgeOutcome(
+                deleted_ids=(),
+                generation_ids=(),
+                residual_paths=_sorted_paths(residual_paths),
+            )
+        else:
             raise
         cancelled = OperationCancelledError()
-        cancelled.purge_outcome = committed[-1]
+        cancelled.purge_outcome = interrupted
         raise cancelled from None
 
 

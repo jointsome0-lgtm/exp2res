@@ -693,3 +693,49 @@ def test_interrupt_during_connection_teardown_still_reports_the_purge(
     assert deleted["raw_log"] == [bundle.raw_log.id]
     with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
         assert connection.execute("SELECT COUNT(*) FROM raw_logs").fetchone()[0] == 0
+
+
+def test_interrupt_in_pre_transaction_cleanup_keeps_its_residuals(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: cleanup that already ran is reported even when the
+    interrupt precedes the purge transaction and no row was deleted."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example pre-transaction interrupt",
+        clock=lambda: FIXED_NOW,
+    )
+    assessment = workspace / "out" / "assessment"
+    assessment.mkdir(mode=0o700, exist_ok=True)
+    target = workspace.parent / "Vera Example pre-transaction target"
+    target.mkdir(exist_ok=True)
+    planted = assessment / "snapshot_vera_pre_transaction"
+    planted.symlink_to(target, target_is_directory=True)
+
+    def interrupt_after_managed_removal(_workspace: Path):
+        raise KeyboardInterrupt()
+
+    # Backups are enumerated first and report the planted symlink's sibling
+    # residual; the managed-output pass is interrupted immediately after.
+    monkeypatch.setattr(
+        workspace_service, "remove_managed_backups", lambda _w: (str(planted),)
+    )
+    monkeypatch.setattr(
+        workspace_service,
+        "remove_all_managed_output_entries",
+        interrupt_after_managed_removal,
+    )
+
+    result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["residual_paths"] == [str(planted)]
+    assert envelope["affected_ids"]["deleted"] == []
+    assert planted.is_symlink()
+    assert target.is_dir()
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM raw_logs WHERE id = ?", (bundle.raw_log.id,)
+        ).fetchone()[0] == 1
