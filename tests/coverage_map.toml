@@ -504,6 +504,9 @@ nodes = [
   "tests/test_capture_artifact_locators.py::test_gitignore_pattern_forms_ignore_the_same_workspace_artifact[any-depth]",
   "tests/test_capture_artifact_locators.py::test_gitignore_pattern_forms_ignore_the_same_workspace_artifact[repeated-recursive]",
   "tests/test_capture_artifact_locators.py::test_ignore_wildcards_do_not_cross_path_separators",
+  "tests/test_capture_artifact_locators.py::test_directory_marker_ignores_the_selected_directory_itself",
+  "tests/test_capture_artifact_locators.py::test_ignore_character_class_with_leading_bracket_stays_applicable",
+  "tests/test_capture_artifact_locators.py::test_repeated_recursive_segments_collapse_to_one_matcher",
 ]
 
 ["21.52"]

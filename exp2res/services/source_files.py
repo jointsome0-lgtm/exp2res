@@ -143,14 +143,24 @@ def _segment_regex(segment: str) -> str:
         if char == "?":
             parts.append("[^/]")
         elif char == "[":
-            close = segment.find("]", index + 1)
+            # A `]` directly after the class opener, or after its negation
+            # marker, is a member rather than the terminator.
+            start = index + 1
+            if segment[start : start + 1] in {"!", "^"}:
+                start += 1
+            if segment[start : start + 1] == "]":
+                start += 1
+            close = segment.find("]", start)
             if close != -1:
                 body = segment[index + 1 : close]
-                if body[:1] in {"!", "^"}:
-                    body = "^" + body[1:]
-                # §11 hygiene and the config gate keep backslashes out of a
-                # pattern, so the class body needs no further escaping.
-                parts.append(f"[{body}]")
+                negated = body[:1] in {"!", "^"}
+                if negated:
+                    body = body[1:]
+                # Python's `re` gives a leading `]` no literal reading and the
+                # config gate keeps backslashes out of a pattern, so members
+                # are escaped explicitly before the class is emitted.
+                members = body.replace("\\", "\\\\").replace("]", "\\]")
+                parts.append(f"[{'^' if negated else ''}{members}]")
                 index = close + 1
                 continue
             parts.append(re.escape(char))
@@ -174,7 +184,16 @@ def _ignore_matcher(pattern: str) -> tuple[re.Pattern[str], bool, bool]:
     normalized = pattern.rstrip("/")
     directory_only = normalized != pattern
     anchored = "/" in normalized
-    segments = [segment for segment in normalized.split("/") if segment]
+    segments: list[str] = []
+    for segment in normalized.split("/"):
+        if not segment:
+            continue
+        # Consecutive `**` segments mean exactly what one means; keeping them
+        # apart would make one check partition the same components in
+        # combinatorially many ways.
+        if segment == "**" and segments[-1:] == ["**"]:
+            continue
+        segments.append(segment)
     parts: list[str] = [] if anchored else ["(?:[^/]+/)*"]
     for position, segment in enumerate(segments):
         last = position == len(segments) - 1
@@ -209,6 +228,10 @@ def _ignored(path: Path, *, config: WorkspaceConfig, folded: bool) -> bool:
     except ValueError:
         relative = None
     absolute = path.as_posix().lstrip("/")
+    # A trailing-separator rule covers the directory it names as well as its
+    # contents, and a locator may select that directory itself. Statting the
+    # already-canonical path opens nothing and reads no byte.
+    selected_is_directory = path.is_dir()
     for pattern in config.ignore_paths:
         compared_pattern = pattern.casefold() if folded else pattern
         matcher, anchored, directory_only = _ignore_matcher(compared_pattern)
@@ -218,7 +241,8 @@ def _ignored(path: Path, *, config: WorkspaceConfig, folded: bool) -> bool:
                 continue
             compared = target.casefold() if folded else target
             for prefix in _match_prefixes(
-                compared, include_whole=not directory_only
+                compared,
+                include_whole=not directory_only or selected_is_directory,
             ):
                 if matcher.fullmatch(prefix):
                     return True

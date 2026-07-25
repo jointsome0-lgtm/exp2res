@@ -7,6 +7,7 @@ import http.client
 import json
 from pathlib import Path
 import sqlite3
+import time
 from urllib.parse import quote
 import urllib.request
 
@@ -26,7 +27,10 @@ from exp2res.errors import (
 from exp2res.services.capture import capture_daily
 from exp2res.services.correction import capture_correction
 from exp2res.services.logs import delete_log, show_log
-from exp2res.services.source_files import reauthorize_prompt_locators
+from exp2res.services.source_files import (
+    _ignore_matcher,
+    reauthorize_prompt_locators,
+)
 from exp2res.storage.repository import (
     insert_evidence_item,
     insert_raw_log,
@@ -872,3 +876,59 @@ def test_ignore_wildcards_do_not_cross_path_separators(
         ),
     )
     assert captured.evidence_items[1].path == str(deeper.resolve())
+
+
+def test_directory_marker_ignores_the_selected_directory_itself(
+    workspace: Path,
+) -> None:
+    """§21.51 / §29.4: a trailing separator covers the directory it names."""
+
+    private = workspace / "private"
+    private.mkdir()
+    (private / "Vera Example board.md").write_text(
+        "Vera Example private board.\n", encoding="utf-8"
+    )
+    _set_ignore_paths(workspace, "private/")
+
+    with pytest.raises(InvalidInputError) as failure:
+        capture_daily(
+            workspace,
+            raw_text="Vera Example captured the ignored directory itself.",
+            artifacts=(str(private),),
+            clock=lambda: FIXED_NOW,
+        )
+    assert failure.value.exit_code == 2
+    assert failure.value.diagnostic_class == "artifact_locator_ignored"
+    assert _counts(workspace) == (0, 0)
+
+
+def test_ignore_character_class_with_leading_bracket_stays_applicable(
+    workspace: Path,
+) -> None:
+    """§21.51 / §29.4: `[]]` is a class member, not an internal failure."""
+
+    artifact = workspace / "]Vera Example board.md"
+    artifact.write_text("Vera Example bracketed board.\n", encoding="utf-8")
+    _set_ignore_paths(workspace, "[]]Vera Example board.md")
+
+    with pytest.raises(InvalidInputError) as failure:
+        capture_daily(
+            workspace,
+            raw_text="Vera Example captured a bracket-class ignored locator.",
+            artifacts=(str(artifact),),
+            clock=lambda: FIXED_NOW,
+        )
+    assert failure.value.exit_code == 2
+    assert failure.value.diagnostic_class == "artifact_locator_ignored"
+
+
+def test_repeated_recursive_segments_collapse_to_one_matcher() -> None:
+    """§21.51 / §29.4: adjacent `**` segments cannot multiply the match cost."""
+
+    matcher, _anchored, _directory_only = _ignore_matcher("a/" + "**/" * 14 + "z")
+    assert matcher.pattern.count("(?:[^/]+/)*") == 1
+
+    target = "a/" + "/".join(f"component{index}" for index in range(14)) + "/no.md"
+    started = time.perf_counter()
+    assert matcher.fullmatch(target) is None
+    assert time.perf_counter() - started < 1.0
