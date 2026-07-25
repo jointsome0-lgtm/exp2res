@@ -365,7 +365,15 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
             invoke(
                 transcript,
                 workspace,
-                ["log", "today", "--project", "K8s Playbook", "--file", relative],
+                [
+                    "log",
+                    "today",
+                    "--project",
+                    "K8s Playbook",
+                    "--file",
+                    relative,
+                    "--owner-authored",
+                ],
             )
 
     transcript.section("Act 1 — supported first mirror and export")

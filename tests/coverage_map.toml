@@ -346,6 +346,7 @@ note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit-offs
 ["21.43"]
 status = "partial"
 nodes = [
+  "tests/test_llm_preflight.py::test_shipped_deadline_defaults_agree_and_cover_documented_live_upper_bound",
   "tests/test_llm_preflight.py::test_missing_bwrap_fails_capability_before_any_canary_or_transport",
   "tests/test_llm_preflight.py::test_size_budget_context_and_secret_preflight_codes[context-window]",
   "tests/test_llm_runner.py::test_budget_preflight_stops_before_fake_transport_and_records_code",
@@ -496,3 +497,18 @@ nodes = [
   "tests/test_cli_detections.py::test_gap_answer_is_atomic_self_contained_and_fails_closed",
   "tests/test_cli_correction.py::test_correction_rebuilds_through_artifacts_and_preserves_history",
 ]
+
+["21.52"]
+status = "covered"
+nodes = [
+  "tests/test_capture_noninteractive.py::test_multiline_file_and_stdin_capture_round_trip_with_unchanged_classes",
+  "tests/test_capture_noninteractive.py::test_missing_owner_authorship_fails_before_every_nonprompt_source_read[daily-yes-is-not-affirmation]",
+  "tests/test_capture_noninteractive.py::test_missing_owner_authorship_fails_before_every_nonprompt_source_read[retro]",
+  "tests/test_capture_noninteractive.py::test_missing_owner_authorship_fails_before_every_nonprompt_source_read[gap-answer]",
+  "tests/test_capture_noninteractive.py::test_interactive_unknown_precision_skips_period_and_stores_null_bounds",
+  "tests/test_capture_noninteractive.py::test_noninteractive_retro_rejects_unknown_period_and_missing_typed_values",
+  "tests/test_capture_noninteractive.py::test_stdin_capture_is_bounded_utf8_and_atomic[oversize]",
+  "tests/test_capture_noninteractive.py::test_stdin_capture_is_bounded_utf8_and_atomic[invalid-utf8]",
+]
+phase = "1"
+note = "All three non-prompt capture forms prove explicit pre-acquisition affirmation, multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate."

@@ -58,6 +58,8 @@ from exp2res.errors import (
     MigrationInterrupted,
     NonInteractiveInputRequired,
     OperationCancelledError,
+    OwnerAuthorshipRequired,
+    PeriodNotAllowedError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
@@ -68,6 +70,7 @@ from exp2res.services.capture import (
     capture_gap_answer,
     capture_gap_answer_file,
     capture_retro,
+    capture_retro_file,
     validate_gap_answer_selection,
     validate_project_label,
 )
@@ -703,12 +706,15 @@ def log_today(
     context: typer.Context,
     project: str | None = typer.Option(None, "--project"),
     source_file: str | None = typer.Option(None, "--file"),
+    owner_authored: bool = typer.Option(False, "--owner-authored"),
     artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
         artifact_values = tuple(artifacts or ())
         validate_artifact_locator_count(artifact_values)
         if source_file is not None:
+            if not owner_authored:
+                raise OwnerAuthorshipRequired()
             return _capture_outcome(
                 capture_daily_file(
                     workspace,
@@ -738,25 +744,72 @@ def log_today(
 @log_app.command("retro")
 def log_retro(
     context: typer.Context,
+    source_file: str | None = typer.Option(None, "--file"),
+    period: str | None = typer.Option(None, "--period"),
+    precision: str | None = typer.Option(None, "--precision"),
+    confidence: str | None = typer.Option(None, "--confidence"),
+    project: str | None = typer.Option(None, "--project"),
+    owner_authored: bool = typer.Option(False, "--owner-authored"),
     artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
         artifact_values = tuple(artifacts or ())
         validate_artifact_locator_count(artifact_values)
+        if source_file is not None:
+            if not owner_authored:
+                raise OwnerAuthorshipRequired()
+            if precision is None or confidence is None:
+                raise NonInteractiveInputRequired()
+            if precision == "unknown":
+                if period is not None:
+                    raise PeriodNotAllowedError()
+            elif period is None:
+                raise NonInteractiveInputRequired()
+            validate_project_label(project)
+            require_compatible(workspace)
+            timezone_name = require_timezone(load_workspace_config(workspace))
+            occurred = parse_occurred(
+                period=period,
+                precision=cast(TemporalPrecision, precision),
+                confidence=cast(TemporalConfidence, confidence),
+                timezone_name=timezone_name,
+            )
+            return _capture_outcome(
+                capture_retro_file(
+                    workspace,
+                    source_path=source_file,
+                    occurred=occurred,
+                    project=project,
+                    artifacts=artifact_values,
+                )
+            )
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
         require_compatible(workspace)
         # Fail closed on the local-time contract before collecting owner text.
         timezone_name = require_timezone(load_workspace_config(workspace))
         workspace_zone(timezone_name)
-        period = typer.prompt("What period are we reconstructing?", err=True)
-        precision_value = typer.prompt("How precise is this?", err=True)
-        confidence_value = typer.prompt("How confident are you?", err=True)
-        project = typer.prompt("Project/activity?", default="", err=True) or None
-        validate_project_label(project)
+        precision_value = precision or typer.prompt(
+            "How precise is this?", err=True
+        )
+        if precision_value == "unknown":
+            period_value = period
+        else:
+            period_value = period or typer.prompt(
+                "What period are we reconstructing?", err=True
+            )
+        confidence_value = confidence or typer.prompt(
+            "How confident are you?", err=True
+        )
+        project_value = (
+            project
+            if project is not None
+            else typer.prompt("Project/activity?", default="", err=True) or None
+        )
+        validate_project_label(project_value)
         raw_text = typer.prompt("Describe what you remember.", err=True)
         occurred = parse_occurred(
-            period=period,
+            period=period_value,
             precision=cast(TemporalPrecision, precision_value),
             confidence=cast(TemporalConfidence, confidence_value),
             timezone_name=timezone_name,
@@ -766,7 +819,7 @@ def log_retro(
                 workspace,
                 occurred=occurred,
                 raw_text=raw_text,
-                project=project,
+                project=project_value,
                 artifacts=artifact_values,
             )
         )
@@ -1568,11 +1621,14 @@ def gaps_answer(
     context: typer.Context,
     gap_id: str = typer.Option(..., "--gap-id"),
     source_file: str | None = typer.Option(None, "--file"),
+    owner_authored: bool = typer.Option(False, "--owner-authored"),
     artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
         artifact_values = tuple(artifacts or ())
         validate_artifact_locator_count(artifact_values)
+        if source_file is not None and not owner_authored:
+            raise OwnerAuthorshipRequired()
         # Resolve before file acquisition or prompt; capture re-checks under
         # the writer lock so this read-only validation cannot race the write.
         validate_gap_answer_selection(workspace, gap_id=gap_id)

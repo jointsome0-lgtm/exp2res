@@ -114,15 +114,24 @@ def _build_occurred(**kwargs: object) -> OccurredAt:
 
 def parse_occurred(
     *,
-    period: str,
+    period: str | None,
     precision: TemporalPrecision,
     confidence: TemporalConfidence,
     timezone_name: str,
 ) -> OccurredAt:
     zone = workspace_zone(timezone_name)
     if precision == "unknown":
+        if period is not None:
+            raise _time_error(
+                "period_not_allowed",
+                "A period cannot be supplied when precision is unknown.",
+            )
         return _build_occurred(
             start=None, end=None, precision=precision, confidence=confidence
+        )
+    if period is None:
+        raise _time_error(
+            "period_required", "A period is required for the selected precision."
         )
     if precision in {"date_range", "approximate_range"}:
         parts = period.split("/", 1)

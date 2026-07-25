@@ -39,11 +39,14 @@ exp2res db migrate
 ```bash
 exp2res log today
 exp2res log today --project Exp2Res
-exp2res log today --file notes/today.md
+exp2res log today --file notes/today.md --owner-authored
+exp2res log today --file - --owner-authored
 exp2res log today --artifact notes/demo.md --artifact https://example.invalid/demo
 ```
 
 Every form persists `RawLog(entry_type=manual_daily, source_type=manual_entry)` and a linked `EvidenceItem(strength=manual_claim)`. `--file` reads the supplied file into `RawLog.raw_text` and records its path in `RawLog.external_ref`; the database remains the persisted record.
+
+The `--file` form is non-prompt capture and requires §14.14 rule 3's explicit `--owner-authored` affirmation. `--file -` reads the record from standard input and records no `RawLog.external_ref`; a path form remains governed by §29.4, while standard input selects no filesystem object and is not source acquisition. Both forms retain the accepted `raw_text` exactly under §11's bound and free-text hygiene.
 
 The owner-authored capture forms `log today`, `log retro`, `correction add`, and `gaps answer` each accept repeatable `--artifact <locator>`, with at most 16 occurrences per captured record. A seventeenth occurrence or two occurrences whose §13.1 classifications yield the same stored field/value pair are invalid usage in exit class 2, with stable diagnostics `artifact_locator_limit` and `artifact_locator_duplicate` respectively. Section §13.1 owns the additional evidence-item fields, classification, order, and atomic persistence; §29.4 owns capture-time authorization and the never-dereferenced boundary; §9.4 owns their calibration consequence.
 
@@ -51,18 +54,24 @@ The owner-authored capture forms `log today`, `log retro`, `correction add`, and
 
 ```bash
 exp2res log retro
+exp2res log retro --file notes/retro.md --precision month --period 2026-07 --confidence medium --project Exp2Res --owner-authored
+exp2res log retro --file - --precision unknown --confidence low --owner-authored
 exp2res log retro --artifact file:notes/demo.md
 ```
 
 Interactive prompts:
 
 ```text
-What period are we reconstructing?
 How precise is this?
+What period are we reconstructing?  # omitted when precision is unknown
 How confident are you?
 Project/activity?
 Describe what you remember.
 ```
+
+Interactive capture asks precision first. For `unknown`, it does not ask for a period and stores `OccurredAt(start=null, end=null)`; otherwise it asks for the period after precision, then confidence, project, and text.
+
+The `--file` form is non-prompt capture and requires §14.14 rule 3's explicit `--owner-authored` affirmation plus `--precision` and `--confidence`. Every precision other than `unknown` also requires `--period`; `date_range` and `approximate_range` retain the `start/end` input form. `--precision unknown` with `--period` is invalid usage rather than silently discarding the supplied value. `--file -` has the same standard-input, `external_ref = null`, §11 byte-bound, and non-acquisition semantics as §14.2.
 
 The command persists `RawLog(entry_type=manual_retro, source_type=user_memory)` and a linked `EvidenceItem(strength=manual_claim)`.
 
@@ -118,6 +127,8 @@ Extraction follows the correction-lineage replacement and current-generation rul
 exp2res detections generate
 exp2res gaps list
 exp2res gaps answer --gap-id gap_001
+exp2res gaps answer --gap-id gap_001 --file notes/answer.md --owner-authored
+exp2res gaps answer --gap-id gap_001 --file - --owner-authored
 exp2res gaps answer --gap-id gap_001 --artifact https://example.invalid/demo
 exp2res contradictions list
 exp2res contradictions show --contradiction-id contradiction_001
@@ -126,6 +137,8 @@ exp2res contradictions show --contradiction-id contradiction_001
 `detections generate` is the sole direct detection-generation command; Stage 4 also runs inside the §14.12 lifecycle flow (§13.4). Either path follows §13.4's whole-generation retain-or-replace lifecycle. Its help and command output must make the both-sets replacement side effect unmistakable and report both complete result sets, every invalidated artifact class, and the §13.13 rule 9 view/branch regeneration guidance, or state that the generation was retained unchanged.
 
 `gaps answer` persists `RawLog(entry_type=gap_answer, source_type=manual_entry)` plus a linked `EvidenceItem(strength=manual_claim)`, then assigns the new raw-log ID to `GapQuestion.answer_log_id` and sets `GapQuestion.answered = true` in the same transaction; `answered` is true iff `answer_log_id` is set. That transaction supersedes no current `AssessmentSnapshot`, branch, or bullet referencing the question: the answer is new raw evidence that reaches derived state only through extraction and regeneration (§13.5 via Stage 3, §13.6), while §17 renders the question's answered state on the still-current snapshot and §13.12 keeps that snapshot exportable. It is the gap-answer trigger of §13's stale-export invalidation rule: while any current snapshot references the answered question, the affected sets are that snapshot's `out/assessment/<snapshot-id>/` set and every `out/branch/<branch-id>/` set whose branch anchors it — with complete unfiltered gap sets, that is every current assessment view. The snapshot and branches stay immediately re-exportable with the answered-since-synthesis rendering.
+
+The `gaps answer --file` form is non-prompt capture and requires §14.14 rule 3's explicit `--owner-authored` affirmation. Its path and `--file -` standard-input behavior is the same as §14.2, including `external_ref = null` for standard input.
 
 Gap answers are self-contained at capture, like corrections: the command copies the answered question's text and `GapQuestion.reason` into the answer's `RawLog.metadata` (`question_text`, `question_reason`). The answer therefore remains interpretable evidence if its question row is later superseded by a Stage 4 regeneration or purged by the §13.13 reset. Question-to-answer links are never re-created after regeneration: an uncertainty a stored answer resolves simply no longer fires its gap trigger against the current facts, and a gap that regenerates anyway is genuinely still open. The copied question text becomes part of the owner's raw record — owner-deletable on its own, never system-edited.
 
@@ -222,8 +235,14 @@ exp2res runs show --run-id run_001
 This contract binds every command-specific form above and every later §14 addition.
 
 1. **Workspace discovery.** Every non-`init` command resolves its workspace before loading workspace configuration or performing compatibility or business I/O. Starting at the current directory's canonical real path, with symlinks resolved, it examines that directory and each physical parent through the filesystem root; the first ancestor containing a `.exp2res/` directory is the workspace root. The nearest marker wins, including when that marker is partial or its database is unrecognized: compatibility then fails under §12.14 rather than skipping the marker and binding an enclosing workspace. The global `--workspace <path>` option replaces this walk; a relative value resolves from the current directory, its canonical real path alone is examined, and it must name a directory containing `.exp2res/`. An invalid override never falls back to discovery. Failure to establish a workspace uses a stable diagnostic class in exit class 3. `init` neither walks ancestry nor redirects through `--workspace`: it always targets the canonical current directory, and supplying the override is invalid usage. Creating `.exp2res/` there while an enclosing workspace exists is legal; later discovery from that tree selects the new nested workspace by the nearest-wins rule.
-2. **Configuration precedence.** Workspace resolution precedes configuration loading. For each setting that declares more than one representation, the value is selected in this order: an explicitly supplied CLI flag, its documented `EXP2RES_*` environment variable, the corresponding key in the selected workspace's `.exp2res/config.toml`, then a built-in default when that setting declares one. A representation, including a default, need not exist at every level; a required setting still unresolved after this chain fails closed. An undocumented environment variable or ambient user, repository, provider, shell, or platform setting has no effect. `--workspace`, `--json`, `--yes`, and `--no-input` are invocation controls rather than configuration values and are accepted only as explicit flags. Provider credentials are outside this precedence chain and remain transport-only adapter values resolved at the §29.2/§29.4 boundary.
-3. **Non-interactive behavior.** Every command accepts the global `--json`, `--yes`, `--no-input`, `--workspace`, `--verbose`, and `--quiet` controls subject to the `init` exception above. `--no-input` forces non-interactive behavior regardless of the terminal; non-TTY stdin is non-interactive even without that flag. In either case, a command that would prompt must receive every required value through its declared flags or fail closed with exit class 2 before blocking or performing the prompt-dependent operation. This applies to §14.3 capture, destructive confirmations, migration, and every foreground action that may invoke a cost-bearing LLM call. A destructive or cost-bearing action additionally requires explicit `--yes` in non-interactive mode; on TTY stdin it requires either `--yes` or an interactive confirmation before the destructive step or provider call. The confirmation set is `logs delete`, `jd delete` (§14.15), `workspace purge` (§14.16), `db migrate`, and every command that can make a cost-bearing §15 call, including verification, parsing, extraction, detection, lifecycle, and generation commands. `--yes` supplies consent only; it never supplies missing capture or selector input. Verbosity controls affect secret-safe diagnostics and progress only, never the result, exit class, or JSON shape.
+2. **Configuration precedence.** Workspace resolution precedes configuration loading. For each setting that declares more than one representation, the value is selected in this order: an explicitly supplied CLI flag, its documented `EXP2RES_*` environment variable, the corresponding key in the selected workspace's `.exp2res/config.toml`, then a built-in default when that setting declares one. A representation, including a default, need not exist at every level; a required setting still unresolved after this chain fails closed. An undocumented environment variable or ambient user, repository, provider, shell, or platform setting has no effect. `--workspace`, `--json`, `--yes`, `--no-input`, and the command-local `--owner-authored` affirmation are invocation controls rather than configuration values and are accepted only as explicit flags. Provider credentials are outside this precedence chain and remain transport-only adapter values resolved at the §29.2/§29.4 boundary.
+3. **Non-interactive behavior, consent, and owner affirmation.** Every command accepts the global `--json`, `--yes`, `--no-input`, `--workspace`, `--verbose`, and `--quiet` controls subject to the `init` exception above. `--no-input` forces non-interactive behavior regardless of the terminal; non-TTY stdin is non-interactive even without that flag. In either case, a command that would prompt must receive every required value through its declared flags or fail closed with exit class 2 before blocking or performing the prompt-dependent operation. This applies to §14.3 capture, destructive confirmations, migration, and every foreground action that may invoke a cost-bearing LLM call.
+
+   Record content supplied through `--file PATH` or `--file -` is a non-prompt owner capture and requires the command-local explicit `--owner-authored` flag. Missing affirmation fails before the source is opened and before any row is written with exit class 2 and stable diagnostic `owner_authorship_required`. Neither configuration nor an environment variable can supply or imply affirmation. The flag affirms that the record content was authored by the owner; it does not supply consent, and `--yes` never supplies or implies affirmation.
+
+   Every non-prompt capture source reads at most §11's `raw_text` limit plus one byte, fails closed above that bound, decodes only valid UTF-8, and then applies §11's free-text hygiene without normalization, trimming, or line joining; accepted multiline content therefore round-trips byte-identically. `--file -` reads standard input, records no `RawLog.external_ref`, and is not §29.4 acquisition because no filesystem object was selected. `--file PATH` remains fully subject to §29.4 before it is opened. No capture command accepts record content in an option value: local process arguments are readable by other host processes and commonly retained in shell history, so argv is not a private record-content channel.
+
+   A destructive or cost-bearing action additionally requires explicit `--yes` in non-interactive mode; on TTY stdin it requires either `--yes` or an interactive confirmation before the destructive step or provider call. The confirmation set is `logs delete`, `jd delete` (§14.15), `workspace purge` (§14.16), `db migrate`, and every command that can make a cost-bearing §15 call, including verification, parsing, extraction, detection, lifecycle, and generation commands. `--yes` supplies consent only; it never supplies missing capture or selector input. Verbosity controls affect secret-safe diagnostics and progress only, never the result, exit class, or JSON shape.
 4. **Exit-code taxonomy.** The process exit status and the envelope's `exit_code` are the same stable small integer, and `CLIResultStatus` (§10) is a deterministic projection of it:
 
    | Code | `CLIResultStatus` | Required meaning |

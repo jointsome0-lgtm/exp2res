@@ -8,6 +8,8 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import sys
+from typing import BinaryIO
 from urllib.parse import unquote, urlsplit
 
 from exp2res.config import WorkspaceConfig
@@ -312,11 +314,33 @@ def reauthorize_prompt_locators(
                 visit(child)
 
     visit(payload)
+def _read_bounded_utf8(stream: BinaryIO) -> str:
+    try:
+        data = stream.read(RAW_TEXT_LIMIT + 1)
+    except OSError as error:
+        raise InvalidInputError() from error
+    if len(data) > RAW_TEXT_LIMIT:
+        error = InvalidInputError()
+        error.diagnostic_class = "input_too_large"
+        error.public_message = "The selected source exceeds the raw-text limit."
+        raise error
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        failure = InvalidInputError()
+        failure.diagnostic_class = "input_not_utf8"
+        failure.public_message = "The selected source is not valid UTF-8."
+        raise failure from error
 
 
 def read_capture_file(
     supplied: str, *, config: WorkspaceConfig
-) -> tuple[str, str]:
+) -> tuple[str, str | None]:
+    if supplied == "-":
+        stream = getattr(sys.stdin, "buffer", None)
+        if stream is None:
+            raise InvalidInputError()
+        return _read_bounded_utf8(stream), None
     if _forbidden_supplied_form(supplied):
         raise ForbiddenPathError()
     path = Path(supplied)
@@ -340,7 +364,7 @@ def read_capture_file(
         if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(opened, current):
             raise ForbiddenPathError()
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            data = stream.read(RAW_TEXT_LIMIT + 1)
+            text = _read_bounded_utf8(stream)
     except ForbiddenPathError:
         raise
     except OSError as error:
@@ -348,13 +372,4 @@ def read_capture_file(
     finally:
         if descriptor is not None:
             os.close(descriptor)
-    if len(data) > RAW_TEXT_LIMIT:
-        error = InvalidInputError()
-        error.diagnostic_class = "input_too_large"
-        error.public_message = "The selected source exceeds the raw-text limit."
-        raise error
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise InvalidInputError() from error
     return text, path.as_posix()

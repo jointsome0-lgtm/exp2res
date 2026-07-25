@@ -209,7 +209,15 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
     answer_source = VERA_CORPUS / "logs" / "daily-2026-06-20.md"
     answered_result, answered = invoke_json(
         workspace,
-        ["gaps", "answer", "--gap-id", gap_id, "--file", str(answer_source)],
+        [
+            "gaps",
+            "answer",
+            "--gap-id",
+            gap_id,
+            "--file",
+            str(answer_source),
+            "--owner-authored",
+        ],
     )
     assert answered_result.exit_code == 0, (answered_result.stderr, answered)
     assert not final_set.exists()

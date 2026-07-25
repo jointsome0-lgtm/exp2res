@@ -287,6 +287,41 @@ def capture_retro(
     )
 
 
+def capture_retro_file(
+    workspace: Path,
+    *,
+    source_path: str,
+    occurred: OccurredAt,
+    project: str | None = None,
+    artifacts: tuple[str, ...] = (),
+    clock: Clock | None = None,
+    id_factory: IdFactory = new_id,
+    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    after_raw_insert: FailureHook | None = None,
+) -> RawLogBundle:
+    """Acquire retrospective text after compatibility and timezone gates."""
+
+    validate_project_label(project)
+    require_compatible(workspace)
+    config = load_workspace_config(workspace)
+    workspace_zone(require_timezone(config))
+    raw_text, external_ref = read_capture_file(source_path, config=config)
+    return capture_manual(
+        workspace,
+        entry_type="manual_retro",
+        source_type="user_memory",
+        occurred=occurred,
+        raw_text=raw_text,
+        project=project,
+        external_ref=external_ref,
+        artifacts=artifacts,
+        clock=clock,
+        id_factory=id_factory,
+        timeout_ms=timeout_ms,
+        after_raw_insert=after_raw_insert,
+    )
+
+
 def _select_answerable_gap(connection, gap_id: str):
     gap = get_gap_question(connection, gap_id, current_only=True)
     if gap is None:
