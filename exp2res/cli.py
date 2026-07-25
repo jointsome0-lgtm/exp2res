@@ -71,6 +71,7 @@ from exp2res.services.capture import (
     validate_gap_answer_selection,
     validate_project_label,
 )
+from exp2res.services.source_files import validate_artifact_locator_count
 from exp2res.services.correction import (
     CorrectionOutcome,
     capture_correction,
@@ -524,17 +525,23 @@ def db_migrate(context: typer.Context) -> None:
 
 def _capture_outcome(bundle) -> Outcome:
     evidence_ids = [item.id for item in bundle.evidence_items]
+    reported_evidence_ids = sorted(
+        evidence_ids, key=lambda value: value.encode("utf-8")
+    )
     return Outcome(
         affected_ids=AffectedIds(
             created=[
-                EntityIdGroup(entity_type="evidence_item", ids=evidence_ids),
+                EntityIdGroup(
+                    entity_type="evidence_item", ids=reported_evidence_ids
+                ),
                 EntityIdGroup(entity_type="raw_log", ids=[bundle.raw_log.id]),
             ],
             superseded=[],
             deleted=[],
         ),
         human_result=(
-            f"Created raw log {bundle.raw_log.id} with evidence {evidence_ids[0]}."
+            f"Created raw log {bundle.raw_log.id} with evidence "
+            f"{', '.join(evidence_ids)}."
         ),
     )
 
@@ -572,7 +579,11 @@ def _correction_affected(captured: CorrectionOutcome) -> AffectedIds:
     return AffectedIds(
         created=[
             EntityIdGroup(
-                entity_type="evidence_item", ids=[captured.evidence_item.id]
+                entity_type="evidence_item",
+                ids=sorted(
+                    (item.id for item in captured.evidence_items),
+                    key=lambda value: value.encode("utf-8"),
+                ),
             ),
             EntityIdGroup(entity_type="raw_log", ids=[captured.raw_log.id]),
         ],
@@ -671,12 +682,18 @@ def log_today(
     context: typer.Context,
     project: str | None = typer.Option(None, "--project"),
     source_file: str | None = typer.Option(None, "--file"),
+    artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
+        artifact_values = tuple(artifacts or ())
+        validate_artifact_locator_count(artifact_values)
         if source_file is not None:
             return _capture_outcome(
                 capture_daily_file(
-                    workspace, source_path=source_file, project=project
+                    workspace,
+                    source_path=source_file,
+                    project=project,
+                    artifacts=artifact_values,
                 )
             )
         if _noninteractive(controls):
@@ -686,15 +703,25 @@ def log_today(
         workspace_zone(require_timezone(load_workspace_config(workspace)))
         raw_text = typer.prompt("Describe what happened", err=True)
         return _capture_outcome(
-            capture_daily(workspace, raw_text=raw_text, project=project)
+            capture_daily(
+                workspace,
+                raw_text=raw_text,
+                project=project,
+                artifacts=artifact_values,
+            )
         )
 
     _run_command(context, "log today", operation)
 
 
 @log_app.command("retro")
-def log_retro(context: typer.Context) -> None:
+def log_retro(
+    context: typer.Context,
+    artifacts: list[str] | None = typer.Option(None, "--artifact"),
+) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
+        artifact_values = tuple(artifacts or ())
+        validate_artifact_locator_count(artifact_values)
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
         require_compatible(workspace)
@@ -715,7 +742,11 @@ def log_retro(context: typer.Context) -> None:
         )
         return _capture_outcome(
             capture_retro(
-                workspace, occurred=occurred, raw_text=raw_text, project=project
+                workspace,
+                occurred=occurred,
+                raw_text=raw_text,
+                project=project,
+                artifacts=artifact_values,
             )
         )
 
@@ -726,8 +757,11 @@ def log_retro(context: typer.Context) -> None:
 def correction_add(
     context: typer.Context,
     log_id: str = typer.Option(..., "--log-id"),
+    artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
+        artifact_values = tuple(artifacts or ())
+        validate_artifact_locator_count(artifact_values)
         target = validate_correction_selection(workspace, log_id=log_id)
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
@@ -790,6 +824,7 @@ def correction_add(
                     raw_text=raw_text,
                     occurred=occurred,
                     project=project,
+                    artifacts=artifact_values,
                     connection=connection,
                 )
             except OperationCancelledError as error:
@@ -1512,14 +1547,20 @@ def gaps_answer(
     context: typer.Context,
     gap_id: str = typer.Option(..., "--gap-id"),
     source_file: str | None = typer.Option(None, "--file"),
+    artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
+        artifact_values = tuple(artifacts or ())
+        validate_artifact_locator_count(artifact_values)
         # Resolve before file acquisition or prompt; capture re-checks under
         # the writer lock so this read-only validation cannot race the write.
         validate_gap_answer_selection(workspace, gap_id=gap_id)
         if source_file is not None:
             bundle = capture_gap_answer_file(
-                workspace, gap_id=gap_id, source_path=source_file
+                workspace,
+                gap_id=gap_id,
+                source_path=source_file,
+                artifacts=artifact_values,
             )
         else:
             if _noninteractive(controls):
@@ -1528,7 +1569,10 @@ def gaps_answer(
             workspace_zone(require_timezone(load_workspace_config(workspace)))
             raw_text = typer.prompt("Answer the gap question", err=True)
             bundle = capture_gap_answer(
-                workspace, gap_id=gap_id, raw_text=raw_text
+                workspace,
+                gap_id=gap_id,
+                raw_text=raw_text,
+                artifacts=artifact_values,
             )
         evidence_ids = [item.id for item in bundle.evidence_items]
         # §13/§14.7: capture removed every current snapshot's assessment set
@@ -1537,7 +1581,13 @@ def gaps_answer(
         return Outcome(
             affected_ids=AffectedIds(
                 created=[
-                    EntityIdGroup(entity_type="evidence_item", ids=evidence_ids),
+                    EntityIdGroup(
+                        entity_type="evidence_item",
+                        ids=sorted(
+                            evidence_ids,
+                            key=lambda value: value.encode("utf-8"),
+                        ),
+                    ),
                     EntityIdGroup(entity_type="raw_log", ids=[bundle.raw_log.id]),
                 ],
                 superseded=[],
@@ -1646,10 +1696,7 @@ def logs_show(
             log=_selected_log_projection(bundle.raw_log),
             evidence_items=[
                 _evidence_projection(item)
-                for item in sorted(
-                    bundle.evidence_items,
-                    key=lambda value: value.id.encode("utf-8"),
-                )
+                for item in bundle.evidence_items
             ],
         )
         projection = json.dumps(

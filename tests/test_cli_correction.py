@@ -182,7 +182,15 @@ def test_correction_rebuilds_through_artifacts_and_preserves_history(
 
     result, envelope = _invoke_json(
         workspace,
-        ["--yes", "correction", "add", "--log-id", target.id],
+        [
+            "--yes",
+            "correction",
+            "add",
+            "--log-id",
+            target.id,
+            "--artifact",
+            "https://example.invalid/Vera-Example-correction-artifact",
+        ],
         input="Vera Example corrected and fully restated the workflow.\n\n\n",
     )
     assert result.exit_code == 0, result.stderr
@@ -203,9 +211,17 @@ def test_correction_rebuilds_through_artifacts_and_preserves_history(
         assert correction.occurred == target.occurred
         assert correction.project == target.project
         evidence = connection.execute(
-            "SELECT strength FROM evidence_items WHERE raw_log_id = ?", (correction_id,)
-        ).fetchone()
-        assert evidence[0] == "manual_claim"
+            "SELECT strength, uri FROM evidence_items WHERE raw_log_id = ? "
+            "ORDER BY rowid",
+            (correction_id,),
+        ).fetchall()
+        assert [tuple(row) for row in evidence] == [
+            ("manual_claim", None),
+            (
+                "artifact_reference",
+                "https://example.invalid/Vera-Example-correction-artifact",
+            ),
+        ]
         assert connection.execute(
             "SELECT superseded_at FROM experience_facts WHERE id = ?", (old_fact.id,)
         ).fetchone()[0] is not None

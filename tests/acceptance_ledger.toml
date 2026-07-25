@@ -383,3 +383,10 @@ nodes = [
   "tests/test_cli_extract.py::test_build_llm_execution_uses_workspace_selection_and_budget_defaults",
 ]
 note = "Config-only selection, model, and adapter-specific reasoning effort now reach both shipped agent-backed runners, including a double-opt-in Claude full-stack smoke; openai-compat remains the one unimplemented V1 adapter and keeps this criterion partial"
+
+["24.55"]
+status = "met"
+phases = ["0", "1"]
+evals = ["21.51"]
+issues = ["#159"]
+note = "Covered eval 21.51 proves every owner-capture command surface, ordered atomic persistence and logs-show projection, local/remote classification, fail-closed diagnostics, permanent non-dereference, and both unchanged §9.4 calibration outcomes."

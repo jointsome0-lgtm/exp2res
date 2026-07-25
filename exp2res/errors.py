@@ -40,6 +40,41 @@ class ForbiddenPathError(InvalidInputError):
     public_message = "The selected source path is not permitted."
 
 
+class ArtifactLocatorLimitError(InvalidInputError):
+    diagnostic_class = "artifact_locator_limit"
+    public_message = "At most 16 artifact locators may be supplied."
+
+
+class ArtifactLocatorDuplicateError(InvalidInputError):
+    diagnostic_class = "artifact_locator_duplicate"
+    public_message = "Artifact locators must resolve to distinct stored values."
+
+
+class ArtifactLocatorInvalidError(InvalidInputError):
+    diagnostic_class = "artifact_locator_invalid"
+    public_message = "An artifact locator is not a valid bounded absolute URI or POSIX path."
+
+
+class ArtifactLocatorUnsupportedPathError(InvalidInputError):
+    diagnostic_class = "artifact_locator_path_unsupported"
+    public_message = "An artifact locator uses an unsupported non-POSIX path form."
+
+
+class ArtifactLocatorUnresolvableError(InvalidInputError):
+    diagnostic_class = "artifact_locator_unresolved"
+    public_message = "A local artifact locator could not be resolved."
+
+
+class ArtifactLocatorDeniedError(InvalidInputError):
+    diagnostic_class = "artifact_locator_denied"
+    public_message = "A local artifact locator is in the mandatory deny set."
+
+
+class ArtifactLocatorIgnoredError(InvalidInputError):
+    diagnostic_class = "artifact_locator_ignored"
+    public_message = "A local artifact locator is excluded by workspace privacy rules."
+
+
 class PublicCheckoutError(InvalidInputError):
     diagnostic_class = "public_checkout_forbidden"
     public_message = "A public engine checkout cannot be initialized as a private workspace."

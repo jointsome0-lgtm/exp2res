@@ -1473,11 +1473,10 @@ def get_evidence_for_log(
     connection: sqlite3.Connection, log_id: str
 ) -> tuple[EvidenceItem, ...]:
     rows = connection.execute(
-        "SELECT * FROM evidence_items WHERE raw_log_id = ?", (log_id,)
+        "SELECT * FROM evidence_items WHERE raw_log_id = ? ORDER BY rowid",
+        (log_id,),
     ).fetchall()
-    items = [hydrate_evidence_item(row) for row in rows]
-    items.sort(key=lambda item: (item.created_at.astimezone(timezone.utc), item.id))
-    return tuple(items)
+    return tuple(hydrate_evidence_item(row) for row in rows)
 
 
 def get_bundle(connection: sqlite3.Connection, log_id: str) -> RawLogBundle | None:

@@ -18,18 +18,19 @@ def persist_manual_capture(
     workspace,
     *,
     raw_log: RawLog,
-    evidence_item: EvidenceItem,
+    evidence_items: tuple[EvidenceItem, ...],
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> None:
-    """Commit exactly one validated RawLog/EvidenceItem pair or neither."""
+    """Commit one validated RawLog and its ordered evidence bundle or neither."""
     with writer_database(workspace, timeout_ms=timeout_ms) as connection:
         try:
             connection.execute("BEGIN IMMEDIATE")
             insert_raw_log(connection, raw_log)
             if after_raw_insert is not None:
                 after_raw_insert()
-            insert_evidence_item(connection, evidence_item)
+            for evidence_item in evidence_items:
+                insert_evidence_item(connection, evidence_item)
             connection.commit()
         except sqlite3.OperationalError as error:
             connection.rollback()

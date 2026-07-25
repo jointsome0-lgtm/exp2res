@@ -1648,3 +1648,33 @@ When adapter classification runs
 Then its §15.10 rule 4 declaration rules out every agent affordance, §15.12 does not bind it, and its capability declaration still applies
 And an adapter that cannot rule out an agent affordance by declaration classifies as agent-backed and is unselectable without the full §15.12 preflight
 '''
+
+["21.51"]
+title = "Owner-Controlled Artifact Locators Stay Inert and Calibrated"
+enforces = "§9.4, §11's Model validation policy, §13.1, §13.3 rule 10, §14.2–§14.4, §14.7, §14.14 rules 4–5, and §29.4"
+case = '''
+Given each owner-authored capture form supplies ordered local POSIX paths, file URIs, and absolute non-file URIs through its repeatable artifact option
+When Stage 1 authorizes and persists the record
+Then the manual_claim item is created and reported first and one artifact_reference item follows for each locator in supplied order
+And local locators round-trip only through path as their symlink-resolved canonical real paths while remote locators round-trip byte-for-byte only through uri
+And every artifact item has title = null, metadata = {}, and summary = "Owner-supplied artifact reference."
+And logs show projects that same ordered linked evidence without raw text or metadata in JSON mode
+
+Given file-open, network-transport, probe, and scheme-handler seams fail the test if invoked
+When local and remote artifact locators are captured and later inspected or supplied as displaced-record support
+Then no locator is opened, fetched, probed, or otherwise dereferenced
+
+Given an unresolvable path, a mandatory-denied path, a privacy-ignored path, a Windows drive-letter, UNC, or backslash form, a structurally invalid or oversized remote URI, more than 16 locators, or two locators yielding the same stored field/value pair
+When any owner-authored capture form validates the candidate
+Then it fails with exit class 2 and its stable artifact-locator diagnostic before persistence
+And no RawLog or EvidenceItem from the rejected candidate exists
+
+Given one owner-captured RawLog whose complete linked set contains its manual_claim and one artifact_reference
+When Stage 3 validates a fact selecting items only from that raw log
+Then the fact ceiling remains medium because the locator is the same owner's assertion rather than an independent source
+
+Given that owner-captured root is displaced by an owner correction
+And Stage 3 selects the root artifact_reference as rule 10 displaced-record support plus the effective correction's manual_claim
+When it validates the corrected lineage fact
+Then the selected set spans two distinct raw logs and contains a non-manual item, so the unchanged §9.4 ceiling permits high
+'''

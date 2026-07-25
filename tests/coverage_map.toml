@@ -451,3 +451,25 @@ environment_gated = [
 ]
 phase = "1"
 note = "Both shipped agent-backed adapters execute the shared control, workspace-lifecycle, final-result-channel, environment, and token-classifier conformance nodes; real bwrap/userns isolation and transient-artifact execution remain environment-gated, the Claude provider smoke remains double-opt-in, and simulated hard-crash residue, §21.49 undeclared-authority fixtures, explicit drifted-control/protocol-version preflight cases, and the openai-compat direct-adapter classification remain uncovered"
+
+["21.51"]
+status = "covered"
+nodes = [
+  "tests/test_capture_artifact_locators.py::test_artifact_locators_round_trip_in_order_without_any_dereference",
+  "tests/test_capture_artifact_locators.py::test_rejected_local_artifact_locator_is_atomic[unresolvable-artifact_locator_unresolved]",
+  "tests/test_capture_artifact_locators.py::test_rejected_local_artifact_locator_is_atomic[denied-artifact_locator_denied]",
+  "tests/test_capture_artifact_locators.py::test_rejected_local_artifact_locator_is_atomic[ignored-artifact_locator_ignored]",
+  "tests/test_capture_artifact_locators.py::test_rejected_local_artifact_locator_is_atomic[drive-artifact_locator_path_unsupported]",
+  "tests/test_capture_artifact_locators.py::test_rejected_local_artifact_locator_is_atomic[unc-artifact_locator_path_unsupported]",
+  "tests/test_capture_artifact_locators.py::test_rejected_local_artifact_locator_is_atomic[backslash-artifact_locator_path_unsupported]",
+  "tests/test_capture_artifact_locators.py::test_remote_hygiene_and_count_fail_before_persistence[locators0-artifact_locator_invalid]",
+  "tests/test_capture_artifact_locators.py::test_remote_hygiene_and_count_fail_before_persistence[locators1-artifact_locator_invalid]",
+  "tests/test_capture_artifact_locators.py::test_remote_hygiene_and_count_fail_before_persistence[locators2-artifact_locator_limit]",
+  "tests/test_capture_artifact_locators.py::test_equivalent_local_locators_are_rejected_not_deduplicated",
+  "tests/test_capture_artifact_locators.py::test_repeatable_cli_artifacts_reach_logs_show_projection",
+  "tests/test_capture_artifact_locators.py::test_every_owner_capture_command_exposes_artifact_option",
+  "tests/test_capture_artifact_locators.py::test_retro_cli_accepts_artifact_locator",
+  "tests/test_capture_artifact_locators.py::test_owner_only_corrected_lineage_reaches_unchanged_high_ceiling",
+  "tests/test_cli_detections.py::test_gap_answer_is_atomic_self_contained_and_fails_closed",
+  "tests/test_cli_correction.py::test_correction_rebuilds_through_artifacts_and_preserves_history",
+]

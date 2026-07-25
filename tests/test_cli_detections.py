@@ -272,7 +272,16 @@ def test_gap_answer_is_atomic_self_contained_and_fails_closed(
 
     answered, envelope = invoke_json(
         workspace,
-        ["gaps", "answer", "--gap-id", gap["id"], "--file", str(answer_file)],
+        [
+            "gaps",
+            "answer",
+            "--gap-id",
+            gap["id"],
+            "--file",
+            str(answer_file),
+            "--artifact",
+            "https://example.invalid/Vera-Example-gap-artifact",
+        ],
     )
     assert answered.exit_code == 0
     assert [group["entity_type"] for group in envelope["affected_ids"]["created"]] == [
@@ -302,7 +311,11 @@ def test_gap_answer_is_atomic_self_contained_and_fails_closed(
         "question_text": gap["question"],
         "question_reason": gap["reason"],
     }
-    assert len(evidence) == 1 and evidence[0].strength == "manual_claim"
+    assert [item.strength for item in evidence] == [
+        "manual_claim",
+        "artifact_reference",
+    ]
+    assert evidence[1].uri == "https://example.invalid/Vera-Example-gap-artifact"
     assert current_gap.answered is True
     assert current_gap.answer_log_id == answer_log_id
 

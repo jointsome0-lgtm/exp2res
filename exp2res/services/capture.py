@@ -27,7 +27,11 @@ from exp2res.errors import (
 )
 from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
-from exp2res.services.source_files import read_capture_file
+from exp2res.services.source_files import (
+    ArtifactLocator,
+    authorize_artifact_locators,
+    read_capture_file,
+)
 from exp2res.services.time_input import today_occurred, workspace_zone
 from exp2res.storage.repository import (
     RawLogBundle,
@@ -85,6 +89,53 @@ def validate_project_label(project: str | None) -> None:
         raise BlankProjectLabelError()
 
 
+def _authorized_artifacts(
+    workspace: Path, artifacts: tuple[str, ...]
+) -> tuple[ArtifactLocator, ...]:
+    if not artifacts:
+        return ()
+    require_compatible(workspace)
+    return authorize_artifact_locators(
+        artifacts, config=load_workspace_config(workspace)
+    )
+
+
+def build_capture_evidence_items(
+    *,
+    raw_log_id: str,
+    created_at: datetime,
+    artifacts: tuple[ArtifactLocator, ...],
+    id_factory: IdFactory,
+) -> tuple[EvidenceItem, ...]:
+    return (
+        EvidenceItem(
+            id=id_factory("evidence_item"),
+            created_at=created_at,
+            raw_log_id=raw_log_id,
+            title=None,
+            summary="Owner-authored manual claim.",
+            uri=None,
+            path=None,
+            strength="manual_claim",
+            metadata={},
+        ),
+        *(
+            EvidenceItem(
+                id=id_factory("evidence_item"),
+                created_at=created_at,
+                raw_log_id=raw_log_id,
+                title=None,
+                summary="Owner-supplied artifact reference.",
+                uri=artifact.uri,
+                path=artifact.path,
+                strength="artifact_reference",
+                metadata={},
+            )
+            for artifact in artifacts
+        ),
+    )
+
+
 def capture_manual(
     workspace: Path,
     *,
@@ -94,17 +145,18 @@ def capture_manual(
     raw_text: str,
     project: str | None = None,
     external_ref: str | None = None,
+    artifacts: tuple[str, ...] = (),
     clock: Clock | None = None,
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
     validate_project_label(project)
+    authorized_artifacts = _authorized_artifacts(workspace, artifacts)
     recorded_at = (clock or (lambda: datetime.now(timezone.utc)))()
     last_collision: IdCollisionError | None = None
     for _attempt in range(3):
         raw_id = id_factory("raw_log")
-        evidence_id = id_factory("evidence_item")
         try:
             raw_log = RawLog(
                 id=raw_id,
@@ -118,16 +170,11 @@ def capture_manual(
                 corrects_log_id=None,
                 metadata={},
             )
-            evidence_item = EvidenceItem(
-                id=evidence_id,
-                created_at=recorded_at,
+            evidence_items = build_capture_evidence_items(
                 raw_log_id=raw_id,
-                title=None,
-                summary="Owner-authored manual claim.",
-                uri=None,
-                path=None,
-                strength="manual_claim",
-                metadata={},
+                created_at=recorded_at,
+                artifacts=authorized_artifacts,
+                id_factory=id_factory,
             )
         except (ValidationError, ValueError, TypeError) as error:
             raise _invalid_capture(error) from error
@@ -135,11 +182,11 @@ def capture_manual(
             persist_manual_capture(
                 workspace,
                 raw_log=raw_log,
-                evidence_item=evidence_item,
+                evidence_items=evidence_items,
                 timeout_ms=timeout_ms,
                 after_raw_insert=after_raw_insert,
             )
-            return RawLogBundle(raw_log, (evidence_item,))
+            return RawLogBundle(raw_log, evidence_items)
         except IdCollisionError as error:
             last_collision = error
             continue
@@ -152,6 +199,7 @@ def capture_daily(
     raw_text: str,
     project: str | None = None,
     external_ref: str | None = None,
+    artifacts: tuple[str, ...] = (),
     clock: Clock | None = None,
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
@@ -171,6 +219,7 @@ def capture_daily(
         raw_text=raw_text,
         project=project,
         external_ref=external_ref,
+        artifacts=artifacts,
         clock=lambda: now,
         id_factory=id_factory,
         timeout_ms=timeout_ms,
@@ -183,6 +232,7 @@ def capture_daily_file(
     *,
     source_path: str,
     project: str | None = None,
+    artifacts: tuple[str, ...] = (),
     clock: Clock | None = None,
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
@@ -200,6 +250,7 @@ def capture_daily_file(
         raw_text=raw_text,
         project=project,
         external_ref=external_ref,
+        artifacts=artifacts,
         clock=clock,
         id_factory=id_factory,
         timeout_ms=timeout_ms,
@@ -213,6 +264,7 @@ def capture_retro(
     occurred: OccurredAt,
     raw_text: str,
     project: str | None = None,
+    artifacts: tuple[str, ...] = (),
     clock: Clock | None = None,
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
@@ -227,6 +279,7 @@ def capture_retro(
         occurred=occurred,
         raw_text=raw_text,
         project=project,
+        artifacts=artifacts,
         clock=clock,
         id_factory=id_factory,
         timeout_ms=timeout_ms,
@@ -257,6 +310,7 @@ def capture_gap_answer(
     gap_id: str,
     raw_text: str,
     external_ref: str | None = None,
+    artifacts: tuple[str, ...] = (),
     clock: Clock | None = None,
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
@@ -267,6 +321,7 @@ def capture_gap_answer(
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     config = load_workspace_config(workspace)
     occurred = today_occurred(now=now, timezone_name=require_timezone(config))
+    authorized_artifacts = authorize_artifact_locators(artifacts, config=config)
     last_collision: IdCollisionError | None = None
 
     with writer_database(workspace, timeout_ms=timeout_ms) as connection:
@@ -275,7 +330,6 @@ def capture_gap_answer(
             gap = _select_answerable_gap(connection, gap_id)
             for attempt in range(3):
                 raw_id = id_factory("raw_log")
-                evidence_id = id_factory("evidence_item")
                 try:
                     raw_log = RawLog(
                         id=raw_id,
@@ -292,16 +346,11 @@ def capture_gap_answer(
                             "question_reason": gap.reason,
                         },
                     )
-                    evidence_item = EvidenceItem(
-                        id=evidence_id,
-                        created_at=now,
+                    evidence_items = build_capture_evidence_items(
                         raw_log_id=raw_id,
-                        title=None,
-                        summary="Owner-authored manual claim.",
-                        uri=None,
-                        path=None,
-                        strength="manual_claim",
-                        metadata={},
+                        created_at=now,
+                        artifacts=authorized_artifacts,
+                        id_factory=id_factory,
                     )
                 except (ValidationError, ValueError, TypeError) as error:
                     raise _invalid_capture(error) from error
@@ -310,7 +359,8 @@ def capture_gap_answer(
                 connection.execute(f"SAVEPOINT {savepoint}")
                 try:
                     insert_raw_log(connection, raw_log)
-                    insert_evidence_item(connection, evidence_item)
+                    for evidence_item in evidence_items:
+                        insert_evidence_item(connection, evidence_item)
                     mark_gap_answered(
                         connection, gap_id=gap.id, answer_log_id=raw_log.id
                     )
@@ -356,7 +406,7 @@ def capture_gap_answer(
                         withdraw_managed_residuals(pending)
                     raise
                 residuals = remove_assessment_sets(workspace, snapshot_ids)
-                return RawLogBundle(raw_log, (evidence_item,), residuals)
+                return RawLogBundle(raw_log, evidence_items, residuals)
             raise IdCollisionError() from last_collision
         except sqlite3.OperationalError as error:
             connection.rollback()
@@ -373,6 +423,7 @@ def capture_gap_answer_file(
     *,
     gap_id: str,
     source_path: str,
+    artifacts: tuple[str, ...] = (),
     clock: Clock | None = None,
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
@@ -388,6 +439,7 @@ def capture_gap_answer_file(
         gap_id=gap_id,
         raw_text=raw_text,
         external_ref=external_ref,
+        artifacts=artifacts,
         clock=clock,
         id_factory=id_factory,
         timeout_ms=timeout_ms,

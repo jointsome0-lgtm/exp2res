@@ -2,17 +2,35 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from fnmatch import fnmatchcase
 import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+from urllib.parse import unquote, urlsplit
 
 from exp2res.config import WorkspaceConfig
-from exp2res.domain.models import RAW_TEXT_LIMIT
-from exp2res.errors import ForbiddenPathError, InvalidInputError
+from exp2res.domain.models import (
+    RAW_TEXT_LIMIT,
+    validate_posix_path,
+    validate_structural,
+)
+from exp2res.errors import (
+    ArtifactLocatorDeniedError,
+    ArtifactLocatorDuplicateError,
+    ArtifactLocatorIgnoredError,
+    ArtifactLocatorInvalidError,
+    ArtifactLocatorLimitError,
+    ArtifactLocatorUnresolvableError,
+    ArtifactLocatorUnsupportedPathError,
+    ForbiddenPathError,
+    InvalidInputError,
+)
 
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+MAX_ARTIFACT_LOCATORS = 16
 DENIED_COMPONENTS = {
     "secrets",
     "credentials",
@@ -26,8 +44,27 @@ DENIED_COMPONENTS = {
 }
 
 
+@dataclass(frozen=True)
+class ArtifactLocator:
+    """One validated inert locator in its exact persisted field shape."""
+
+    uri: str | None
+    path: str | None
+
+    @property
+    def stored_key(self) -> tuple[str, str]:
+        if self.path is not None:
+            return ("path", self.path)
+        assert self.uri is not None
+        return ("uri", self.uri)
+
+
 def _forbidden_supplied_form(value: str) -> bool:
-    return "\\" in value or WINDOWS_DRIVE.match(value) is not None or value.startswith("//")
+    return (
+        "\\" in value
+        or WINDOWS_DRIVE.match(value) is not None
+        or value.startswith("//")
+    )
 
 
 def _case_insensitive_lookup(path: Path) -> bool:
@@ -65,6 +102,107 @@ def _mandatory_denied(path: Path, *, folded: bool) -> bool:
     return False
 
 
+def _ignored(path: Path, *, config: WorkspaceConfig, folded: bool) -> bool:
+    selected_value = PurePosixPath(path.name).as_posix()
+    resolved_value = path.as_posix()
+    return any(
+        fnmatchcase(
+            selected_value.casefold() if folded else selected_value,
+            pattern.casefold() if folded else pattern,
+        )
+        or fnmatchcase(
+            resolved_value.casefold() if folded else resolved_value,
+            pattern.casefold() if folded else pattern,
+        )
+        for pattern in config.ignore_paths
+    )
+
+
+def validate_artifact_locator_count(supplied: tuple[str, ...]) -> None:
+    if len(supplied) > MAX_ARTIFACT_LOCATORS:
+        raise ArtifactLocatorLimitError()
+
+
+def _file_uri_path(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme.casefold() != "file"
+            or (
+                parsed.netloc
+                and parsed.netloc.casefold() != "localhost"
+            )
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("file URI does not resolve to one POSIX path")
+        decoded = unquote(parsed.path, encoding="utf-8", errors="strict")
+        validate_posix_path(decoded)
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise ArtifactLocatorUnsupportedPathError() from error
+    return decoded
+
+
+def authorize_artifact_locators(
+    supplied: tuple[str, ...], *, config: WorkspaceConfig
+) -> tuple[ArtifactLocator, ...]:
+    """Classify and authorize inert owner locators without opening them."""
+
+    validate_artifact_locator_count(supplied)
+    accepted: list[ArtifactLocator] = []
+    stored_keys: set[tuple[str, str]] = set()
+    for value in supplied:
+        try:
+            validate_structural(value)
+        except (UnicodeError, ValueError, TypeError) as error:
+            raise ArtifactLocatorInvalidError() from error
+
+        scheme_match = URI_SCHEME.match(value)
+        scheme = (
+            value[: scheme_match.end() - 1].casefold()
+            if scheme_match is not None
+            else None
+        )
+        if WINDOWS_DRIVE.match(value) is not None:
+            raise ArtifactLocatorUnsupportedPathError()
+        if scheme is not None and scheme != "file":
+            try:
+                parsed = urlsplit(value)
+            except ValueError as error:
+                raise ArtifactLocatorInvalidError() from error
+            if not parsed.scheme:
+                raise ArtifactLocatorInvalidError()
+            locator = ArtifactLocator(uri=value, path=None)
+        else:
+            local_value = _file_uri_path(value) if scheme is not None else value
+            if _forbidden_supplied_form(local_value):
+                raise ArtifactLocatorUnsupportedPathError()
+            try:
+                validate_posix_path(local_value)
+            except (UnicodeError, ValueError, TypeError) as error:
+                raise ArtifactLocatorUnsupportedPathError() from error
+            try:
+                resolved = Path(local_value).resolve(strict=True)
+            except (OSError, RuntimeError) as error:
+                raise ArtifactLocatorUnresolvableError() from error
+            folded = _case_insensitive_lookup(resolved)
+            if _mandatory_denied(resolved, folded=folded):
+                raise ArtifactLocatorDeniedError()
+            if _ignored(resolved, config=config, folded=folded):
+                raise ArtifactLocatorIgnoredError()
+            try:
+                canonical = validate_posix_path(resolved.as_posix())
+            except (UnicodeError, ValueError, TypeError) as error:
+                raise ArtifactLocatorInvalidError() from error
+            locator = ArtifactLocator(uri=None, path=canonical)
+
+        if locator.stored_key in stored_keys:
+            raise ArtifactLocatorDuplicateError()
+        stored_keys.add(locator.stored_key)
+        accepted.append(locator)
+    return tuple(accepted)
+
+
 def read_capture_file(
     supplied: str, *, config: WorkspaceConfig
 ) -> tuple[str, str]:
@@ -79,20 +217,7 @@ def read_capture_file(
     if not resolved.is_file() or _mandatory_denied(resolved, folded=folded):
         raise ForbiddenPathError()
 
-    selected_name = PurePosixPath(resolved.name)
-    selected_value = selected_name.as_posix()
-    resolved_value = resolved.as_posix()
-    if any(
-        fnmatchcase(
-            selected_value.casefold() if folded else selected_value,
-            pattern.casefold() if folded else pattern,
-        )
-        or fnmatchcase(
-            resolved_value.casefold() if folded else resolved_value,
-            pattern.casefold() if folded else pattern,
-        )
-        for pattern in config.ignore_paths
-    ):
+    if _ignored(resolved, config=config, folded=folded):
         raise ForbiddenPathError()
 
     descriptor: int | None = None
