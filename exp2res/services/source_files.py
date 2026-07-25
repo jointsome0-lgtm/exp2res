@@ -40,14 +40,13 @@ URI_AUTHORITY = re.compile(
     r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@\[\]-]|%[0-9A-Fa-f]{2})*$"
 )
 MAX_ARTIFACT_LOCATORS = 16
-# §29.4's re-check covers the locator fields this branch produces and every
-# persisted `path`/`uri`/`url` it can reach. `RawLog.external_ref` is excluded
-# until issue #171 settles which form is persisted: §14.2 stores the supplied
-# spelling, so a relative value would resolve against whatever directory the
-# later stage runs in, and canonicalizing it embeds the checkout path in the
-# byte-identical demo transcript. Excluding it leaves the pre-existing gap
-# exactly where it was rather than adding a working-directory dependency.
-PROMPT_LOCATOR_FIELDS = frozenset({"path", "uri", "url"})
+# §29.4 names exactly these persisted locator fields. `external_ref` is
+# included even though §14.2 persists the supplied spelling, so a relative
+# value re-resolves against the directory the later stage runs in: failing
+# closed there is the recoverable outcome, while omitting the field would
+# let an ignored path reach the provider. Issue #171 owns which form is
+# persisted, and the demo work that change requires.
+PROMPT_LOCATOR_FIELDS = frozenset({"path", "uri", "url", "external_ref"})
 DENIED_COMPONENTS = {
     "secrets",
     "credentials",

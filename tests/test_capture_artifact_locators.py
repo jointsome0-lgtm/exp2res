@@ -661,28 +661,24 @@ def test_owner_only_corrected_lineage_reaches_unchanged_high_ceiling(
 
 
 
-def test_prompt_reauthorization_rejects_windows_forms_and_skips_external_ref(
+def test_prompt_reauthorization_rejects_windows_forms_in_every_locator_field(
     workspace: Path,
 ) -> None:
-    """§21.51 / §29.4: a drive letter is not a remote scheme; #171 owns external_ref.
+    """§21.51 / §29.4: a drive letter is not a remote scheme, in any named field.
 
     A Windows drive letter parses as a one-character URI scheme, so the
-    unsupported-form check must precede the remote-scheme shortcut or the form
-    reaches the provider. `RawLog.external_ref` stays outside this boundary
-    while issue #171 settles whether the supplied or canonical spelling is
-    persisted — re-checking a relative spelling here would resolve it against
-    the working directory of whichever later command runs the stage.
+    unsupported-form test must precede the remote-scheme shortcut or the form
+    reaches the provider. §29.4 names `external_ref` alongside `path` and
+    `uri`, so the gate covers it too.
     """
 
     config = load_workspace_config(workspace)
-    for value in ("C:/Vera Example/artifact.md", r"C:\Vera Example\artifact.md"):
-        with pytest.raises(LocatorReauthorizationFailedError) as failure:
-            reauthorize_prompt_locators({"path": value}, config=config)
-        assert failure.value.diagnostic_class == "locator_reauthorization_failed"
-
-    reauthorize_prompt_locators(
-        {"external_ref": "Vera Example notes/missing-today.md"}, config=config
-    )
+    values = ("C:/Vera Example/artifact.md", r"C:\Vera Example\artifact.md")
+    for field in ("path", "uri", "external_ref"):
+        for value in values:
+            with pytest.raises(LocatorReauthorizationFailedError) as failure:
+                reauthorize_prompt_locators({field: value}, config=config)
+            assert failure.value.diagnostic_class == "locator_reauthorization_failed"
 
 
 def test_deletion_report_orders_evidence_ids_by_identity(

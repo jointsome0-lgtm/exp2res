@@ -486,7 +486,7 @@ nodes = [
   "tests/test_capture_artifact_locators.py::test_remote_hygiene_and_count_fail_before_persistence[locators2-artifact_locator_limit]",
   "tests/test_capture_artifact_locators.py::test_captured_local_locator_is_reauthorized_before_prompt_serialization",
   "tests/test_capture_artifact_locators.py::test_import_file_locators_share_prompt_reauthorization_boundary",
-  "tests/test_capture_artifact_locators.py::test_prompt_reauthorization_rejects_windows_forms_and_skips_external_ref",
+  "tests/test_capture_artifact_locators.py::test_prompt_reauthorization_rejects_windows_forms_in_every_locator_field",
   "tests/test_capture_artifact_locators.py::test_remote_persisted_locators_are_not_resolved_again",
   "tests/test_capture_artifact_locators.py::test_equivalent_local_locators_are_rejected_not_deduplicated",
   "tests/test_capture_artifact_locators.py::test_repeatable_cli_artifacts_reach_logs_show_projection",
