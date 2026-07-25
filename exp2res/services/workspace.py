@@ -219,7 +219,14 @@ def _purge_locked(
         # incomplete, because the committed privacy deletion is never restored.
         residual_paths.extend(checkpoint_residuals(connection, database))
         residual_paths.extend(vacuum_residuals(connection, database))
-        residual_paths.extend(checkpoint_residuals(connection, database))
+        # In WAL mode the `VACUUM` rewrite lands in the WAL, so an untruncated
+        # final checkpoint leaves the main database still holding pre-purge
+        # bytes. Reporting only the WAL would understate that, so the live
+        # database joins the residual list whenever this checkpoint cannot
+        # truncate (§8.1, §14.16).
+        final_checkpoint = checkpoint_residuals(connection, database)
+        if final_checkpoint:
+            residual_paths.extend((*final_checkpoint, str(database)))
 
         final = outcome()
         committed.append(final)

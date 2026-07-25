@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import sqlite3
 
@@ -11,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from exp2res import __version__
+from exp2res import cli
 from exp2res.cli import app
 import exp2res.exports.managed as managed_outputs
 import exp2res.services.workspace as workspace_service
@@ -323,18 +325,20 @@ def test_workspace_purge_reports_symlink_residual_but_commits_database(
 
 
 @pytest.mark.parametrize(
-    ("failed_step", "expected_residual_name"),
+    ("failed_step", "expected_residual_names"),
     [
-        ("initial_checkpoint", "exp2res.sqlite-wal"),
-        ("vacuum", "exp2res.sqlite"),
-        ("final_checkpoint", "exp2res.sqlite-wal"),
+        ("initial_checkpoint", ["exp2res.sqlite-wal"]),
+        ("vacuum", ["exp2res.sqlite"]),
+        # An untruncated final checkpoint leaves the VACUUM rewrite in the WAL,
+        # so the main database is unproven too.
+        ("final_checkpoint", ["exp2res.sqlite", "exp2res.sqlite-wal"]),
     ],
 )
 def test_workspace_purge_erasure_failure_is_exit_8_after_committed_deletion(
     workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
     failed_step: str,
-    expected_residual_name: str,
+    expected_residual_names: list[str],
 ) -> None:
     """§8.1: every erasure step is attempted and failure cannot undo purge."""
 
@@ -366,9 +370,9 @@ def test_workspace_purge_erasure_failure_is_exit_8_after_committed_deletion(
     assert result.exit_code == 8
     assert envelope["diagnostic_class"] == "deletion_incomplete"
     assert events == ["initial_checkpoint", "vacuum", "final_checkpoint"]
-    assert [Path(path).name for path in envelope["residual_paths"]] == [
-        expected_residual_name
-    ]
+    assert [
+        Path(path).name for path in envelope["residual_paths"]
+    ] == expected_residual_names
     with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
         assert all(
             connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
@@ -739,3 +743,69 @@ def test_interrupt_in_pre_transaction_cleanup_keeps_its_residuals(
         assert connection.execute(
             "SELECT COUNT(*) FROM raw_logs WHERE id = ?", (bundle.raw_log.id,)
         ).fetchone()[0] == 1
+
+
+def test_busy_final_checkpoint_reports_the_live_database_too(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§8.1/§14.16: in WAL mode the VACUUM rewrite lands in the WAL, so an
+    untruncated final checkpoint leaves the main database unproven."""
+
+    capture_daily(
+        workspace,
+        raw_text="Vera Example busy final checkpoint",
+        clock=lambda: FIXED_NOW,
+    )
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    wal = database.with_name(database.name + "-wal")
+    calls: list[int] = []
+
+    def busy_final(_connection, path: Path) -> tuple[str, ...]:
+        calls.append(1)
+        # Only the final checkpoint is contended.
+        return () if len(calls) == 1 else (str(path.with_name(path.name + "-wal")),)
+
+    monkeypatch.setattr(workspace_service, "checkpoint_residuals", busy_final)
+
+    result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == sorted(
+        {str(database), str(wal)}, key=os.fsencode
+    )
+
+
+def test_interrupt_in_cli_result_assembly_still_reports_the_purge(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the durable purge survives an interrupt raised while the
+    CLI builds its envelope from the returned outcome."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example result assembly interrupt",
+        clock=lambda: FIXED_NOW,
+    )
+    real_outcome = cli._purge_outcome
+    raised: list[int] = []
+
+    def interrupt_once(purged):
+        if not raised:
+            raised.append(1)
+            raise KeyboardInterrupt()
+        return real_outcome(purged)
+
+    monkeypatch.setattr(cli, "_purge_outcome", interrupt_once)
+
+    result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    deleted = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["deleted"]
+    }
+    assert deleted["raw_log"] == [bundle.raw_log.id]
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_logs").fetchone()[0] == 0

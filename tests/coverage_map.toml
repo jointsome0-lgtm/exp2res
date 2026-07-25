@@ -379,6 +379,8 @@ nodes = [
   "tests/test_workspace_purge.py::test_erasure_residual_never_tells_the_owner_to_remove_the_database",
   "tests/test_workspace_purge.py::test_interrupt_during_connection_teardown_still_reports_the_purge",
   "tests/test_workspace_purge.py::test_interrupt_in_pre_transaction_cleanup_keeps_its_residuals",
+  "tests/test_workspace_purge.py::test_busy_final_checkpoint_reports_the_live_database_too",
+  "tests/test_workspace_purge.py::test_interrupt_in_cli_result_assembly_still_reports_the_purge",
 ]
 phase = "4"
 note = "The workspace purge half is proven, including complete schema inventory, consent, retained initialization, SQLite erasure, and residual symlink semantics; jd delete awaits its implementation phase"

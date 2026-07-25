@@ -1861,22 +1861,35 @@ def workspace_purge(
                 error.generation_ids = committed.generation_ids
                 error.residual_paths = committed.residual_paths
             raise
-        exit_code = 8 if purged.residual_paths else 0
-        return Outcome(
-            exit_code=exit_code,
-            diagnostic_class="deletion_incomplete" if exit_code else None,
-            affected_ids=_purge_affected(purged),
-            generation_ids=list(purged.generation_ids),
-            residual_paths=list(purged.residual_paths),
-            result=None,
-            # One home for the incompleteness claim: `_run_command` appends it
-            # from the merged residual set, which this operation cannot see.
-            human_result=(
-                "Purged the workspace database; the initialized workspace remains."
-            ),
-        )
+        try:
+            return _purge_outcome(purged)
+        except KeyboardInterrupt:
+            # The service returned a durable purge; §14.14 rule 6 keeps it
+            # reported even when the interrupt lands in result assembly.
+            cancelled = OperationCancelledError()
+            cancelled.affected_ids = _purge_affected(purged)
+            cancelled.generation_ids = list(purged.generation_ids)
+            cancelled.residual_paths = list(purged.residual_paths)
+            raise cancelled from None
 
     _run_command(context, "workspace purge", operation)
+
+
+def _purge_outcome(purged: PurgeOutcome) -> Outcome:
+    exit_code = 8 if purged.residual_paths else 0
+    return Outcome(
+        exit_code=exit_code,
+        diagnostic_class="deletion_incomplete" if exit_code else None,
+        affected_ids=_purge_affected(purged),
+        generation_ids=list(purged.generation_ids),
+        residual_paths=list(purged.residual_paths),
+        result=None,
+        # One home for the incompleteness claim: `_run_command` appends it
+        # from the merged residual set, which this operation cannot see.
+        human_result=(
+            "Purged the workspace database; the initialized workspace remains."
+        ),
+    )
 
 
 def _parse_error_envelope(json_output: bool, diagnostic: str, message: str) -> None:
