@@ -44,6 +44,12 @@ def _sorted_paths(paths: tuple[str, ...] | list[str]) -> tuple[str, ...]:
     return tuple(sorted(set(paths), key=os.fsencode))
 
 
+def _unproven_erasure_paths(database: Path) -> tuple[str, ...]:
+    """The live database and WAL, unproven until §8.1's sequence completes."""
+
+    return (str(database), str(database.with_name(database.name + "-wal")))
+
+
 def _capture_deleted_ids(
     connection: sqlite3.Connection,
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -93,6 +99,35 @@ def purge_workspace(
         if connection is not None
         else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
     )
+    # §14.14 rule 6: once the purge transaction commits, no later interrupt may
+    # produce an empty cancelled envelope. This cell makes the whole remaining
+    # region — erasure, result construction, lock and connection teardown — one
+    # cancellation boundary instead of a sequence of narrower guarded blocks.
+    committed: list[PurgeOutcome] = []
+    try:
+        return _purge_locked(
+            workspace,
+            held=held,
+            residual_paths=residual_paths,
+            committed=committed,
+            clock=clock,
+        )
+    except KeyboardInterrupt:
+        if not committed:
+            raise
+        cancelled = OperationCancelledError()
+        cancelled.purge_outcome = committed[-1]
+        raise cancelled from None
+
+
+def _purge_locked(
+    workspace: Path,
+    *,
+    held,
+    residual_paths: list[str],
+    committed: list[PurgeOutcome],
+    clock: Callable[[], datetime] | None,
+) -> PurgeOutcome:
     with held as connection:
         # §14.16: enumerate and attempt every managed removal before the one
         # database purge transaction. The managed-output helper covers final,
@@ -146,46 +181,32 @@ def purge_workspace(
             if "locked" in str(error).lower() or "busy" in str(error).lower():
                 raise WorkspaceBusyError() from error
             raise
-        except BaseException as error:
+        except BaseException:
             if connection.in_transaction:
                 connection.rollback()
                 raise
             # SQLite already ended the transaction, so the purge and its fresh
             # schema_meta row are durable even though control never reached the
-            # erasure region — an interrupt delivered on `commit()`'s return is
-            # the reachable case. §14.14 rule 6: report the committed deletion
-            # and the unproven erasure paths, never an empty cancelled
-            # envelope.
-            if isinstance(error, KeyboardInterrupt):
-                cancelled = OperationCancelledError()
-                cancelled.purge_outcome = outcome(
-                    (
-                        str(database),
-                        str(database.with_name(database.name + "-wal")),
-                    )
-                )
-                raise cancelled from None
+            # line below — an interrupt delivered on `commit()`'s return is the
+            # reachable case. Record the durable state and let the caller's one
+            # cancellation boundary report it.
+            committed.append(outcome(_unproven_erasure_paths(database)))
             raise
+
+        # Everything from here on is post-commit: the purge is durable and the
+        # erasure paths stay unproven until their steps succeed. Recording the
+        # outcome now, before any further work, is what lets an interrupt in
+        # the erasure sequence, in result construction, or in lock and
+        # connection teardown still report the committed deletion.
+        committed.append(outcome(_unproven_erasure_paths(database)))
 
         # §8.1: checkpoint, VACUUM outside any transaction, then checkpoint
         # again. Each step is attempted even if an earlier erasure step reports
         # incomplete, because the committed privacy deletion is never restored.
-        # §14.14 rule 6: the whole post-commit region is one cancellation
-        # boundary — an interrupt between two erasure steps must still carry
-        # the committed deletion and the unproven paths, never an empty
-        # cancelled envelope.
-        try:
-            residual_paths.extend(checkpoint_residuals(connection, database))
-            residual_paths.extend(vacuum_residuals(connection, database))
-            residual_paths.extend(checkpoint_residuals(connection, database))
-        except KeyboardInterrupt:
-            cancelled = OperationCancelledError()
-            cancelled.purge_outcome = outcome(
-                (
-                    str(database),
-                    str(database.with_name(database.name + "-wal")),
-                )
-            )
-            raise cancelled from None
+        residual_paths.extend(checkpoint_residuals(connection, database))
+        residual_paths.extend(vacuum_residuals(connection, database))
+        residual_paths.extend(checkpoint_residuals(connection, database))
 
-        return outcome()
+        final = outcome()
+        committed.append(final)
+        return final

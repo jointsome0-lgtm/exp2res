@@ -657,3 +657,39 @@ def test_erasure_residual_never_tells_the_owner_to_remove_the_database(
     assert "Cleanup did not complete; unresolved paths:" in result.stderr
     assert str(database) in result.stderr
     assert database.is_file()
+
+
+def test_interrupt_during_connection_teardown_still_reports_the_purge(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the cancellation boundary reaches past result
+    construction into lock and connection teardown."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example teardown interrupt",
+        clock=lambda: FIXED_NOW,
+    )
+    real_writer = workspace_service.writer_database
+
+    @contextmanager
+    def interrupting_teardown(target: Path, **keywords):
+        with real_writer(target, **keywords) as connection:
+            yield connection
+        # The purge has returned its result; the interrupt lands while the
+        # writer lock and connection are being released.
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(workspace_service, "writer_database", interrupting_teardown)
+
+    result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    deleted = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["deleted"]
+    }
+    assert deleted["raw_log"] == [bundle.raw_log.id]
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_logs").fetchone()[0] == 0
