@@ -38,6 +38,8 @@ The adapter and model must be selected explicitly in `[llm]` before the first ou
 
 Prompts and responses are subject to the selected provider's retention, access, and training policies. Choosing a provider is choosing who may see every data class in §29.3. Exp2Res cannot guarantee provider-side confidentiality or erase provider-retained copies through local owner deletion; that exposure is an accepted residual risk, not implicit cloud persistence authorized to Exp2Res.
 
+Local-first governs storage, not model calls, and V1 implements no per-record withholding marker (§11.2). Processing confidentiality therefore has exactly two V1 controls, and this is the project's standing position rather than a gap awaiting a feature: point `openai-compat` at a self-hosted or on-device endpoint so no third party is involved, or select a provider the owner trusts with every §29.3 class. Exp2Res's own default selection is the second — the `codex-cli` adapter on `gpt-5.6-sol` (§15.13), so the selected provider sees every class each invoked contract transmits. Material that can satisfy neither control must not be captured; recording it is the authorization.
+
 ## §29.3 Exhaustive LLM Transmission Surface
 
 The following eight contracts are the complete model-call surface. The selected provider receives the fixed contract instructions and the exact declared typed input for that invocation; a data class listed here is transmitted only when the owning stage selects it under the contract and §13.
@@ -117,7 +119,7 @@ Point-retained telemetry is not identifier-free: run IDs, opaque internal entity
 
 The following risks remain explicit:
 
-1. The selected provider may retain or expose transmitted prompts and responses after §13.13 or §14.16 removes local managed data. Provider choice accepts that provider-controlled risk.
+1. The selected provider may retain or expose transmitted prompts and responses after §13.13 or §14.16 removes local managed data. Provider choice accepts that provider-controlled risk. Neither local deletion nor any V1 mechanism recalls what an already-authorized call transmitted; §29.2's two controls — a self-hosted endpoint or a trusted provider — plus declining to capture are the complete V1 answer.
 2. A structurally valid imported artifact may be false or malicious, and an LLM may return a schema-valid semantic error. Provenance, evidence strength, replacement generations, and verifier gates limit unsupported promotion but do not authenticate every external assertion or make the model infallible.
 3. Owner-supplied source files and copies of exports or backups outside the managed workspace remain outside Exp2Res's deletion authority.
 4. `secure_delete` is a SQLite page-level logical overwrite, WAL checkpointing truncates the live sidecar, and `VACUUM` rewrites the live main database; even together they do not prove physical erasure from filesystem snapshots or journals, SSD wear-leveling cells, backup media, or OS swap.
