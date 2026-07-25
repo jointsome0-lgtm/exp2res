@@ -513,6 +513,8 @@ nodes = [
   "tests/test_capture_artifact_locators.py::test_consecutive_ignore_separators_stay_nonmatching_at_both_boundaries",
   "tests/test_capture_artifact_locators.py::test_ignore_wildcards_compare_utf8_bytes_at_both_privacy_boundaries",
   "tests/test_capture_artifact_locators.py::test_trailing_separator_anchors_both_privacy_boundaries_to_root",
+  "tests/test_capture_artifact_locators.py::test_reversed_ignore_range_keeps_git_semantics_at_both_boundaries",
+  "tests/test_capture_artifact_locators.py::test_unanchored_ignore_uses_absolute_path_only_outside_workspace",
   "tests/test_capture_artifact_locators.py::test_repeated_recursive_segments_collapse_to_one_matcher",
 ]
 

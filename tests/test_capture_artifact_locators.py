@@ -1207,6 +1207,108 @@ def test_trailing_separator_anchors_both_privacy_boundaries_to_root(
     assert accepted.evidence_items[1].path == str(nested_artifact.resolve())
 
 
+def test_reversed_ignore_range_keeps_git_semantics_at_both_boundaries(
+    workspace: Path,
+) -> None:
+    """§21.51 / §29.4: `[z-a]` matches only its tested start, never crashes."""
+
+    matched = workspace / "zVera Example.md"
+    matched.write_text("Vera Example reversed-range start.\n", encoding="utf-8")
+    unmatched = workspace / "aVera Example.md"
+    unmatched.write_text("Vera Example reversed-range end.\n", encoding="utf-8")
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured before a reversed-range rule.",
+        artifacts=(str(matched),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_reversed_range_before",
+            "evi_vera_reversed_range_before_manual",
+            "evi_vera_reversed_range_before_artifact",
+        ),
+    )
+
+    _set_ignore_paths(workspace, "[z-a]Vera Example.md")
+    config = load_workspace_config(workspace)
+    with pytest.raises(LocatorReauthorizationFailedError):
+        reauthorize_prompt_locators(
+            {"path": captured.evidence_items[1].path},
+            config=config,
+        )
+    with pytest.raises(InvalidInputError) as matched_failure:
+        capture_daily(
+            workspace,
+            raw_text="Vera Example attempted the reversed-range start.",
+            artifacts=(str(matched),),
+            clock=lambda: FIXED_NOW,
+        )
+    assert matched_failure.value.diagnostic_class == "artifact_locator_ignored"
+
+    accepted = capture_daily(
+        workspace,
+        raw_text="Vera Example captured the reversed-range endpoint.",
+        artifacts=(str(unmatched),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_reversed_range_after",
+            "evi_vera_reversed_range_after_manual",
+            "evi_vera_reversed_range_after_artifact",
+        ),
+    )
+    assert accepted.evidence_items[1].path == str(unmatched.resolve())
+
+
+def test_unanchored_ignore_uses_absolute_path_only_outside_workspace(
+    workspace: Path,
+) -> None:
+    """§21.51 / §29.4: host ancestors never become in-root ignore targets."""
+
+    ancestor_name = workspace.resolve().parts[1]
+    matched_dir = workspace / ancestor_name
+    matched_dir.mkdir()
+    matched = matched_dir / "Vera Example matched.md"
+    matched.write_text("Vera Example in-root component.\n", encoding="utf-8")
+    allowed_dir = workspace / "allowed"
+    allowed_dir.mkdir()
+    allowed = allowed_dir / "Vera Example allowed.md"
+    allowed.write_text("Vera Example host-ancestor-safe artifact.\n", encoding="utf-8")
+    captured = capture_daily(
+        workspace,
+        raw_text="Vera Example captured before an unanchored component rule.",
+        artifacts=(str(matched),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_unanchored_before",
+            "evi_vera_unanchored_before_manual",
+            "evi_vera_unanchored_before_artifact",
+        ),
+    )
+
+    _set_ignore_paths(workspace, ancestor_name)
+    config = load_workspace_config(workspace)
+    with pytest.raises(LocatorReauthorizationFailedError):
+        reauthorize_prompt_locators(
+            {"path": captured.evidence_items[1].path},
+            config=config,
+        )
+    reauthorize_prompt_locators(
+        {"path": str(allowed.resolve())},
+        config=config,
+    )
+    accepted = capture_daily(
+        workspace,
+        raw_text="Vera Example ignored the host ancestor during capture.",
+        artifacts=(str(allowed),),
+        clock=lambda: FIXED_NOW,
+        id_factory=_capture_ids(
+            "log_vera_unanchored_after",
+            "evi_vera_unanchored_after_manual",
+            "evi_vera_unanchored_after_artifact",
+        ),
+    )
+    assert accepted.evidence_items[1].path == str(allowed.resolve())
+
+
 def test_repeated_recursive_segments_collapse_to_one_matcher() -> None:
     """§21.51 / §29.4: adjacent `**` segments cannot multiply the match cost."""
 

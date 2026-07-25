@@ -60,19 +60,24 @@ DENIED_COMPONENTS = {
     "dist",
     "build",
 }
-POSIX_CLASS_MEMBERS = {
-    "alnum": "0-9A-Za-z",
-    "alpha": "A-Za-z",
-    "blank": r"\x09\x20",
-    "cntrl": r"\x00-\x1f\x7f",
-    "digit": "0-9",
-    "graph": r"\x21-\x7e",
-    "lower": "a-z",
-    "print": r"\x20-\x7e",
-    "punct": r"\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e",
-    "space": r"\x09-\x0d\x20",
-    "upper": "A-Z",
-    "xdigit": "0-9A-Fa-f",
+POSIX_CLASS_RANGES = {
+    "alnum": ((0x30, 0x39), (0x41, 0x5A), (0x61, 0x7A)),
+    "alpha": ((0x41, 0x5A), (0x61, 0x7A)),
+    "blank": ((0x09, 0x09), (0x20, 0x20)),
+    "cntrl": ((0x00, 0x1F), (0x7F, 0x7F)),
+    "digit": ((0x30, 0x39),),
+    "graph": ((0x21, 0x7E),),
+    "lower": ((0x61, 0x7A),),
+    "print": ((0x20, 0x7E),),
+    "punct": (
+        (0x21, 0x2F),
+        (0x3A, 0x40),
+        (0x5B, 0x60),
+        (0x7B, 0x7E),
+    ),
+    "space": ((0x09, 0x0D), (0x20, 0x20)),
+    "upper": ((0x41, 0x5A),),
+    "xdigit": ((0x30, 0x39), (0x41, 0x46), (0x61, 0x66)),
 }
 
 
@@ -151,7 +156,7 @@ def _class_regex(
     """Translate one git wildmatch bracket expression.
 
     Git recognizes exactly the POSIX named classes in
-    ``POSIX_CLASS_MEMBERS``. An unknown named class makes the whole pattern
+    ``POSIX_CLASS_RANGES``. An unknown named class makes the whole pattern
     non-matching, while an unterminated bracket opener remains literal.
     """
 
@@ -160,37 +165,72 @@ def _class_regex(
     if negated:
         cursor += 1
 
-    members: list[str] = []
+    members: set[int] = set()
+    previous: int | None = None
     if segment[cursor : cursor + 1] == "]":
-        members.append(r"\]")
+        previous = ord("]")
+        members.add(previous)
         cursor += 1
 
     while cursor < len(segment):
         char = segment[cursor]
         if char == "]":
-            return (
-                # Git's WM_PATHNAME check rejects `/` after evaluating every
-                # bracket expression, including a negated one.
-                f"(?!/)[{'^' if negated else ''}{''.join(members)}]",
-                cursor + 1,
+            if negated:
+                members = set(range(256)).difference(members)
+            # Git's WM_PATHNAME check rejects `/` after evaluating every
+            # bracket expression, including a negated one.
+            members.discard(ord("/"))
+            if not members:
+                return "(?!)", cursor + 1
+            ranges: list[tuple[int, int]] = []
+            start = end = min(members)
+            for value in sorted(members)[1:]:
+                if value == end + 1:
+                    end = value
+                    continue
+                ranges.append((start, end))
+                start = end = value
+            ranges.append((start, end))
+            encoded = "".join(
+                (
+                    f"\\x{start:02x}"
+                    if start == end
+                    else f"\\x{start:02x}-\\x{end:02x}"
+                )
+                for start, end in ranges
             )
+            return f"[{encoded}]", cursor + 1
         if segment.startswith("[:", cursor):
             class_end = segment.find(":]", cursor + 2)
             if class_end != -1:
                 name = segment[cursor + 2 : class_end]
-                class_members = POSIX_CLASS_MEMBERS.get(name)
-                if class_members is None:
+                class_ranges = POSIX_CLASS_RANGES.get(name)
+                if class_ranges is None:
                     return "(?!)", len(segment)
                 if folded and name == "upper":
-                    class_members = "a-z"
-                members.append(class_members)
+                    class_ranges = ((0x61, 0x7A),)
+                for start, end in class_ranges:
+                    members.update(range(start, end + 1))
+                previous = None
                 cursor = class_end + 2
                 continue
-        if char in {"\\", "[", "]", "^", "&", "~"}:
-            members.append(f"\\{char}")
-        else:
-            # A raw `-` intentionally retains git's range semantics.
-            members.append(char)
+        if (
+            char == "-"
+            and previous is not None
+            and cursor + 1 < len(segment)
+            and segment[cursor + 1] != "]"
+        ):
+            endpoint = ord(segment[cursor + 1])
+            if previous <= endpoint:
+                members.update(range(previous, endpoint + 1))
+            # Git has already tested the range start as a literal. A reversed
+            # range therefore retains that start but contributes no endpoint
+            # or intermediate members.
+            previous = None
+            cursor += 2
+            continue
+        previous = ord(char)
+        members.add(previous)
         cursor += 1
     return None
 
@@ -318,7 +358,13 @@ def _ignored(path: Path, *, config: WorkspaceConfig, folded: bool) -> bool:
             compared_pattern,
             folded=folded,
         )
-        targets = (relative,) if anchored else (relative, absolute)
+        if anchored:
+            targets = (relative,)
+        else:
+            # Inside the workspace, gitignore evaluation is relative to that
+            # root. The absolute path is only the comparison surface for an
+            # unanchored rule when canonicalization resolves outside it.
+            targets = (relative if relative is not None else absolute,)
         for target in targets:
             if target is None:
                 continue
