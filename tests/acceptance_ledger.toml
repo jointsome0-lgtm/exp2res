@@ -311,10 +311,11 @@ issues = ["#69", "PR #101", "#82", "PR #125"]
 note = "The runner plus Stage 3 CLI prove bounded foreground attempts, budgets, deadlines, retry telemetry, complete-stage rollback, fresh failed-run telemetry, and handled cancellation with no partial facts; the exhaustive failure matrix, all adapters, hard crashes, late responses, and every interruption timing remain"
 
 ["24.47"]
-status = "pending"
+status = "partial"
 phases = ["4"]
 evals = ["21.44"]
-issues = []
+issues = ["#167"]
+note = "Workspace purge is implemented and proven; job-description inspection and deletion await their later schema and implementation phase"
 
 ["24.48"]
 status = "pending"
