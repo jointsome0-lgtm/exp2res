@@ -656,3 +656,4 @@ def test_owner_only_corrected_lineage_reaches_unchanged_high_ceiling(
         root.raw_log.id,
         corrected.raw_log.id,
     }
+
