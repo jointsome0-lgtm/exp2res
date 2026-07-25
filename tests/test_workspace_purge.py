@@ -1,0 +1,447 @@
+"""§14.16 whole-workspace purge acceptance tests."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sqlite3
+
+import pytest
+from typer.testing import CliRunner
+
+from exp2res import __version__
+from exp2res.cli import app
+import exp2res.exports.managed as managed_outputs
+import exp2res.services.workspace as workspace_service
+from exp2res.services.capture import capture_daily
+from exp2res.storage.schema import PURGE_ENTITY_TABLES, PURGE_TABLE_ORDER
+from exp2res.storage.workspace import CURRENT_SCHEMA_VERSION
+
+from conftest import FIXED_NOW
+from test_cli_correction import _prepare_full_graph
+
+
+runner = CliRunner()
+
+
+def _invoke_json(workspace: Path, arguments: list[str]):
+    result = runner.invoke(
+        app,
+        ["--json", "--workspace", str(workspace), *arguments],
+    )
+    return result, json.loads(result.stdout)
+
+
+def _user_tables(connection: sqlite3.Connection) -> set[str]:
+    return {
+        row[0]
+        for row in connection.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            """
+        )
+    }
+
+
+def _id_table_names(connection: sqlite3.Connection) -> set[str]:
+    tables = set()
+    for table in _user_tables(connection):
+        primary_key = [
+            row[1]
+            for row in connection.execute(f"PRAGMA table_info({table})")
+            if row[5]
+        ]
+        if primary_key == ["id"]:
+            tables.add(table)
+    return tables
+
+
+def _captured_ids(
+    connection: sqlite3.Connection,
+) -> dict[str, list[str]]:
+    return {
+        entity_type: [
+            row[0]
+            for row in connection.execute(
+                f"SELECT id FROM {table} ORDER BY CAST(id AS BLOB)"
+            )
+        ]
+        for table, entity_type in PURGE_ENTITY_TABLES
+        if connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    }
+
+
+def test_purge_inventory_covers_the_current_schema(workspace: Path) -> None:
+    """§14.16: every current table and single-column entity ID is inventoried."""
+
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        tables = _user_tables(connection)
+        assert set(PURGE_TABLE_ORDER) == tables - {"schema_meta"}
+        assert len(PURGE_TABLE_ORDER) == len(set(PURGE_TABLE_ORDER))
+        assert {table for table, _entity in PURGE_ENTITY_TABLES} == (
+            _id_table_names(connection) - {"schema_meta"}
+        )
+        assert len(PURGE_ENTITY_TABLES) == len(
+            {entity for _table, entity in PURGE_ENTITY_TABLES}
+        )
+
+
+def test_workspace_purge_erases_live_content_and_retains_empty_workspace(
+    workspace: Path,
+) -> None:
+    """§21.44 / §24.47: complete purge, fresh history, and erasure proof."""
+
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    config = workspace / ".exp2res" / "config.toml"
+    config_before = config.read_bytes()
+    main_sentinel = b"Vera Example PURGE MAIN SENTINEL 7219"
+    wal_sentinel = b"Vera Example PURGE WAL SENTINEL 8461"
+
+    _prepare_full_graph(workspace)
+    capture_daily(
+        workspace,
+        raw_text=main_sentinel.decode("utf-8"),
+        clock=lambda: FIXED_NOW.replace(hour=14),
+    )
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0] == 0
+    assert main_sentinel in database.read_bytes()
+
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700)
+    backup = backup_root / "exp2res-v6-Vera-Example.sqlite"
+    backup.write_bytes(b"Vera Example managed backup sentinel")
+
+    branch_parent = workspace / "out" / "branch"
+    branch_parent.mkdir(mode=0o700, exist_ok=True)
+    branch_set = branch_parent / "branch_vera_purge"
+    branch_set.mkdir(mode=0o700)
+    (branch_set / "member.md").write_bytes(b"Vera Example managed branch sentinel")
+
+    assessment_parent = workspace / "out" / "assessment"
+    candidate = (
+        assessment_parent
+        / ".exp2res-candidate-snapshot_vera_purge-0123456789abcdef0123456789abcdef"
+    )
+    candidate.mkdir(mode=0o700)
+    (candidate / "partial.md").write_bytes(b"Vera Example candidate sentinel")
+    rollback = (
+        branch_parent
+        / ".exp2res-rollback-branch_vera_purge-fedcba9876543210fedcba9876543210"
+    )
+    rollback.mkdir(mode=0o700)
+    (rollback / "old.md").write_bytes(b"Vera Example rollback sentinel")
+
+    # Keep one idle handle open so closing the snapshot reader does not perform
+    # a last-connection checkpoint before the purge command sees the WAL bytes.
+    keeper = sqlite3.connect(database)
+    reader = sqlite3.connect(database)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM raw_logs").fetchone()
+        capture_daily(
+            workspace,
+            raw_text=wal_sentinel.decode("utf-8"),
+            clock=lambda: FIXED_NOW.replace(hour=15),
+        )
+        wal = database.with_name(database.name + "-wal")
+        assert wal.exists()
+        assert wal_sentinel in wal.read_bytes()
+        reader.rollback()
+        reader.close()
+
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                """
+                INSERT INTO schema_meta(version, applied_at, app_version)
+                VALUES (?, ?, ?)
+                """,
+                (6, FIXED_NOW.isoformat(), "0.0.6"),
+            )
+            expected_ids = _captured_ids(connection)
+            expected_generations = sorted(
+                {
+                    row[0]
+                    for table in PURGE_TABLE_ORDER
+                    if "generation_id"
+                    in {
+                        column[1]
+                        for column in connection.execute(
+                            f"PRAGMA table_info({table})"
+                        )
+                    }
+                    for row in connection.execute(
+                        f"SELECT DISTINCT generation_id FROM {table}"
+                    )
+                    if row[0] is not None
+                },
+                key=lambda value: value.encode("utf-8"),
+            )
+            connection.commit()
+
+        result, envelope = _invoke_json(workspace, ["workspace", "purge", "--yes"])
+        assert result.exit_code == 0, result.stderr
+        assert envelope["command"] == "workspace purge"
+        assert envelope["status"] == "ok"
+        assert envelope["diagnostic_class"] is None
+        assert envelope["result"] is None
+        assert envelope["run_ids"] == []
+        assert envelope["invalidated_views"] == []
+        assert envelope["invalidated_branches"] == []
+        assert envelope["retry"] is None
+        assert envelope["residual_paths"] == []
+        assert envelope["generation_ids"] == expected_generations
+        assert {
+            group["entity_type"]: group["ids"]
+            for group in envelope["affected_ids"]["deleted"]
+        } == expected_ids
+        assert envelope["affected_ids"]["created"] == []
+        assert envelope["affected_ids"]["superseded"] == []
+
+        assert config.read_bytes() == config_before
+        assert (workspace / ".exp2res").is_dir()
+        assert database.is_file()
+        assert sorted((workspace / "out" / "assessment").iterdir()) == []
+        assert sorted((workspace / "out" / "branch").iterdir()) == []
+        assert sorted(backup_root.iterdir()) == []
+
+        with sqlite3.connect(database) as connection:
+            for table in PURGE_TABLE_ORDER:
+                assert connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()[0] == 0
+            schema_rows = connection.execute(
+                "SELECT version, applied_at, app_version FROM schema_meta"
+            ).fetchall()
+            assert len(schema_rows) == 1
+            assert schema_rows[0][0] == CURRENT_SCHEMA_VERSION
+            assert schema_rows[0][1] != FIXED_NOW.isoformat()
+            assert schema_rows[0][2] == __version__
+            assert connection.execute("PRAGMA secure_delete").fetchone()[0] == 1
+            assert connection.execute("PRAGMA freelist_count").fetchone()[0] == 0
+
+        for path in (
+            database,
+            database.with_name(database.name + "-wal"),
+            database.with_name(database.name + "-shm"),
+        ):
+            if path.exists():
+                content = path.read_bytes()
+                assert main_sentinel not in content
+                assert wal_sentinel not in content
+    finally:
+        if reader:
+            reader.close()
+        keeper.close()
+
+
+def test_workspace_purge_without_yes_refuses_before_destructive_work(
+    workspace: Path,
+) -> None:
+    """§14.14 rule 3: non-interactive purge fails closed without consent."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example purge refusal sentinel",
+        clock=lambda: FIXED_NOW,
+    )
+    managed = workspace / "out" / "assessment" / "snapshot_vera_refusal"
+    managed.mkdir(parents=True, mode=0o700)
+    (managed / "member.md").write_text("Vera Example retained\n", encoding="utf-8")
+
+    result, envelope = _invoke_json(workspace, ["workspace", "purge"])
+
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] == "input_required"
+    assert envelope["affected_ids"]["deleted"] == []
+    assert managed.is_dir()
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert connection.execute(
+            "SELECT raw_text FROM raw_logs WHERE id = ?", (bundle.raw_log.id,)
+        ).fetchone()[0] == "Vera Example purge refusal sentinel"
+
+
+def test_workspace_purge_human_mode_prints_primary_result_to_stdout(
+    workspace: Path,
+) -> None:
+    """§14.14 rule 5: human result is stdout and diagnostics stay stderr."""
+
+    capture_daily(
+        workspace,
+        raw_text="Vera Example human purge result",
+        clock=lambda: FIXED_NOW,
+    )
+
+    result = runner.invoke(
+        app,
+        ["--workspace", str(workspace), "workspace", "purge", "--yes"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "Purged all managed workspace data; the initialized workspace remains.\n"
+    )
+    assert result.stderr == ""
+
+
+def test_workspace_purge_reports_symlink_residual_but_commits_database(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§21.44 / §24.47: symlinks are residual, untraversed, and exit 8."""
+
+    capture_daily(
+        workspace,
+        raw_text="Vera Example purge residual source",
+        clock=lambda: FIXED_NOW,
+    )
+    outside = tmp_path / "Vera Example purge symlink target"
+    outside.write_bytes(b"Vera Example outside target remains unchanged")
+    assessment = workspace / "out" / "assessment"
+    assessment.mkdir(mode=0o700, exist_ok=True)
+    planted = assessment / "snapshot_vera_symlink"
+    planted.symlink_to(outside)
+
+    result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
+
+    assert result.exit_code == 8
+    assert envelope["status"] == "failed"
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str(planted)]
+    assert envelope["result"] is None
+    assert planted.is_symlink()
+    assert outside.read_bytes() == b"Vera Example outside target remains unchanged"
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert all(
+            connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            for table in PURGE_TABLE_ORDER
+        )
+        assert connection.execute("SELECT COUNT(*) FROM schema_meta").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize(
+    ("failed_step", "expected_residual_name"),
+    [
+        ("initial_checkpoint", "exp2res.sqlite-wal"),
+        ("vacuum", "exp2res.sqlite"),
+        ("final_checkpoint", "exp2res.sqlite-wal"),
+    ],
+)
+def test_workspace_purge_erasure_failure_is_exit_8_after_committed_deletion(
+    workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_step: str,
+    expected_residual_name: str,
+) -> None:
+    """§8.1: every erasure step is attempted and failure cannot undo purge."""
+
+    capture_daily(
+        workspace,
+        raw_text="Vera Example erasure-step failure source",
+        clock=lambda: FIXED_NOW,
+    )
+    events: list[str] = []
+
+    def checkpoint(_connection, database: Path) -> tuple[str, ...]:
+        step = "initial_checkpoint" if not events else "final_checkpoint"
+        events.append(step)
+        return (
+            (str(database.with_name(database.name + "-wal")),)
+            if failed_step == step
+            else ()
+        )
+
+    def vacuum(_connection, database: Path) -> tuple[str, ...]:
+        events.append("vacuum")
+        return (str(database),) if failed_step == "vacuum" else ()
+
+    monkeypatch.setattr(workspace_service, "checkpoint_residuals", checkpoint)
+    monkeypatch.setattr(workspace_service, "vacuum_residuals", vacuum)
+
+    result, envelope = _invoke_json(workspace, ["workspace", "purge", "--yes"])
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert events == ["initial_checkpoint", "vacuum", "final_checkpoint"]
+    assert [Path(path).name for path in envelope["residual_paths"]] == [
+        expected_residual_name
+    ]
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert all(
+            connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            for table in PURGE_TABLE_ORDER
+        )
+        assert connection.execute("SELECT COUNT(*) FROM schema_meta").fetchone()[0] == 1
+
+
+def test_workspace_purge_interrupt_after_commit_reports_committed_effects(
+    workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§14.14 rule 6: post-commit interruption cancels without restoration."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example post-commit purge interruption",
+        clock=lambda: FIXED_NOW,
+    )
+
+    def interrupt_checkpoint(_connection, _database):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        workspace_service,
+        "checkpoint_residuals",
+        interrupt_checkpoint,
+    )
+
+    result, envelope = _invoke_json(workspace, ["workspace", "purge", "--yes"])
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["diagnostic_class"] == "cancelled"
+    assert {Path(path).name for path in envelope["residual_paths"]} == {
+        "exp2res.sqlite",
+        "exp2res.sqlite-wal",
+    }
+    deleted = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["deleted"]
+    }
+    assert deleted["raw_log"] == [bundle.raw_log.id]
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert all(
+            connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            for table in PURGE_TABLE_ORDER
+        )
+        assert connection.execute("SELECT COUNT(*) FROM schema_meta").fetchone()[0] == 1
+
+
+def test_workspace_purge_preamble_residual_uses_deletion_diagnostic(
+    workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§14.16: even preamble cleanup residuals use deletion_incomplete."""
+
+    capture_daily(
+        workspace,
+        raw_text="Vera Example purge preamble residual",
+        clock=lambda: FIXED_NOW,
+    )
+    assessment = workspace / "out" / "assessment"
+    assessment.mkdir(mode=0o700, exist_ok=True)
+    monkeypatch.setattr(
+        managed_outputs,
+        "reconcile_managed_outputs",
+        lambda _workspace: (str(assessment),),
+    )
+
+    result, envelope = _invoke_json(workspace, ["workspace", "purge", "--yes"])
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str(assessment)]
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_logs").fetchone()[0] == 0

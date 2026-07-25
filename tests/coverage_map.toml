@@ -366,8 +366,15 @@ phase = "1"
 note = "Runner and Stage 3 fixtures prove bounded foreground calls, whole-stage rollback, durable failed telemetry, budget preflight, and handled cancellation; the full transport-failure matrix, hard-crash timings, late-response discard, stderr progress limits, and other named stages remain"
 
 ["21.44"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_workspace_purge.py::test_purge_inventory_covers_the_current_schema",
+  "tests/test_workspace_purge.py::test_workspace_purge_erases_live_content_and_retains_empty_workspace",
+  "tests/test_workspace_purge.py::test_workspace_purge_without_yes_refuses_before_destructive_work",
+  "tests/test_workspace_purge.py::test_workspace_purge_reports_symlink_residual_but_commits_database",
+]
 phase = "4"
+note = "The workspace purge half is proven, including complete schema inventory, consent, retained initialization, SQLite erasure, and residual symlink semantics; jd delete awaits its implementation phase"
 
 ["21.45"]
 status = "pending"
