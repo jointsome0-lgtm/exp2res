@@ -146,4 +146,8 @@ Enforces §15.10 rule 4, §15.12, §29.2, §29.4, and §29.6; extends §21.43's 
 
 Enforces §9.4, §11's Model validation policy, §13.1, §13.3 rule 10, §14.2–§14.4, §14.7, §14.14 rules 4–5, and §29.4.
 
+## §21.52 Non-Prompt Owner Capture Is Affirmed, Lossless, and Uncertainty-Preserving
+
+Enforces §5.2, §5.5, §11's Model validation policy and §11.1, §13.1, §14.2–§14.3, §14.7, §14.14 rules 2–4 and 8, and §29.4.
+
 ---

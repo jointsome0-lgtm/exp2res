@@ -1688,3 +1688,33 @@ And Stage 3 selects the root artifact_reference as rule 10 displaced-record supp
 When it validates the corrected lineage fact
 Then the selected set spans two distinct raw logs and contains a non-manual item, so the unchanged §9.4 ceiling permits high
 '''
+
+["21.52"]
+title = "Non-Prompt Owner Capture Is Affirmed, Lossless, and Uncertainty-Preserving"
+enforces = "§5.2, §5.5, §11's Model validation policy and §11.1, §13.1, §14.2–§14.3, §14.7, §14.14 rules 2–4 and 8, and §29.4"
+case = '''
+Given invented multiline UTF-8 owner text supplied through --file PATH and, separately, --file -
+When log today, log retro, and gaps answer capture the text with --owner-authored and repeatable artifact locators
+Then every accepted RawLog.raw_text re-encodes byte-for-byte identically to the supplied bytes, including every newline, with no normalization, trimming, or line joining
+And file paths retain their existing §29.4 acquisition gate and external_ref behavior, while standard input records external_ref = null and selects no filesystem object
+And standard input shares the source-file raw_text byte limit, UTF-8 decoding, and §11 free-text hygiene and fails atomically above the bound or on invalid UTF-8
+And the captures retain exactly manual_daily/manual_entry, manual_retro/user_memory, and gap_answer/manual_entry classification with no new entry or source type
+And every capture bundle keeps its manual_claim first and its artifact_reference items under §13.1
+
+Given each non-prompt form is invoked without --owner-authored, including a form carrying --yes and an environment variable or configuration-shaped value that purports to supply affirmation
+When the command evaluates the candidate
+Then log today --file, log retro --file, and gaps answer --file each fail with exit class 2 and diagnostic owner_authorship_required before opening the source and before writing any row
+And --yes does not imply affirmation, --owner-authored does not imply consent, and neither configuration nor an environment variable supplies either invocation control
+
+Given interactive log retro receives precision = unknown
+When it collects the owner record
+Then precision is prompted first, no period prompt occurs, and OccurredAt stores start = null and end = null
+
+Given non-prompt log retro receives --precision unknown together with --period
+When it validates the typed values
+Then it rejects the form in exit class 2 rather than discarding the period
+
+Given non-prompt log retro omits --precision, --confidence, or the period required by a non-unknown precision, or supplies a range precision without start/end
+When stdin is non-TTY or --no-input is set
+Then the command fails closed under §14.14 rule 3 before reading record text, writing a row, or displaying a prompt
+'''

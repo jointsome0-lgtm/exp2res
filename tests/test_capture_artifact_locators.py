@@ -476,6 +476,7 @@ def test_repeatable_cli_artifacts_reach_logs_show_projection(
             "today",
             "--file",
             str(source),
+            "--owner-authored",
             "--artifact",
             str(local),
             "--artifact",
@@ -552,8 +553,8 @@ def test_retro_cli_accepts_artifact_locator(
             remote,
         ],
         input=(
-            "2026-07\n"
             "month\n"
+            "2026-07\n"
             "medium\n"
             "Vera Example Retro\n"
             "Vera Example reconstructed an artifact-backed event.\n"

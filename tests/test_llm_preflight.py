@@ -10,7 +10,11 @@ import re
 import pytest
 
 import exp2res.llm.codex as codex_adapter
-from exp2res.config import load_workspace_config, resolve_codex_home
+from exp2res.config import (
+    DEFAULT_LLM_CONFIG,
+    load_workspace_config,
+    resolve_codex_home,
+)
 from exp2res.errors import (
     ConfigurationError,
     LLMAdapterNotRegisteredError,
@@ -118,6 +122,24 @@ def test_fresh_config_exposes_adapter_model_home_reference_and_all_budgets(
     assert config.per_invocation_cost_ceiling > 0
     assert config.per_run_cost_ceiling is not None
     assert config.per_run_cost_ceiling > 0
+
+
+def test_shipped_deadline_defaults_agree_and_cover_documented_live_upper_bound(
+    tmp_path: Path,
+) -> None:
+    """Issue #165 / §15.10: init and fallback defaults cover the 130 s bound."""
+
+    workspace = tmp_path / "Vera Example deadline workspace"
+    workspace.mkdir()
+    initialize_workspace(workspace)
+    initialized = load_workspace_config(workspace).llm
+
+    assert initialized.invocation_deadline_seconds == 600.0
+    assert (
+        initialized.invocation_deadline_seconds
+        == DEFAULT_LLM_CONFIG.invocation_deadline_seconds
+    )
+    assert initialized.invocation_deadline_seconds >= 130.0
 
 
 def write_llm_config(workspace: Path, llm_lines: str) -> None:
