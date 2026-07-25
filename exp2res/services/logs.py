@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import sqlite3
-import stat
 
 from exp2res.domain.models import RawLog
 from exp2res.domain.results import InvalidatedView, invalidated_view
@@ -17,6 +16,10 @@ from exp2res.errors import (
     WorkspaceBusyError,
 )
 from exp2res.exports.managed import remove_all_managed_output_entries
+from exp2res.services.privacy import (
+    checkpoint_residuals as _delete_checkpoint_residuals,
+    remove_managed_backups as _remove_managed_backups,
+)
 from exp2res.storage.repository import (
     RawLogBundle,
     get_bundle,
@@ -62,58 +65,6 @@ def show_log(
         if bundle is None:
             raise SelectorNotFoundError()
         return bundle
-
-
-def _delete_checkpoint_residuals(
-    connection: sqlite3.Connection, database: Path
-) -> tuple[str, ...]:
-    wal_path = str(database.with_name(database.name + "-wal"))
-    try:
-        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-        return () if checkpoint is not None and checkpoint[0] == 0 else (wal_path,)
-    except sqlite3.DatabaseError:
-        return (wal_path,)
-
-
-def _remove_managed_backups(workspace: Path) -> list[str]:
-    backup_root = workspace / ".exp2res" / "backup"
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    no_follow = getattr(os, "O_NOFOLLOW", 0)
-    descriptors: list[int] = []
-    try:
-        workspace_fd = os.open(workspace, directory_flags | no_follow)
-        descriptors.append(workspace_fd)
-        marker_fd = os.open(
-            ".exp2res", directory_flags | no_follow, dir_fd=workspace_fd
-        )
-        descriptors.append(marker_fd)
-        try:
-            backup_fd = os.open("backup", directory_flags | no_follow, dir_fd=marker_fd)
-        except FileNotFoundError:
-            return []
-        descriptors.append(backup_fd)
-
-        residual: list[str] = []
-        with os.scandir(backup_fd) as iterator:
-            entries = sorted(iterator, key=lambda entry: os.fsencode(entry.name))
-        for entry in entries:
-            managed_path = str((backup_root / entry.name).absolute())
-            try:
-                entry_mode = os.stat(
-                    entry.name, dir_fd=backup_fd, follow_symlinks=False
-                ).st_mode
-                if stat.S_ISREG(entry_mode) and not stat.S_ISLNK(entry_mode):
-                    os.unlink(entry.name, dir_fd=backup_fd)
-                else:
-                    residual.append(managed_path)
-            except OSError:
-                residual.append(managed_path)
-        return residual
-    except OSError:
-        return [str(backup_root.absolute())]
-    finally:
-        for descriptor in reversed(descriptors):
-            os.close(descriptor)
 
 
 def delete_log(

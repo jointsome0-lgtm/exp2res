@@ -101,6 +101,7 @@ from exp2res.services.lifecycle import (
 )
 from exp2res.services.signals import list_current_signals, run_signals_generate
 from exp2res.services.time_input import parse_occurred, workspace_zone
+from exp2res.services.workspace import PurgeOutcome, purge_workspace
 from exp2res.storage.repository import get_assessment_snapshot
 from exp2res.storage.workspace import (
     SchemaStatus,
@@ -136,6 +137,7 @@ contradictions_app = typer.Typer(
 signals_app = typer.Typer(help="Generate and inspect current self-signals.")
 assess_app = typer.Typer(help="Generate and inspect self-assessment views.")
 export_app = typer.Typer(help="Publish deterministic managed exports.")
+workspace_app = typer.Typer(help="Manage the whole initialized workspace.")
 app.add_typer(db_app, name="db")
 app.add_typer(log_app, name="log")
 app.add_typer(logs_app, name="logs")
@@ -147,6 +149,7 @@ app.add_typer(contradictions_app, name="contradictions")
 app.add_typer(signals_app, name="signals")
 app.add_typer(assess_app, name="assess")
 app.add_typer(export_app, name="export")
+app.add_typer(workspace_app, name="workspace")
 
 
 @dataclass(frozen=True)
@@ -378,17 +381,35 @@ def _run_command(
         # failed class (1-7) is not a completion and keeps its own code while
         # still reporting the residual paths.
         outcome.exit_code = 8
-        outcome.diagnostic_class = "managed_output_incomplete"
+        outcome.diagnostic_class = (
+            "deletion_incomplete"
+            if command == "workspace purge"
+            else "managed_output_incomplete"
+        )
     if residual_paths:
         # One diagnostic for every residual-carrying envelope — promoted,
         # direct class 8, cancelled, or failed — so a human-mode user always
         # sees the paths that still need cleanup.
+        # Not every residual is a file to delete: §8.1's erasure sequence
+        # reports the live database or its WAL when a checkpoint or `VACUUM`
+        # cannot complete, and §14.16 requires that database to remain. The
+        # wording therefore states that the paths are unresolved and never
+        # prescribes removing them.
         typer.echo(
-            "Managed-output cleanup did not complete; residual paths:",
+            "Cleanup did not complete; unresolved paths:",
             err=True,
         )
         for path in residual_paths:
             typer.echo(f"  {path}", err=True)
+        if outcome.human_result:
+            # The operation composed its primary result before the §13.14
+            # preamble residuals were merged in, so a residual contributed by
+            # the preamble alone would otherwise leave a human-mode success
+            # sentence standing against an incomplete class-8 envelope.
+            outcome.human_result += (
+                "\nCleanup is incomplete; the paths reported above are "
+                "unresolved."
+            )
 
     envelope = CLIEnvelope(
         command=command,
@@ -1835,8 +1856,6 @@ def logs_delete(
             result=result,
             human_result=(
                 f"Deleted raw log {deleted.selected_log.id}; rebuilt through Stage 5."
-                if not deleted.residual_paths and not lifecycle.residual_paths
-                else f"Deleted raw log {deleted.selected_log.id}; cleanup is incomplete."
             )
             + (
                 "\n"
@@ -1850,6 +1869,74 @@ def logs_delete(
         )
 
     _run_command(context, "logs delete", operation)
+
+
+def _purge_affected(purged: PurgeOutcome) -> AffectedIds:
+    return AffectedIds(
+        created=[],
+        superseded=[],
+        deleted=[
+            EntityIdGroup(entity_type=entity_type, ids=list(ids))
+            for entity_type, ids in purged.deleted_ids
+        ],
+    )
+
+
+@workspace_app.command("purge")
+def workspace_purge(
+    context: typer.Context,
+    yes: bool = typer.Option(False, "--yes"),
+) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        if not (controls.yes or yes):
+            if _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            if not typer.confirm(
+                "Purge all Exp2Res-managed data from this workspace?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
+        try:
+            purged = purge_workspace(workspace)
+        except OperationCancelledError as error:
+            committed = cast(
+                PurgeOutcome | None,
+                getattr(error, "purge_outcome", None),
+            )
+            if committed is not None:
+                error.affected_ids = _purge_affected(committed)
+                error.generation_ids = committed.generation_ids
+                error.residual_paths = committed.residual_paths
+            raise
+        try:
+            return _purge_outcome(purged)
+        except KeyboardInterrupt:
+            # The service returned a durable purge; §14.14 rule 6 keeps it
+            # reported even when the interrupt lands in result assembly.
+            cancelled = OperationCancelledError()
+            cancelled.affected_ids = _purge_affected(purged)
+            cancelled.generation_ids = list(purged.generation_ids)
+            cancelled.residual_paths = list(purged.residual_paths)
+            raise cancelled from None
+
+    _run_command(context, "workspace purge", operation)
+
+
+def _purge_outcome(purged: PurgeOutcome) -> Outcome:
+    exit_code = 8 if purged.residual_paths else 0
+    return Outcome(
+        exit_code=exit_code,
+        diagnostic_class="deletion_incomplete" if exit_code else None,
+        affected_ids=_purge_affected(purged),
+        generation_ids=list(purged.generation_ids),
+        residual_paths=list(purged.residual_paths),
+        result=None,
+        # One home for the incompleteness claim: `_run_command` appends it
+        # from the merged residual set, which this operation cannot see.
+        human_result=(
+            "Purged the workspace database; the initialized workspace remains."
+        ),
+    )
 
 
 def _parse_error_envelope(json_output: bool, diagnostic: str, message: str) -> None:

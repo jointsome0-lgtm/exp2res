@@ -42,6 +42,7 @@ CommandPath = Literal[
     "logs list",
     "logs show",
     "logs delete",
+    "workspace purge",
     "facts list",
     "facts show",
     "detections generate",

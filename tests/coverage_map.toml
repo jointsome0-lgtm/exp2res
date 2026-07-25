@@ -366,8 +366,24 @@ phase = "1"
 note = "Runner and Stage 3 fixtures prove bounded foreground calls, whole-stage rollback, durable failed telemetry, budget preflight, and handled cancellation; the full transport-failure matrix, hard-crash timings, late-response discard, stderr progress limits, and other named stages remain"
 
 ["21.44"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_workspace_purge.py::test_purge_inventory_covers_the_current_schema",
+  "tests/test_workspace_purge.py::test_workspace_purge_erases_live_content_and_retains_empty_workspace",
+  "tests/test_workspace_purge.py::test_workspace_purge_without_yes_refuses_before_destructive_work",
+  "tests/test_workspace_purge.py::test_workspace_purge_reports_symlink_residual_but_commits_database",
+  "tests/test_workspace_purge.py::test_preamble_residual_makes_the_human_result_report_incompleteness",
+  "tests/test_workspace_purge.py::test_interrupt_between_erasure_steps_still_reports_committed_purge",
+  "tests/test_workspace_purge.py::test_unreadable_managed_root_cannot_block_the_database_purge",
+  "tests/test_workspace_purge.py::test_interrupt_on_commit_return_still_reports_the_durable_purge",
+  "tests/test_workspace_purge.py::test_erasure_residual_never_tells_the_owner_to_remove_the_database",
+  "tests/test_workspace_purge.py::test_interrupt_during_connection_teardown_still_reports_the_purge",
+  "tests/test_workspace_purge.py::test_interrupt_in_pre_transaction_cleanup_keeps_its_residuals",
+  "tests/test_workspace_purge.py::test_busy_final_checkpoint_reports_the_live_database_too",
+  "tests/test_workspace_purge.py::test_interrupt_in_cli_result_assembly_still_reports_the_purge",
+]
 phase = "4"
+note = "The workspace purge half is proven, including complete schema inventory, consent, retained initialization, SQLite erasure, and residual symlink semantics; jd delete awaits its implementation phase"
 
 ["21.45"]
 status = "pending"

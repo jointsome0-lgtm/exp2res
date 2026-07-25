@@ -696,17 +696,22 @@ def remove_assessment_sets(
 def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
     """Remove every contained entry below both reserved managed parents."""
 
+    # §13.13 rule 6: this enumeration serves privacy deletions that commit
+    # whether or not cleanup succeeds, so every filesystem error becomes a
+    # residual path rather than an exception that could abort the caller.
     try:
         _root, out_root = _canonical_roots(workspace)
     except ManagedOutputIncompleteError as error:
         return error.residual_paths
+    except OSError:
+        return (str((workspace / "out").absolute()),)
 
     residuals: set[str] = set()
     for parent_name in ("assessment", "branch"):
         parent = out_root / parent_name
-        if _lstat(parent) is None:
-            continue
         try:
+            if _lstat(parent) is None:
+                continue
             names = _directory_names(parent, out_root)
         except OSError:
             residuals.add(str(parent))
@@ -714,7 +719,11 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
         removed = False
         for name in names:
             path = parent / name
-            if _remove_entry(path, out_root):
+            try:
+                entry_removed = _remove_entry(path, out_root)
+            except OSError:
+                entry_removed = False
+            if entry_removed:
                 removed = True
             else:
                 residuals.add(str(path))
