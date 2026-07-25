@@ -922,6 +922,108 @@ def test_ignore_character_class_with_leading_bracket_stays_applicable(
     assert failure.value.diagnostic_class == "artifact_locator_ignored"
 
 
+@pytest.mark.parametrize("boundary", ["capture", "prompt"])
+def test_posix_named_ignore_class_applies_at_both_privacy_boundaries(
+    workspace: Path,
+    boundary: str,
+) -> None:
+    """§21.51 / §29.4: named classes bind acquisition and prompt re-checks."""
+
+    artifact = workspace / "1Vera Example board.md"
+    artifact.write_text("Vera Example numbered board.\n", encoding="utf-8")
+    captured = None
+    if boundary == "prompt":
+        captured = capture_daily(
+            workspace,
+            raw_text="Vera Example captured provenance before a named-class rule.",
+            artifacts=(str(artifact),),
+            clock=lambda: FIXED_NOW,
+            id_factory=_capture_ids(
+                "log_vera_named_class",
+                "evi_vera_named_class_manual",
+                "evi_vera_named_class_artifact",
+            ),
+        )
+
+    _set_ignore_paths(workspace, "[[:digit:]]Vera Example board.md")
+    if boundary == "capture":
+        with pytest.raises(InvalidInputError) as failure:
+            capture_daily(
+                workspace,
+                raw_text="Vera Example captured a named-class ignored locator.",
+                artifacts=(str(artifact),),
+                clock=lambda: FIXED_NOW,
+            )
+        assert failure.value.exit_code == 2
+        assert failure.value.diagnostic_class == "artifact_locator_ignored"
+        assert _counts(workspace) == (0, 0)
+        return
+
+    assert captured is not None
+    fake = FakeContractRunner([])
+    with pytest.raises(LocatorReauthorizationFailedError) as failure:
+        run_stage3(workspace, fake, TestIds(), log_id=captured.raw_log.id)
+    assert failure.value.exit_code == 7
+    assert failure.value.diagnostic_class == "locator_reauthorization_failed"
+    assert fake.calls == []
+    assert show_log(workspace, log_id=captured.raw_log.id).evidence_items == (
+        captured.evidence_items
+    )
+
+
+def test_ignore_matcher_supports_every_git_posix_named_class() -> None:
+    """§21.51 / §29.4: the local matcher carries Git's complete class set."""
+
+    cases = {
+        "alnum": ("A", "-"),
+        "alpha": ("z", "7"),
+        "blank": ("\t", "A"),
+        "cntrl": ("\x01", " "),
+        "digit": ("7", "A"),
+        "graph": ("!", " "),
+        "lower": ("z", "Z"),
+        "print": (" ", "\x01"),
+        "punct": ("!", "A"),
+        "space": ("\t", "A"),
+        "upper": ("Z", "z"),
+        "xdigit": ("f", "g"),
+    }
+    for name, (matching, nonmatching) in cases.items():
+        matcher, _anchored, _directory_only = _ignore_matcher(
+            f"[[:{name}:]]"
+        )
+        assert matcher.fullmatch(matching) is not None
+        assert matcher.fullmatch(nonmatching) is None
+
+    for name in ("graph", "print", "punct"):
+        matcher, _anchored, _directory_only = _ignore_matcher(
+            f"[[:{name}:]]"
+        )
+        assert matcher.fullmatch("/") is None
+
+    folded, _anchored, _directory_only = _ignore_matcher(
+        "[[:upper:]]",
+        folded=True,
+    )
+    assert folded.fullmatch("a") is not None
+
+    combined, _anchored, _directory_only = _ignore_matcher(
+        "[a-c[:digit:]x-z]"
+    )
+    assert all(
+        combined.fullmatch(value) is not None for value in ("5", "b", "y")
+    )
+    assert combined.fullmatch("q") is None
+
+    invalid, _anchored, _directory_only = _ignore_matcher(
+        "[[:digit:][:spaci:]]"
+    )
+    assert invalid.fullmatch("1") is None
+
+    negated, _anchored, _directory_only = _ignore_matcher("ab[!x]cd")
+    assert negated.fullmatch("ab/cd") is None
+
+
 def test_repeated_recursive_segments_collapse_to_one_matcher() -> None:
     """§21.51 / §29.4: adjacent `**` segments cannot multiply the match cost."""
 

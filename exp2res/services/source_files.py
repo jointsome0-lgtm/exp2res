@@ -60,6 +60,20 @@ DENIED_COMPONENTS = {
     "dist",
     "build",
 }
+POSIX_CLASS_MEMBERS = {
+    "alnum": "0-9A-Za-z",
+    "alpha": "A-Za-z",
+    "blank": r"\x09\x20",
+    "cntrl": r"\x00-\x1f\x7f",
+    "digit": "0-9",
+    "graph": r"\x21-\x7e",
+    "lower": "a-z",
+    "print": r"\x20-\x7e",
+    "punct": r"\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e",
+    "space": r"\x09-\x0d\x20",
+    "upper": "A-Z",
+    "xdigit": "0-9A-Fa-f",
+}
 
 
 @dataclass(frozen=True)
@@ -128,7 +142,60 @@ def _mandatory_denied(path: Path, *, folded: bool) -> bool:
     return False
 
 
-def _segment_regex(segment: str) -> str:
+def _class_regex(
+    segment: str,
+    index: int,
+    *,
+    folded: bool,
+) -> tuple[str, int] | None:
+    """Translate one git wildmatch bracket expression.
+
+    Git recognizes exactly the POSIX named classes in
+    ``POSIX_CLASS_MEMBERS``. An unknown named class makes the whole pattern
+    non-matching, while an unterminated bracket opener remains literal.
+    """
+
+    cursor = index + 1
+    negated = segment[cursor : cursor + 1] in {"!", "^"}
+    if negated:
+        cursor += 1
+
+    members: list[str] = []
+    if segment[cursor : cursor + 1] == "]":
+        members.append(r"\]")
+        cursor += 1
+
+    while cursor < len(segment):
+        char = segment[cursor]
+        if char == "]":
+            return (
+                # Git's WM_PATHNAME check rejects `/` after evaluating every
+                # bracket expression, including a negated one.
+                f"(?!/)[{'^' if negated else ''}{''.join(members)}]",
+                cursor + 1,
+            )
+        if segment.startswith("[:", cursor):
+            class_end = segment.find(":]", cursor + 2)
+            if class_end != -1:
+                name = segment[cursor + 2 : class_end]
+                class_members = POSIX_CLASS_MEMBERS.get(name)
+                if class_members is None:
+                    return "(?!)", len(segment)
+                if folded and name == "upper":
+                    class_members = "a-z"
+                members.append(class_members)
+                cursor = class_end + 2
+                continue
+        if char in {"\\", "[", "]", "^", "&", "~"}:
+            members.append(f"\\{char}")
+        else:
+            # A raw `-` intentionally retains git's range semantics.
+            members.append(char)
+        cursor += 1
+    return None
+
+
+def _segment_regex(segment: str, *, folded: bool = False) -> str:
     """Translate one gitignore path segment; wildcards never cross `/`."""
 
     parts: list[str] = []
@@ -143,25 +210,10 @@ def _segment_regex(segment: str) -> str:
         if char == "?":
             parts.append("[^/]")
         elif char == "[":
-            # A `]` directly after the class opener, or after its negation
-            # marker, is a member rather than the terminator.
-            start = index + 1
-            if segment[start : start + 1] in {"!", "^"}:
-                start += 1
-            if segment[start : start + 1] == "]":
-                start += 1
-            close = segment.find("]", start)
-            if close != -1:
-                body = segment[index + 1 : close]
-                negated = body[:1] in {"!", "^"}
-                if negated:
-                    body = body[1:]
-                # Python's `re` gives a leading `]` no literal reading and the
-                # config gate keeps backslashes out of a pattern, so members
-                # are escaped explicitly before the class is emitted.
-                members = body.replace("\\", "\\\\").replace("]", "\\]")
-                parts.append(f"[{'^' if negated else ''}{members}]")
-                index = close + 1
+            translated = _class_regex(segment, index, folded=folded)
+            if translated is not None:
+                expression, index = translated
+                parts.append(expression)
                 continue
             parts.append(re.escape(char))
         else:
@@ -171,7 +223,11 @@ def _segment_regex(segment: str) -> str:
 
 
 @lru_cache(maxsize=256)
-def _ignore_matcher(pattern: str) -> tuple[re.Pattern[str], bool, bool]:
+def _ignore_matcher(
+    pattern: str,
+    *,
+    folded: bool = False,
+) -> tuple[re.Pattern[str], bool, bool]:
     """Compile one §29.4 user pattern under gitignore matching rules.
 
     Returns the compiled expression plus whether the pattern is anchored to
@@ -201,7 +257,7 @@ def _ignore_matcher(pattern: str) -> tuple[re.Pattern[str], bool, bool]:
             # The group consumes its own separator, so none is appended.
             parts.append(".+" if last else "(?:[^/]+/)*")
             continue
-        parts.append(_segment_regex(segment))
+        parts.append(_segment_regex(segment, folded=folded))
         if not last:
             parts.append("/")
     return re.compile("".join(parts)), anchored, directory_only
@@ -234,7 +290,10 @@ def _ignored(path: Path, *, config: WorkspaceConfig, folded: bool) -> bool:
     selected_is_directory = path.is_dir()
     for pattern in config.ignore_paths:
         compared_pattern = pattern.casefold() if folded else pattern
-        matcher, anchored, directory_only = _ignore_matcher(compared_pattern)
+        matcher, anchored, directory_only = _ignore_matcher(
+            compared_pattern,
+            folded=folded,
+        )
         targets = (relative,) if anchored else (relative, absolute)
         for target in targets:
             if target is None:
