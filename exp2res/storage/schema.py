@@ -828,6 +828,40 @@ SCHEMA_V7_SQL = "\n".join(
     )
 )
 
+# §14.16 owns one complete, referentially ordered whole-workspace purge.
+# Keeping the inventory beside the current schema makes a newly added table a
+# deliberate compile-time/test-time lifecycle decision instead of a silent
+# omission in service code.
+PURGE_TABLE_ORDER = (
+    "verification_findings",
+    "self_claims",
+    "assessment_snapshots",
+    "gap_questions",
+    "contradictions",
+    "self_signals",
+    "fact_sources",
+    "experience_facts",
+    "evidence_items",
+    "raw_logs",
+    "llm_calls",
+    "processing_runs",
+)
+
+# Tables with one entity `id` contribute typed §14.14 affected-ID groups.
+# `fact_sources` is a link table and `llm_calls` is identified by its run.
+PURGE_ENTITY_TABLES = (
+    ("raw_logs", "raw_log"),
+    ("evidence_items", "evidence_item"),
+    ("experience_facts", "experience_fact"),
+    ("gap_questions", "gap_question"),
+    ("contradictions", "contradiction"),
+    ("self_signals", "self_signal"),
+    ("assessment_snapshots", "assessment_snapshot"),
+    ("self_claims", "self_claim"),
+    ("verification_findings", "verification_finding"),
+    ("processing_runs", "processing_run"),
+)
+
 
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
