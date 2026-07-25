@@ -55,8 +55,16 @@ class ArtifactLocator:
     def stored_key(self) -> tuple[str, str]:
         if self.path is not None:
             return ("path", self.path)
-        assert self.uri is not None
+        if self.uri is None:
+            raise ArtifactLocatorInvalidError()
         return ("uri", self.uri)
+
+    @property
+    def order_key(self) -> tuple[int, bytes]:
+        """§13.1's canonical order: local locators first, then by stored bytes."""
+
+        field, value = self.stored_key
+        return (0 if field == "path" else 1, value.encode("utf-8"))
 
 
 def _forbidden_supplied_form(value: str) -> bool:
@@ -200,7 +208,10 @@ def authorize_artifact_locators(
             raise ArtifactLocatorDuplicateError()
         stored_keys.add(locator.stored_key)
         accepted.append(locator)
-    return tuple(accepted)
+    # §13.1 orders the created items by stored locator, not by input order, so
+    # the persisted bundle and every later read agree without depending on an
+    # insertion-order storage artifact.
+    return tuple(sorted(accepted, key=lambda locator: locator.order_key))
 
 
 def read_capture_file(

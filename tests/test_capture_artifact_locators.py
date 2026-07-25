@@ -57,12 +57,12 @@ def _invoke_json(workspace: Path, arguments: list[str]):
     return result, json.loads(result.stdout)
 
 
-def test_artifact_locators_round_trip_in_order_without_any_dereference(
+def test_artifact_locators_round_trip_in_canonical_order_without_dereference(
     workspace: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """§21.51: classification is exact and locator values stay inert."""
+    """§21.51: classification is exact, order is canonical, values stay inert."""
 
     first = tmp_path / "Vera Example artifact one.md"
     first.write_text("Vera Example inert artifact one.\n", encoding="utf-8")
@@ -87,10 +87,12 @@ def test_artifact_locators_round_trip_in_order_without_any_dereference(
     captured = capture_daily(
         workspace,
         raw_text="Vera Example captured inert artifact provenance.",
+        # Supplied deliberately out of canonical order: §13.1 orders the
+        # created items by stored value, not by the order they were typed.
         artifacts=(
-            str(alias),
-            f"file:{quote(str(second), safe='/')}",
             remote,
+            f"file:{quote(str(second), safe='/')}",
+            str(alias),
         ),
         clock=lambda: FIXED_NOW,
         id_factory=_capture_ids(
@@ -239,7 +241,7 @@ def test_repeatable_cli_artifacts_reach_logs_show_projection(
     workspace: Path,
     tmp_path: Path,
 ) -> None:
-    """§21.51 / §24.55: CLI capture and inspection preserve supplied order."""
+    """§21.51 / §24.55: CLI capture and inspection agree on canonical order."""
 
     source = tmp_path / "Vera Example daily source.md"
     source.write_text("Vera Example captured a locator through CLI.\n", encoding="utf-8")

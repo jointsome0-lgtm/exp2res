@@ -455,7 +455,7 @@ note = "Both shipped agent-backed adapters execute the shared control, workspace
 ["21.51"]
 status = "covered"
 nodes = [
-  "tests/test_capture_artifact_locators.py::test_artifact_locators_round_trip_in_order_without_any_dereference",
+  "tests/test_capture_artifact_locators.py::test_artifact_locators_round_trip_in_canonical_order_without_dereference",
   "tests/test_capture_artifact_locators.py::test_rejected_local_artifact_locator_is_atomic[unresolvable-artifact_locator_unresolved]",
   "tests/test_capture_artifact_locators.py::test_rejected_local_artifact_locator_is_atomic[denied-artifact_locator_denied]",
   "tests/test_capture_artifact_locators.py::test_rejected_local_artifact_locator_is_atomic[ignored-artifact_locator_ignored]",

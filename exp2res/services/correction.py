@@ -73,12 +73,6 @@ class CorrectionOutcome:
     invalidated_views: tuple[InvalidatedView, ...]
     residual_paths: tuple[str, ...]
 
-    @property
-    def evidence_item(self) -> EvidenceItem:
-        """Compatibility alias for the always-first manual claim."""
-
-        return self.evidence_items[0]
-
 
 def _id_key(value: str) -> bytes:
     return value.encode("utf-8")

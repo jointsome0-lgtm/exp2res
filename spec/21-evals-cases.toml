@@ -1653,9 +1653,9 @@ And an adapter that cannot rule out an agent affordance by declaration classifie
 title = "Owner-Controlled Artifact Locators Stay Inert and Calibrated"
 enforces = "§9.4, §11's Model validation policy, §13.1, §13.3 rule 10, §14.2–§14.4, §14.7, §14.14 rules 4–5, and §29.4"
 case = '''
-Given each owner-authored capture form supplies ordered local POSIX paths, file URIs, and absolute non-file URIs through its repeatable artifact option
+Given each owner-authored capture form supplies local POSIX paths, file URIs, and absolute non-file URIs through its repeatable artifact option
 When Stage 1 authorizes and persists the record
-Then the manual_claim item is created and reported first and one artifact_reference item follows for each locator in supplied order
+Then the manual_claim item is created and reported first and one artifact_reference item follows for each locator in §13.1's canonical stored-value order, independent of input order and of any storage insertion artifact
 And local locators round-trip only through path as their symlink-resolved canonical real paths while remote locators round-trip byte-for-byte only through uri
 And every artifact item has title = null, metadata = {}, and summary = "Owner-supplied artifact reference."
 And logs show projects that same ordered linked evidence without raw text or metadata in JSON mode
