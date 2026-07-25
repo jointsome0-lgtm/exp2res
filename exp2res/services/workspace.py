@@ -97,8 +97,29 @@ def purge_workspace(
         # §14.16: enumerate and attempt every managed removal before the one
         # database purge transaction. The managed-output helper covers final,
         # candidate, rollback, and other entries under both reserved parents.
-        residual_paths.extend(remove_managed_backups(workspace))
-        residual_paths.extend(remove_all_managed_output_entries(workspace))
+        # §13.13 rule 6: no filesystem failure may block the database purge, so
+        # an error the helpers cannot classify still becomes a residual path.
+        for remove, fallback in (
+            (remove_managed_backups, workspace / ".exp2res" / "backup"),
+            (remove_all_managed_output_entries, workspace / "out"),
+        ):
+            try:
+                residual_paths.extend(remove(workspace))
+            except OSError:
+                residual_paths.append(str(fallback.absolute()))
+
+        database = workspace / ".exp2res" / "exp2res.sqlite"
+        deleted_ids: tuple[tuple[str, tuple[str, ...]], ...] = ()
+        generation_ids: tuple[str, ...] = ()
+
+        def outcome(extra_residuals: tuple[str, ...] = ()) -> PurgeOutcome:
+            return PurgeOutcome(
+                deleted_ids=deleted_ids,
+                generation_ids=generation_ids,
+                residual_paths=_sorted_paths(
+                    [*residual_paths, *extra_residuals]
+                ),
+            )
 
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -128,33 +149,17 @@ def purge_workspace(
             connection.rollback()
             raise
 
-        database = workspace / ".exp2res" / "exp2res.sqlite"
-
-        def outcome(extra_residuals: tuple[str, ...] = ()) -> PurgeOutcome:
-            return PurgeOutcome(
-                deleted_ids=deleted_ids,
-                generation_ids=generation_ids,
-                residual_paths=_sorted_paths(
-                    [*residual_paths, *extra_residuals]
-                ),
-            )
-
         # §8.1: checkpoint, VACUUM outside any transaction, then checkpoint
         # again. Each step is attempted even if an earlier erasure step reports
         # incomplete, because the committed privacy deletion is never restored.
+        # §14.14 rule 6: the whole post-commit region is one cancellation
+        # boundary — an interrupt between two erasure steps must still carry
+        # the committed deletion and the unproven paths, never an empty
+        # cancelled envelope.
         try:
             residual_paths.extend(checkpoint_residuals(connection, database))
-        except KeyboardInterrupt:
-            cancelled = OperationCancelledError()
-            cancelled.purge_outcome = outcome(
-                (
-                    str(database),
-                    str(database.with_name(database.name + "-wal")),
-                )
-            )
-            raise cancelled from None
-        try:
             residual_paths.extend(vacuum_residuals(connection, database))
+            residual_paths.extend(checkpoint_residuals(connection, database))
         except KeyboardInterrupt:
             cancelled = OperationCancelledError()
             cancelled.purge_outcome = outcome(
@@ -162,14 +167,6 @@ def purge_workspace(
                     str(database),
                     str(database.with_name(database.name + "-wal")),
                 )
-            )
-            raise cancelled from None
-        try:
-            residual_paths.extend(checkpoint_residuals(connection, database))
-        except KeyboardInterrupt:
-            cancelled = OperationCancelledError()
-            cancelled.purge_outcome = outcome(
-                (str(database.with_name(database.name + "-wal")),)
             )
             raise cancelled from None
 

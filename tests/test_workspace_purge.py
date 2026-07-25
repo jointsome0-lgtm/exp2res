@@ -282,7 +282,7 @@ def test_workspace_purge_human_mode_prints_primary_result_to_stdout(
 
     assert result.exit_code == 0
     assert result.stdout == (
-        "Purged all managed workspace data; the initialized workspace remains.\n"
+        "Purged the workspace database; the initialized workspace remains.\n"
     )
     assert result.stderr == ""
 
@@ -445,3 +445,127 @@ def test_workspace_purge_preamble_residual_uses_deletion_diagnostic(
     assert envelope["residual_paths"] == [str(assessment)]
     with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
         assert connection.execute("SELECT COUNT(*) FROM raw_logs").fetchone()[0] == 0
+
+
+def test_preamble_residual_makes_the_human_result_report_incompleteness(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.16: a residual the purge service never sees still makes the human
+    primary result incomplete, not a standing success sentence."""
+
+    capture_daily(
+        workspace,
+        raw_text="Vera Example preamble residual purge",
+        clock=lambda: FIXED_NOW,
+    )
+    assessment = workspace / "out" / "assessment"
+    assessment.mkdir(mode=0o700, exist_ok=True)
+    target = workspace.parent / "Vera Example purge preamble target"
+    target.mkdir(exist_ok=True)
+    candidate = assessment / (
+        ".exp2res-candidate-snapshot_vera_purge_preamble-" + "b" * 32
+    )
+    candidate.symlink_to(target, target_is_directory=True)
+    # The preamble reports the ambiguous sibling; this purge run reports no
+    # residual of its own, which is exactly the divergence under test.
+    monkeypatch.setattr(
+        workspace_service, "remove_all_managed_output_entries", lambda _workspace: ()
+    )
+
+    result = runner.invoke(
+        app,
+        ["--workspace", str(workspace), "workspace", "purge", "--yes"],
+    )
+
+    assert result.exit_code == 8
+    assert result.stdout == (
+        "Purged the workspace database; the initialized workspace remains.\n"
+        "Managed cleanup is incomplete; "
+        "the residual paths above still need removal.\n"
+    )
+    assert candidate.is_symlink()
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_logs").fetchone()[0] == 0
+
+
+def test_interrupt_between_erasure_steps_still_reports_committed_purge(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: cancellation anywhere after commit carries the committed
+    deletion and its unproven paths, never an empty cancelled envelope."""
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example purge interrupt sentinel",
+        clock=lambda: FIXED_NOW,
+    )
+
+    def interrupt(*_arguments, **_keywords):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(workspace_service, "vacuum_residuals", interrupt)
+
+    result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    deleted = {
+        group["entity_type"]: group["ids"] for group in envelope["affected_ids"]["deleted"]
+    }
+    assert deleted["raw_log"] == [bundle.raw_log.id]
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    assert str(database) in envelope["residual_paths"]
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM raw_logs").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM schema_meta").fetchone()[0] == 1
+
+
+def test_unreadable_managed_root_cannot_block_the_database_purge(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 6: a filesystem error becomes a residual path; it never
+    leaves private rows behind by aborting before the purge transaction."""
+
+    capture_daily(
+        workspace,
+        raw_text="Vera Example unreadable managed root",
+        clock=lambda: FIXED_NOW,
+    )
+
+    def denied(_workspace: Path) -> tuple[str, ...]:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(
+        workspace_service, "remove_all_managed_output_entries", denied
+    )
+
+    result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str((workspace / "out").absolute())]
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        assert all(
+            connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            for table in PURGE_TABLE_ORDER
+        )
+
+
+def test_managed_enumeration_is_total_when_an_entry_cannot_be_inspected(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shared helper reports, never raises, so any privacy flow that calls
+    it keeps its own commit-despite-cleanup-failure contract."""
+
+    assessment = workspace / "out" / "assessment"
+    assessment.mkdir(mode=0o700, exist_ok=True)
+    (assessment / "snapshot_vera_unreadable").mkdir(mode=0o700, exist_ok=True)
+
+    def denied(*_arguments, **_keywords):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(managed_outputs, "_remove_entry", denied)
+
+    residuals = managed_outputs.remove_all_managed_output_entries(workspace)
+
+    assert residuals == (str(assessment / "snapshot_vera_unreadable"),)

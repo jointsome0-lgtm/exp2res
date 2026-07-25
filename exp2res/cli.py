@@ -395,6 +395,15 @@ def _run_command(
         )
         for path in residual_paths:
             typer.echo(f"  {path}", err=True)
+        if outcome.human_result:
+            # The operation composed its primary result before the §13.14
+            # preamble residuals were merged in, so a residual contributed by
+            # the preamble alone would otherwise leave a human-mode success
+            # sentence standing against an incomplete class-8 envelope.
+            outcome.human_result += (
+                "\nManaged cleanup is incomplete; "
+                "the residual paths above still need removal."
+            )
 
     envelope = CLIEnvelope(
         command=command,
@@ -1795,8 +1804,6 @@ def logs_delete(
             result=result,
             human_result=(
                 f"Deleted raw log {deleted.selected_log.id}; rebuilt through Stage 5."
-                if not deleted.residual_paths and not lifecycle.residual_paths
-                else f"Deleted raw log {deleted.selected_log.id}; cleanup is incomplete."
             )
             + (
                 "\n"
@@ -1857,10 +1864,10 @@ def workspace_purge(
             generation_ids=list(purged.generation_ids),
             residual_paths=list(purged.residual_paths),
             result=None,
+            # One home for the incompleteness claim: `_run_command` appends it
+            # from the merged residual set, which this operation cannot see.
             human_result=(
-                "Purged all managed workspace data; the initialized workspace remains."
-                if not purged.residual_paths
-                else "Purged the workspace database; managed cleanup is incomplete."
+                "Purged the workspace database; the initialized workspace remains."
             ),
         )
 
