@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 import typer
@@ -355,6 +356,109 @@ def test_noninteractive_retro_rejects_unknown_period_and_missing_typed_values(
     )
     assert malformed_range.exit_code == 2
     assert range_envelope["diagnostic_class"] == "invalid_time_shape"
+    assert list_logs(workspace) == ()
+
+
+def test_open_retro_period_round_trips_null_end_without_marker_or_decay(
+    workspace: Path,
+    tmp_path: Path,
+) -> None:
+    """§21.53/§24.57: explicit start/.. survives capture and later reads."""
+
+    source = tmp_path / "Vera Example ongoing work.md"
+    source.write_text(
+        "Vera Example has worked on the synthetic project since April.\n",
+        encoding="utf-8",
+    )
+    result, envelope = invoke_json(
+        workspace,
+        [
+            "log",
+            "retro",
+            "--file",
+            str(source),
+            "--precision",
+            "approximate_range",
+            "--period",
+            "2026-04-01/..",
+            "--confidence",
+            "medium",
+            "--owner-authored",
+        ],
+    )
+    assert result.exit_code == 0, result.stderr
+    log_id = created_log_id(envelope)
+    first = show_log(workspace, log_id=log_id).raw_log
+    second = show_log(workspace, log_id=log_id).raw_log
+    assert first.occurred == second.occurred
+    assert first.occurred.start is not None
+    assert first.occurred.start.isoformat() == "2026-04-01T00:00:00+00:00"
+    assert first.occurred.end is None
+    assert first.occurred.precision == "approximate_range"
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        columns = [
+            row[1] for row in connection.execute("PRAGMA table_info(raw_logs)")
+        ]
+        stored = connection.execute(
+            """
+            SELECT occurred_start, occurred_end, temporal_precision
+            FROM raw_logs WHERE id = ?
+            """,
+            (log_id,),
+        ).fetchone()
+    assert stored == (
+        "2026-04-01T00:00:00+00:00",
+        None,
+        "approximate_range",
+    )
+    assert not any("open" in column or "ongoing" in column for column in columns)
+
+
+@pytest.mark.parametrize(
+    ("precision", "period"),
+    [
+        ("date_range", "2026-04-01/"),
+        ("date_range", ".."),
+        ("date_range", "../2026-05-01"),
+        ("exact_day", "2026-04-01/.."),
+        ("approximate_range", "2026-04-01"),
+    ],
+    ids=[
+        "empty-end",
+        "bare-open-marker",
+        "missing-start",
+        "non-range-open",
+        "separator-free-range",
+    ],
+)
+def test_invalid_open_period_forms_fail_class_2_without_persistence(
+    workspace: Path,
+    tmp_path: Path,
+    precision: str,
+    period: str,
+) -> None:
+    """§21.53/§24.57: openness is typed only by range start/..."""
+
+    source = tmp_path / "Vera Example invalid open period.md"
+    source.write_text("Vera Example invalid open period.\n", encoding="utf-8")
+    result, envelope = invoke_json(
+        workspace,
+        [
+            "log",
+            "retro",
+            "--file",
+            str(source),
+            "--precision",
+            precision,
+            "--period",
+            period,
+            "--confidence",
+            "medium",
+            "--owner-authored",
+        ],
+    )
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] in {"invalid_time", "invalid_time_shape"}
     assert list_logs(workspace) == ()
 
 

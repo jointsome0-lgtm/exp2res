@@ -1718,3 +1718,41 @@ Given non-prompt log retro omits --precision, --confidence, or the period requir
 When stdin is non-TTY or --no-input is set
 Then the command fails closed under §14.14 rule 3 before reading record text, writing a row, or displaying a prompt
 '''
+
+["21.53"]
+title = "Ongoing Periods Stay Open, Attested, and Unnarrowed"
+enforces = "§5.4, §5.5, §11.1, §12 rules 3 and 5, §13.3 rules 2 and 10, §14.3, §14.4, §14.14 rule 8, §15.2, §16.7, and §17"
+case = '''
+Given an owner records ongoing work with log retro --precision approximate_range --period '2026-04-01/..'
+When the record is persisted and later read back
+Then OccurredAt stores the resolved start with end = null at the range precision, and no end bound is invented from the clock, the workspace timezone, or recorded_at
+And the stored row keeps its NULL occurred_end with no marker column, flag, or sentinel instant, and hydrates back to the same open-ended shape
+And reading the record on any later day returns byte-identical stored bounds
+
+Given open-period input forms that do not type openness explicitly — 'start/', a bare '..', '2026-04/..' at a non-range precision, and a range value without a separator
+When each is supplied to retrospective capture
+Then every form fails in exit class 2 without persisting a row, and none is silently accepted as an open period
+
+Given a fact candidate extracted from a lineage whose governing record carries an open-ended placement
+When Stage 3 validates the candidate
+Then a null transport occurred copies the open placement unchanged onto the fact
+And a closed narrowing inside the governing record's attested window [start, recorded_at) commits only when a selected effective record explicitly states that bounded placement
+And the same closed narrowing without such support fails as a §16.7 temporal upgrade, because an open-ended support entails no bounded candidate
+And a candidate placed at or after the governing record's recorded_at fails containment even though [start, ∞) would trivially contain it
+And a candidate that replaces a closed governing end bound with end = null fails as widening
+
+Given an open-ended governing placement whose start is at or after its record's recorded_at
+When Stage 3 validates candidates against it
+Then the attested window is empty, every closed narrowing fails, and copying the open placement remains legal
+
+Given a retained lineage whose root records an open-ended period
+When the owner captures a correction that restates the same open placement, and separately a correction that supplies an end
+Then the restating correction governs with its own later recorded_at, extending the attested window that bounds narrowing for the facts it governs
+And the closing correction leaves those facts with a closed placement, while every retained row, including the displaced root's stored bounds, stays unchanged
+
+Given an open-ended placement and its attesting record's recorded_at
+When §17 renders it
+Then the rendering shows the stored start, an explicit open-period label, the approximate flavor when the precision is approximate_range, and the attesting recorded_at as a labeled as-of anchor in its stored ISO 8601 form
+And it contains no end bound, no present-tense continuation such as "to the present", "currently", or "still", and no export wall-clock value
+And rendering the same value at two different wall-clock times produces identical bytes
+'''

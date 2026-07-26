@@ -828,6 +828,97 @@ def test_fact_insert_accepts_narrowing_supported_by_a_selected_effective_record(
     assert stored[0] == "exact_day"
 
 
+def test_fact_insert_uses_open_governing_records_attested_window(
+    workspace: Path,
+) -> None:
+    """§16.7/§21.53: the storage boundary clips bounded candidates too."""
+
+    start = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    open_period = OccurredAt(
+        start=start,
+        end=None,
+        precision="date_range",
+        confidence="medium",
+    )
+    _month_lineage_log(
+        workspace,
+        log_id="log_vera_attested_root",
+        occurred=open_period,
+        recorded_at=FIXED_NOW - timedelta(hours=3),
+    )
+    at_attestation = OccurredAt(
+        start=FIXED_NOW,
+        end=FIXED_NOW + timedelta(hours=1),
+        precision="date_range",
+        confidence="medium",
+    )
+    support_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_attested_support",
+        occurred=at_attestation,
+        corrects_log_id="log_vera_attested_root",
+        recorded_at=FIXED_NOW - timedelta(hours=1),
+    )
+    governing_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_attested_governing",
+        occurred=open_period,
+        corrects_log_id="log_vera_attested_root",
+        recorded_at=FIXED_NOW,
+    )
+    rejected = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=sorted(
+                [
+                    "log_vera_attested_support",
+                    "log_vera_attested_governing",
+                ]
+            ),
+            evidence_item_ids=sorted([support_item, governing_item]),
+            occurred=at_attestation,
+        )
+    )
+    copied = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=["log_vera_attested_governing"],
+            evidence_item_ids=[governing_item],
+            occurred=open_period,
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        with pytest.raises(IntegrityFailureError):
+            insert_experience_fact(
+                connection,
+                rejected,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        insert_experience_fact(
+            connection,
+            copied,
+            produced_by_run_id=RUN_A,
+            generation_id=GEN_A,
+        )
+        stored_end = connection.execute(
+            "SELECT occurred_end FROM experience_facts WHERE id = ?",
+            (copied.id,),
+        ).fetchone()[0]
+        connection.rollback()
+    assert stored_end is None
+
+
 def test_fact_insert_rejects_placements_no_selected_record_entails(
     workspace: Path,
 ) -> None:

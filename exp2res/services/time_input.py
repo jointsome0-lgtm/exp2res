@@ -137,9 +137,12 @@ def parse_occurred(
         parts = period.split("/", 1)
         if len(parts) != 2:
             raise _time_error("invalid_time_shape", "A range requires start/end values.")
+        start_text, end_text = parts
+        if not start_text or start_text == ".." or not end_text:
+            raise _time_error("invalid_time_shape", "A range requires start/end values.")
         return _build_occurred(
-            start=_parse_datetime(parts[0], zone),
-            end=_parse_datetime(parts[1], zone),
+            start=_parse_datetime(start_text, zone),
+            end=None if end_text == ".." else _parse_datetime(end_text, zone),
             precision=precision,
             confidence=confidence,
         )

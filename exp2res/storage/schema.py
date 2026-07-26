@@ -828,6 +828,34 @@ SCHEMA_V7_SQL = "\n".join(
     )
 )
 
+# §11.1/§12 rule 5: schema v8 changes only the two flattened OccurredAt
+# range-shape checks. Historical schema strings remain closed-range fixtures.
+RAW_LOGS_V8_SQL = RAW_LOGS_V3_SQL.replace(
+    "AND occurred_start IS NOT NULL AND occurred_end IS NOT NULL",
+    "AND occurred_start IS NOT NULL",
+    1,
+)
+EXPERIENCE_FACTS_V8_SQL = EXPERIENCE_FACTS_SQL.replace(
+    "AND occurred_start IS NOT NULL AND occurred_end IS NOT NULL",
+    "AND occurred_start IS NOT NULL",
+    1,
+).replace(
+    "CREATE TABLE experience_facts",
+    'CREATE TABLE "experience_facts"',
+    1,
+)
+RAW_LOGS_V8_NEW_SQL = RAW_LOGS_V8_SQL.replace(
+    'CREATE TABLE "raw_logs"', "CREATE TABLE raw_logs_new", 1
+)
+EXPERIENCE_FACTS_V8_NEW_SQL = EXPERIENCE_FACTS_V8_SQL.replace(
+    'CREATE TABLE "experience_facts"', "CREATE TABLE experience_facts_new", 1
+)
+SCHEMA_V8_SQL = SCHEMA_V7_SQL.replace(
+    RAW_LOGS_V3_SQL, RAW_LOGS_V8_SQL, 1
+).replace(
+    EXPERIENCE_FACTS_SQL, EXPERIENCE_FACTS_V8_SQL, 1
+)
+
 # §14.16 owns one complete, referentially ordered whole-workspace purge.
 # Keeping the inventory beside the current schema makes a newly added table a
 # deliberate compile-time/test-time lifecycle decision instead of a silent
@@ -866,9 +894,9 @@ PURGE_ENTITY_TABLES = (
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    if version != 7:
-        raise ValueError("fresh workspaces must use schema version 7")
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V7_SQL)
+    if version != 8:
+        raise ValueError("fresh workspaces must use schema version 8")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V8_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
@@ -985,5 +1013,62 @@ def apply_migration_6_to_7(connection: Connection) -> None:
         VERIFICATION_FINDINGS_TARGET_INDEX_SQL,
         VERIFICATION_FINDINGS_UPDATE_GUARD_SQL,
         VERIFICATION_FINDINGS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+
+def apply_migration_7_to_8(connection: Connection) -> None:
+    """Rebuild OccurredAt-bearing tables for §11.1 open-ended ranges."""
+
+    connection.execute(RAW_LOGS_V8_NEW_SQL)
+    connection.execute(
+        """
+        INSERT INTO raw_logs_new(
+            id, recorded_at, entry_type, source_type, occurred_start,
+            occurred_end, temporal_precision, temporal_confidence, raw_text,
+            project, project_key, external_ref, corrects_log_id, metadata_json
+        )
+        SELECT id, recorded_at, entry_type, source_type, occurred_start,
+               occurred_end, temporal_precision, temporal_confidence, raw_text,
+               project, project_key, external_ref, corrects_log_id, metadata_json
+        FROM raw_logs
+        """
+    )
+    connection.execute("DROP TABLE raw_logs")
+    connection.execute("ALTER TABLE raw_logs_new RENAME TO raw_logs")
+    for statement in (
+        RAW_LOGS_INDEX_SQL,
+        RAW_LOGS_UPDATE_GUARD_SQL,
+        RAW_LOGS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+    connection.execute(EXPERIENCE_FACTS_V8_NEW_SQL)
+    connection.execute(
+        """
+        INSERT INTO experience_facts_new(
+            id, created_at, superseded_at, claim, claim_kind, project,
+            project_key, role, company, context, ownership_level, action,
+            object, outcome, skills_json, technologies_json, themes_json,
+            occurred_start, occurred_end, temporal_precision,
+            temporal_confidence, confidence, metadata_json,
+            produced_by_run_id, generation_id
+        )
+        SELECT id, created_at, superseded_at, claim, claim_kind, project,
+               project_key, role, company, context, ownership_level, action,
+               object, outcome, skills_json, technologies_json, themes_json,
+               occurred_start, occurred_end, temporal_precision,
+               temporal_confidence, confidence, metadata_json,
+               produced_by_run_id, generation_id
+        FROM experience_facts
+        """
+    )
+    connection.execute("DROP TABLE experience_facts")
+    connection.execute(
+        "ALTER TABLE experience_facts_new RENAME TO experience_facts"
+    )
+    for statement in (
+        EXPERIENCE_FACTS_UPDATE_GUARD_SQL,
+        EXPERIENCE_FACTS_DELETE_GUARD_SQL,
     ):
         connection.execute(statement)

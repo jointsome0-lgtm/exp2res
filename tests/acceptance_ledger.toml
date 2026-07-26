@@ -398,3 +398,10 @@ phases = ["0"]
 evals = ["21.52"]
 issues = ["#161", "#163"]
 note = "Covered eval 21.52 proves uniform explicit affirmation before acquisition, bounded byte-identical multiline file/stdin capture with unchanged classifications and artifact composition, and the unknown-precision prompt and typed-value carve-outs."
+
+["24.57"]
+status = "met"
+phases = ["0", "1", "3"]
+evals = ["21.53"]
+issues = ["#160"]
+note = "Covered eval 21.53 proves explicit start/.. capture, marker-free schema-v8 storage and hydration, unbounded and attested interval semantics at both Stage 3 validation boundaries, correction-only re-attestation and closure with retained history, and deterministic as-of rendering."

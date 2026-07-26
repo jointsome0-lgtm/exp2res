@@ -24,6 +24,7 @@ from exp2res.llm.registry import (
     AdapterRegistration,
     LLMSelection,
 )
+from exp2res.llm.fact_extractor import FACT_EXTRACTOR_INSTRUCTIONS
 from exp2res.llm.runner import CallBudgets, PreparedCall
 from exp2res.pipeline.lineage import plan_lineages
 from exp2res.pipeline.stage3 import run_fact_extraction
@@ -247,6 +248,16 @@ def telemetry_rows(
         connection.close()
     assert run is not None
     return run, calls
+
+
+def test_fact_extractor_instructions_preserve_open_governing_placement() -> None:
+    """§15.2: the model receives the settled open-window constraints."""
+
+    assert "null preserves that open placement" in FACT_EXTRACTOR_INSTRUCTIONS
+    assert "attested window" in FACT_EXTRACTOR_INSTRUCTIONS
+    assert "Emitting end: null over a closed governing window is invalid" in (
+        FACT_EXTRACTOR_INSTRUCTIONS
+    )
 
 
 @pytest.mark.lifecycle
@@ -636,6 +647,237 @@ def test_selected_effective_placement_can_license_anchored_narrowing(
     assert fact.source_log_ids == sorted(
         ["log_vera_temporal_support", "log_vera_temporal_governing"]
     )
+
+
+@pytest.mark.invariant
+def test_open_governing_copy_and_attested_supported_narrowing(
+    workspace: Path,
+) -> None:
+    """§21.53: null copies openness; explicit bounded support may narrow."""
+
+    open_period = OccurredAt(
+        start=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        end=None,
+        precision="approximate_range",
+        confidence="medium",
+    )
+    root, root_items = add_log(
+        workspace,
+        log_id="log_vera_open_root",
+        recorded_at=FIXED_NOW - timedelta(hours=3),
+        raw_text="Vera Example began the synthetic work in April.",
+        occurred=open_period,
+        item_specs=(("evi_vera_open_root", "manual_claim"),),
+    )
+    ids = TestIds()
+    run_stage3(
+        workspace,
+        FakeContractRunner([fact_response([root_items[0].id])]),
+        ids,
+    )
+    with read_database(workspace) as connection:
+        copied = list_experience_facts(connection)[0]
+    assert copied.occurred == open_period
+
+    narrowed = OccurredAt(
+        start=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        end=datetime(2026, 6, 2, tzinfo=timezone.utc),
+        precision="date_range",
+        confidence="medium",
+    )
+    _support, support_items = add_log(
+        workspace,
+        log_id="log_vera_open_support",
+        recorded_at=FIXED_NOW - timedelta(hours=2),
+        raw_text="Vera Example explicitly bounded one selected activity to June 1.",
+        occurred=narrowed,
+        item_specs=(("evi_vera_open_support", "manual_claim"),),
+        corrects_log_id=root.id,
+    )
+    governing, governing_items = add_log(
+        workspace,
+        log_id="log_vera_open_governing",
+        recorded_at=FIXED_NOW - timedelta(hours=1),
+        raw_text="Vera Example restated the April-start open period.",
+        occurred=open_period,
+        item_specs=(("evi_vera_open_governing", "manual_claim"),),
+        corrects_log_id=root.id,
+    )
+    run_stage3(
+        workspace,
+        FakeContractRunner(
+            [
+                fact_response(
+                    [support_items[0].id, governing_items[0].id],
+                    occurred=temporal_payload(narrowed),
+                )
+            ]
+        ),
+        ids,
+    )
+    with read_database(workspace) as connection:
+        stored = list_experience_facts(connection)[0]
+    assert stored.occurred == narrowed
+    assert governing.recorded_at > narrowed.end
+
+
+@pytest.mark.invariant
+@pytest.mark.parametrize(
+    "case",
+    ["unsupported-bound", "at-attestation", "closed-to-open"],
+)
+def test_open_temporal_upgrades_fail_stage3_validation(
+    workspace: Path,
+    case: str,
+) -> None:
+    """§21.53: unsupported bounds, post-attestation claims, and widening fail."""
+
+    start = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    open_period = OccurredAt(
+        start=start,
+        end=None,
+        precision="date_range",
+        confidence="medium",
+    )
+    if case == "closed-to-open":
+        governing = open_period.model_copy(
+            update={"end": datetime(2026, 7, 1, tzinfo=timezone.utc)}
+        )
+        candidate = open_period
+        _log, items = add_log(
+            workspace,
+            log_id="log_vera_closed_governing",
+            recorded_at=FIXED_NOW,
+            raw_text="Vera Example stated a closed April-to-July period.",
+            occurred=governing,
+            item_specs=(("evi_vera_closed_governing", "manual_claim"),),
+        )
+        selected_ids = [items[0].id]
+    else:
+        root, root_items = add_log(
+            workspace,
+            log_id="log_vera_open_invalid_root",
+            recorded_at=FIXED_NOW,
+            raw_text="Vera Example stated an open period only.",
+            occurred=open_period,
+            item_specs=(("evi_vera_open_invalid_root", "manual_claim"),),
+        )
+        if case == "unsupported-bound":
+            candidate = OccurredAt(
+                start=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                end=datetime(2026, 6, 2, tzinfo=timezone.utc),
+                precision="date_range",
+                confidence="medium",
+            )
+            selected_ids = [root_items[0].id]
+        else:
+            candidate = OccurredAt(
+                start=FIXED_NOW,
+                end=FIXED_NOW + timedelta(hours=1),
+                precision="date_range",
+                confidence="medium",
+            )
+            _support, support_items = add_log(
+                workspace,
+                log_id="log_vera_post_attestation_support",
+                recorded_at=FIXED_NOW - timedelta(hours=1),
+                raw_text="Vera Example explicitly supplied the later bound.",
+                occurred=candidate,
+                item_specs=(
+                    ("evi_vera_post_attestation_support", "manual_claim"),
+                ),
+                corrects_log_id=root.id,
+            )
+            _governing, governing_items = add_log(
+                workspace,
+                log_id="log_vera_post_attestation_governing",
+                recorded_at=FIXED_NOW,
+                raw_text="Vera Example restated the open governing period.",
+                occurred=open_period,
+                item_specs=(
+                    ("evi_vera_post_attestation_governing", "manual_claim"),
+                ),
+                corrects_log_id=root.id,
+            )
+            selected_ids = [support_items[0].id, governing_items[0].id]
+
+    payload = fact_response(
+        selected_ids,
+        occurred=temporal_payload(candidate),
+    )
+    fake = FakeContractRunner([payload, payload])
+    with pytest.raises(LLMInvocationError):
+        run_stage3(workspace, fake, TestIds())
+    assert len(fake.calls) == 2
+    with read_database(workspace) as connection:
+        assert list_experience_facts(connection) == ()
+
+
+@pytest.mark.invariant
+def test_empty_open_attested_window_rejects_bounds_but_copy_remains_legal(
+    workspace: Path,
+) -> None:
+    """§21.53: future-start governance has an empty bounded window."""
+
+    start = FIXED_NOW + timedelta(days=1)
+    open_period = OccurredAt(
+        start=start,
+        end=None,
+        precision="date_range",
+        confidence="medium",
+    )
+    root, root_items = add_log(
+        workspace,
+        log_id="log_vera_empty_window",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example recorded work whose stated start is later.",
+        occurred=open_period,
+        item_specs=(("evi_vera_empty_window", "manual_claim"),),
+    )
+    bounded = OccurredAt(
+        start=start,
+        end=start + timedelta(hours=1),
+        precision="date_range",
+        confidence="medium",
+    )
+    _support, support_items = add_log(
+        workspace,
+        log_id="log_vera_empty_window_support",
+        recorded_at=FIXED_NOW - timedelta(hours=1),
+        raw_text="Vera Example explicitly supplied a future bounded placement.",
+        occurred=bounded,
+        item_specs=(("evi_vera_empty_window_support", "manual_claim"),),
+        corrects_log_id=root.id,
+    )
+    _governing, governing_items = add_log(
+        workspace,
+        log_id="log_vera_empty_window_governing",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example restated the future-start open period.",
+        occurred=open_period,
+        item_specs=(("evi_vera_empty_window_governing", "manual_claim"),),
+        corrects_log_id=root.id,
+    )
+    invalid = fact_response(
+        [support_items[0].id, governing_items[0].id],
+        occurred=temporal_payload(bounded),
+    )
+    ids = TestIds()
+    with pytest.raises(LLMInvocationError):
+        run_stage3(
+            workspace,
+            FakeContractRunner([invalid, invalid]),
+            ids,
+        )
+
+    run_stage3(
+        workspace,
+        FakeContractRunner([fact_response([governing_items[0].id])]),
+        ids,
+    )
+    with read_database(workspace) as connection:
+        copied = list_experience_facts(connection)[0]
+    assert copied.occurred == open_period
 
 
 @pytest.mark.invariant

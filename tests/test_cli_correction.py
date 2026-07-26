@@ -14,8 +14,10 @@ import exp2res.cli as cli_module
 import exp2res.services.lifecycle as lifecycle_service
 from exp2res.cli import app
 from exp2res.domain.models import OccurredAt
+from exp2res.domain.temporal import governing_contains
 from exp2res.llm.runner import AttemptTelemetry, PreparedCall, RawResult
 from exp2res.services.capture import new_id
+from exp2res.services.correction import capture_correction
 from exp2res.services.export import export_assessment
 from exp2res.storage.repository import (
     get_raw_log,
@@ -29,7 +31,15 @@ from exp2res.storage.workspace import read_database
 
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
-from test_stage3_extraction import SELECTION, add_log, budgets, exact_day, fact_response, run_stage3
+from test_stage3_extraction import (
+    SELECTION,
+    TestIds,
+    add_log,
+    budgets,
+    exact_day,
+    fact_response,
+    run_stage3,
+)
 from test_stage4_detection import detector_response, run_stage4
 from test_stage5_signals import SignalIds, run_stage5, signal_response
 from test_stage6_assessment import assessment_response, run_stage6
@@ -371,6 +381,102 @@ def test_correction_copy_and_explicit_temporal_project_replacement(
     assert first_log.project == target.project
     assert second_log.occurred == replacement
     assert second_log.project == "Vera Example Replacement"
+
+
+def test_open_period_correction_reattests_then_closes_without_rewriting_history(
+    workspace: Path,
+) -> None:
+    """§21.53/§24.57: correction is the only open-period state transition."""
+
+    start = FIXED_NOW - timedelta(days=105)
+    open_period = OccurredAt(
+        start=start,
+        end=None,
+        precision="date_range",
+        confidence="medium",
+    )
+    root, root_items = add_log(
+        workspace,
+        log_id="log_vera_open_correction_root",
+        recorded_at=FIXED_NOW - timedelta(days=45),
+        raw_text="Vera Example began the synthetic work and recorded no end.",
+        occurred=open_period,
+        item_specs=(("evi_vera_open_correction_root", "manual_claim"),),
+        project=None,
+    )
+    ids = TestIds()
+    run_stage3(
+        workspace,
+        FakeContractRunner([fact_response([root_items[0].id])]),
+        ids,
+    )
+
+    restated = capture_correction(
+        workspace,
+        log_id=root.id,
+        raw_text="Vera Example restates the synthetic work with no recorded end.",
+        occurred=open_period,
+        project=None,
+        clock=lambda: FIXED_NOW,
+    )
+    run_stage3(
+        workspace,
+        FakeContractRunner(
+            [fact_response([restated.evidence_items[0].id])]
+        ),
+        ids,
+    )
+    with read_database(workspace) as connection:
+        restated_fact = list_experience_facts(connection)[0]
+    assert restated_fact.occurred == open_period
+    bounded_after_root_attestation = OccurredAt(
+        start=FIXED_NOW - timedelta(days=20),
+        end=FIXED_NOW - timedelta(days=19),
+        precision="date_range",
+        confidence="medium",
+    )
+    assert not governing_contains(
+        root.occurred, root.recorded_at, bounded_after_root_attestation
+    )
+    assert governing_contains(
+        restated.raw_log.occurred,
+        restated.raw_log.recorded_at,
+        bounded_after_root_attestation,
+    )
+
+    closed_period = open_period.model_copy(
+        update={"end": FIXED_NOW - timedelta(days=1)}
+    )
+    closed = capture_correction(
+        workspace,
+        log_id=restated.raw_log.id,
+        raw_text="Vera Example restates the synthetic work with its recorded end.",
+        occurred=closed_period,
+        project=None,
+        clock=lambda: FIXED_NOW + timedelta(days=1),
+    )
+    run_stage3(
+        workspace,
+        FakeContractRunner([fact_response([closed.evidence_items[0].id])]),
+        ids,
+    )
+    with read_database(workspace) as connection:
+        current_fact = list_experience_facts(connection)[0]
+        retained = connection.execute(
+            """
+            SELECT id, occurred_start, occurred_end
+            FROM raw_logs
+            WHERE id IN (?, ?, ?)
+            ORDER BY recorded_at, id
+            """,
+            (root.id, restated.raw_log.id, closed.raw_log.id),
+        ).fetchall()
+    assert current_fact.occurred == closed_period
+    assert [tuple(row) for row in retained] == [
+        (root.id, start.isoformat(), None),
+        (restated.raw_log.id, start.isoformat(), None),
+        (closed.raw_log.id, start.isoformat(), closed_period.end.isoformat()),
+    ]
 
 
 @pytest.mark.parametrize(

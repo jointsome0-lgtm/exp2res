@@ -535,3 +535,29 @@ nodes = [
 ]
 phase = "1"
 note = "All three non-prompt capture forms prove explicit pre-acquisition affirmation, multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate."
+
+["21.53"]
+status = "covered"
+nodes = [
+  "tests/test_capture_noninteractive.py::test_open_retro_period_round_trips_null_end_without_marker_or_decay",
+  "tests/test_capture_noninteractive.py::test_invalid_open_period_forms_fail_class_2_without_persistence[empty-end]",
+  "tests/test_capture_noninteractive.py::test_invalid_open_period_forms_fail_class_2_without_persistence[bare-open-marker]",
+  "tests/test_capture_noninteractive.py::test_invalid_open_period_forms_fail_class_2_without_persistence[missing-start]",
+  "tests/test_capture_noninteractive.py::test_invalid_open_period_forms_fail_class_2_without_persistence[non-range-open]",
+  "tests/test_capture_noninteractive.py::test_invalid_open_period_forms_fail_class_2_without_persistence[separator-free-range]",
+  "tests/test_stage3_extraction.py::test_open_governing_copy_and_attested_supported_narrowing",
+  "tests/test_stage3_extraction.py::test_open_temporal_upgrades_fail_stage3_validation[unsupported-bound]",
+  "tests/test_stage3_extraction.py::test_open_temporal_upgrades_fail_stage3_validation[at-attestation]",
+  "tests/test_stage3_extraction.py::test_open_temporal_upgrades_fail_stage3_validation[closed-to-open]",
+  "tests/test_stage3_extraction.py::test_empty_open_attested_window_rejects_bounds_but_copy_remains_legal",
+  "tests/test_facts_storage.py::test_fact_insert_uses_open_governing_records_attested_window",
+  "tests/test_cli_correction.py::test_open_period_correction_reattests_then_closes_without_rewriting_history",
+  "tests/test_schema_migration.py::test_v7_to_v8_rebuild_preserves_rows_guards_indexes_and_admits_open_ranges",
+  "tests/test_temporal_open_ended.py::test_open_range_shape_and_width_stay_distinct_from_unknown_and_closed",
+  "tests/test_temporal_open_ended.py::test_interval_contains_handles_open_closed_unknown_singleton_and_empty",
+  "tests/test_temporal_open_ended.py::test_governing_contains_clips_only_bounded_candidates_to_attested_window",
+  "tests/test_temporal_open_ended.py::test_empty_attested_window_rejects_closed_narrowing_but_allows_open_copy",
+  "tests/test_temporal_open_ended.py::test_open_support_never_entails_a_bounded_candidate_and_closed_rejects_open",
+  "tests/test_export_occurred.py::test_open_occurred_rendering_is_attested_explicit_and_clock_free",
+  "tests/test_export_occurred.py::test_open_occurred_rendering_requires_attestation",
+]

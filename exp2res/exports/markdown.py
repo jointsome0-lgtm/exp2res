@@ -2,12 +2,53 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import re
 import unicodedata
+
+from exp2res.domain.models import OccurredAt
 
 
 _PUNCTUATION = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 _BACKTICK_RUN = re.compile(br"`+")
+
+
+def render_occurred(
+    occurred: OccurredAt, *, attested_as_of: datetime | None = None
+) -> str:
+    """Render one temporal placement as deterministic §17 plain text."""
+
+    if occurred.precision == "unknown":
+        return "Unknown occurrence time"
+    assert occurred.start is not None
+    start = occurred.start.isoformat()
+    if occurred.precision in {"date_range", "approximate_range"}:
+        flavor = (
+            "Approximate range" if occurred.precision == "approximate_range"
+            else "Date range"
+        )
+        if occurred.end is not None:
+            return f"{flavor}: {start} / {occurred.end.isoformat()}"
+        if attested_as_of is None:
+            raise ValueError("open-ended occurrence requires an as-of attestation")
+        open_flavor = (
+            "Approximate open period"
+            if occurred.precision == "approximate_range"
+            else "Open period"
+        )
+        return (
+            f"{open_flavor}: {start}; "
+            f"no recorded end as of {attested_as_of.isoformat()}"
+        )
+    labels = {
+        "exact_datetime": "Exact datetime",
+        "exact_day": "Exact day (representational anchor)",
+        "week": "Week (representational anchor)",
+        "month": "Month (representational anchor)",
+        "quarter": "Quarter (representational anchor)",
+        "year": "Year (representational anchor)",
+    }
+    return f"{labels[occurred.precision]}: {start}"
 
 
 def normalize_generated_text(value: str) -> str:

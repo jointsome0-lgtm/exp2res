@@ -23,18 +23,27 @@ _CONFIDENCE_ORDER = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
 
 @dataclass(frozen=True)
 class UncertaintyInterval:
-    """Half-open UTC interval [start, end); equal bounds are the singleton.
+    """A §16.7 UTC interval, including open, unknown, and empty states.
 
-    ``start is None`` and ``end is None`` together represent the unbounded
-    `unknown` timeline; §11.1 admits no other unbounded shape.
+    Equal bounds are a singleton unless ``empty`` is true. ``(None, None)``
+    is the unknown timeline, while ``(start, None)`` is unbounded above.
     """
 
     start: datetime | None
     end: datetime | None
+    empty: bool = False
 
     @property
     def unbounded(self) -> bool:
-        return self.start is None
+        return not self.empty and self.end is None
+
+    @property
+    def unbounded_timeline(self) -> bool:
+        return self.unbounded and self.start is None
+
+    @property
+    def unbounded_above(self) -> bool:
+        return self.unbounded and self.start is not None
 
 
 def _utc(value: datetime) -> datetime:
@@ -44,12 +53,14 @@ def _utc(value: datetime) -> datetime:
 
 
 def uncertainty_width(occurred: OccurredAt) -> timedelta | None:
-    """Return §16.7's comparison width; None means unbounded (`unknown`)."""
+    """Return §16.7's comparison width; None means unbounded."""
 
     if occurred.precision == "unknown":
         return None
     if occurred.precision in ("date_range", "approximate_range"):
-        assert occurred.start is not None and occurred.end is not None
+        assert occurred.start is not None
+        if occurred.end is None:
+            return None
         return _utc(occurred.end) - _utc(occurred.start)
     return _MAX_UNCERTAINTY_WIDTH[occurred.precision]
 
@@ -62,20 +73,30 @@ def occurred_interval(occurred: OccurredAt) -> UncertaintyInterval:
     assert occurred.start is not None
     start = _utc(occurred.start)
     if occurred.precision in ("date_range", "approximate_range"):
-        assert occurred.end is not None
-        return UncertaintyInterval(start, _utc(occurred.end))
+        return UncertaintyInterval(
+            start, None if occurred.end is None else _utc(occurred.end)
+        )
     return UncertaintyInterval(start, start + _MAX_UNCERTAINTY_WIDTH[occurred.precision])
 
 
 def interval_contains(outer: UncertaintyInterval, inner: UncertaintyInterval) -> bool:
     """Subset test under §16.7's half-open/singleton semantics."""
 
-    if outer.unbounded:
-        return True
-    if inner.unbounded:
+    if outer.empty:
         return False
-    assert outer.start is not None and outer.end is not None
-    assert inner.start is not None and inner.end is not None
+    if inner.empty:
+        return True
+    if outer.unbounded_timeline:
+        return True
+    if inner.unbounded_timeline:
+        return False
+    assert outer.start is not None
+    assert inner.start is not None
+    if outer.unbounded_above:
+        return inner.start >= outer.start
+    if inner.unbounded_above:
+        return False
+    assert outer.end is not None and inner.end is not None
     if inner.start == inner.end:
         if outer.start == outer.end:
             return inner.start == outer.start
@@ -83,6 +104,39 @@ def interval_contains(outer: UncertaintyInterval, inner: UncertaintyInterval) ->
     if outer.start == outer.end:
         return False
     return outer.start <= inner.start and inner.end <= outer.end
+
+
+def _open_ended(occurred: OccurredAt) -> bool:
+    return (
+        occurred.precision in ("date_range", "approximate_range")
+        and occurred.end is None
+    )
+
+
+def governing_contains(
+    governing: OccurredAt,
+    governing_recorded_at: datetime,
+    candidate: OccurredAt,
+) -> bool:
+    """Apply §16.7's attested-window containment for a governing record."""
+
+    if not _open_ended(governing) or candidate.precision == "unknown":
+        return interval_contains(
+            occurred_interval(governing), occurred_interval(candidate)
+        )
+    if _open_ended(candidate):
+        return interval_contains(
+            occurred_interval(governing), occurred_interval(candidate)
+        )
+    assert governing.start is not None
+    start = _utc(governing.start)
+    attested_end = _utc(governing_recorded_at)
+    attested = UncertaintyInterval(
+        start,
+        attested_end,
+        empty=attested_end <= start,
+    )
+    return interval_contains(attested, occurred_interval(candidate))
 
 
 def _is_exact_bounded(occurred: OccurredAt) -> bool:

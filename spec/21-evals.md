@@ -150,4 +150,8 @@ Enforces §9.4, §11's Model validation policy, §13.1, §13.3 rule 10, §14.2�
 
 Enforces §5.2, §5.5, §11's Model validation policy and §11.1, §13.1, §14.2–§14.3, §14.7, §14.14 rules 2–4 and 8, and §29.4.
 
+## §21.53 Ongoing Periods Stay Open, Attested, and Unnarrowed
+
+Enforces §5.4, §5.5, §11.1, §12 rules 3 and 5, §13.3 rules 2 and 10, §14.3, §14.4, §14.14 rule 8, §15.2, §16.7, and §17.
+
 ---
