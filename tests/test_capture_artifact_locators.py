@@ -396,6 +396,77 @@ def test_import_file_locators_share_prompt_reauthorization_boundary(
         assert tuple(stored_evidence) == (stored_path, None)
 
 
+def test_relative_capture_locators_persist_canonically_for_any_later_directory(
+    workspace: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§21.51 / §24.56: the persisted form names one object, not a spelling.
+
+    Capture runs from a directory the later stage knows nothing about and
+    supplies both locator kinds relative to it. Persisting the supplied
+    spelling would make the §29.4 pre-serialization re-check resolve against
+    whatever directory the later command happens to run in.
+    """
+
+    capture_root = tmp_path / "Vera Example capture root"
+    (capture_root / "notes").mkdir(parents=True)
+    record = capture_root / "notes" / "vera-example-today.md"
+    record.write_text("Vera Example relative capture record.\n", encoding="utf-8")
+    artifact = capture_root / "notes" / "vera-example-artifact.md"
+    artifact.write_text("Vera Example relative artifact.\n", encoding="utf-8")
+    relative_record = "notes/vera-example-today.md"
+    relative_artifact = "notes/vera-example-artifact.md"
+
+    monkeypatch.chdir(capture_root)
+    result, envelope = _invoke_json(
+        workspace,
+        [
+            "log",
+            "today",
+            "--file",
+            relative_record,
+            "--owner-authored",
+            "--artifact",
+            relative_artifact,
+        ],
+    )
+    assert result.exit_code == 0
+
+    created = next(
+        group["ids"][0]
+        for group in envelope["affected_ids"]["created"]
+        if group["entity_type"] == "raw_log"
+    )
+    bundle = show_log(workspace, log_id=created)
+    assert bundle.raw_log.external_ref == str(record.resolve())
+    assert [item.path for item in bundle.evidence_items] == [
+        None,
+        str(artifact.resolve()),
+    ]
+
+    # A directory that shares no ancestry with the capture directory: the
+    # discarded spellings resolve to nothing here, the persisted ones still
+    # name the captured files.
+    elsewhere = tmp_path / "Vera Example unrelated directory"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    config = load_workspace_config(workspace)
+    reauthorize_prompt_locators(
+        {
+            "external_ref": bundle.raw_log.external_ref,
+            "path": bundle.evidence_items[1].path,
+        },
+        config=config,
+    )
+    for field, spelling in (
+        ("external_ref", relative_record),
+        ("path", relative_artifact),
+    ):
+        with pytest.raises(LocatorReauthorizationFailedError):
+            reauthorize_prompt_locators({field: spelling}, config=config)
+
+
 def test_remote_persisted_locators_are_not_resolved_again(
     workspace: Path,
     monkeypatch: pytest.MonkeyPatch,

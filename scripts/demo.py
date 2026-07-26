@@ -197,6 +197,7 @@ class Transcript:
             f"corpus={CORPUS_VERSION} schema={CURRENT_SCHEMA_VERSION} envelope={ENVELOPE_VERSION}",
             "mode=no-cost offline canned responses; network/provider calls=0",
             "workspace=demo/workspace (external temporary workspace; display alias only)",
+            "paths=stored locators are canonical real paths; this checkout root displays as . (display alias only)",
             "",
         ]
 

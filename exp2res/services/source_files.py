@@ -42,12 +42,11 @@ URI_AUTHORITY = re.compile(
     r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@\[\]-]|%[0-9A-Fa-f]{2})*$"
 )
 MAX_ARTIFACT_LOCATORS = 16
-# §29.4 names exactly these persisted locator fields. `external_ref` is
-# included even though §14.2 persists the supplied spelling, so a relative
-# value re-resolves against the directory the later stage runs in: failing
-# closed there is the recoverable outcome, while omitting the field would
-# let an ignored path reach the provider. Issue #171 owns which form is
-# persisted, and the demo work that change requires.
+# §29.4 names exactly these persisted locator fields. Every persisted local
+# locator — `EvidenceItem.path` under §13.1 and `RawLog.external_ref` under
+# §14.2/§14.5 alike — is stored in its authorized canonical real form, so
+# this gate re-resolves the same filesystem object whatever directory the
+# later stage runs in.
 PROMPT_LOCATOR_FIELDS = frozenset({"path", "uri", "url", "external_ref"})
 DENIED_COMPONENTS = {
     "secrets",
@@ -589,6 +588,16 @@ def read_capture_file(
     if _ignored(resolved, config=config, folded=folded):
         raise ForbiddenPathError()
 
+    # §14.2 persists the canonical real path that §29.4 just authorized, not
+    # the supplied spelling: the record then names one filesystem object, so
+    # the pre-serialization re-check reaches the same verdict from any
+    # directory. Validate it before opening, so nothing is read for a record
+    # the store could not accept.
+    try:
+        canonical = validate_posix_path(resolved.as_posix())
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise ForbiddenPathError() from error
+
     descriptor: int | None = None
     try:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -606,4 +615,4 @@ def read_capture_file(
     finally:
         if descriptor is not None:
             os.close(descriptor)
-    return text, path.as_posix()
+    return text, canonical
