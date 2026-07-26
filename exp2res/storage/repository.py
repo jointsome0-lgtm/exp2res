@@ -27,8 +27,7 @@ from exp2res.domain.models import (
 )
 from exp2res.domain.temporal import (
     confidence_exceeds,
-    interval_contains,
-    occurred_interval,
+    governing_contains,
     placement_supports,
 )
 from exp2res.errors import HydrationFailureError, IdCollisionError, IntegrityFailureError
@@ -327,8 +326,10 @@ def insert_experience_fact(
             raise IntegrityFailureError() from error
 
     governing_occurred = stored_occurred(governing)
-    if not interval_contains(
-        occurred_interval(governing_occurred), occurred_interval(fact.occurred)
+    if not governing_contains(
+        governing_occurred,
+        _utc_instant(governing["recorded_at"]),
+        fact.occurred,
     ):
         raise IntegrityFailureError()
     if confidence_exceeds(fact.occurred.confidence, governing_occurred.confidence):

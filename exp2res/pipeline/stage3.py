@@ -18,8 +18,7 @@ from exp2res.errors import LLMCancelledError
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.domain.temporal import (
     confidence_exceeds,
-    interval_contains,
-    occurred_interval,
+    governing_contains,
     placement_supports,
 )
 from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
@@ -167,9 +166,10 @@ def _enrich_for(context: LineageContext) -> Callable[[dict[str, Any]], dict[str,
 
             governing = max(selected_effective_logs, key=_log_order)
             if fact.occurred is not None:
-                if not interval_contains(
-                    occurred_interval(governing.occurred),
-                    occurred_interval(fact.occurred),
+                if not governing_contains(
+                    governing.occurred,
+                    governing.recorded_at,
+                    fact.occurred,
                 ):
                     errors.append(
                         _reference_diagnostic(

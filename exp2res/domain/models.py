@@ -165,7 +165,9 @@ class OccurredAt(StrictModel):
             if self.start is None or self.end is not None:
                 raise ValueError("invalid non-range temporal shape")
         elif self.precision in {"date_range", "approximate_range"}:
-            if self.start is None or self.end is None or self.end <= self.start:
+            if self.start is None or (
+                self.end is not None and self.end <= self.start
+            ):
                 raise ValueError("invalid temporal range")
         elif self.precision == "unknown":
             if self.start is not None or self.end is not None:

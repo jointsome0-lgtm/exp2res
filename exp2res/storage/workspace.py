@@ -27,17 +27,18 @@ from exp2res.errors import (
 )
 
 from .schema import (
-    SCHEMA_V7_SQL,
+    SCHEMA_V8_SQL,
     apply_migration_1_to_2,
     apply_migration_2_to_3,
     apply_migration_3_to_4,
     apply_migration_4_to_5,
     apply_migration_5_to_6,
     apply_migration_6_to_7,
+    apply_migration_7_to_8,
     create_schema,
 )
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 _CLI_PREAMBLE_RESIDUALS: ContextVar[list[str] | None] = ContextVar(
     "exp2res_cli_preamble_residuals", default=None
@@ -92,6 +93,7 @@ MIGRATION_REGISTRY = (
     MigrationStep(4, 5, apply_migration_4_to_5),
     MigrationStep(5, 6, apply_migration_5_to_6),
     MigrationStep(6, 7, apply_migration_6_to_7),
+    MigrationStep(7, 8, apply_migration_7_to_8, requires_foreign_keys_off=True),
 )
 
 
@@ -521,7 +523,7 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
     scratch = sqlite3.connect(":memory:")
     try:
         scratch.create_function("exp2res_owner_delete", 0, lambda: 0)
-        scratch.executescript(SCHEMA_V7_SQL)
+        scratch.executescript(SCHEMA_V8_SQL)
         expected_entries = schema_entries(scratch)
     finally:
         scratch.close()

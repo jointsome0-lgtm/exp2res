@@ -1,4 +1,4 @@
-"""Schema v1→v2→v3→v4→v5→v6→v7 migration and rollback tests."""
+"""Schema v1→v2→v3→v4→v5→v6→v7→v8 migration and rollback tests."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from exp2res.storage.schema import (
     SCHEMA_V4_SQL,
     SCHEMA_V5_SQL,
     SCHEMA_V6_SQL,
+    SCHEMA_V7_SQL,
 )
 from exp2res.storage.workspace import (
     inspect_workspace,
@@ -218,6 +219,29 @@ def v6_workspace(tmp_path: Path, *, name: str = "v6-workspace") -> Path:
     return root
 
 
+def v7_workspace(tmp_path: Path, *, name: str = "v7-workspace") -> Path:
+    root = tmp_path / name
+    root.mkdir()
+    (root / ".exp2res").mkdir(mode=0o700)
+    (root / ".exp2res" / "lock").touch(mode=0o600)
+    (root / "out").mkdir(mode=0o700)
+    configure_timezone(root)
+    database = root / ".exp2res" / "exp2res.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.executescript(SCHEMA_V7_SQL)
+        connection.executemany(
+            "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
+            tuple(
+                (version, FIXED_NOW.isoformat(), f"0.1.0-v{version}-fixture")
+                for version in range(1, 8)
+            ),
+        )
+    database.chmod(0o600)
+    return root
+
+
 def sqlite_master_shape(database: Path) -> list[tuple[object, ...]]:
     with sqlite3.connect(database) as connection:
         return sorted(
@@ -278,7 +302,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     assert result.exit_code == 0, result.stderr
     envelope = json.loads(result.stdout)
     schema = envelope["result"]["schema"]
-    assert schema["stored_version"] == 7
+    assert schema["stored_version"] == 8
     assert schema["compatible"] is True
     backup = Path(schema["managed_backup_path"])
     assert backup.is_file()
@@ -296,7 +320,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     with sqlite3.connect(database) as connection:
         assert [
             row[0] for row in connection.execute("SELECT version FROM schema_meta ORDER BY version")
-        ] == [1, 2, 3, 4, 5, 6, 7]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8]
         tables = {
             row[0]
             for row in connection.execute(
@@ -331,7 +355,7 @@ def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 7
+    assert migrated.stored_version == 8
     backup = Path(migrated.managed_backup_path or "")
     assert backup.is_file()
     assert "exp2res-v2-" in backup.name
@@ -349,22 +373,225 @@ def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
         ]
         assert connection.execute(
             "SELECT version FROM schema_meta ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,), (4,), (5,), (6,), (7,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,)]
 
 
-def test_fresh_v7_and_migrated_v6_to_v7_have_identical_sqlite_master_shape(
+def test_fresh_v8_and_migrated_v7_to_v8_have_identical_sqlite_master_shape(
     tmp_path: Path,
 ) -> None:
-    """§12.14: fresh and additive-v7 table/trigger SQL has exact parity."""
+    """§12.14: fresh and rebuilt-v8 table/trigger SQL has exact parity."""
 
-    migrated = v6_workspace(tmp_path)
+    migrated = v7_workspace(tmp_path)
     migrate_workspace(migrated, clock=lambda: FIXED_NOW.replace(day=16))
-    fresh = tmp_path / "fresh-v7"
+    fresh = tmp_path / "fresh-v8"
     fresh.mkdir()
     initialize_workspace(fresh, clock=lambda: FIXED_NOW.replace(day=16))
     assert sqlite_master_shape(
         migrated / ".exp2res" / "exp2res.sqlite"
     ) == sqlite_master_shape(fresh / ".exp2res" / "exp2res.sqlite")
+
+
+def test_v7_to_v8_rebuild_preserves_rows_guards_indexes_and_admits_open_ranges(
+    tmp_path: Path,
+) -> None:
+    """§12 rule 5/§21.53: v8 is a byte-preserving two-table rebuild."""
+
+    workspace = v7_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    closed_start = "2026-04-01T00:00:00+02:00"
+    closed_end = "2026-07-01T00:00:00+02:00"
+    recorded_at = "2026-07-15T14:30:00+02:00"
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        connection.execute(
+            """
+            INSERT INTO raw_logs(
+                id, recorded_at, entry_type, source_type, occurred_start,
+                occurred_end, temporal_precision, temporal_confidence, raw_text,
+                project, project_key, external_ref, corrects_log_id, metadata_json
+            ) VALUES (
+                'log_vera_v7', ?, 'manual_retro', 'user_memory', ?, ?,
+                'approximate_range', 'medium',
+                'Vera Example retained closed period.', NULL, NULL, NULL, NULL,
+                '{"fixture":"Vera Example"}'
+            )
+            """,
+            (recorded_at, closed_start, closed_end),
+        )
+        connection.execute(
+            """
+            INSERT INTO evidence_items(
+                id, created_at, raw_log_id, title, summary, uri, path,
+                strength, metadata_json
+            ) VALUES (
+                'evi_vera_v7', ?, 'log_vera_v7', NULL,
+                'Vera Example retained manual support.', NULL, NULL,
+                'manual_claim', '{}'
+            )
+            """,
+            (recorded_at,),
+        )
+        connection.execute(
+            """
+            INSERT INTO processing_runs(
+                id, stage, started_at, status, input_ids_json, output_ids_json,
+                metadata_json
+            ) VALUES (
+                'run_vera_v7', '13.3', ?, 'completed',
+                '["log_vera_v7"]', '["fact_vera_v7"]', '{}'
+            )
+            """,
+            (recorded_at,),
+        )
+        connection.execute(
+            """
+            INSERT INTO experience_facts(
+                id, created_at, superseded_at, claim, claim_kind, project,
+                project_key, role, company, context, ownership_level, action,
+                object, outcome, skills_json, technologies_json, themes_json,
+                occurred_start, occurred_end, temporal_precision,
+                temporal_confidence, confidence, metadata_json,
+                produced_by_run_id, generation_id
+            ) VALUES (
+                'fact_vera_v7', ?, NULL,
+                'Vera Example retained migration fact.', 'observed_fact',
+                NULL, NULL, NULL, NULL, 'independent_project', 'built',
+                'built', 'a migration fixture', NULL, '[]', '["SQLite"]', '[]',
+                ?, ?, 'approximate_range', 'medium', 'medium', '{}',
+                'run_vera_v7', 'gen_vera_v7'
+            )
+            """,
+            (recorded_at, closed_start, closed_end),
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_sources(fact_id, evidence_item_id, support_type)
+            VALUES ('fact_vera_v7', 'evi_vera_v7', 'direct')
+            """
+        )
+        for statement in (
+            """
+            INSERT INTO raw_logs(
+                id, recorded_at, entry_type, source_type, occurred_start,
+                occurred_end, temporal_precision, temporal_confidence, raw_text,
+                project, project_key, external_ref, corrects_log_id, metadata_json
+            ) VALUES (
+                'log_vera_open', ?, 'manual_retro', 'user_memory', ?, NULL,
+                'date_range', 'medium', 'Vera Example open period.',
+                NULL, NULL, NULL, NULL, '{}'
+            )
+            """,
+            """
+            INSERT INTO experience_facts(
+                id, created_at, superseded_at, claim, claim_kind, project,
+                project_key, role, company, context, ownership_level, action,
+                object, outcome, skills_json, technologies_json, themes_json,
+                occurred_start, occurred_end, temporal_precision,
+                temporal_confidence, confidence, metadata_json,
+                produced_by_run_id, generation_id
+            ) VALUES (
+                'fact_vera_open', ?, NULL, 'Vera Example open fact.',
+                'observed_fact', NULL, NULL, NULL, NULL,
+                'independent_project', 'built', NULL, NULL, NULL,
+                '[]', '[]', '[]', ?, NULL, 'date_range', 'medium', 'medium',
+                '{}', 'run_vera_v7', 'gen_vera_open'
+            )
+            """,
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(statement, (recorded_at, closed_start))
+        retained_before = {
+            table: connection.execute(
+                f"SELECT * FROM {table} ORDER BY rowid"
+            ).fetchall()
+            for table in (
+                "raw_logs",
+                "evidence_items",
+                "processing_runs",
+                "experience_facts",
+                "fact_sources",
+            )
+        }
+        indexes_before = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name"
+        ).fetchall()
+        triggers_before = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        ).fetchall()
+
+    migrated = migrate_workspace(
+        workspace, clock=lambda: FIXED_NOW.replace(day=16)
+    )
+    assert migrated.stored_version == 8
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        retained_after = {
+            table: connection.execute(
+                f"SELECT * FROM {table} ORDER BY rowid"
+            ).fetchall()
+            for table in retained_before
+        }
+        assert retained_after == retained_before
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name"
+        ).fetchall() == indexes_before
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+        ).fetchall() == triggers_before
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        with pytest.raises(sqlite3.IntegrityError, match="raw_log_immutable"):
+            connection.execute(
+                "UPDATE raw_logs SET raw_text = 'Vera Example changed' "
+                "WHERE id = 'log_vera_v7'"
+            )
+        with pytest.raises(
+            sqlite3.IntegrityError, match="experience_fact_lifecycle_only"
+        ):
+            connection.execute(
+                "UPDATE experience_facts SET claim = 'Vera Example changed' "
+                "WHERE id = 'fact_vera_v7'"
+            )
+        connection.execute(
+            """
+            INSERT INTO raw_logs(
+                id, recorded_at, entry_type, source_type, occurred_start,
+                occurred_end, temporal_precision, temporal_confidence, raw_text,
+                project, project_key, external_ref, corrects_log_id, metadata_json
+            ) VALUES (
+                'log_vera_open', ?, 'manual_retro', 'user_memory', ?, NULL,
+                'date_range', 'medium', 'Vera Example open period.',
+                NULL, NULL, NULL, NULL, '{}'
+            )
+            """,
+            (recorded_at, closed_start),
+        )
+        connection.execute(
+            """
+            INSERT INTO experience_facts(
+                id, created_at, superseded_at, claim, claim_kind, project,
+                project_key, role, company, context, ownership_level, action,
+                object, outcome, skills_json, technologies_json, themes_json,
+                occurred_start, occurred_end, temporal_precision,
+                temporal_confidence, confidence, metadata_json,
+                produced_by_run_id, generation_id
+            ) VALUES (
+                'fact_vera_open', ?, NULL, 'Vera Example open fact.',
+                'observed_fact', NULL, NULL, NULL, NULL,
+                'independent_project', 'built', NULL, NULL, NULL,
+                '[]', '[]', '[]', ?, NULL, 'date_range', 'medium', 'medium',
+                '{}', 'run_vera_v7', 'gen_vera_open'
+            )
+            """,
+            (recorded_at, closed_start),
+        )
+        assert connection.execute(
+            "SELECT occurred_end FROM raw_logs WHERE id = 'log_vera_open'"
+        ).fetchone() == (None,)
+        assert connection.execute(
+            "SELECT occurred_end FROM experience_facts "
+            "WHERE id = 'fact_vera_open'"
+        ).fetchone() == (None,)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 @pytest.mark.parametrize(
@@ -376,21 +603,28 @@ def test_fresh_v7_and_migrated_v6_to_v7_have_identical_sqlite_master_shape(
         (1, "after_migration_4_to_5"),
         (1, "after_migration_5_to_6"),
         (1, "after_migration_6_to_7"),
+        (1, "after_migration_7_to_8"),
         (2, "after_migration_2_to_3"),
         (2, "after_migration_3_to_4"),
         (2, "after_migration_4_to_5"),
         (2, "after_migration_5_to_6"),
         (2, "after_migration_6_to_7"),
+        (2, "after_migration_7_to_8"),
         (3, "after_migration_3_to_4"),
         (3, "after_migration_4_to_5"),
         (3, "after_migration_5_to_6"),
         (3, "after_migration_6_to_7"),
+        (3, "after_migration_7_to_8"),
         (4, "after_migration_4_to_5"),
         (4, "after_migration_5_to_6"),
         (4, "after_migration_6_to_7"),
+        (4, "after_migration_7_to_8"),
         (5, "after_migration_5_to_6"),
         (5, "after_migration_6_to_7"),
+        (5, "after_migration_7_to_8"),
         (6, "after_migration_6_to_7"),
+        (6, "after_migration_7_to_8"),
+        (7, "after_migration_7_to_8"),
     ],
 )
 def test_each_registered_step_failure_rolls_back_to_the_original_version(
@@ -408,8 +642,10 @@ def test_each_registered_step_failure_rolls_back_to_the_original_version(
         workspace = v4_workspace(tmp_path)
     elif start_version == 5:
         workspace = v5_workspace(tmp_path)
-    else:
+    elif start_version == 6:
         workspace = v6_workspace(tmp_path)
+    else:
+        workspace = v7_workspace(tmp_path)
 
     def inject(point: str) -> None:
         if point == failure_point:
@@ -603,7 +839,7 @@ def test_cli_pre_backup_interrupt_keeps_the_generic_null_result_envelope(
     assert envelope["result"] is None
 
 
-def test_post_commit_interrupt_reports_backup_and_leaves_durable_v7(
+def test_post_commit_interrupt_reports_backup_and_leaves_durable_v8(
     tmp_path: Path,
 ) -> None:
     """§14.14 rule 4: a post-commit interrupt still reports both effects."""
@@ -625,11 +861,11 @@ def test_post_commit_interrupt_reports_backup_and_leaves_durable_v7(
     assert len(backups) == 1
     assert interrupt_info.value.managed_backup_path == str(backups[0])
     after = inspect_workspace(workspace)
-    assert after.stored_version == 7
+    assert after.stored_version == 8
     assert after.compatible is True
 
 
-def test_cli_post_commit_interrupt_envelope_reports_durable_v7_and_backup(
+def test_cli_post_commit_interrupt_envelope_reports_durable_v8_and_backup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """§14.14 rule 4: the cancelled envelope shows the committed migration."""
@@ -655,7 +891,7 @@ def test_cli_post_commit_interrupt_envelope_reports_durable_v7_and_backup(
     assert result.exit_code == 9
     envelope = json.loads(result.stdout)
     assert envelope["status"] == "cancelled"
-    assert envelope["result"]["schema"]["stored_version"] == 7
+    assert envelope["result"]["schema"]["stored_version"] == 8
     assert envelope["result"]["schema"]["compatible"] is True
     backup = Path(envelope["result"]["schema"]["managed_backup_path"])
     assert backup.is_file()
@@ -850,6 +1086,6 @@ def test_exact_shape_preexisting_telemetry_table_migrates(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
 
-    assert migrated.stored_version == 7
+    assert migrated.stored_version == 8
     assert migrated.compatible is True
     assert table_shape(database, table) == expected_shape

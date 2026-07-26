@@ -1,12 +1,12 @@
 Vera Example — deterministic first-mirror demo
-corpus=0.3.0 schema=7 envelope=1
+corpus=0.3.0 schema=8 envelope=1
 mode=no-cost offline canned responses; network/provider calls=0
 workspace=demo/workspace (external temporary workspace; display alias only)
 
 == Setup and invented Vera corpus capture ==
 
 $ exp2res init
-Initialized schema version 7 at demo/workspace.
+Initialized schema version 8 at demo/workspace.
 
 Configured demo/workspace timezone: Europe/Berlin
 
