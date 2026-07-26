@@ -44,7 +44,7 @@ exp2res log today --file - --owner-authored
 exp2res log today --artifact notes/demo.md --artifact https://example.invalid/demo
 ```
 
-Every form persists `RawLog(entry_type=manual_daily, source_type=manual_entry)` and a linked `EvidenceItem(strength=manual_claim)`. `--file` reads the supplied file into `RawLog.raw_text` and records its path in `RawLog.external_ref`; the database remains the persisted record.
+Every form persists `RawLog(entry_type=manual_daily, source_type=manual_entry)` and a linked `EvidenceItem(strength=manual_claim)`. `--file` reads the supplied file into `RawLog.raw_text` and records in `RawLog.external_ref` the symlink-resolved canonical real path §29.4 authorized for that read — never the supplied spelling, so a path typed relative to the invocation directory is persisted in the same absolute POSIX form as an equivalent absolute one. That form is what makes the record's provenance name one filesystem object: §29.4's pre-serialization re-check re-resolves it against the same object whatever directory the later stage runs in. The database remains the persisted record; a canonical path that fails §11's POSIX path form is refused before the file is opened.
 
 The `--file` form is non-prompt capture and requires §14.14 rule 3's explicit `--owner-authored` affirmation. `--file -` reads the record from standard input and records no `RawLog.external_ref`; a path form remains governed by §29.4, while standard input selects no filesystem object and is not source acquisition. Both forms retain the accepted `raw_text` exactly under §11's bound and free-text hygiene.
 
@@ -109,7 +109,7 @@ Every importer consumes a user-supplied local payload or file. The `github` form
 
 §19.4 owns the envelope, identity/idempotency, duplicate/conflict, and all-or-nothing batch semantics for the §19-backed `ephemeris`, `atlas`, and `github` forms (`import file` is not an envelope record); §14.14 rule 5 owns their closed result shape.
 
-`import file` rejects other local-file categories in V1 rather than guessing an entry type. It stores the document content in `RawLog.raw_text`, records the supplied path in `RawLog.external_ref` and `EvidenceItem.path`, and does not create a managed source copy.
+`import file` rejects other local-file categories in V1 rather than guessing an entry type. It stores the document content in `RawLog.raw_text`, records the §29.4-authorized canonical real path of that document — not the supplied spelling, on §14.2's rule and for its reason — in both `RawLog.external_ref` and `EvidenceItem.path`, and does not create a managed source copy.
 
 ## §14.6 Extract Facts
 
