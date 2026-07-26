@@ -919,6 +919,54 @@ def test_fact_insert_uses_open_governing_records_attested_window(
     assert stored_end is None
 
 
+def test_fact_insert_rejects_exact_open_bounds_over_approximate_open_support(
+    workspace: Path,
+) -> None:
+    """§16.7/§21.53: exactness is compared at the shared unbounded width."""
+
+    start = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    approximate_open = OccurredAt(
+        start=start,
+        end=None,
+        precision="approximate_range",
+        confidence="medium",
+    )
+    governing_item = _month_lineage_log(
+        workspace,
+        log_id="log_vera_open_approximate_root",
+        occurred=approximate_open,
+        recorded_at=FIXED_NOW,
+    )
+    exact_open = approximate_open.model_copy(update={"precision": "date_range"})
+    rejected = ExperienceFact(
+        **fact_values(
+            project=None,
+            source_log_ids=["log_vera_open_approximate_root"],
+            evidence_item_ids=[governing_item],
+            occurred=exact_open,
+        )
+    )
+    with writer_database(workspace) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        create_processing_run(
+            connection,
+            run_id=RUN_A,
+            stage="13.3",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+        )
+        with pytest.raises(IntegrityFailureError):
+            insert_experience_fact(
+                connection,
+                rejected,
+                produced_by_run_id=RUN_A,
+                generation_id=GEN_A,
+            )
+        connection.rollback()
+
+
 def test_fact_insert_rejects_placements_no_selected_record_entails(
     workspace: Path,
 ) -> None:

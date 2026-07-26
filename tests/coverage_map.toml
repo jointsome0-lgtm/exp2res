@@ -549,8 +549,10 @@ nodes = [
   "tests/test_stage3_extraction.py::test_open_temporal_upgrades_fail_stage3_validation[unsupported-bound]",
   "tests/test_stage3_extraction.py::test_open_temporal_upgrades_fail_stage3_validation[at-attestation]",
   "tests/test_stage3_extraction.py::test_open_temporal_upgrades_fail_stage3_validation[closed-to-open]",
+  "tests/test_stage3_extraction.py::test_open_temporal_upgrades_fail_stage3_validation[open-exactness]",
   "tests/test_stage3_extraction.py::test_empty_open_attested_window_rejects_bounds_but_copy_remains_legal",
   "tests/test_facts_storage.py::test_fact_insert_uses_open_governing_records_attested_window",
+  "tests/test_facts_storage.py::test_fact_insert_rejects_exact_open_bounds_over_approximate_open_support",
   "tests/test_cli_correction.py::test_open_period_correction_reattests_then_closes_without_rewriting_history",
   "tests/test_schema_migration.py::test_v7_to_v8_rebuild_preserves_rows_guards_indexes_and_admits_open_ranges",
   "tests/test_temporal_open_ended.py::test_open_range_shape_and_width_stay_distinct_from_unknown_and_closed",
@@ -558,6 +560,7 @@ nodes = [
   "tests/test_temporal_open_ended.py::test_governing_contains_clips_only_bounded_candidates_to_attested_window",
   "tests/test_temporal_open_ended.py::test_empty_attested_window_rejects_closed_narrowing_but_allows_open_copy",
   "tests/test_temporal_open_ended.py::test_open_support_never_entails_a_bounded_candidate_and_closed_rejects_open",
+  "tests/test_temporal_open_ended.py::test_open_exactness_is_still_compared_at_the_shared_unbounded_width",
   "tests/test_export_occurred.py::test_open_occurred_rendering_is_attested_explicit_and_clock_free",
   "tests/test_export_occurred.py::test_open_occurred_rendering_requires_attestation",
 ]

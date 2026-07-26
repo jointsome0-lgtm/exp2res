@@ -1740,6 +1740,7 @@ And a closed narrowing inside the governing record's attested window [start, rec
 And the same closed narrowing without such support fails as a §16.7 temporal upgrade, because an open-ended support entails no bounded candidate
 And a candidate placed at or after the governing record's recorded_at fails containment even though [start, ∞) would trivially contain it
 And a candidate that replaces a closed governing end bound with end = null fails as widening
+And an open date_range candidate under an open approximate_range governing placement fails as an exactness upgrade at their shared unbounded width, while the reverse weakening is accepted
 
 Given an open-ended governing placement whose start is at or after its record's recorded_at
 When Stage 3 validates candidates against it
@@ -1752,7 +1753,7 @@ And the closing correction leaves those facts with a closed placement, while eve
 
 Given an open-ended placement and its attesting record's recorded_at
 When §17 renders it
-Then the rendering shows the stored start, an explicit open-period label, the approximate flavor when the precision is approximate_range, and the attesting recorded_at as a labeled as-of anchor in its stored ISO 8601 form
+Then the rendering shows the stored start, an explicit open-period label, the approximate flavor when the precision is approximate_range, and the attesting recorded_at as a labeled as-of anchor in one canonical offset-preserving ISO 8601 form
 And it contains no end bound, no present-tense continuation such as "to the present", "currently", or "still", and no export wall-clock value
 And rendering the same value at two different wall-clock times produces identical bytes
 '''

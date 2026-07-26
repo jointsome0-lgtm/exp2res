@@ -145,6 +145,17 @@ def _is_exact_bounded(occurred: OccurredAt) -> bool:
     return occurred.precision != "approximate_range"
 
 
+def _width_key(width: timedelta | None) -> tuple[int, timedelta]:
+    """Order §16.7 widths with every finite width stronger than unbounded.
+
+    Unbounded widths — `unknown` and an open-ended range — compare equal to
+    each other, so the exactness comparison below still separates an open
+    `approximate_range` from an open `date_range` at that shared width.
+    """
+
+    return (1, timedelta(0)) if width is None else (0, width)
+
+
 def strength_exceeds_support(
     candidate: OccurredAt, supports: tuple[OccurredAt, ...]
 ) -> bool:
@@ -152,30 +163,27 @@ def strength_exceeds_support(
 
     A candidate upgrades precision when its normalized width is narrower
     than the strongest supported width, or when it strengthens exactness at
-    equal width (§16.7). An empty support set makes any bounded candidate
-    an upgrade.
+    equal width (§16.7) — including the shared unbounded width two open-ended
+    ranges have, where an open `date_range` still upgrades an open
+    `approximate_range`. An empty support set makes any candidate an upgrade.
     """
 
-    candidate_width = uncertainty_width(candidate)
-    if candidate_width is None:
-        return False
-    strongest: timedelta | None = None
+    candidate_key = _width_key(uncertainty_width(candidate))
+    strongest: tuple[int, timedelta] | None = None
     exact_at_strongest = False
     for support in supports:
-        width = uncertainty_width(support)
-        if width is None:
-            continue
-        if strongest is None or width < strongest:
-            strongest = width
+        key = _width_key(uncertainty_width(support))
+        if strongest is None or key < strongest:
+            strongest = key
             exact_at_strongest = _is_exact_bounded(support)
-        elif width == strongest:
+        elif key == strongest:
             exact_at_strongest = exact_at_strongest or _is_exact_bounded(support)
     if strongest is None:
         return True
-    if candidate_width < strongest:
+    if candidate_key < strongest:
         return True
     return (
-        candidate_width == strongest
+        candidate_key == strongest
         and _is_exact_bounded(candidate)
         and not exact_at_strongest
     )

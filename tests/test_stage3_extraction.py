@@ -724,7 +724,7 @@ def test_open_governing_copy_and_attested_supported_narrowing(
 @pytest.mark.invariant
 @pytest.mark.parametrize(
     "case",
-    ["unsupported-bound", "at-attestation", "closed-to-open"],
+    ["unsupported-bound", "at-attestation", "closed-to-open", "open-exactness"],
 )
 def test_open_temporal_upgrades_fail_stage3_validation(
     workspace: Path,
@@ -739,7 +739,23 @@ def test_open_temporal_upgrades_fail_stage3_validation(
         precision="date_range",
         confidence="medium",
     )
-    if case == "closed-to-open":
+    if case == "open-exactness":
+        # §16.7: two open ranges share one unbounded width, so exact bounds
+        # over an approximate governing start remain an exactness upgrade.
+        governing = open_period.model_copy(
+            update={"precision": "approximate_range"}
+        )
+        candidate = open_period
+        _log, items = add_log(
+            workspace,
+            log_id="log_vera_open_approximate_governing",
+            recorded_at=FIXED_NOW,
+            raw_text="Vera Example stated an approximate open start.",
+            occurred=governing,
+            item_specs=(("evi_vera_open_approximate_governing", "manual_claim"),),
+        )
+        selected_ids = [items[0].id]
+    elif case == "closed-to-open":
         governing = open_period.model_copy(
             update={"end": datetime(2026, 7, 1, tzinfo=timezone.utc)}
         )

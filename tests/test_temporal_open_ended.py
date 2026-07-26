@@ -128,3 +128,18 @@ def test_open_support_never_entails_a_bounded_candidate_and_closed_rejects_open(
 
     assert not placement_supports(bounded, open_support)
     assert not governing_contains(bounded, start + timedelta(days=10), open_support)
+
+
+def test_open_exactness_is_still_compared_at_the_shared_unbounded_width() -> None:
+    """§16.7: an open date_range upgrades an open approximate_range."""
+
+    start = datetime(2026, 4, 1, tzinfo=UTC)
+    approximate_open = occurred(
+        start=start, end=None, precision="approximate_range"
+    )
+    exact_open = occurred(start=start, end=None, precision="date_range")
+
+    assert not placement_supports(exact_open, approximate_open)
+    assert placement_supports(approximate_open, exact_open)
+    assert placement_supports(exact_open, exact_open)
+    assert governing_contains(approximate_open, start + timedelta(days=1), exact_open)
