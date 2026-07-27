@@ -76,3 +76,5 @@ lanes, and review policy stay local to each repository.
 - **Invented data only in public repositories.** Examples and fixtures carry
   no real personal data, credentials, or local agent/tool state.
 <!-- END SDD-CONVENTIONS -->
+
+Git worktrees: create them only in `.worktrees/<name>` inside the repo (globally gitignored via `~/.config/git/ignore`), never as sibling directories.
