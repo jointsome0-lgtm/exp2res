@@ -73,6 +73,49 @@ class RawResult:
     api_error_status: int | None = None
 
 
+# §15.10 rule 10 separates a stable code from the `transport_provider_error`
+# catch-all only when it names a distinct owner remedy. A refused request
+# shape means fix the build or configuration; an unserviceable model means fix
+# the `[llm]` selection. Both are non-retryable. Every adapter classifies from
+# its own error channel with these shared deterministic markers, and an
+# unmatched rejection stays the catch-all rather than being guessed into a
+# narrower class.
+MODEL_UNAVAILABLE_MARKERS = (
+    b"model_not_found",
+    b"model not found",
+    b"unknown model",
+    b"unsupported model",
+    b"model is not supported",
+    b"does not exist or you do not have access",
+)
+REQUEST_REJECTED_MARKERS = (
+    b"invalid_json_schema",
+    b"invalid_request_error",
+    b"invalid schema",
+    b"invalid request",
+    b"malformed request",
+    b"unsupported parameter",
+    b"unsupported_value",
+    b"unprocessable entity",
+)
+
+
+def classify_rejection_shape(channel: bytes) -> str | None:
+    """Name a §15.10 rule 10 rejection class, or None to keep the catch-all.
+
+    The model check precedes the request-shape check because a provider
+    reports an unserviceable model through the same rejected-request
+    envelope, and the model remedy is the more specific one.
+    """
+
+    lowered = channel.lower()
+    if any(marker in lowered for marker in MODEL_UNAVAILABLE_MARKERS):
+        return "transport_model_unavailable"
+    if any(marker in lowered for marker in REQUEST_REJECTED_MARKERS):
+        return "transport_request_rejected"
+    return None
+
+
 class ContractRunner(Protocol):
     def run_contract(self, call: PreparedCall) -> RawResult:
         """Run one physical request attempt."""

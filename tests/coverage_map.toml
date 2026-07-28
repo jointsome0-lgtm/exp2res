@@ -366,9 +366,16 @@ nodes = [
   "tests/test_cli_extract.py::test_build_llm_execution_uses_workspace_selection_and_budget_defaults",
   "tests/test_cli_extract.py::test_extract_invalid_after_retry_reports_failure_and_durable_telemetry",
   "tests/test_cli_extract.py::test_extract_interrupt_is_cancelled_without_partial_facts",
+  "tests/test_transport_diagnostics.py::test_unclassifiable_rejection_keeps_the_catch_all[codex-cli]",
+  "tests/test_transport_diagnostics.py::test_unclassifiable_rejection_keeps_the_catch_all[claude-agent-sdk]",
+  "tests/test_transport_diagnostics.py::test_claude_typed_4xx_status_still_names_the_rejection_shape",
+  "tests/test_transport_diagnostics.py::test_rejection_classes_stay_in_the_provider_transport_exit_class",
+  "tests/test_transport_diagnostics.py::test_human_mode_names_the_failing_surface_without_provider_bytes",
+  "tests/test_transport_diagnostics.py::test_cancellation_names_no_failing_surface",
+  "tests/test_transport_diagnostics.py::test_new_codes_are_registered_transport_classes_for_every_adapter",
 ]
 phase = "1"
-note = "Runner and Stage 3 fixtures prove bounded foreground calls, whole-stage rollback, durable failed telemetry, budget preflight, and handled cancellation; the full transport-failure matrix, hard-crash timings, late-response discard, stderr progress limits, and other named stages remain"
+note = "Runner and Stage 3 fixtures prove bounded foreground calls, whole-stage rollback, durable failed telemetry, budget preflight, and handled cancellation; the rejection-shape fixtures prove both new rule-10 codes across every registered adapter, their class-6 exit, the catch-all fallback for an unclassifiable channel, and a stage/contract stderr diagnostic that echoes no provider byte and leaves the envelope unchanged; the full transport-failure matrix, hard-crash timings, late-response discard, stderr progress limits, and other named stages remain"
 
 ["21.44"]
 status = "partial"
@@ -468,6 +475,14 @@ nodes = [
   "tests/test_claude_adapter.py::test_sandbox_argv_has_exact_claude_controls_and_inline_schema",
   "tests/test_claude_adapter.py::test_claude_patterns_include_generic_and_sk_ant_classifiers",
   "tests/test_claude_adapter.py::test_fake_runtime_session_artifacts_die_with_sandbox",
+  "tests/test_llm_preflight.py::test_configured_codex_binary_replaces_path_discovery",
+  "tests/test_llm_preflight.py::test_unusable_configured_binary_fails_capability_before_transport[missing]",
+  "tests/test_llm_preflight.py::test_unusable_configured_binary_fails_capability_before_transport[not-executable]",
+  "tests/test_llm_preflight.py::test_unusable_configured_binary_fails_capability_before_transport[directory]",
+  "tests/test_llm_preflight.py::test_adapter_binary_key_requires_an_absolute_posix_path[command-name]",
+  "tests/test_llm_preflight.py::test_adapter_binary_key_requires_an_absolute_posix_path[non-string]",
+  "tests/test_llm_preflight.py::test_adapter_binary_key_requires_an_absolute_posix_path[relative-path]",
+  "tests/test_llm_preflight.py::test_adapter_binary_keys_are_recognized_and_carry_no_credential",
 ]
 environment_gated = [
   "tests/test_llm_preflight.py::test_canary_proves_closed_read_namespace_or_skips_explicitly",
@@ -477,7 +492,7 @@ environment_gated = [
   "tests/test_claude_adapter.py::test_fake_runtime_session_artifacts_die_with_sandbox",
 ]
 phase = "1"
-note = "Both shipped agent-backed adapters execute the shared control, workspace-lifecycle, final-result-channel, environment, and token-classifier conformance nodes; real bwrap/userns isolation and transient-artifact execution remain environment-gated, the Claude provider smoke remains double-opt-in, and simulated hard-crash residue, §21.49 undeclared-authority fixtures, explicit drifted-control/protocol-version preflight cases, and the openai-compat direct-adapter classification remain uncovered"
+note = "Both shipped agent-backed adapters execute the shared control, workspace-lifecycle, final-result-channel, environment, and token-classifier conformance nodes, and the §29.2 executable key proves configured-path resolution without PATH lookup, unchanged discovery when absent, and pre-transport capability_mismatch on an unusable path; real bwrap/userns isolation and transient-artifact execution remain environment-gated, the Claude provider smoke remains double-opt-in, and simulated hard-crash residue, §21.49 undeclared-authority fixtures, explicit drifted-control/protocol-version preflight cases, and the openai-compat direct-adapter classification remain uncovered"
 
 ["21.51"]
 status = "covered"
@@ -543,9 +558,23 @@ nodes = [
   "tests/test_capture_noninteractive.py::test_interactive_retro_rejects_explicitly_empty_typed_options[precision]",
   "tests/test_capture_noninteractive.py::test_interactive_retro_rejects_explicitly_empty_typed_options[period]",
   "tests/test_capture_noninteractive.py::test_interactive_retro_rejects_explicitly_empty_typed_options[confidence]",
+  "tests/test_correction_nonprompt.py::test_file_and_stdin_corrections_round_trip_and_copy_placement",
+  "tests/test_correction_nonprompt.py::test_explicit_replacements_take_effect_exactly[temporal-set]",
+  "tests/test_correction_nonprompt.py::test_explicit_replacements_take_effect_exactly[project-replacement]",
+  "tests/test_correction_nonprompt.py::test_explicit_replacements_take_effect_exactly[project-cleared]",
+  "tests/test_correction_nonprompt.py::test_missing_affirmation_fails_before_acquisition[bare]",
+  "tests/test_correction_nonprompt.py::test_missing_affirmation_fails_before_acquisition[with-replacement-flags]",
+  "tests/test_correction_nonprompt.py::test_replacement_flags_without_file_are_invalid_usage[temporal]",
+  "tests/test_correction_nonprompt.py::test_replacement_flags_without_file_are_invalid_usage[project]",
+  "tests/test_correction_nonprompt.py::test_replacement_flags_without_file_are_invalid_usage[clear-project]",
+  "tests/test_correction_nonprompt.py::test_project_replacement_and_clear_are_mutually_exclusive",
+  "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[partial-set]",
+  "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[unknown-with-period]",
+  "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[missing-period]",
+  "tests/test_correction_nonprompt.py::test_affirmation_does_not_supply_the_rebuild_consent",
 ]
 phase = "1"
-note = "All three non-prompt capture forms prove explicit pre-acquisition affirmation, multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate."
+note = "All four non-prompt capture forms prove explicit pre-acquisition affirmation, multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate; correction proves copy-unless-replaced placement and project, the whole-typed-set replacement rules, mutually exclusive project flags, non-prompt-only flag scoping, and affirmation separate from rebuild consent."
 
 ["21.53"]
 status = "covered"

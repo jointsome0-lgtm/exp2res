@@ -1166,11 +1166,18 @@ Then no later attempt starts
 And the same deadline has bounded every request round, physical attempt, and backoff of the invocation
 And the call and run fail with transport_timeout and exit class 6 rather than cancelled class 9
 
-Given table-driven non-retryable transport responses for HTTP 4xx other than 408 or 429, authentication or authorization failure, and provider-rejected request shape
+Given table-driven non-retryable transport responses for HTTP 4xx other than 408 or 429, authentication or authorization failure, provider-rejected request shape, and an unavailable selected model
 When the provider returns the response
 Then exactly one physical attempt occurs on the planned invocation's one llm_calls row
 And transport_retries does not increment, no backoff occurs, and the call fails immediately
-And authentication or authorization records transport_auth_failed while the other fixtures record transport_provider_error
+And authentication or authorization records transport_auth_failed, a rejected request shape records transport_request_rejected, an unavailable model records transport_model_unavailable, and the remaining fixtures record transport_provider_error
+And every one of those codes exits through provider or transport class 6
+
+Given a failing invocation whose provider error channel carries source-derived text and credential-shaped material
+When the command reports the failure
+Then human mode prints one stderr diagnostic naming the failing stage, the contract identifier, and the stable failure code
+And no byte of the provider error channel reaches stdout, stderr, the §14.14 envelope, processing_runs, or llm_calls
+And the §14.14 envelope is unchanged by the diagnostic and still reports the run through run_ids
 
 Given an adapter or model omits structured-output support, a declared model identifier, declared context or output bounds, timeout or cancellation support, or a required deterministic credential or token classifier
 When selection or configuration validation runs
@@ -1612,7 +1619,7 @@ And when a correction displaces a source record, §13.3 rule 10's prose-free des
 
 ["21.50"]
 title = "Agent-Backed Runners Are Structurally Confined"
-enforces = "§15.10 rule 4, §15.12, §29.2, §29.4, and §29.6; extends §21.43's transport coverage and §21.49's injection matrix"
+enforces = "§15.10 rule 4, §15.12, §15.13, §29.2, §29.4, and §29.6; extends §21.43's transport coverage and §21.49's injection matrix"
 case = '''
 Given every agent-backed adapter the build ships, including the Codex CLI reference adapter and any Agent SDK adapter
 And planted sentinel files outside the contract workspace, at the Exp2Res workspace path and its database, at a .env path, at an unrelated source module, and at the user-level agent rules and configuration paths
@@ -1649,6 +1656,13 @@ Given the non-agent-backed direct-API adapter from the same build
 When adapter classification runs
 Then its §15.10 rule 4 declaration rules out every agent affordance, §15.12 does not bind it, and its capability declaration still applies
 And an adapter that cannot rule out an agent affordance by declaration classifies as agent-backed and is unselectable without the full §15.12 preflight
+
+Given an externally-managed-session adapter whose optional §29.2 executable key is unset, set to a stub executable, and set to a missing or non-executable path
+When capability preflight runs for each configuration
+Then the unset key keeps the adapter's own PATH discovery unchanged
+And the stub path is the executable the preflight resolves and the runner binds, with no PATH lookup and no environment-supplied command name
+And a missing or non-executable path fails as capability_mismatch before any transport and independently of the session check
+And the key loads as a recognized [llm] key, carries no credential value, and never enters a §15 prompt field
 '''
 
 ["21.51"]
@@ -1698,7 +1712,7 @@ Then the selected set spans two distinct raw logs and contains a non-manual item
 
 ["21.52"]
 title = "Non-Prompt Owner Capture Is Affirmed, Lossless, and Uncertainty-Preserving"
-enforces = "§5.2, §5.5, §11's Model validation policy and §11.1, §13.1, §14.2–§14.3, §14.7, §14.14 rules 2–4 and 8, and §29.4"
+enforces = "§5.2, §5.5, §11's Model validation policy and §11.1, §13.1, §13.3 rule 10, §14.2–§14.4, §14.7, §14.14 rules 2–4 and 8, and §29.4"
 case = '''
 Given invented multiline UTF-8 owner text supplied through --file PATH and, separately, --file -
 When log today, log retro, and gaps answer capture the text with --owner-authored and repeatable artifact locators
@@ -1724,6 +1738,25 @@ Then it rejects the form in exit class 2 rather than discarding the period
 Given non-prompt log retro omits --precision, --confidence, or the period required by a non-unknown precision, or supplies a range precision without start/end
 When stdin is non-TTY or --no-input is set
 Then the command fails closed under §14.14 rule 3 before reading record text, writing a row, or displaying a prompt
+
+Given a retained raw record carrying an OccurredAt and a project label
+And invented multiline UTF-8 correction text supplied through correction add --file PATH and, separately, --file -
+When each capture runs with --owner-authored, --yes, and repeatable artifact locators
+Then the accepted RawLog.raw_text re-encodes byte-for-byte identically to the supplied bytes with no normalization, trimming, or line joining
+And the path form records external_ref as the §29.4-authorized canonical real path while standard input records external_ref = null
+And the record retains exactly correction/manual_entry classification with corrects_log_id naming the target, and its bundle keeps the manual claim first and its artifact_reference items under §13.1
+And omitting the temporal and project flags copies the target's OccurredAt and project exactly, with no precision increase and no silent project strip
+
+Given correction add --file supplies --precision, --period, and --confidence, or supplies --project, or supplies --clear-project
+When each explicit replacement is captured
+Then the stored placement and project are exactly the replacements, and every §14.3 typed-set rule applies unchanged — precision and confidence always required together, a period required at every precision other than unknown, unknown with --period rejected, and start/.. the only open-ended form
+And --project together with --clear-project is invalid usage in exit class 2
+
+Given correction add --file is invoked without --owner-authored, and separately any of --precision, --period, --confidence, --project, or --clear-project is supplied without --file
+When the command evaluates the candidate
+Then the missing affirmation fails with exit class 2 and diagnostic owner_authorship_required, and the flag without --file fails as invalid usage in exit class 2
+And both fail before opening the source, writing a row, displaying a prompt, or invoking any provider
+And --owner-authored does not imply the §13.13 rebuild consent, which the non-prompt form still requires under §14.14 rule 3
 '''
 
 ["21.53"]

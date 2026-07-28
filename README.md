@@ -56,6 +56,14 @@ claude_config_dir_env = "CLAUDE_CONFIG_DIR"
 
 The registered agent-backed choices are `codex-cli` and `claude-agent-sdk`; the latter uses model `claude-opus-4-8`. Both use externally managed CLI sessions and fail closed when that session is absent. Sign in with the corresponding CLI outside Exp2Res before invoking a stage. Claude reads its session from the directory named by `claude_config_dir_env`, or `~/.claude` when that environment variable is unset. `reasoning_effort` must be supported by the selected adapter; `high` is supported by both and is the service default. The specification's `openai-compat` choice is not registered in this build yet.
 
+Each adapter also accepts an optional absolute path to its local executable — `codex_binary_path` and `claude_binary_path`. Omit them and the adapter discovers its CLI on `PATH`. Set one when `PATH` resolves to something the isolated runner cannot execute, such as an npm launcher shim whose interpreter is not inside the sandbox:
+
+```toml
+codex_binary_path = "/usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+```
+
+The value names a local program, never a credential; a missing or non-executable path fails `capability_mismatch` before any provider call.
+
 ## Demo
 
 The issue [#79](https://github.com/jointsome0-lgtm/exp2res/issues/79) first-mirror demo is a deliberately small subset of the eventual full [§23 walkthrough](spec/23-end-to-end-demo.md). It exercises capture → extraction → detection → signals → global assessment → verification → assessment export, then a separate project-scoped overclaim whose rejected verification blocks export. It does not claim to implement §23's later verified bullet-pack surface.

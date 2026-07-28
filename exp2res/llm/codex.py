@@ -28,6 +28,7 @@ from .runner import (
     RawResult,
     _read_output,
     _write_private,
+    classify_rejection_shape,
     run_subprocess,
 )
 from .sandbox import (
@@ -364,6 +365,10 @@ def build_runner(config: LLMConfig, repository_root: Path) -> ContractRunner:
     runtime = preflight_adapter(
         repository_root=repository_root,
         codex_home=codex_home,
+        # §29.2: the configured executable, when present, replaces PATH
+        # discovery entirely; `_resolve_codex_binary` fails closed as
+        # `capability_mismatch` on a missing or non-executable path.
+        codex_binary=config.codex_binary_path,
         declaration=DEFAULT_DECLARATION,
     )
     return CodexCLIRunner(
@@ -417,6 +422,9 @@ def classify_codex_failure(result: RawResult) -> tuple[str | None, bool]:
         return "transport_auth_failed", False
     if any(marker in channel for marker in (b"lost response", b"ambiguous delivery")):
         return "transport_lost_response", True
+    rejection = classify_rejection_shape(channel)
+    if rejection is not None:
+        return rejection, False
     retryable = any(
         marker in channel
         for marker in (b"connection", b"tls", b"overload", b"http 5", b" 500")

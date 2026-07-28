@@ -11,7 +11,7 @@ from typing import Callable
 
 from pydantic import ValidationError
 
-from exp2res.config import load_workspace_config
+from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.errors import (
@@ -29,7 +29,11 @@ from exp2res.services.capture import (
     new_id,
     validate_project_label,
 )
-from exp2res.services.source_files import authorize_artifact_locators
+from exp2res.services.source_files import (
+    authorize_artifact_locators,
+    read_capture_file,
+)
+from exp2res.services.time_input import workspace_zone
 from exp2res.storage.repository import (
     get_raw_log,
     insert_evidence_item,
@@ -97,6 +101,23 @@ def validate_correction_selection(workspace: Path, *, log_id: str) -> RawLog:
     return selected
 
 
+def read_correction_source(
+    workspace: Path, *, source_path: str
+) -> tuple[str, str | None]:
+    """Acquire §14.4 non-prompt correction text under §14.2's gates.
+
+    Compatibility and the local-time contract fail closed before the private
+    source is opened, exactly as `capture_retro_file` orders them; the caller
+    reads outside the writer lock so no file I/O happens inside the §13.13
+    capture-and-rebuild transaction.
+    """
+
+    require_compatible(workspace)
+    config = load_workspace_config(workspace)
+    workspace_zone(require_timezone(config))
+    return read_capture_file(source_path, config=config)
+
+
 def _current_fact_ids(
     connection: sqlite3.Connection, member_ids: tuple[str, ...]
 ) -> tuple[str, ...]:
@@ -139,6 +160,7 @@ def capture_correction(
     raw_text: str,
     occurred: OccurredAt,
     project: str | None,
+    external_ref: str | None = None,
     artifacts: tuple[str, ...] = (),
     clock: Clock | None = None,
     id_factory: IdFactory = new_id,
@@ -216,7 +238,10 @@ def capture_correction(
                         occurred=occurred,
                         raw_text=raw_text,
                         project=project,
-                        external_ref=None,
+                        # §14.4's non-prompt form persists the canonical real
+                        # path §29.4 authorized; prompt and stdin capture
+                        # select no filesystem object and record none.
+                        external_ref=external_ref,
                         corrects_log_id=target.id,
                         metadata={},
                     )

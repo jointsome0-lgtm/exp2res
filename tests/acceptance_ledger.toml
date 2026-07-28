@@ -307,8 +307,8 @@ note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit offs
 status = "partial"
 phases = ["1", "2", "3", "4"]
 evals = ["21.43"]
-issues = ["#69", "PR #101", "#82", "PR #125"]
-note = "The runner plus Stage 3 CLI prove bounded foreground attempts, budgets, deadlines, retry telemetry, complete-stage rollback, fresh failed-run telemetry, and handled cancellation with no partial facts; the exhaustive failure matrix, all adapters, hard crashes, late responses, and every interruption timing remain"
+issues = ["#69", "PR #101", "#82", "PR #125", "#151"]
+note = "The runner plus Stage 3 CLI prove bounded foreground attempts, budgets, deadlines, retry telemetry, complete-stage rollback, fresh failed-run telemetry, and handled cancellation with no partial facts; the two new rule-10 rejection classes now prove distinct non-retryable codes across every registered adapter with a catch-all fallback, and human mode names the failing stage and contract while echoing no provider byte; the exhaustive failure matrix, all adapters, hard crashes, late responses, and every interruption timing remain"
 
 ["24.47"]
 status = "partial"
@@ -373,7 +373,7 @@ note = "Codex and Claude are both shipped agent-backed adapters with declared V1
 status = "partial"
 phases = ["0", "1", "2", "3", "4"]
 evals = []
-issues = ["#110", "#82", "PR #125"]
+issues = ["#110", "#82", "PR #125", "#150"]
 nodes = [
   "tests/test_llm_preflight.py::test_fresh_config_exposes_adapter_model_home_reference_and_all_budgets",
   "tests/test_llm_preflight.py::test_known_but_unregistered_adapter_fails_with_distinct_diagnostic[openai-compat]",
@@ -382,8 +382,13 @@ nodes = [
   "tests/test_claude_adapter.py::test_adapter_specific_effort_mismatch_fails_at_build_time[claude-agent-sdk-minimal-build_runner]",
   "tests/test_llm_runner.py::test_loaded_selection_drives_fake_runner_processing_identity",
   "tests/test_cli_extract.py::test_build_llm_execution_uses_workspace_selection_and_budget_defaults",
+  "tests/test_llm_preflight.py::test_configured_codex_binary_replaces_path_discovery",
+  "tests/test_llm_preflight.py::test_unusable_configured_binary_fails_capability_before_transport[missing]",
+  "tests/test_llm_preflight.py::test_unusable_configured_binary_fails_capability_before_transport[not-executable]",
+  "tests/test_llm_preflight.py::test_adapter_binary_key_requires_an_absolute_posix_path[command-name]",
+  "tests/test_llm_preflight.py::test_adapter_binary_keys_are_recognized_and_carry_no_credential",
 ]
-note = "Config-only selection, model, and adapter-specific reasoning effort now reach both shipped agent-backed runners, including a double-opt-in Claude full-stack smoke; openai-compat remains the one unimplemented V1 adapter and keeps this criterion partial"
+note = "Config-only selection, model, adapter-specific reasoning effort, and now the optional §29.2 executable path reach both shipped agent-backed runners, including a double-opt-in Claude full-stack smoke; openai-compat remains the one unimplemented V1 adapter and keeps this criterion partial"
 
 ["24.55"]
 status = "met"
@@ -396,8 +401,8 @@ note = "Covered eval 21.51 proves every owner-capture command surface, ordered a
 status = "met"
 phases = ["0"]
 evals = ["21.52"]
-issues = ["#161", "#163", "#171"]
-note = "Covered eval 21.52 proves uniform explicit affirmation before acquisition, bounded byte-identical multiline file/stdin capture with unchanged classifications and artifact composition, canonical-real-path external_ref for a relative --file source, and the unknown-precision prompt and typed-value carve-outs."
+issues = ["#161", "#163", "#171", "#180"]
+note = "Covered eval 21.52 proves uniform explicit affirmation before acquisition, bounded byte-identical multiline file/stdin capture with unchanged classifications and artifact composition, canonical-real-path external_ref for a relative --file source, the unknown-precision prompt and typed-value carve-outs, and — for corrections — copy-unless-replaced placement and project, whole-typed-set replacement, mutually exclusive project flags, non-prompt-only flag scoping, and affirmation kept separate from the rebuild consent."
 
 ["24.57"]
 status = "met"

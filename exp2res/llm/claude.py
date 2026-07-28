@@ -29,6 +29,7 @@ from .runner import (
     RawResult,
     _read_output,
     _write_private,
+    classify_rejection_shape,
     run_subprocess,
 )
 from .sandbox import (
@@ -470,6 +471,8 @@ def build_runner(config: LLMConfig, repository_root: Path) -> ContractRunner:
     runtime = preflight_adapter(
         repository_root=repository_root,
         claude_config_dir=claude_config_dir,
+        # §29.2's configured executable, on the same terms as Codex's.
+        claude_binary=config.claude_binary_path,
         declaration=DEFAULT_DECLARATION,
     )
     return ClaudeAgentRunner(
@@ -499,7 +502,13 @@ def classify_claude_failure(result: RawResult) -> tuple[str | None, bool]:
         if 500 <= status <= 599:
             return "transport_provider_error", True
         if 400 <= status <= 499:
-            return "transport_provider_error", False
+            # A typed 4xx status names the class but not the remedy: the
+            # rejection shape comes from the same deterministic markers every
+            # adapter shares, and an unmatched one keeps the catch-all.
+            return (
+                classify_rejection_shape(result.error_channel)
+                or "transport_provider_error"
+            ), False
     if result.exit_code == 0 and result.final_message_bytes is not None:
         return None, False
     channel = result.error_channel.lower()
@@ -532,6 +541,9 @@ def classify_claude_failure(result: RawResult) -> tuple[str | None, bool]:
         return "transport_timeout", True
     if any(marker in channel for marker in (b"lost response", b"ambiguous delivery")):
         return "transport_lost_response", True
+    rejection = classify_rejection_shape(channel)
+    if rejection is not None:
+        return rejection, False
     if any(
         marker in channel
         for marker in (

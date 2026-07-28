@@ -443,6 +443,17 @@ def invoke_contract(
 
     try:
         return run_rounds()
+    except LLMCancelledError:
+        # An owner interrupt broke no surface; rule 9's diagnostic would name
+        # one that did not fail.
+        raise
+    except LLMInvocationError as error:
+        # §15.10 rule 9: name the surface that broke. Both values are
+        # service-owned constants, so the human-mode diagnostic the CLI
+        # renders from them carries no provider bytes and no payload content.
+        error.failing_stage = stage
+        error.failing_contract = contract.contract_id
+        raise
     except KeyboardInterrupt:
         # §15.10 rule 8: an owner interrupt anywhere in the foreground
         # invocation — transport, backoff, validation, or the business
