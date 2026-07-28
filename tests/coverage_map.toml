@@ -429,7 +429,7 @@ nodes = [
   "tests/test_export_markdown.py::test_hostile_generated_values_cannot_add_a_report_block",
   "tests/test_export_markdown.py::test_source_voice_fence_is_shortest_and_preserves_interior_bytes",
   "tests/test_export_markdown.py::test_renderer_is_byte_deterministic_and_uses_closed_order_and_empty_headings",
-  "tests/test_export_markdown.py::test_answered_since_synthesis_is_explicit_and_question_is_omitted",
+  "tests/test_export_markdown.py::test_answered_since_synthesis_is_explicit_and_question_stays_beside_id",
   "tests/test_export_markdown.py::test_unmatched_non_summary_claim_fails_closed",
   "tests/test_export_companions.py::test_companion_encoding_has_canonical_key_order_utc_datetime_and_one_lf",
   "tests/test_export_companions.py::test_closed_companion_models_reject_extra_missing_and_wrong_version[SelfClaimsDocument-payload0]",
