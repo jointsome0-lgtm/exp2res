@@ -254,6 +254,26 @@ def _evidence_projection(item) -> EvidenceItemProjection:
     )
 
 
+def _invalidated_view_lines(views: list[InvalidatedView]) -> list[str]:
+    """§14.14 rule 5's one human rendering of §13.13 rule 9 view reports.
+
+    Every command routes through `_run_command`, so composing the lines there
+    is what makes the report reach the owner on the nonzero path too — the
+    supersession that staled a published view is already committed when a
+    later stage of the same lifecycle flow fails.
+    """
+
+    lines: list[str] = []
+    for item in views:
+        target = "" if item.scope_target is None else f": {item.scope_target}"
+        lines.append(
+            f"Invalidated assessment view {item.snapshot_id} "
+            f"({item.scope}{target}); regenerate with: "
+            f"{item.regeneration_command}"
+        )
+    return lines
+
+
 def _emit(envelope: CLIEnvelope, controls: Controls, human_result: str = "") -> None:
     if controls.json_output:
         payload = envelope.model_dump(mode="json", by_alias=True)
@@ -351,6 +371,12 @@ def _run_command(
         # §13.13 retry guidance is an operator diagnostic in human mode; the
         # JSON path carries the same executable command in the closed field.
         typer.echo(f"Retry: {outcome.retry.command}", err=True)
+
+    view_lines = _invalidated_view_lines(outcome.invalidated_views)
+    if view_lines:
+        outcome.human_result = "\n".join(
+            [*([outcome.human_result] if outcome.human_result else []), *view_lines]
+        )
 
     observed_residuals: list[str] = []
     for path in preamble_residuals:
@@ -677,10 +703,6 @@ def _lifecycle_outcome(
     invalidated_views = _views(
         base_invalidated_views, recomputed.invalidated_views
     )
-    view_lines = "\n".join(
-        f"Invalidated {item.snapshot_id}: {item.regeneration_command}"
-        for item in invalidated_views
-    )
     no_view = (
         "\nNo current assessment view exists; run exp2res assess generate."
         if recomputed.no_current_assessment_view
@@ -693,11 +715,7 @@ def _lifecycle_outcome(
         invalidated_views=invalidated_views,
         residual_paths=list(recomputed.residual_paths),
         warnings=list(recomputed.warnings),
-        human_result=(
-            "Recomputed derived state through Stage 5."
-            + (f"\n{view_lines}" if view_lines else "")
-            + no_view
-        ),
+        human_result="Recomputed derived state through Stage 5." + no_view,
     )
 
 
@@ -1078,10 +1096,6 @@ def extract_command(
                 )
             )
         invalidated_views = list(extracted.invalidated_views)
-        view_lines = "\n".join(
-            f"Invalidated {item.snapshot_id}: {item.regeneration_command}"
-            for item in invalidated_views
-        )
         return Outcome(
             affected_ids=AffectedIds(
                 created=(
@@ -1104,7 +1118,6 @@ def extract_command(
             warnings=list(extracted.warnings),
             human_result=(
                 f"Extracted {len(created)} facts ({len(superseded)} superseded)."
-                + (f"\n{view_lines}" if view_lines else "")
             ),
         )
 
@@ -1113,6 +1126,56 @@ def extract_command(
 
 def _fact_human_line(fact: ExperienceFact) -> str:
     return f"{fact.id}\t{fact.claim_kind}\t{fact.project or ''}\t{fact.confidence}"
+
+
+def _occurred_human(occurred: OccurredAt) -> str:
+    """Render a placement in the same shapes §14.3 accepts as input."""
+
+    qualifier = f"({occurred.precision}, confidence {occurred.confidence})"
+    if occurred.start is None:
+        return f"unspecified {qualifier}"
+    period = occurred.start.isoformat()
+    if occurred.precision in {"date_range", "approximate_range"}:
+        # `..` is §14.3's own open-ended end segment, so the rendering states
+        # openness without implying a present-tense continuation (§16.7).
+        period += "/" + (
+            ".." if occurred.end is None else occurred.end.isoformat()
+        )
+    return f"{period} {qualifier}"
+
+
+def _fact_human_block(fact: ExperienceFact) -> str:
+    """§14.6's labeled rendering of every §11.4 field except `metadata`."""
+
+    def optional(value: str | None) -> str:
+        return "none" if value is None else value
+
+    def listed(values: list[str]) -> str:
+        return ", ".join(values) or "none"
+
+    return "\n".join(
+        [
+            f"Fact {fact.id}",
+            f"Created: {fact.created_at.isoformat()}",
+            f"Claim: {fact.claim}",
+            f"Claim kind: {fact.claim_kind}",
+            f"Ownership level: {fact.ownership_level}",
+            f"Context: {fact.context}",
+            f"Project: {optional(fact.project)}",
+            f"Role: {optional(fact.role)}",
+            f"Company: {optional(fact.company)}",
+            f"Action: {optional(fact.action)}",
+            f"Object: {optional(fact.object)}",
+            f"Outcome: {optional(fact.outcome)}",
+            f"Skills: {listed(fact.skills)}",
+            f"Technologies: {listed(fact.technologies)}",
+            f"Themes: {listed(fact.themes)}",
+            f"Occurred: {_occurred_human(fact.occurred)}",
+            f"Confidence: {fact.confidence}",
+            f"Source logs: {listed(fact.source_log_ids)}",
+            f"Evidence items: {listed(fact.evidence_item_ids)}",
+        ]
+    )
 
 
 def _detection_groups(
@@ -1195,11 +1258,6 @@ def detections_generate(context: typer.Context) -> None:
                 f"{', '.join(item.id for item in contradictions) or 'none'}. "
                 f"Invalidated artifact classes: {invalidated}."
             )
-            if invalidated_views:
-                human += "\n" + "\n".join(
-                    f"Invalidated {item.snapshot_id}: {item.regeneration_command}"
-                    for item in invalidated_views
-                )
         return Outcome(
             affected_ids=AffectedIds(
                 created=_detection_groups(
@@ -1235,6 +1293,20 @@ def detections_generate(context: typer.Context) -> None:
 
 def _signal_human_line(signal: SelfSignal) -> str:
     return f"{signal.id}\t{signal.signal_type}\t{signal.confidence}"
+
+
+def _signal_human_block(signal: SelfSignal) -> list[str]:
+    """§14.8's produced-set rendering: the content `signals list` would show."""
+
+    return [
+        "",
+        f"Signal {signal.id}",
+        f"Type: {signal.signal_type}",
+        f"Confidence: {signal.confidence}",
+        f"Statement: {signal.statement}",
+        "Supporting facts: " + (", ".join(signal.supporting_fact_ids) or "none"),
+        "Counter facts: " + (", ".join(signal.counter_fact_ids) or "none"),
+    ]
 
 
 @signals_app.command("generate")
@@ -1278,10 +1350,6 @@ def signals_generate(context: typer.Context) -> None:
                 )
             )
         invalidated_views = list(generated.invalidated_views)
-        view_lines = "\n".join(
-            f"Invalidated {item.snapshot_id}: {item.regeneration_command}"
-            for item in invalidated_views
-        )
         return Outcome(
             affected_ids=AffectedIds(
                 created=created_groups,
@@ -1303,11 +1371,19 @@ def signals_generate(context: typer.Context) -> None:
             invalidated_views=invalidated_views,
             residual_paths=list(generated.residual_paths),
             warnings=list(generated.warnings),
+            # §14.8: envelope version 1 keeps `result = null` here; the
+            # complete produced set reaches the owner through human mode.
             result=None,
-            human_result=(
-                f"Created {len(created)} signals; superseded {len(superseded)}. "
-                f"Invalidated {len(invalidated_views)} assessment views."
-                + (f"\n{view_lines}" if view_lines else "")
+            human_result="\n".join(
+                [
+                    f"Replaced the current signal generation: created "
+                    f"{len(created)}, superseded {len(superseded)}.",
+                    *(
+                        line
+                        for signal in generated.current_signals
+                        for line in _signal_human_block(signal)
+                    ),
+                ]
             ),
         )
 
@@ -1748,7 +1824,7 @@ def facts_show(
         fact = show_fact(workspace, fact_id=fact_id)
         return Outcome(
             result=FactsListResult(facts=[fact]),
-            human_result=_fact_human_line(fact),
+            human_result=_fact_human_block(fact),
         )
 
     _run_command(context, "facts show", operation)
@@ -1921,15 +1997,6 @@ def logs_delete(
             result=result,
             human_result=(
                 f"Deleted raw log {deleted.selected_log.id}; rebuilt through Stage 5."
-            )
-            + (
-                "\n"
-                + "\n".join(
-                    f"Purged {item.snapshot_id}: {item.regeneration_command}"
-                    for item in deleted.invalidated_views
-                )
-                if deleted.invalidated_views
-                else ""
             ),
         )
 

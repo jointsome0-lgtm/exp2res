@@ -329,9 +329,13 @@ nodes = [
   "tests/test_cli_phase0.py::test_console_entry_point_exits_with_contract_code",
   "tests/test_workspace_phase0.py::test_nearest_partial_marker_wins_and_override_never_falls_back",
   "tests/test_workspace_phase0.py::test_incompatible_workspace_blocks_file_capture_before_source_read",
+  "tests/test_cli_extract.py::test_facts_show_human_renders_content_and_leaves_the_envelope_unchanged",
+  "tests/test_cli_signals.py::test_generate_human_reports_the_complete_produced_signal_set",
+  "tests/test_cli_correction.py::test_failed_lifecycle_still_reports_the_invalidated_view[human]",
+  "tests/test_cli_correction.py::test_failed_lifecycle_still_reports_the_invalidated_view[json]",
 ]
 phase = "4"
-note = "Phase 0 plus logs show cover discovery, compatibility ordering, non-interactive controls, stable exit classes, closed JSON envelopes, raw-text-free machine projections, selected-record-only human raw text, linked evidence, and retained displaced-record inspection; later command projections and lifecycle reports remain"
+note = "Phase 0 plus logs show cover discovery, compatibility ordering, non-interactive controls, stable exit classes, closed JSON envelopes, raw-text-free machine projections, selected-record-only human raw text, linked evidence, and retained displaced-record inspection; human mode now proves the §14.6 fact field set, the §14.8 produced signal set, and the §13.13 rule 9 view report on the nonzero path with the envelope unchanged; later command projections remain"
 
 ["21.42"]
 status = "partial"

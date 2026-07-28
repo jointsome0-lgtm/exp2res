@@ -280,6 +280,57 @@ def test_facts_list_show_round_trip_complete_values_via_read_seam(
     assert missing_envelope["diagnostic_class"] == "selector_not_found"
 
 
+def test_facts_show_human_renders_content_and_leaves_the_envelope_unchanged(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.6: human mode carries the fact's meaning, JSON stays byte-equal."""
+
+    evidence_id = seed_lineage(workspace, "human")
+    install_fake_execution(
+        monkeypatch,
+        FakeContractRunner([fact_response([evidence_id])]),
+    )
+    extracted, extraction_envelope = invoke_json(workspace, ["--yes", "extract"])
+    assert extracted.exit_code == 0
+    fact_id = extraction_envelope["affected_ids"]["created"][0]["ids"][0]
+
+    machine, envelope = invoke_json(
+        workspace, ["facts", "show", "--fact-id", fact_id]
+    )
+    human = runner.invoke(
+        app, ["--workspace", str(workspace), "facts", "show", "--fact-id", fact_id]
+    )
+    assert machine.exit_code == human.exit_code == 0
+    fact = envelope["result"]["facts"][0]
+
+    # Every field the machine projection carries, except the inert service
+    # metadata map, is legible without a formatter (#156).
+    assert f"Fact {fact['id']}" in human.stdout
+    for label, value in (
+        ("Claim", fact["claim"]),
+        ("Claim kind", fact["claim_kind"]),
+        ("Ownership level", fact["ownership_level"]),
+        ("Context", fact["context"]),
+        ("Confidence", fact["confidence"]),
+        ("Source logs", ", ".join(fact["source_log_ids"])),
+        ("Evidence items", ", ".join(fact["evidence_item_ids"])),
+    ):
+        assert f"{label}: {value}" in human.stdout
+    # Human mode renders the instant with an explicit offset (`+00:00`) where
+    # the envelope uses the equivalent `Z`; the placement itself is the same.
+    assert fact["occurred"]["start"][:19] in human.stdout
+    assert f"({fact['occurred']['precision']}, confidence " in human.stdout
+    assert "metadata" not in human.stdout
+
+    # The JSON side is untouched by the human rendering (#156's acceptance).
+    reread, reread_envelope = invoke_json(
+        workspace, ["facts", "show", "--fact-id", fact_id]
+    )
+    assert reread.exit_code == 0
+    assert reread_envelope == envelope
+    assert set(fact) == set(ExperienceFact.model_fields)
+
+
 @pytest.mark.unit
 def test_llm_failure_exit_classes_follow_rule_4() -> None:
     """§14.14 rule 4: local validation/integrity codes are class 7, not 6."""

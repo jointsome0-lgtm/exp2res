@@ -97,8 +97,47 @@ def test_generate_envelope_replaces_and_keeps_unlisted_result_null(
         ["--workspace", str(workspace), "--yes", "signals", "generate"],
     )
     assert human.exit_code == 0
-    assert "Created 1 signals; superseded 1." in human.stdout
-    assert "Invalidated 0 assessment views" in human.stdout
+    assert (
+        "Replaced the current signal generation: created 1, superseded 1."
+        in human.stdout
+    )
+
+
+def test_generate_human_reports_the_complete_produced_signal_set(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.8: the produced set is legible without a second `signals list`."""
+
+    fact_id = prepare_facts(workspace, SignalIds())[0]
+    payload = two_signal_response(fact_id, suffix="human")
+    install_fake_execution(monkeypatch, FakeContractRunner([payload, payload]))
+
+    generated = runner.invoke(
+        app, ["--workspace", str(workspace), "--yes", "signals", "generate"]
+    )
+    assert generated.exit_code == 0, generated.output
+
+    listed, list_envelope = invoke_json(workspace, ["signals", "list"])
+    assert listed.exit_code == 0
+    signals = list_envelope["result"]["signals"]
+    assert len(signals) == 2
+    for signal in signals:
+        assert f"Signal {signal['id']}" in generated.stdout
+        assert f"Type: {signal['signal_type']}" in generated.stdout
+        assert f"Confidence: {signal['confidence']}" in generated.stdout
+        assert f"Statement: {signal['statement']}" in generated.stdout
+        assert (
+            "Supporting facts: " + ", ".join(signal["supporting_fact_ids"])
+            in generated.stdout
+        )
+    # The complete set reaches human mode in the `signals list` order, while
+    # envelope version 1 keeps `result = null` for this command (#157).
+    assert generated.stdout.index(f"Signal {signals[0]['id']}") < generated.stdout.index(
+        f"Signal {signals[1]['id']}"
+    )
+    machine, envelope = invoke_json(workspace, ["--yes", "signals", "generate"])
+    assert machine.exit_code == 0
+    assert envelope["result"] is None
 
 
 def test_generate_consent_decline_and_noninteractive_failure_precede_adapter(
