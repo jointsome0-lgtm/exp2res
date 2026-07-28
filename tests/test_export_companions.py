@@ -35,7 +35,9 @@ def test_companion_encoding_has_canonical_key_order_utc_datetime_and_one_lf() ->
     assert encoded.endswith(b"\n") and not encoded.endswith(b"\n\n")
     assert encoded.startswith(b'{"claims":')
     assert b'"created_at":"2026-07-20T08:00:00.000000Z"' in encoded
-    assert b"Vera Example" in encoded
+    assert (
+        b"Current evidence suggests you deliver deterministic local tools." in encoded
+    )
     assert json.loads(encoded)["schema_version"] == 1
 
     evidence = companion_bytes(build_evidence_map_document(graph))

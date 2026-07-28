@@ -1808,7 +1808,7 @@ And rendering the same value at two different wall-clock times produces identica
 
 ["21.54"]
 title = "Generated Voice Refers to the Owner in Second Person or Not at All"
-enforces = "§13.7, §15.1 rule 10, §16.11–§16.12, and §16.14"
+enforces = "§13.7, §16.11–§16.12, and §16.14"
 case = '''
 Given current facts and signals support recurring provenance-heavy work
 When the assessment writer emits the generated claim "The user shows a recurring attraction to provenance-heavy systems"
@@ -1826,5 +1826,4 @@ Given a retained raw log whose owner-authored text names the owner in the third 
 When §16.12 validates a byte-verified excerpt of that text
 Then the excerpt is source voice, violates no §16.14 rule, and is never rewritten or blocked
 And a faithfully preserved job-description demand phrased about "the candidate" characterizes the vacancy, not the owner
-And every §15 contract instruction pins the §16.14 owner-reference form under §15.1 rule 10
 '''

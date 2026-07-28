@@ -285,7 +285,7 @@ Verifier checks:
 9. The snapshot preserves the complete current Stage 4 contradiction set; verification cannot hide one by scope filtering, relabeling, or omission.
 10. The §16.11 narrative-summary gate holds.
 11. Each claim stays within the snapshot's scope and scope target supplied as §15.5 structural context; a scoped claim that generalizes beyond its subject receives a non-passing status.
-12. Owner reference follows §16.14: a claim that refers to the owner in the third person or by name is `rejected`.
+12. Owner reference follows §16.14; a violating claim is `rejected`.
 
 For each claim, Stage 7 assembles exactly the §15.5 input closure from current rows, plus the view context — `scope_signals` and `scope_facts`, the snapshot view's complete deterministic §13.6 selection re-derived from current rows — so writer omission of a contrary signal or fact stays visible to check 3 while only the closure deepens into evidence context. The service serializes that closure through §13.3 rule 10's displaced-record support descriptor projection. A required post-projection bundle member that is missing, wrong-type, superseded, duplicated, or otherwise unresolvable fails the Stage 7 run closed before any provider call, and the prior complete verifier state is retained. The exactness and no-narrowing/no-widening rule applies to this displacement-aware bundle: omitting a descriptor, cited signal's counter fact, or other required member would obtain a more permissive verdict from a narrower graph; serializing a complete displaced item, a displaced `RawLog` object, or any row outside the bundle would widen the declared §29.3 transmission surface. The projection-required absence of a displaced `RawLog` object is not a missing member.
 

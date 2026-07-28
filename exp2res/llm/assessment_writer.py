@@ -96,11 +96,11 @@ class AssessmentWriterOutput(StrictModel):
 ASSESSMENT_WRITER_INSTRUCTIONS = (
     "Characterize the supplied subject facts; never score or flatter. Address the owner "
     "in the second person (you/your) or write subject-free per §16.14; never refer to "
-    "the owner as 'the user', 'the subject', in any other third person, or by name. "
+    "the owner in the third person or by name. "
     "Do not use the §16.3 flattering terms without evidence. Claims may be uncomfortable and must "
     "never be rewritten into motivational language. Avoid permanent-identity phrasing; "
     "prefer bounded language such as 'Current evidence suggests…'. Never use medical, "
-    "psychiatric, or clinical labels. Author claims about the supplied subject facts. "
+    "psychiatric, or clinical labels. "
     "Cite a context fact only where it actually grounds cross-target support or "
     "counterevidence. Every source_signal_ids and source_fact_ids member must name a "
     "supplied object. Emit exactly one narrative_summary claim that synthesizes the "

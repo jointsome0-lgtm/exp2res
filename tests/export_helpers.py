@@ -96,7 +96,7 @@ def assessment_graph(
     contradiction = Contradiction(
         id="contradiction_vera_export_0001",
         created_at=EXPORT_TIME,
-        title="Scale evidence conflicts across the supplied Vera Example records.",
+        title="Scale evidence conflicts.",
         description="One synthetic source supports a prototype; another does not support scale.",
         left_ref_type="experience_fact",
         left_ref_id=fact.id,
@@ -119,7 +119,7 @@ def assessment_graph(
                 ("claim_vera_signal_0001", "You repeat the pattern.", "pattern_signal", "working_style", "supported"),
                 ("claim_vera_strength_0001", "You have a current strength.", "hypothesis", "technical_skill", "supported"),
                 ("claim_vera_weak_0001", "You have a bounded strength.", "hypothesis", "technical_skill", "partially_supported"),
-                ("claim_vera_gap_0001", "The supplied Vera Example records leave a gap.", "hypothesis", "gap", "needs_clarification"),
+                ("claim_vera_gap_0001", "The supplied evidence leaves a gap.", "hypothesis", "gap", "needs_clarification"),
                 ("claim_vera_contradicted_0001", "You validated the scale in question.", "hypothesis", "technical_skill", "contradicted"),
                 ("claim_vera_risk_0001", "You carry a delivery risk.", "hypothesis", "risk", "supported"),
                 ("claim_vera_unknown_0001", "The validated scale remains uncertain.", "hypothesis", "technical_skill", "needs_clarification"),

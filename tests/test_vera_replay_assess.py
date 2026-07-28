@@ -67,11 +67,9 @@ def test_vera_e4_cli_assessment_is_navigable_then_signal_replacement_invalidates
     assert listed_result.exit_code == shown_result.exit_code == 0
     assert [item["id"] for item in listed["result"]["snapshots"]] == [snapshot_id]
     assert shown["result"]["snapshot"]["id"] == snapshot_id
-    # §16.14: claim prose is second-person or subject-free; the canned claims
-    # here are "You currently show…" and "Current evidence suggests…".
-    assert {item["claim"].split()[0] for item in shown["result"]["claims"]} == {
-        "You",
-        "Current",
+    assert {item["claim"] for item in shown["result"]["claims"]} == {
+        "You currently show a provenance-aware working pattern.",
+        "Current evidence suggests provenance-aware pattern 1.",
     }
     with read_database(workspace) as connection:
         assert len(list_assessment_snapshots(connection)) == 1

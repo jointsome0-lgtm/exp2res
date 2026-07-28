@@ -36,11 +36,6 @@ FORBIDDEN_OWNER_NOUNS = (
 
 GOLDEN_PROSE_MEMBERS = ("report.md", "self_claims.json")
 
-# The one phrase that may carry the public-hygiene marker inside golden
-# generated prose: the corpus label, never the owner as sentence actor.
-MARKER = "Vera Example"
-MARKER_LABEL_PHRASES = ("the supplied Vera Example records",)
-
 
 def test_every_llm_instruction_block_pins_the_owner_reference_form() -> None:
     for name, block in INSTRUCTION_BLOCKS.items():
@@ -56,8 +51,9 @@ def test_generated_prose_in_goldens_carries_no_third_person_owner_nouns() -> Non
         lowered = text.lower()
         for noun in FORBIDDEN_OWNER_NOUNS:
             assert noun not in lowered, (member, noun)
-        # The hygiene marker stays present, but only as a record label.
-        occurrences = text.count(MARKER)
-        assert occurrences > 0, member
-        labeled = sum(text.count(phrase) for phrase in MARKER_LABEL_PHRASES)
-        assert occurrences == labeled, member
+        # "Vera Example" is a required fixture marker (check_public_hygiene.py
+        # owns its presence); §16.14 allows it here only as a record label,
+        # never as a sentence's actor.
+        assert text.count("Vera Example") == text.count(
+            "the supplied Vera Example records"
+        ), member

@@ -138,8 +138,8 @@ FACT_EXTRACTOR_INSTRUCTIONS = (
     "while attributing facts to the answer record. Assign the lowest defensible "
     "confidence at or below the deterministic ceiling and at most low when the selected "
     "context materially conflicts. Write claim text subject-free or in the second person "
-    "per §16.14; never refer to the owner as 'the user', in any other third person, or "
-    "by name. Produce all output in English."
+    "per §16.14; never refer to the owner in the third person or by name. Produce all "
+    "output in English."
 )
 
 

@@ -156,6 +156,6 @@ Enforces §5.4, §5.5, §11.1, §12 rules 3 and 5, §13.3 rules 2 and 10, §14.3
 
 ## §21.54 Generated Voice Refers to the Owner in Second Person or Not at All
 
-Enforces §13.7, §15.1 rule 10, §16.11–§16.12, and §16.14.
+Enforces §13.7, §16.11–§16.12, and §16.14.
 
 ---
