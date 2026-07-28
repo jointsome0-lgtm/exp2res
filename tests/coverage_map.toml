@@ -416,7 +416,13 @@ note = "Assessment publication proves the ID-keyed manifest writer, owner-only m
 ["21.48"]
 status = "partial"
 nodes = [
-  "tests/test_export_markdown.py::test_escape_generated_covers_every_metacharacter_tab_and_embedded_newline",
+  "tests/test_export_markdown.py::test_escape_generated_applies_the_closed_positional_set",
+  "tests/test_export_markdown.py::test_escape_generated_keeps_prose_instants_and_typed_ids_legible",
+  "tests/test_export_markdown.py::test_escape_generated_escapes_block_openers_only_when_line_leading",
+  "tests/test_export_markdown.py::test_escape_generated_leaves_only_ascii_intraword_underscores_unescaped",
+  "tests/test_export_markdown.py::test_escaped_values_round_trip_and_open_no_construct",
+  "tests/test_export_markdown.py::test_blank_logical_line_splits_a_paragraph_but_stays_inside_its_block",
+  "tests/test_export_markdown.py::test_hostile_generated_values_cannot_add_a_report_block",
   "tests/test_export_markdown.py::test_source_voice_fence_is_shortest_and_preserves_interior_bytes",
   "tests/test_export_markdown.py::test_renderer_is_byte_deterministic_and_uses_closed_order_and_empty_headings",
   "tests/test_export_markdown.py::test_answered_since_synthesis_is_explicit_and_question_is_omitted",

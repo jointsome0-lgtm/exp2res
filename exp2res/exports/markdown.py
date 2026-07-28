@@ -9,8 +9,21 @@ import unicodedata
 from exp2res.domain.models import OccurredAt
 
 
-_PUNCTUATION = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 _BACKTICK_RUN = re.compile(br"`+")
+
+# §17's closed positional escape set. Nothing outside these three groups is
+# escaped, so ISO 8601 instants, typed IDs, and ordinary prose stay legible in
+# the canonical file the owner reads directly.
+_CHARACTER_REFERENCES = {"\t": "&#9;", "<": "&lt;", "&": "&amp;"}
+_SPACE_REFERENCE = "&#32;"
+_ALWAYS_ESCAPED = frozenset("\\`*[]~")
+_LINE_LEADING_ESCAPED = frozenset("-+#>=|:")
+# A marker is one to nine digits, `.` or `)`, then a space or the line end; a
+# tab cannot follow one because the tab itself becomes a character reference.
+_ORDERED_LIST_MARKER = re.compile(r"[0-9]{1,9}[.)](?=[ ]|$)")
+_ASCII_ALPHANUMERIC = frozenset(
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+)
 
 
 def render_occurred(
@@ -57,6 +70,63 @@ def normalize_generated_text(value: str) -> str:
     return unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
 
 
+def _is_inert_intraword_underscore(body: str, index: int) -> bool:
+    """Report whether CommonMark's intraword rule already neutralizes ``_``.
+
+    The neighbour test is ASCII-only and therefore independent of the Unicode
+    version in use, which keeps the escaped bytes equal across implementations.
+    """
+
+    if index == 0 or index + 1 >= len(body):
+        return False
+    return (
+        body[index - 1] in _ASCII_ALPHANUMERIC
+        and body[index + 1] in _ASCII_ALPHANUMERIC
+    )
+
+
+def _escape_logical_line(line: str) -> str:
+    """Apply §17's positional escape rule to one logical line."""
+
+    body_start = 0
+    while body_start < len(line) and line[body_start] == " ":
+        body_start += 1
+    body_end = len(line)
+    while body_end > body_start and line[body_end - 1] == " ":
+        body_end -= 1
+    body = line[body_start:body_end]
+
+    # A line that starts with a space cannot open a block construct once its
+    # indentation is emitted as character references, so the line-leading
+    # escapes apply only to a body that is itself at the start of the line.
+    ordered_delimiter = -1
+    if body_start == 0:
+        marker = _ORDERED_LIST_MARKER.match(body)
+        if marker is not None:
+            ordered_delimiter = marker.end() - 1
+
+    parts: list[str] = [_SPACE_REFERENCE] * body_start
+    for index, character in enumerate(body):
+        reference = _CHARACTER_REFERENCES.get(character)
+        if reference is not None:
+            parts.append(reference)
+        elif character in _ALWAYS_ESCAPED:
+            parts.extend(("\\", character))
+        elif character == "_":
+            if _is_inert_intraword_underscore(body, index):
+                parts.append("_")
+            else:
+                parts.extend(("\\", "_"))
+        elif body_start == 0 and index == 0 and character in _LINE_LEADING_ESCAPED:
+            parts.extend(("\\", character))
+        elif index == ordered_delimiter:
+            parts.extend(("\\", character))
+        else:
+            parts.append(character)
+    parts.extend([_SPACE_REFERENCE] * (len(line) - body_end))
+    return "".join(parts)
+
+
 def escape_generated(value: str, *, continuation_indent: str = "") -> str:
     """Escape one nonliteral generated value under §17.
 
@@ -65,17 +135,7 @@ def escape_generated(value: str, *, continuation_indent: str = "") -> str:
     """
 
     logical_lines = normalize_generated_text(value).split("\n")
-    rendered: list[str] = []
-    for line in logical_lines:
-        parts: list[str] = []
-        for character in line:
-            if character == "\t":
-                parts.append("&#9;")
-            elif character in _PUNCTUATION:
-                parts.extend(("\\", character))
-            else:
-                parts.append(character)
-        rendered.append("".join(parts))
+    rendered = [_escape_logical_line(line) for line in logical_lines]
     return ("  \n" + continuation_indent).join(rendered)
 
 

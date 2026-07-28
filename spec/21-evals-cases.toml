@@ -1537,6 +1537,8 @@ And an approximate or ranged OccurredAt remains visibly approximate or ranged un
 Given nonexcerpt report or bullet values derived from source-backed rows contain every §17 Markdown metacharacter plus embedded tabs and newlines
 When the deterministic Markdown renderer processes them
 Then escaping and continuation syntax preserve the value without creating an extra heading, list item, link, fence, or block
+And the escaped value parses back to exactly its normalized text under CommonMark and under the table and strikethrough extensions
+And no code point outside §17's closed positional set is escaped, so instants, typed IDs, and ordinary prose stay legible in the canonical file
 And a validated source-voice excerpt containing hostile Markdown remains byte-exact inside §17's deterministic fence rather than becoming renderer-authored prose
 
 Given a Stage 10 candidate batch contains two text values that are byte-equal after §11 text hygiene and one semantically similar value that remains byte-distinct after the §13.12 projection

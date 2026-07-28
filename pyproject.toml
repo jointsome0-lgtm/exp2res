@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8,<9"]
+test = ["pytest>=8,<9", "markdown-it-py>=3,<4"]
 
 [project.scripts]
 exp2res = "exp2res.cli:main"
