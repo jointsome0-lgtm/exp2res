@@ -59,19 +59,19 @@ def assessment_response(
 ) -> bytes:
     claims = [
         {
-            "claim": "Vera Example currently shows a provenance-aware working pattern.",
+            "claim": "You currently show a provenance-aware working pattern.",
             "claim_kind": "pattern_signal",
             "dimension": "working_style",
             "source_signal_ids": signal_ids,
             "source_fact_ids": fact_ids,
             "confidence": confidence,
-            "uncertainty": "Vera Example evidence remains limited to supplied records.",
+            "uncertainty": "Evidence remains limited to the supplied Vera Example records.",
         }
     ]
     for index in range(narrative_count):
         claims.append(
             {
-                "claim": f"Current evidence suggests Vera Example pattern {index + 1}.",
+                "claim": f"Current evidence suggests provenance-aware pattern {index + 1}.",
                 "claim_kind": "narrative_summary",
                 "dimension": "trajectory",
                 "source_signal_ids": signal_ids,

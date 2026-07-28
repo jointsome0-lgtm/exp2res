@@ -175,7 +175,7 @@ def fact_response(
     warnings: list[dict[str, str]] | None = None,
 ) -> bytes:
     fact: dict[str, object] = {
-        "claim": "Vera Example designed a provenance-aware local workflow.",
+        "claim": "Designed a provenance-aware local workflow.",
         "claim_kind": "observed_fact",
         "role": None,
         "company": None,

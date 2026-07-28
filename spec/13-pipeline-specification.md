@@ -103,15 +103,15 @@ Rules:
 Bad fact:
 
 ```text
-The user is strong at agent systems.
+You are strong at agent systems.
 ```
 
 Good facts:
 
 ```text
-The user designed a verifier gate for Exp2Res.
-The user wrote a system design document for Atlas.
-The user repeatedly worked with provenance-heavy local-first system ideas.
+You designed a verifier gate for Exp2Res.
+You wrote a system design document for Atlas.
+You repeatedly worked with provenance-heavy local-first system ideas.
 ```
 
 ## §13.4 Stage 4 — Gap and Contradiction Detection
@@ -155,8 +155,8 @@ The validated §15.8 result is the complete candidate set for both outputs, neve
 Contradiction examples:
 
 ```text
-Fact A: user claims strong project execution.
-Fact B: user repeatedly reports burnout under plans.
+Fact A: "You execute ambitious plans with strong follow-through."
+Fact B: "You repeatedly report burnout under ambitious plans."
 
 Fact A: one experience fact says production-grade.
 Fact B: another source-backed fact supports only a local prototype.
@@ -193,7 +193,7 @@ Example signal:
 ```json
 {
   "signal_type": "direction_signal",
-  "statement": "The user repeatedly returns to local-first provenance-heavy systems.",
+  "statement": "You repeatedly return to local-first provenance-heavy systems.",
   "supporting_fact_ids": ["fact_storyworm_001", "fact_exp2res_004", "fact_atlas_002"],
   "confidence": "medium"
 }
@@ -285,6 +285,7 @@ Verifier checks:
 9. The snapshot preserves the complete current Stage 4 contradiction set; verification cannot hide one by scope filtering, relabeling, or omission.
 10. The §16.11 narrative-summary gate holds.
 11. Each claim stays within the snapshot's scope and scope target supplied as §15.5 structural context; a scoped claim that generalizes beyond its subject receives a non-passing status.
+12. Owner reference follows §16.14: a claim that refers to the owner in the third person or by name is `rejected`.
 
 For each claim, Stage 7 assembles exactly the §15.5 input closure from current rows, plus the view context — `scope_signals` and `scope_facts`, the snapshot view's complete deterministic §13.6 selection re-derived from current rows — so writer omission of a contrary signal or fact stays visible to check 3 while only the closure deepens into evidence context. The service serializes that closure through §13.3 rule 10's displaced-record support descriptor projection. A required post-projection bundle member that is missing, wrong-type, superseded, duplicated, or otherwise unresolvable fails the Stage 7 run closed before any provider call, and the prior complete verifier state is retained. The exactness and no-narrowing/no-widening rule applies to this displacement-aware bundle: omitting a descriptor, cited signal's counter fact, or other required member would obtain a more permissive verdict from a narrower graph; serializing a complete displaced item, a displaced `RawLog` object, or any row outside the bundle would widen the declared §29.3 transmission surface. The projection-required absence of a displaced `RawLog` object is not a missing member.
 

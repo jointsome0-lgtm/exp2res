@@ -50,7 +50,7 @@ def detection_response(
                     "target_type": "experience_fact",
                     "target_id": gap_fact_id,
                     "question": (
-                        "Which exact scale did Vera Example validate?"
+                        "Which exact scale did you validate?"
                         if not paraphrased
                         else "What validation scale did Vera Example record?"
                     ),

@@ -55,7 +55,7 @@ def signal_response(
     *,
     counter_fact_ids: list[str] | None = None,
     confidence: str = "medium",
-    statement: str = "Vera Example repeatedly designs provenance-aware workflows.",
+    statement: str = "You repeatedly design provenance-aware workflows.",
     warnings: list[dict[str, str]] | None = None,
 ) -> bytes:
     return json.dumps(
@@ -88,7 +88,7 @@ def multi_fact_response(
     for index in range(count):
         candidate = dict(template)
         candidate["claim"] = (
-            f"Vera Example designed provenance workflow slice {index + 1}."
+            f"Designed provenance workflow slice {index + 1}."
         )
         facts.append(candidate)
     return json.dumps(

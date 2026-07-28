@@ -13,7 +13,7 @@ All LLM calls must:
 7. Preserve the generated-voice/source-voice boundary in §16.12.
 8. Apply §11's Model validation policy, including its `extra = forbid` rule for every output shape.
 9. Before any provider call, deterministically preflight the fully serialized payload against §11's boundary limits alongside §29.4's credential preflight; a failure is local and fail-closed and reports only a non-secret diagnostic.
-10. Emit every generated natural-language output under the V1 language scope in §16.13.
+10. Emit every generated natural-language output under the V1 language scope in §16.13 and, where it refers to the owner, in the §16.14 owner-reference form.
 
 §15.10 owns transport attempts, provider capability checks, runtime budgets, context-overflow refusal, and cancellation. Its transport retry does not widen the response-validation retry below, which remains limited to schema and reference invalidity. §15.12 owns the versioned isolated agent-runner protocol — the per-invocation contract workspace whose §15.1 retry adds only content-free `validation_errors.json`, wrapper-provided read confinement, the native schema-constrained final-message result channel (fenced JSON parsed from agent prose is forbidden), and the two-half fail-closed capability preflight with §21.50's provider-free canary; an agent-backed adapter executes every §15 call under it.
 
@@ -159,7 +159,7 @@ Output:
   "signals": [
     {
       "signal_type": "direction_signal",
-      "statement": "The user repeatedly returns to provenance-heavy local-first systems.",
+      "statement": "You repeatedly return to provenance-heavy local-first systems.",
       "supporting_fact_ids": ["fact_001", "fact_002"],
       "counter_fact_ids": [],
       "confidence": "medium"
@@ -193,7 +193,7 @@ Input:
       "created_at": "2026-07-11T10:02:00+02:00",
       "superseded_at": null,
       "signal_type": "direction_signal",
-      "statement": "The user repeatedly returns to provenance-heavy local-first systems.",
+      "statement": "You repeatedly return to provenance-heavy local-first systems.",
       "supporting_fact_ids": ["fact_001", "fact_002"],
       "counter_fact_ids": [],
       "confidence": "medium",
@@ -228,7 +228,7 @@ Output:
 {
   "self_claims": [
     {
-      "claim": "The user shows a recurring attraction to systems that preserve provenance and prevent unsupported claims.",
+      "claim": "You show a recurring attraction to systems that preserve provenance and prevent unsupported claims.",
       "dimension": "domain_interest",
       "claim_kind": "pattern_signal",
       "source_signal_ids": ["signal_001"],
@@ -258,7 +258,7 @@ The writer emits exactly one `narrative_summary` self-claim; snapshot inclusion 
 
 `scope` is a canonical `AssessmentScope` and `scope_target` is service-supplied structural context from §14.9. The writer must return neither field and cannot rewrite the target. `facts` is the scope's subject set selected under §13.6 and `context_facts` is exactly the duplicate-free out-of-subject fact set referenced by the supplied signals; both carry complete §11.4 objects, and for `global` the context set is empty. Claims are authored about the subject; a context fact grounds cross-target support or counterevidence and may be cited only where actually used. Every `source_fact_ids` / `source_signal_ids` value must name a supplied object; out-of-context provenance is invalid structured output. `gaps` is the complete current unanswered set (§13.6). The writer returns no unknowns echo (§13.6, §15.11). Known-gap assertions belong in status-bearing `SelfClaim(dimension="gap")` output. An unknown reference can render only the referenced question/uncertainty under §17; it is not an independent claim or a §16.11 bypass.
 
-Hard instructions: apply §16.2 (mirror, no motivational rewriting), §16.3 (anti-flattery), §16.9 (identity), §16.10 (diagnostic); preserve uncertainty and mention weak evidence where relevant.
+Hard instructions: apply §16.2 (mirror, no motivational rewriting), §16.3 (anti-flattery), §16.9 (identity), §16.10 (diagnostic), §16.14 (owner reference: second person or subject-free); preserve uncertainty and mention weak evidence where relevant.
 
 ## §15.5 Assessment Verifier Contract
 

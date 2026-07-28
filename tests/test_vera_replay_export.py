@@ -117,7 +117,7 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
                 {
                     "target_type": "experience_fact",
                     "target_id": fact_id,
-                    "question": "Which exact scale did Vera Example validate?",
+                    "question": "Which exact scale did you validate?",
                     "reason": "missing_scale",
                     "priority": "medium",
                 }
@@ -232,7 +232,7 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
             "answered": True,
             "id": gap_id,
             "priority": "medium",
-            "question": "Which exact scale did Vera Example validate?",
+            "question": "Which exact scale did you validate?",
             "reason": "missing_scale",
             "target_id": fact_id,
             "target_type": "experience_fact",
@@ -247,7 +247,7 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
         [
             signal_response(
                 [fact_id],
-                statement="Vera Example changed the provenance-aware direction.",
+                statement="You changed the provenance-aware direction.",
             )
         ],
         workspace,

@@ -87,13 +87,13 @@ Generated voice under §16.12 must not author medical, psychiatric, or clinical 
 Allowed:
 
 ```text
-The user reports burnout under ambitious plans.
+You report burnout under ambitious plans.
 ```
 
 Forbidden:
 
 ```text
-The user has depression / ADHD / anxiety disorder.
+You have depression / ADHD / anxiety disorder.
 ```
 
 ## §16.11 Verification-Status Semantics and Consumer Gates
@@ -153,5 +153,15 @@ Source voice may be in any language and remains byte-for-byte preserved under §
 For a mixed-language job description, §15.9 requirement and keyword text must preserve the vacancy's demand modality and meaning. Faithfully preserved demand wording may remain non-English; it remains generated voice for structural validation and §15.9 parse fidelity and characterizes the vacancy under §16.12. Every Exp2Res-authored assertion about the owner remains English and fully bound by §16.2–§16.10.
 
 Localized or multilingual generated output is explicitly deferred beyond V1.
+
+## §16.14 Owner-Reference Rule
+
+Owner-referential generated voice under §16.12 refers to the owner in the second person — "you", "your" — or names no subject at all. Subject-free phrasing is always legal and is the expected form for fact and bullet prose, which state what was done rather than who did it; §18 bullet prose stays subject-free because an external reader consumes it. Where a generated segment needs a referring expression for the owner — a signal statement, claim, gap question, contradiction description, or verifier counterevidence statement — that expression is second person. The mirror addresses its owner; it does not narrate a case study about a third party.
+
+Third-person owner reference in generated voice is forbidden: third-person pronouns standing for the owner, role nouns standing for the owner — "the user", "the subject", "the author", "the owner", "the developer", "the candidate" — and the owner's personal name. Those nouns are examples of the one violation, not a closed term list: any generated wording whose referent is the owner and whose grammatical person is third is out. A generated segment that refers to the owner in the third person is a §16 voice violation evaluated at §16.12's segment boundary; when Stage 7 verifies a claim candidate that carries one, the verdict is `rejected` under §16.11 — a phrasing violation requiring replacement, not a qualifiable weakness.
+
+The rule is owner-referential in exactly §16.12's sense, so nothing outside that scope changes. Source voice keeps its wording byte-for-byte in any person, including the owner's name; a §16.12 byte-verified source segment never violates this rule, and a voice finding never rewrites owner memory. Faithfully preserved demand wording keeps the vacancy's own nouns — a job description's "the candidate must" characterizes the vacancy, not the owner (§15.9). Third-person nouns whose referent is not the owner remain legal in generated voice: a claim about software the owner shipped may describe that software's users. That referent ambiguity — "the user" may denote the owner or a product's user — is why V1 enforcement is semantic: §15.1 rule 10 binds every contract's instructions to this form, and Stage 7 judges claim candidates (§13.7); there is no deterministic phrase gate and deliberately no §16.3-style closed term list.
+
+This rule changes no §16.11 status meaning, no §16.12 scope, and no §16.13 language boundary; it fixes only the referring form inside owner-referential generated voice.
 
 ---
