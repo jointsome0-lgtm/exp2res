@@ -35,7 +35,14 @@ $ exp2res --workspace demo/workspace contradictions show --contradiction-id cont
 contradiction_demo_0001	Vera Example ingress completion conflict	2026-07-11T10:05:00+02:00
 
 $ exp2res --workspace demo/workspace --yes signals generate
-Created 1 signals; superseded 0. Invalidated 0 assessment views.
+Replaced the current signal generation: created 1, superseded 0.
+
+Signal signal_demo_0001
+Type: execution_pattern
+Confidence: medium
+Statement: Vera Example checks documentation claims against stored evidence and corrects premature completion reports.
+Supporting facts: fact_demo_0001, fact_demo_0003
+Counter facts: fact_demo_0002
 
 $ exp2res --workspace demo/workspace --yes assess generate
 Created snapshot_demo_0001 — Self-Assessment — Global; 2 claims.

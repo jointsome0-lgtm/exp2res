@@ -317,8 +317,9 @@ def test_correction_human_output_includes_captured_project_view_command(
 
     assert result.exit_code == 0, result.output
     assert (
-        f"Invalidated {assessed.snapshot_id}: exp2res assess generate "
-        "--scope project --project 'Vera Example Project'"
+        f"Invalidated assessment view {assessed.snapshot_id} "
+        "(project: Vera Example Project); regenerate with: "
+        "exp2res assess generate --scope project --project 'Vera Example Project'"
     ) in result.stdout
 
 
@@ -650,6 +651,60 @@ def test_lifecycle_failure_prints_retry_in_human_mode(
 
     assert result.exit_code == 7
     assert "Retry: exp2res recompute --log-id log_" in result.stderr
+
+
+@pytest.mark.parametrize("mode", ["human", "json"])
+def test_failed_lifecycle_still_reports_the_invalidated_view(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """§14.14 rule 5: the staleness report survives the failure path (#164).
+
+    The capture transaction already superseded the published snapshot when
+    the Stage 5 rebuild fails, so an owner who learns nothing here discovers
+    it only by trying to export.
+    """
+
+    target, _other, _fact, _detected, _signaled, assessed, export_dir = (
+        _prepare_full_graph(workspace)
+    )
+    assert export_dir.is_dir()
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+    monkeypatch.setattr(
+        lifecycle_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner([b"{}", b"{}"]),
+        ),
+    )
+
+    arguments = ["--yes", "correction", "add", "--log-id", target.id]
+    text = "Vera Example correction whose rebuild fails.\n\n\n"
+    reported = {
+        "scope": "global",
+        "scope_target": None,
+        "snapshot_id": assessed.snapshot_id,
+        "regeneration_command": "exp2res assess generate",
+    }
+
+    if mode == "json":
+        # The machine consumer keeps reading the same closed envelope field;
+        # human mode gains the rendering, the envelope gains nothing.
+        result, envelope = _invoke_json(workspace, arguments, input=text)
+        assert result.exit_code == 7
+        assert envelope["invalidated_views"] == [reported]
+        assert "Invalidated assessment view" not in result.stdout
+        return
+
+    result = runner.invoke(
+        app, ["--workspace", str(workspace), *arguments], input=text
+    )
+    assert result.exit_code == 7, result.output
+    assert (
+        f"Invalidated assessment view {reported['snapshot_id']} (global); "
+        f"regenerate with: {reported['regeneration_command']}"
+    ) in result.stdout
 
 
 def test_delete_rebuild_success_failure_zero_survivor_and_bare_recompute(
