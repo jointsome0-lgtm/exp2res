@@ -956,20 +956,25 @@ def correction_add(
                 else project_option
             )
             validate_project_label(project)
+            # §14.14 rule 3: the affirmation covers authorship of the text,
+            # never the cost-bearing rebuild the capture triggers. A
+            # non-interactive run cannot supply that consent, so it fails
+            # before the source is touched — `--file -` would otherwise block
+            # on a pipe whose content the command was never going to use.
+            if not controls.yes and _noninteractive(controls):
+                raise NonInteractiveInputRequired()
             raw_text, external_ref = read_correction_source(
                 workspace, source_path=source_file
             )
-            # §14.14 rule 3: the affirmation covers authorship of the text,
-            # never the cost-bearing rebuild the capture triggers.
-            if not controls.yes:
-                if _noninteractive(controls):
-                    raise NonInteractiveInputRequired()
-                if not typer.confirm(
-                    "Store the correction and rebuild derived state through "
-                    "Stage 5 with the configured model provider?",
-                    err=True,
-                ):
-                    return Outcome(exit_code=9, diagnostic_class="cancelled")
+            # The interactive confirmation stays after acquisition: under
+            # `--file -` the record and the answer share one stream, so
+            # confirming first would consume the record's first line.
+            if not controls.yes and not typer.confirm(
+                "Store the correction and rebuild derived state through "
+                "Stage 5 with the configured model provider?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
             return _store_correction(
                 workspace,
                 controls,

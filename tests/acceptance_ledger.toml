@@ -387,6 +387,7 @@ nodes = [
   "tests/test_llm_preflight.py::test_unusable_configured_binary_fails_capability_before_transport[not-executable]",
   "tests/test_llm_preflight.py::test_adapter_binary_key_requires_an_absolute_posix_path[command-name]",
   "tests/test_llm_preflight.py::test_adapter_binary_keys_are_recognized_and_carry_no_credential",
+  "tests/test_llm_preflight.py::test_configured_binary_is_validated_before_the_external_session",
 ]
 note = "Config-only selection, model, adapter-specific reasoning effort, and now the optional §29.2 executable path reach both shipped agent-backed runners, including a double-opt-in Claude full-stack smoke; openai-compat remains the one unimplemented V1 adapter and keeps this criterion partial"
 

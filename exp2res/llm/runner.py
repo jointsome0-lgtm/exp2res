@@ -76,27 +76,31 @@ class RawResult:
 # §15.10 rule 10 separates a stable code from the `transport_provider_error`
 # catch-all only when it names a distinct owner remedy. A refused request
 # shape means fix the build or configuration; an unserviceable model means fix
-# the `[llm]` selection. Both are non-retryable. Every adapter classifies from
-# its own error channel with these shared deterministic markers, and an
-# unmatched rejection stays the catch-all rather than being guessed into a
+# the `[llm]` selection. Both are non-retryable.
+#
+# The channel is a mixed surface: §15.10 rule 9 acknowledges it may carry
+# source-derived text, so only provider error-code tokens and exact provider
+# sentences qualify as markers. Bare prose an owner could plausibly write —
+# "invalid request", "unknown model" — is deliberately absent, and every
+# caller runs this classification only after its retryable-outage markers, so
+# an outage whose channel happens to echo rejection wording keeps its retry.
+# An unmatched rejection stays the catch-all rather than being guessed into a
 # narrower class.
 MODEL_UNAVAILABLE_MARKERS = (
     b"model_not_found",
-    b"model not found",
-    b"unknown model",
-    b"unsupported model",
-    b"model is not supported",
+    b"model_not_supported",
+    b"unsupported_model",
     b"does not exist or you do not have access",
 )
 REQUEST_REJECTED_MARKERS = (
     b"invalid_json_schema",
     b"invalid_request_error",
-    b"invalid schema",
-    b"invalid request",
-    b"malformed request",
+    b"invalid_schema",
+    b"malformed_request",
+    b"unsupported_parameter",
     b"unsupported parameter",
     b"unsupported_value",
-    b"unprocessable entity",
+    b"unprocessable_entity",
 )
 
 

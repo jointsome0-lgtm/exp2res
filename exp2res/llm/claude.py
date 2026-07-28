@@ -467,12 +467,15 @@ def build_runner(config: LLMConfig, repository_root: Path) -> ContractRunner:
     reasoning_effort = validate_reasoning_effort(
         config.reasoning_effort, DEFAULT_DECLARATION
     )
+    # §29.2's configured executable, on the same terms as Codex's: validated
+    # before the session so an unusable path fails `capability_mismatch`
+    # independently of the session check.
+    claude_binary = _resolve_claude_binary(config.claude_binary_path)
     claude_config_dir = resolve_claude_config_dir(config)
     runtime = preflight_adapter(
         repository_root=repository_root,
         claude_config_dir=claude_config_dir,
-        # §29.2's configured executable, on the same terms as Codex's.
-        claude_binary=config.claude_binary_path,
+        claude_binary=claude_binary,
         declaration=DEFAULT_DECLARATION,
     )
     return ClaudeAgentRunner(
@@ -541,9 +544,6 @@ def classify_claude_failure(result: RawResult) -> tuple[str | None, bool]:
         return "transport_timeout", True
     if any(marker in channel for marker in (b"lost response", b"ambiguous delivery")):
         return "transport_lost_response", True
-    rejection = classify_rejection_shape(channel)
-    if rejection is not None:
-        return rejection, False
     if any(
         marker in channel
         for marker in (
@@ -557,5 +557,7 @@ def classify_claude_failure(result: RawResult) -> tuple[str | None, bool]:
             b"529",
         )
     ):
+        # The retryable-outage markers win over rejection wording the channel
+        # may merely echo; only an otherwise unexplained failure is classified.
         return "transport_provider_error", True
-    return "transport_provider_error", False
+    return classify_rejection_shape(channel) or "transport_provider_error", False

@@ -566,3 +566,23 @@ def test_adapter_binary_keys_are_recognized_and_carry_no_credential(
     assert "codex_binary_path" in DEFAULT_LLM_CONFIG.__dataclass_fields__
     assert DEFAULT_LLM_CONFIG.codex_binary_path is None
     assert DEFAULT_LLM_CONFIG.claude_binary_path is None
+
+
+def test_configured_binary_is_validated_before_the_external_session(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #150 / §29.2: an unusable path fails independently of the session."""
+
+    missing = tmp_path / "Vera Example absent codex"
+    write_llm_config(
+        workspace,
+        'adapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n'
+        f'codex_binary_path = "{missing}"',
+    )
+    config = load_workspace_config(workspace).llm
+    # No external session either: the owner must still be told which
+    # configuration to repair, so the executable check comes first.
+    monkeypatch.delenv(config.codex_home_env, raising=False)
+    with pytest.raises(LLMInvocationError) as caught:
+        codex_adapter.build_runner(config, Path(__file__).resolve().parent.parent)
+    assert caught.value.failure_code == "capability_mismatch"

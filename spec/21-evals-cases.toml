@@ -1179,6 +1179,11 @@ Then human mode prints one stderr diagnostic naming the failing stage, the contr
 And no byte of the provider error channel reaches stdout, stderr, the §14.14 envelope, processing_runs, or llm_calls
 And the §14.14 envelope is unchanged by the diagnostic and still reports the run through run_ids
 
+Given error channels that mix a retryable-outage marker with echoed rejection wording, and channels carrying only owner-plausible prose such as "invalid request" or "unknown model"
+When each adapter classifies the failure
+Then the mixed channel keeps transport_provider_error and its retry rather than a non-retryable rejection class
+And the prose-only channels stay transport_provider_error, because a rejection class is named only from a structured provider field or an adapter-owned error-code token or exact provider sentence
+
 Given an adapter or model omits structured-output support, a declared model identifier, declared context or output bounds, timeout or cancellation support, or a required deterministic credential or token classifier
 When selection or configuration validation runs
 Then that adapter or model is not selectable
@@ -1661,7 +1666,7 @@ Given an externally-managed-session adapter whose optional §29.2 executable key
 When capability preflight runs for each configuration
 Then the unset key keeps the adapter's own PATH discovery unchanged
 And the stub path is the executable the preflight resolves and the runner binds, with no PATH lookup and no environment-supplied command name
-And a missing or non-executable path fails as capability_mismatch before any transport and independently of the session check
+And a missing or non-executable path fails as capability_mismatch before any transport and independently of the session check, including when no external session exists either
 And the key loads as a recognized [llm] key, carries no credential value, and never enters a §15 prompt field
 '''
 

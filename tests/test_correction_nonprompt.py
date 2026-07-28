@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import exp2res.cli as cli_module
 import exp2res.services.lifecycle as lifecycle_service
 from exp2res.cli import app
 from exp2res.services.logs import list_logs, show_log
@@ -351,6 +352,35 @@ def test_affirmation_does_not_supply_the_rebuild_consent(
             str(source),
             "--owner-authored",
         ],
+    )
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] == "input_required"
+    assert [log.id for log in list_logs(workspace)] == [target.id]
+
+
+def test_missing_consent_fails_before_the_source_is_read(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 3: `--file -` never blocks on a pipe it will not use."""
+
+    target = seed_target(workspace)
+
+    def refuse_read(*_args, **_kwargs):
+        raise AssertionError("the source was acquired before cost consent")
+
+    monkeypatch.setattr(cli_module, "read_correction_source", refuse_read)
+    result, envelope = invoke_json(
+        workspace,
+        [
+            "correction",
+            "add",
+            "--log-id",
+            target.id,
+            "--file",
+            "-",
+            "--owner-authored",
+        ],
+        input=b"Vera Example text that must never be consumed.\n",
     )
     assert result.exit_code == 2
     assert envelope["diagnostic_class"] == "input_required"

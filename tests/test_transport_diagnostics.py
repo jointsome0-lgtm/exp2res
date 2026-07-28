@@ -32,7 +32,7 @@ REJECTION_CASES = [
         b"The model `vera-example-model` does not exist or you do not have access to it",
         "transport_model_unavailable",
     ),
-    (b"Error: unknown model vera-example-model", "transport_model_unavailable"),
+    (b"unsupported_model: vera-example-model", "transport_model_unavailable"),
 ]
 
 
@@ -200,3 +200,41 @@ def test_new_codes_are_registered_transport_classes_for_every_adapter() -> None:
         for channel, expected in REJECTION_CASES:
             code, _retryable = registration.classify_failure(failed(channel))
             assert code == expected
+
+
+@pytest.mark.parametrize(
+    "classify",
+    [codex_adapter.classify_codex_failure, claude_adapter.classify_claude_failure],
+    ids=["codex-cli", "claude-agent-sdk"],
+)
+def test_a_retryable_outage_keeps_its_retry_despite_echoed_rejection_wording(
+    classify,
+) -> None:
+    """§15.10 rule 10: the channel is mixed, so an outage marker wins."""
+
+    channel = (
+        b"connection reset by peer; echoed owner text: invalid_request_error"
+    )
+    assert classify(failed(channel)) == ("transport_provider_error", True)
+
+
+@pytest.mark.parametrize(
+    "classify",
+    [codex_adapter.classify_codex_failure, claude_adapter.classify_claude_failure],
+    ids=["codex-cli", "claude-agent-sdk"],
+)
+@pytest.mark.parametrize(
+    "prose",
+    [
+        b"Vera Example wrote: the invalid request form was rejected by review",
+        b"Vera Example wrote: an unknown model of collaboration emerged",
+    ],
+    ids=["invalid-request-prose", "unknown-model-prose"],
+)
+def test_owner_prose_in_the_channel_never_names_a_rejection_class(
+    classify, prose: bytes
+) -> None:
+    """§15.10 rule 10: only error-code tokens and exact provider sentences."""
+
+    code, _retryable = classify(failed(prose))
+    assert code == "transport_provider_error"
