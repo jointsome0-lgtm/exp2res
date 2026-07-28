@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from exp2res.domain.models import SelfClaim
+from exp2res.domain.models import SelfClaim, SelfSignal
 from exp2res.errors import IntegrityFailureError
 
 from .graph import AssessmentExportGraph, id_key
@@ -20,10 +20,8 @@ _HEADINGS = (
     "## 6. Gaps",
     "## 7. Contradictions",
     "## 8. Risks / Failure Modes",
-    "## 9. Unknowns",
-    "## 10. Questions Worth Answering",
-    "## 11. Evidence Map",
-    "## 12. Counterevidence",
+    "## 9. Unknowns and Open Questions",
+    "## 10. Counterevidence",
 )
 
 
@@ -50,7 +48,32 @@ def claim_section(claim: SelfClaim) -> int:
     raise IntegrityFailureError("assessment_claim_section_invalid")
 
 
-def _claim_block(claim: SelfClaim) -> list[str]:
+def _id_list(values) -> str:
+    return ", ".join(escape_generated(value) for value in sorted(values, key=id_key))
+
+
+def _sources_line(claim: SelfClaim, signals_by_id: dict[str, SelfSignal]) -> str:
+    # §17: the claim-level trail is the report's inline provenance; the
+    # record-level closure stays in the evidence_map.json companion.
+    entries: list[str] = []
+    for signal_id in sorted(claim.source_signal_ids, key=id_key):
+        signal = signals_by_id[signal_id]
+        parts: list[str] = []
+        if signal.supporting_fact_ids:
+            parts.append(f"facts {_id_list(signal.supporting_fact_ids)}")
+        if signal.counter_fact_ids:
+            parts.append(f"counter {_id_list(signal.counter_fact_ids)}")
+        entries.append(f"{escape_generated(signal_id)} ({'; '.join(parts)})")
+    if claim.source_fact_ids:
+        entries.append(f"facts {_id_list(claim.source_fact_ids)}")
+    if not entries:
+        raise IntegrityFailureError("claim_sources_trail_empty")
+    return "  **Sources:** " + "; ".join(entries)
+
+
+def _claim_block(
+    claim: SelfClaim, signals_by_id: dict[str, SelfSignal]
+) -> list[str]:
     lines = [f"- {escape_generated(claim.claim, continuation_indent='  ')}"]
     lines.append(
         f"  **Status:** {escape_generated(claim.verification_status, continuation_indent='  ')}"
@@ -59,6 +82,7 @@ def _claim_block(claim: SelfClaim) -> list[str]:
         lines.append(
             f"  **Uncertainty:** {escape_generated(claim.uncertainty, continuation_indent='  ')}"
         )
+    lines.append(_sources_line(claim, signals_by_id))
     return lines
 
 
@@ -90,14 +114,18 @@ def _strong_fact_rows(graph: AssessmentExportGraph) -> list[str]:
         )
         lines.append(f"  **Fact ID:** {escape_generated(fact.id)}")
         lines.append(f"  **Supporting claim IDs:** {claim_ids}")
+        lines.append(f"  **Raw log IDs:** {_id_list(fact.source_log_ids)}")
     return lines
 
 
 def _gap_rows(graph: AssessmentExportGraph) -> list[str]:
+    # §17: the question renders first, beside the gap ID that §14.7
+    # `gaps answer` needs; unanswered blocks form the open-question set.
     lines: list[str] = []
     for stored in graph.gaps:
         gap = stored.value
-        lines.append(f"- **Gap ID:** {escape_generated(gap.id)}")
+        lines.append(f"- {escape_generated(gap.question, continuation_indent='  ')}")
+        lines.append(f"  **Gap ID:** {escape_generated(gap.id)}")
         lines.append(
             "  **Target:** "
             f"{escape_generated(gap.target_type)} {escape_generated(gap.target_id)}"
@@ -133,61 +161,6 @@ def _contradiction_rows(graph: AssessmentExportGraph) -> list[str]:
     return lines
 
 
-def _question_rows(graph: AssessmentExportGraph) -> list[str]:
-    return [
-        f"- {escape_generated(item.value.question, continuation_indent='  ')}"
-        for item in graph.gaps
-        if not item.value.answered
-    ]
-
-
-def _evidence_map_rows(graph: AssessmentExportGraph) -> list[str]:
-    lines: list[str] = []
-    for stored in graph.claims:
-        claim = stored.value
-        signals = ", ".join(
-            escape_generated(item)
-            for item in sorted(claim.source_signal_ids, key=id_key)
-        )
-        facts = ", ".join(
-            escape_generated(item)
-            for item in sorted(claim.source_fact_ids, key=id_key)
-        )
-        lines.append(f"- **Claim:** {escape_generated(claim.id)}")
-        lines.append(f"  **Signals:** [{signals}]")
-        lines.append(f"  **Facts:** [{facts}]")
-    for stored in graph.signals:
-        signal = stored.value
-        supporting = ", ".join(
-            escape_generated(item)
-            for item in sorted(signal.supporting_fact_ids, key=id_key)
-        )
-        counter = ", ".join(
-            escape_generated(item)
-            for item in sorted(signal.counter_fact_ids, key=id_key)
-        )
-        lines.append(f"- **Signal:** {escape_generated(signal.id)}")
-        lines.append(f"  **Supporting facts:** [{supporting}]")
-        lines.append(f"  **Counter facts:** [{counter}]")
-    for stored in graph.facts:
-        fact = stored.value
-        evidence = ", ".join(
-            escape_generated(item)
-            for item in sorted(fact.evidence_item_ids, key=id_key)
-        )
-        logs = ", ".join(
-            escape_generated(item)
-            for item in sorted(fact.source_log_ids, key=id_key)
-        )
-        lines.append(f"- **Fact:** {escape_generated(fact.id)}")
-        lines.append(f"  **Evidence items:** [{evidence}]")
-        lines.append(f"  **Raw logs:** [{logs}]")
-    for evidence in graph.evidence_items:
-        lines.append(f"- **Evidence item:** {escape_generated(evidence.id)}")
-        lines.append(f"  **Raw log:** {escape_generated(evidence.raw_log_id)}")
-    return lines
-
-
 def _counterevidence_rows(graph: AssessmentExportGraph) -> list[str]:
     lines: list[str] = []
     for stored in graph.claims:
@@ -217,16 +190,15 @@ def _counterevidence_rows(graph: AssessmentExportGraph) -> list[str]:
 
 def render_report(graph: AssessmentExportGraph) -> bytes:
     snapshot = graph.snapshot.value
-    sections: dict[int, list[str]] = {number: [] for number in range(1, 13)}
+    signals_by_id = {item.value.id: item.value for item in graph.signals}
+    sections: dict[int, list[str]] = {number: [] for number in range(1, 11)}
     for stored in graph.claims:
         claim = stored.value
-        sections[claim_section(claim)].extend(_claim_block(claim))
+        sections[claim_section(claim)].extend(_claim_block(claim, signals_by_id))
     sections[2] = _strong_fact_rows(graph)
     sections[7].extend(_contradiction_rows(graph))
     sections[9].extend(_gap_rows(graph))
-    sections[10] = _question_rows(graph)
-    sections[11] = _evidence_map_rows(graph)
-    sections[12] = _counterevidence_rows(graph)
+    sections[10] = _counterevidence_rows(graph)
 
     lines = [
         "# Self-Assessment Snapshot",

@@ -33,10 +33,8 @@ EXPECTED_HEADINGS = (
     "## 6. Gaps",
     "## 7. Contradictions",
     "## 8. Risks / Failure Modes",
-    "## 9. Unknowns",
-    "## 10. Questions Worth Answering",
-    "## 11. Evidence Map",
-    "## 12. Counterevidence",
+    "## 9. Unknowns and Open Questions",
+    "## 10. Counterevidence",
 )
 
 # Values a §15 writer could emit that would otherwise open a block, an inline
@@ -280,6 +278,11 @@ def test_renderer_is_byte_deterministic_and_uses_closed_order_and_empty_headings
     assert "Snapshot created: 2026-07-20T10:00:00+02:00" in text
     assert "**Status:** supported" in text
     assert "**Fact ID:** fact_vera_export_0001" in text
+    assert "**Raw log IDs:** log_vera_export_0001" in text
+    assert (
+        "**Sources:** signal_vera_export_0001 (facts fact_vera_export_0001); "
+        "facts fact_vera_export_0001" in text
+    )
     assert "\\" not in text
 
     sparse = assessment_graph(all_sections=False)
@@ -288,13 +291,18 @@ def test_renderer_is_byte_deterministic_and_uses_closed_order_and_empty_headings
     assert "placeholder" not in sparse_text.lower()
 
 
-def test_answered_since_synthesis_is_explicit_and_question_is_omitted() -> None:
+def test_answered_since_synthesis_is_explicit_and_question_stays_beside_id() -> None:
     text = render_report(assessment_graph(answered=True)).decode("utf-8")
-    assert "**Answered since synthesis:** yes" in text
-    question_section = text.split("## 10. Questions Worth Answering", 1)[1].split(
-        "## 11. Evidence Map", 1
+    unknown_section = text.split("## 9. Unknowns and Open Questions", 1)[1].split(
+        "## 10. Counterevidence", 1
     )[0]
-    assert "What scale" not in question_section
+    # §17: an answered-after-synthesis question keeps its block — question
+    # first, gap ID beside it — plus the explicit marker.
+    assert (
+        "- What scale did Vera Example validate?\n"
+        "  **Gap ID:** gap_vera_export_0001\n" in unknown_section
+    )
+    assert "**Answered since synthesis:** yes" in unknown_section
 
 
 def test_unmatched_non_summary_claim_fails_closed() -> None:

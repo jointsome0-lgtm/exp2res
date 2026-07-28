@@ -6,6 +6,7 @@ Scope: global
 ## 1. Summary
 - Current evidence suggests Vera Example pattern 1.
   **Status:** supported
+  **Sources:** signal_vera_0001 (facts fact_vera_0001); facts fact_vera_0001
 
 ## 2. Strongly Supported Facts
 
@@ -13,6 +14,7 @@ Scope: global
 - Vera Example currently shows a provenance-aware working pattern.
   **Status:** supported
   **Uncertainty:** Vera Example evidence remains limited to supplied records.
+  **Sources:** signal_vera_0001 (facts fact_vera_0001); facts fact_vera_0001
 
 ## 4. Current Strengths
 
@@ -24,29 +26,11 @@ Scope: global
 
 ## 8. Risks / Failure Modes
 
-## 9. Unknowns
-- **Gap ID:** gap_vera_0001
+## 9. Unknowns and Open Questions
+- Which exact scale did Vera Example validate?
+  **Gap ID:** gap_vera_0001
   **Target:** experience_fact fact_vera_0001
   **Reason:** missing_scale
   **Priority:** medium
 
-## 10. Questions Worth Answering
-- Which exact scale did Vera Example validate?
-
-## 11. Evidence Map
-- **Claim:** claim_vera_0001
-  **Signals:** [signal_vera_0001]
-  **Facts:** [fact_vera_0001]
-- **Claim:** claim_vera_0002
-  **Signals:** [signal_vera_0001]
-  **Facts:** [fact_vera_0001]
-- **Signal:** signal_vera_0001
-  **Supporting facts:** [fact_vera_0001]
-  **Counter facts:** []
-- **Fact:** fact_vera_0001
-  **Evidence items:** [evidence_item_vera_0001]
-  **Raw logs:** [raw_log_vera_0001]
-- **Evidence item:** evidence_item_vera_0001
-  **Raw log:** raw_log_vera_0001
-
-## 12. Counterevidence
+## 10. Counterevidence

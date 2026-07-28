@@ -393,7 +393,7 @@ Given a project assessment synthesis over current unanswered GapQuestions where 
 When Stage 6 persists and §17 renders the snapshot
 Then scope_target equals the canonical §14.9 project selector
 And Stage 6 service-populates gap_question_ids with exactly the duplicate-free current unanswered set it supplied to the writer
-And Unknowns and Questions Worth Answering dereference those rows without adding declarative snapshot prose
+And the Unknowns and Open Questions section dereferences those rows — each rendered question adjacent to its gap ID — without adding declarative snapshot prose
 And every non-empty claim counterevidence list renders with its claim ID and visible status
 And each counterevidence entry renders its statement with a typed reference resolving inside that claim's §15.5 bundle
 And neither channel improves §16.11 aggregation or independently guides Stage 10
@@ -415,7 +415,7 @@ Given a current snapshot references a gap that the owner answers afterwards
 When the snapshot is rendered or exported without regeneration
 Then the snapshot, its branches, and its bullets remain current and the assessment stays exportable
 And the answer transaction removes the dependent managed assessment and branch exports or reports residual paths, superseding no row
-And §17 marks that reference answered since synthesis and drops it from Questions Worth Answering
+And §17 marks that reference answered since synthesis and excludes it from the open-question set
 And a following export renders that answered-since-synthesis state
 And the next Stage 6 generation excludes the answered row
 '''
