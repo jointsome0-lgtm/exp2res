@@ -1883,6 +1883,11 @@ Given the same claim carries the capability dimension technical_skill
 When Stage 7 verifies that candidate
 Then the candidate is not rejected for its dimension
 
+Given the unique narrative_summary claim synthesizes capability, orientation, and limit claims
+When Stage 7 verifies it carrying any single dimension
+Then it is not rejected for its dimension
+And §17 renders it only in Summary
+
 Given a snapshot whose claims carry only §16.11 assessment-exportable statuses
 When §17 renders the report members
 Then every non-summary claim receives exactly one section keyed on its dimension and §16.11 status, never on claim_kind
