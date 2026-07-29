@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from typing import Any, Callable
+import unicodedata
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -192,6 +193,92 @@ def validation_diagnostics(
     return _diagnostics(errors, _declared_names(contract))
 
 
+# §16.13 mixed-script tripwire: closed, Unicode-version-independent classes.
+# Letters carry a script; the continuation marks extend a token without one.
+_LATIN_RANGES = ((0x41, 0x5A), (0x61, 0x7A), (0xC0, 0xD6), (0xD8, 0xF6), (0xF8, 0x24F))
+_CYRILLIC_RANGES = ((0x400, 0x4FF), (0x500, 0x52F))
+_CONTINUATION_RANGES = ((0x300, 0x36F),)
+
+
+def _in_ranges(code_point: int, ranges: tuple[tuple[int, int], ...]) -> bool:
+    return any(low <= code_point <= high for low, high in ranges)
+
+
+def mixed_script_tokens(text: str) -> frozenset[str]:
+    """Collect §16.13 mixed Latin/Cyrillic tokens from NFC-normalized text.
+
+    A token is a maximal run of Latin-class, Cyrillic-class, and continuation
+    code points; any other code point terminates it, so hyphenated constructs
+    split into single-script tokens and never register here.
+    """
+
+    tokens: set[str] = set()
+    current: list[str] = []
+    has_latin = False
+    has_cyrillic = False
+
+    def flush() -> None:
+        nonlocal has_latin, has_cyrillic
+        if current and has_latin and has_cyrillic:
+            tokens.add("".join(current))
+        current.clear()
+        has_latin = False
+        has_cyrillic = False
+
+    for character in unicodedata.normalize("NFC", text):
+        code_point = ord(character)
+        if _in_ranges(code_point, _LATIN_RANGES):
+            current.append(character)
+            has_latin = True
+        elif _in_ranges(code_point, _CYRILLIC_RANGES):
+            current.append(character)
+            has_cyrillic = True
+        elif _in_ranges(code_point, _CONTINUATION_RANGES):
+            if current:
+                current.append(character)
+        else:
+            flush()
+    flush()
+    return frozenset(tokens)
+
+
+def mixed_script_tokens_in_json(value: object) -> frozenset[str]:
+    """Collect the mixed-script tokens of every string in a JSON value."""
+
+    tokens: set[str] = set()
+    if isinstance(value, str):
+        tokens.update(mixed_script_tokens(value))
+    elif isinstance(value, dict):
+        for child in value.values():
+            tokens.update(mixed_script_tokens_in_json(child))
+    elif isinstance(value, list):
+        for child in value:
+            tokens.update(mixed_script_tokens_in_json(child))
+    return frozenset(tokens)
+
+
+def _find_invented_mixed_token(
+    value: object,
+    allowed: frozenset[str],
+    location: tuple[str | int, ...] = (),
+) -> tuple[str | int, ...] | None:
+    if isinstance(value, str):
+        for token in mixed_script_tokens(value):
+            if token not in allowed:
+                return location
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            found = _find_invented_mixed_token(child, allowed, (*location, str(key)))
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            found = _find_invented_mixed_token(child, allowed, (*location, index))
+            if found is not None:
+                return found
+    return None
+
+
 def _find_service_field(
     value: object,
     service_owned: frozenset[str],
@@ -231,8 +318,15 @@ def validate_output(
     output_bytes: bytes,
     *,
     enrich: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    allowed_mixed_script_tokens: frozenset[str] = frozenset(),
 ) -> BaseModel:
-    """Parse, reject service authorship, enrich, then validate with Pydantic."""
+    """Parse, reject service authorship, enrich, then validate with Pydantic.
+
+    `allowed_mixed_script_tokens` is the §16.13 input-token set collected by
+    the invoking adapter from this call's serialized typed input; the default
+    empty set is the strictest reading — no input, so every mixed-script
+    response token is model-invented.
+    """
 
     declared = _declared_names(contract)
     try:
@@ -253,6 +347,14 @@ def validate_output(
     if injected is not None:
         raise ContractValidationError(
             _diagnostics([{"loc": injected, "type": "service_owned_field"}], declared)
+        )
+    # §16.13 mixed-script tripwire: a mixed Latin/Cyrillic token the call's
+    # input never carried is model-invented. The diagnostic names only the
+    # field location and a stable code, never the token bytes.
+    invented = _find_invented_mixed_token(decoded, allowed_mixed_script_tokens)
+    if invented is not None:
+        raise ContractValidationError(
+            _diagnostics([{"loc": invented, "type": "mixed_script_token"}], declared)
         )
     try:
         candidate = decoded if enrich is None else enrich(deepcopy(decoded))

@@ -140,7 +140,10 @@ FACT_EXTRACTOR_INSTRUCTIONS = (
     "context materially conflicts. Write every natural-language field you author — claim "
     "text, action, object, outcome, and warning messages — subject-free or in the second person "
     "per §16.14; never refer to the owner in the first or third person or by name. Produce all "
-    "output in English."
+    "output in English. Reproduce proper nouns, project labels, acronyms, and identifiers "
+    "exactly as the source spells them, in the source script; never transliterate, romanize, "
+    "or mix scripts inside one such token. Where English prose needs a gloss, keep the "
+    "source-script token and add the gloss beside it rather than replacing the token."
 )
 
 

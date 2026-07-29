@@ -300,8 +300,8 @@ note = "Discovery, schema gating, non-interactive controls, stable exit classes,
 status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.42"]
-issues = ["#81", "PR #95", "#69", "PR #101"]
-note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit offsets, strict runner datetimes, and Windows-path refusal are proven; UTC/hash equivalence, calendar anchors, generated-language, Unicode identity, and complete locator behavior remain"
+issues = ["#81", "PR #95", "#69", "PR #101", "#177"]
+note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit offsets, strict runner datetimes, Windows-path refusal, and the §16.13 input-relative mixed-script tripwire with content-free diagnostics and ungated hydration are proven; UTC/hash equivalence, calendar anchors, generated-language, Unicode identity, and complete locator behavior remain"
 
 ["24.46"]
 status = "partial"
