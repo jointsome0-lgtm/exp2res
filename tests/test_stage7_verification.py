@@ -375,6 +375,53 @@ def test_stale_contradiction_set_fails_before_provider_or_run(
         assert connection.execute("SELECT COUNT(*) FROM processing_runs").fetchone()[0] == before
 
 
+def test_verifier_input_supplies_the_current_contradiction_set(
+    workspace: Path,
+) -> None:
+    # §13.7 check 14 / §15.5: the snapshot's contradiction set is view
+    # context, so a restated detection stays visible to the verifier.
+    ids = SignalIds()
+    facts = prepare_high_facts(workspace, ids)[0]
+    detected = run_stage4(
+        workspace,
+        FakeContractRunner(
+            [
+                detector_response(
+                    target_id=facts[0],
+                    left=("experience_fact", facts[0]),
+                    right=("raw_log", "log_vera_signal_correction"),
+                )
+            ]
+        ),
+        ids,
+    )
+    signals = run_stage5(
+        workspace, FakeContractRunner([signal_response(list(facts), confidence="low")]), ids
+    ).current_signals
+    generated = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [assessment_response(fact_ids=list(facts), signal_ids=[signals[0].id])]
+        ),
+        ids,
+    )
+    assert generated.snapshot_id is not None
+    contradiction_id = detected.created_contradiction_ids[0]
+    fake = FakeContractRunner([verifier_response(), verifier_response()])
+    run_stage7(workspace, fake, ids, generated.snapshot_id)
+    assert fake.calls
+    for call in fake.calls:
+        payload = json.loads(call.serialized_input)
+        assert [item["id"] for item in payload["contradictions"]] == [contradiction_id]
+    with read_database(workspace) as connection:
+        input_ids = json.loads(
+            connection.execute(
+                "SELECT input_ids_json FROM processing_runs ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+    assert contradiction_id in input_ids
+
+
 def test_superseded_snapshot_selector_is_distinct(workspace: Path) -> None:
     ids, facts, signals, first = generated_snapshot(workspace)
     second = run_stage6(
@@ -420,6 +467,7 @@ def test_exact_closure_is_ordered_and_projects_displaced_support(
     fake = FakeContractRunner([verifier_response(), verifier_response()])
     run_stage7(workspace, fake, ids, generated.snapshot_id)
     payload = json.loads(fake.calls[0].serialized_input)
+    assert payload["contradictions"] == []
     for field in (
         "source_signals",
         "scope_signals",
@@ -427,6 +475,7 @@ def test_exact_closure_is_ordered_and_projects_displaced_support(
         "source_facts",
         "source_evidence_items",
         "source_logs",
+        "contradictions",
     ):
         assert [item["id"] for item in payload[field]] == sorted(
             (item["id"] for item in payload[field]), key=lambda item: item.encode("utf-8")

@@ -29,7 +29,6 @@ HEADINGS = (
     "7. Contradictions",
     "8. Risks / Failure Modes",
     "9. Unknowns and Open Questions",
-    "10. Counterevidence",
 )
 
 TITLE = "Self-Assessment Snapshot"
@@ -159,12 +158,47 @@ def _sources_line(claim: SelfClaim, signals_by_id: dict[str, SelfSignal]) -> Lin
     return tuple(segments)
 
 
+def _counterevidence_children(claim: SelfClaim) -> tuple[Block, ...]:
+    children: list[Block] = []
+    for item in sorted(
+        claim.counterevidence,
+        key=lambda item: (
+            id_key(item.source_ref_type),
+            id_key(item.source_ref_id),
+        ),
+    ):
+        children.append(
+            Block(
+                lead=(
+                    Key("Verifier-grounded contrary evidence"),
+                    Val(item.statement),
+                ),
+                fields=(
+                    (
+                        Key("Source"),
+                        Val(item.source_ref_type, "token"),
+                        Lit(" "),
+                        Val(item.source_ref_id, "token"),
+                    ),
+                ),
+            )
+        )
+    return tuple(children)
+
+
 def _claim_block(claim: SelfClaim, signals_by_id: dict[str, SelfSignal]) -> Block:
-    fields: list[Line] = [(Key("Status"), Val(claim.verification_status, "status"))]
+    fields: list[Line] = [
+        (Key("Claim ID"), Val(claim.id, "token")),
+        (Key("Status"), Val(claim.verification_status, "status")),
+    ]
     if claim.uncertainty is not None:
         fields.append((Key("Uncertainty"), Val(claim.uncertainty)))
     fields.append(_sources_line(claim, signals_by_id))
-    return Block(lead=(Val(claim.claim),), fields=tuple(fields))
+    return Block(
+        lead=(Val(claim.claim),),
+        fields=tuple(fields),
+        children=_counterevidence_children(claim),
+    )
 
 
 def _strong_fact_blocks(graph: AssessmentExportGraph) -> tuple[Block, ...]:
@@ -227,6 +261,9 @@ def _gap_blocks(graph: AssessmentExportGraph) -> tuple[Block, ...]:
 
 
 def _contradiction_blocks(graph: AssessmentExportGraph) -> tuple[Block, ...]:
+    # §17: the fixed origin label states §13.4's rule — a detection is Stage
+    # 4's reading of its inputs and no Stage 7 verdict retires or adjudicates
+    # it, so the row is never read as a verified conclusion.
     blocks: list[Block] = []
     for stored in graph.contradictions:
         contradiction = stored.value
@@ -234,6 +271,7 @@ def _contradiction_blocks(graph: AssessmentExportGraph) -> tuple[Block, ...]:
             Block(
                 lead=(Val(contradiction.title),),
                 fields=(
+                    (Key("Origin"), Lit("unadjudicated detector output")),
                     (Key("Description"), Val(contradiction.description)),
                     (
                         Key("Left reference"),
@@ -253,61 +291,18 @@ def _contradiction_blocks(graph: AssessmentExportGraph) -> tuple[Block, ...]:
     return tuple(blocks)
 
 
-def _counterevidence_blocks(graph: AssessmentExportGraph) -> tuple[Block, ...]:
-    blocks: list[Block] = []
-    for stored in graph.claims:
-        claim = stored.value
-        if not claim.counterevidence:
-            continue
-        children: list[Block] = []
-        for item in sorted(
-            claim.counterevidence,
-            key=lambda item: (
-                id_key(item.source_ref_type),
-                id_key(item.source_ref_id),
-            ),
-        ):
-            children.append(
-                Block(
-                    lead=(
-                        Key("Verifier-grounded contrary evidence"),
-                        Val(item.statement),
-                    ),
-                    fields=(
-                        (
-                            Key("Source"),
-                            Val(item.source_ref_type, "token"),
-                            Lit(" "),
-                            Val(item.source_ref_id, "token"),
-                        ),
-                    ),
-                )
-            )
-        blocks.append(
-            Block(
-                lead=(Key("Claim"), Val(claim.id, "token")),
-                fields=(
-                    (Key("Status"), Val(claim.verification_status, "status")),
-                ),
-                children=tuple(children),
-            )
-        )
-    return tuple(blocks)
-
-
 def build_assessment_document(graph: AssessmentExportGraph) -> ReportDocument:
     """Project one loaded export graph into the deterministic §17 document."""
 
     snapshot = graph.snapshot.value
     signals_by_id = {item.value.id: item.value for item in graph.signals}
-    blocks: dict[int, list[Block]] = {number: [] for number in range(1, 11)}
+    blocks: dict[int, list[Block]] = {number: [] for number in range(1, 10)}
     for stored in graph.claims:
         claim = stored.value
         blocks[claim_section(claim)].append(_claim_block(claim, signals_by_id))
     blocks[2] = list(_strong_fact_blocks(graph))
     blocks[7].extend(_contradiction_blocks(graph))
     blocks[9].extend(_gap_blocks(graph))
-    blocks[10] = list(_counterevidence_blocks(graph))
 
     header: list[Line] = [
         (

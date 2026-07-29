@@ -183,8 +183,14 @@ status = "pending"
 phase = "4"
 
 ["21.26"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_export_markdown.py::test_counterevidence_renders_inline_and_never_as_a_section",
+  "tests/test_export_markdown.py::test_every_claim_block_carries_its_claim_id_line",
+  "tests/test_export_markdown.py::test_contradiction_rows_carry_the_fixed_origin_label",
+]
 phase = "3"
+note = "Offline rendering tests pin inline counterevidence beside the claim-ID line, the removed standalone section, and the unadjudicated-detector-output origin label; Stage 6/7 population and lifecycle mechanics stay with their stage tests"
 
 ["21.27"]
 status = "pending"
@@ -232,6 +238,7 @@ note = "Stage 3 fact ceilings, Stage 5 signal propagation caps, and Stage 6 clai
 status = "covered"
 nodes = [
   "tests/test_stage7_verification.py::test_exact_closure_is_ordered_and_projects_displaced_support",
+  "tests/test_stage7_verification.py::test_verifier_input_supplies_the_current_contradiction_set",
 ]
 
 ["21.33"]
@@ -643,7 +650,7 @@ nodes = [
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
 phase = "3"
-note = "The published set's fourth member is pinned by golden bytes and its manifest hash at manifest_version 3, both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"
+note = "The published set's fourth member is pinned by golden bytes and its manifest hash at manifest_version 4, both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"
 
 ["21.56"]
 status = "partial"

@@ -15,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 from exp2res.domain.enums import VerificationStatus
 from exp2res.domain.models import (
     AssessmentSnapshot,
+    Contradiction,
     CounterevidenceItem,
     EvidenceItem,
     ExperienceFact,
@@ -45,6 +46,7 @@ from exp2res.storage.repository import (
     get_assessment_snapshot,
     get_raw_log,
     insert_verification_finding,
+    list_contradictions,
     list_experience_facts,
     list_self_claims_for_snapshot,
     list_self_signals,
@@ -192,6 +194,7 @@ def _build_bundle(
     current_signals: dict[str, SelfSignal],
     scope_facts: tuple[ExperienceFact, ...],
     scope_signals: tuple[SelfSignal, ...],
+    contradictions: tuple[Contradiction, ...],
 ) -> _ClaimBundle:
     try:
         source_signals = tuple(
@@ -247,6 +250,7 @@ def _build_bundle(
         source_facts=list(source_facts),
         source_evidence_items=list(source_evidence),
         source_logs=list(source_logs),
+        contradictions=list(contradictions),
     )
     bundle_refs = frozenset(
         {
@@ -395,6 +399,12 @@ def run_assessment_verification(
         scope_signals = tuple(sorted(view.signals, key=lambda item: _id_key(item.id)))
         current_facts = {item.id: item for item in list_experience_facts(connection)}
         current_signals = {item.id: item for item in list_self_signals(connection)}
+        # §13.7/§15.5: the snapshot's complete current contradiction set —
+        # integrity-checked against snapshot.contradiction_ids above — is view
+        # context for check 14; it deepens into no evidence closure.
+        current_contradictions = tuple(
+            sorted(list_contradictions(connection), key=lambda item: _id_key(item.id))
+        )
         bundles = tuple(
             _build_bundle(
                 connection,
@@ -404,6 +414,7 @@ def run_assessment_verification(
                 current_signals=current_signals,
                 scope_facts=scope_facts,
                 scope_signals=scope_signals,
+                contradictions=current_contradictions,
             )
             for claim in claims
         )
@@ -417,6 +428,10 @@ def run_assessment_verification(
                         {
                             claim.id,
                             *(item[1] for item in bundle.bundle_refs),
+                            # §12.13 telemetry names every transited entity;
+                            # contradictions stay out of bundle_refs because
+                            # they cannot ground counterevidence.
+                            *(item.id for item in current_contradictions),
                         },
                         key=_id_key,
                     )
