@@ -60,7 +60,13 @@ WORKSPACE_LABEL = "demo/workspace"
 FIXED_CLOCK = datetime.fromisoformat("2026-07-15T12:30:00+00:00")
 CORPUS_VERSION = "0.3.0"
 ENVELOPE_VERSION = 1
-EXPORT_MEMBERS = ("report.md", "self_claims.json", "evidence_map.json", "manifest.json")
+EXPORT_MEMBERS = (
+    "report.md",
+    "report.html",
+    "self_claims.json",
+    "evidence_map.json",
+    "manifest.json",
+)
 PRIVATE_HOME_MARKERS = (b"/home/", b"/Users/", b"/root/", b"\\Users\\")
 
 
@@ -513,7 +519,7 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
     members = exported_bytes(workspace, act1)
     manifest = json.loads(members["manifest.json"])
     recorded = {item["name"]: item["sha256"] for item in manifest["members"]}
-    for name in ("report.md", "self_claims.json", "evidence_map.json"):
+    for name in ("report.md", "report.html", "self_claims.json", "evidence_map.json"):
         if recorded.get(name) != hashlib.sha256(members[name]).hexdigest():
             raise AssertionError(f"Vera Example export manifest hash mismatch: {name}")
     evidence_map = AssessmentEvidenceMapDocument.model_validate_json(

@@ -158,4 +158,8 @@ Enforces §5.4, §5.5, §11.1, §12 rules 3 and 5, §13.3 rules 2 and 10, §14.3
 
 Enforces §13.7, §16.11–§16.12, and §16.14.
 
+## §21.55 The Static Mirror Page Is Self-Contained, Deterministic, and Inert
+
+Enforces §13.12, §13.14 rules 2–3 and 5, §16.13, §17, §29.1–§29.2, and §30.
+
 ---

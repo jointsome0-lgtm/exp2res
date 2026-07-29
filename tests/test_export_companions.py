@@ -95,6 +95,7 @@ def test_manifest_is_closed_complete_and_member_byte_hashed() -> None:
     )
     assert [item.name for item in manifest.members] == [
         "evidence_map.json",
+        "report.html",
         "report.md",
         "self_claims.json",
     ]

@@ -25,6 +25,7 @@ from .companions import (
     companion_bytes,
 )
 from .graph import AssessmentExportGraph, id_key, render_input_bundle
+from .html import render_report_html
 from .report import render_report
 
 
@@ -37,7 +38,12 @@ _ROLLBACK = re.compile(
     r"^\.exp2res-rollback-(?P<entity>[a-z0-9][a-z0-9_-]{0,127})-"
     r"(?P<nonce>[0-9a-f]{32})$"
 )
-_MEMBER_NAMES = ("evidence_map.json", "report.md", "self_claims.json")
+_MEMBER_NAMES = (
+    "evidence_map.json",
+    "report.html",
+    "report.md",
+    "self_claims.json",
+)
 _ALL_NAMES = (*_MEMBER_NAMES, "manifest.json")
 
 
@@ -83,7 +89,7 @@ class AssessmentSourceIds(_ManifestModel):
 
 
 class ManifestMember(_ManifestModel):
-    name: Literal["report.md", "self_claims.json", "evidence_map.json"]
+    name: Literal["report.md", "report.html", "self_claims.json", "evidence_map.json"]
     sha256: str
 
     @field_validator("sha256")
@@ -95,7 +101,7 @@ class ManifestMember(_ManifestModel):
 
 
 class AssessmentManifest(_ManifestModel):
-    manifest_version: Literal[1]
+    manifest_version: Literal[2]
     output_kind: Literal["assessment"]
     entity_id: str
     generation_id: str
@@ -160,6 +166,7 @@ def assessment_member_bytes(graph: AssessmentExportGraph) -> dict[str, bytes]:
     _validate_snapshot_title(graph)
     return {
         "report.md": render_report(graph),
+        "report.html": render_report_html(graph),
         "self_claims.json": companion_bytes(build_self_claims_document(graph)),
         "evidence_map.json": companion_bytes(build_evidence_map_document(graph)),
     }
@@ -183,7 +190,7 @@ def build_assessment_manifest(
     _validate_snapshot_title(graph)
     snapshot = graph.snapshot.value
     return AssessmentManifest(
-        manifest_version=1,
+        manifest_version=2,
         output_kind="assessment",
         entity_id=snapshot.id,
         generation_id=graph.snapshot.generation_id,

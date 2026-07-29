@@ -65,6 +65,7 @@ def test_export_assessment_closed_success_envelope_needs_no_yes(
     assert [Path(path).name for path in envelope["result"]["managed_paths"]] == [
         "evidence_map.json",
         "manifest.json",
+        "report.html",
         "report.md",
         "self_claims.json",
     ]

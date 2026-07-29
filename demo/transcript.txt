@@ -76,6 +76,7 @@ claim_demo_0002	narrative_summary	trajectory	medium	supported
 $ exp2res --workspace demo/workspace export assessment --snapshot snapshot_demo_0001
 demo/workspace/out/assessment/snapshot_demo_0001/manifest.json
 demo/workspace/out/assessment/snapshot_demo_0001/evidence_map.json
+demo/workspace/out/assessment/snapshot_demo_0001/report.html
 demo/workspace/out/assessment/snapshot_demo_0001/report.md
 demo/workspace/out/assessment/snapshot_demo_0001/self_claims.json
 

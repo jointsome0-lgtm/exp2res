@@ -36,7 +36,7 @@ FORBIDDEN_OWNER_NOUN_PATTERNS = tuple(
     for noun in ("user", "subject", "author", "owner", "developer", "candidate")
 )
 
-GOLDEN_PROSE_MEMBERS = ("report.md", "self_claims.json")
+GOLDEN_PROSE_MEMBERS = ("report.md", "report.html", "self_claims.json")
 
 
 def test_every_llm_instruction_block_pins_the_owner_reference_form() -> None:

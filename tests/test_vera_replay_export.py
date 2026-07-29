@@ -31,7 +31,7 @@ from test_vera_replay_assess import invoke_json
 
 pytestmark = [pytest.mark.contract, pytest.mark.lifecycle]
 GOLDENS = REPOSITORY_ROOT / "tests" / "goldens" / "assessment"
-MEMBERS = ("report.md", "self_claims.json", "evidence_map.json")
+MEMBERS = ("report.md", "report.html", "self_claims.json", "evidence_map.json")
 
 
 def _fixed_stage(real_stage, ids):
@@ -187,6 +187,8 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
     final_set = workspace / "out" / "assessment" / snapshot_id
     first_bytes = {name: (final_set / name).read_bytes() for name in MEMBERS}
     first_manifest = json.loads((final_set / "manifest.json").read_text())
+    assert first_manifest["manifest_version"] == 2
+
 
     second_result, second = invoke_json(
         workspace, ["export", "assessment", "--snapshot", snapshot_id]
