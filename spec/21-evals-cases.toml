@@ -1834,7 +1834,7 @@ enforces = "§13.12, §13.14 rules 2–3 and 5, §16.13, §17, §29.1–§29.2, 
 case = '''
 Given a current assessment snapshot that passes the §16.11 export gate
 When the assessment set is published twice from unchanged state
-Then the published set contains exactly report.md, report.html, self_claims.json, and manifest.json
+Then the published set contains exactly report.md, report.html, self_claims.json, evidence_map.json, and manifest.json
 And manifest.json declares manifest_version 2 and lists report.html with its exact member hash
 And report.html matches its pinned golden bytes on both runs, is UTF-8 with LF line endings and exactly one final LF, and contains no export wall-clock value, nonce, workspace path, or host name
 
