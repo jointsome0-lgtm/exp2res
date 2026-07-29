@@ -5,6 +5,7 @@ Scope: global
 
 ## 1. Summary
 - Current evidence suggests provenance-aware pattern 1.
+  **Claim ID:** claim_vera_0002
   **Status:** supported
   **Sources:** signal_vera_0001 (facts fact_vera_0001); facts fact_vera_0001
 
@@ -12,6 +13,7 @@ Scope: global
 
 ## 3. Recurring Patterns and Interests
 - You currently show a provenance-aware working pattern.
+  **Claim ID:** claim_vera_0001
   **Status:** supported
   **Uncertainty:** Evidence remains limited to the supplied records.
   **Sources:** signal_vera_0001 (facts fact_vera_0001); facts fact_vera_0001
@@ -32,5 +34,3 @@ Scope: global
   **Target:** experience_fact fact_vera_0001
   **Reason:** missing_scale
   **Priority:** medium
-
-## 10. Counterevidence

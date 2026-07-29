@@ -187,7 +187,7 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
     final_set = workspace / "out" / "assessment" / snapshot_id
     first_bytes = {name: (final_set / name).read_bytes() for name in MEMBERS}
     first_manifest = json.loads((final_set / "manifest.json").read_text())
-    assert first_manifest["manifest_version"] == 3
+    assert first_manifest["manifest_version"] == 4
 
 
     second_result, second = invoke_json(

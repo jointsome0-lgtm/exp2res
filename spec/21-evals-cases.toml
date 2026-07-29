@@ -394,7 +394,7 @@ When Stage 6 persists and §17 renders the snapshot
 Then scope_target equals the canonical §14.9 project selector
 And Stage 6 service-populates gap_question_ids with exactly the duplicate-free current unanswered set it supplied to the writer
 And the Unknowns and Open Questions section dereferences those rows — each rendered question adjacent to its gap ID — without adding declarative snapshot prose
-And every non-empty claim counterevidence list renders with its claim ID and visible status
+And every non-empty claim counterevidence list renders inline inside its claim's block — beside the claim ID line and visible status — in every section, never as a section of its own
 And each counterevidence entry renders its statement with a typed reference resolving inside that claim's §15.5 bundle
 And neither channel improves §16.11 aggregation or independently guides Stage 10
 
@@ -410,6 +410,12 @@ Then the complete-state check fails and no snapshot batch commits
 
 Given a current gap has answered = true under §14.7
 Then Stage 6 excludes it from both the writer's gap input and the service-populated gap_question_ids
+
+Given Stage 7 counterevidence refutes what a current Stage 4 contradiction describes
+When the snapshot renders
+Then the contradiction row renders under the fixed origin label "unadjudicated detector output" while the refuting counterevidence renders inline in its claim's block
+And no Stage 7 verdict retires, supersedes, resolves, or annotates the detection
+And after the owner corrects the underlying records and re-extraction reruns Stage 4, the replacement generation may omit the conflict its inputs no longer support
 
 Given a current snapshot references a gap that the owner answers afterwards
 When the snapshot is rendered or exported without regeneration
@@ -1847,7 +1853,7 @@ case = '''
 Given a current assessment snapshot that passes the §16.11 export gate
 When the assessment set is published twice from unchanged state
 Then the published set contains exactly report.md, report.html, self_claims.json, evidence_map.json, and manifest.json
-And manifest.json declares manifest_version 3 and lists report.html with its exact member hash
+And manifest.json declares manifest_version 4 and lists report.html with its exact member hash
 And report.html matches its pinned golden bytes on both runs, is UTF-8 with LF line endings and exactly one final LF, and contains no export wall-clock value, nonce, workspace path, or host name
 
 Given the same published snapshot

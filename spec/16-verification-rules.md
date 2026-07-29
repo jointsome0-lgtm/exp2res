@@ -107,7 +107,7 @@ You have depression / ADHD / anxiety disorder.
 | `partially_supported` | A grounded core remains, but some phrasing or inference is not fully supported. | Snapshot anchor only | Snapshot anchor only | Snapshot and claim presentation, visibly labeled |
 | `inferred_but_acceptable` | A bounded inference is acceptable inside the mirror but not as an external claim. | Snapshot anchor only | Snapshot anchor only | Snapshot and claim presentation, visibly labeled |
 | `needs_clarification` | Current evidence is too incomplete or ambiguous for a safe conclusion. | No | No | Snapshot and claim presentation as uncertainty or a question |
-| `contradicted` | Current evidence materially conflicts with the assertion. | No | No | Snapshot and claim presentation with contradiction and counterevidence visible |
+| `contradicted` | Current evidence materially conflicts with the assertion. | No | No | Snapshot and claim presentation with inline counterevidence and any coexisting detection row visible |
 | `unsupported` | Current evidence does not adequately support the assertion. | No | No | No |
 | `rejected` | The candidate violates a verification rule and requires replacement rather than qualification. | No | No | No |
 

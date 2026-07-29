@@ -101,7 +101,7 @@ class ManifestMember(_ManifestModel):
 
 
 class AssessmentManifest(_ManifestModel):
-    manifest_version: Literal[3]
+    manifest_version: Literal[4]
     output_kind: Literal["assessment"]
     entity_id: str
     generation_id: str
@@ -190,7 +190,7 @@ def build_assessment_manifest(
     _validate_snapshot_title(graph)
     snapshot = graph.snapshot.value
     return AssessmentManifest(
-        manifest_version=3,
+        manifest_version=4,
         output_kind="assessment",
         entity_id=snapshot.id,
         generation_id=graph.snapshot.generation_id,

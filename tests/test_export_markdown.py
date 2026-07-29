@@ -38,7 +38,6 @@ EXPECTED_HEADINGS = (
     "## 7. Contradictions",
     "## 8. Risks / Failure Modes",
     "## 9. Unknowns and Open Questions",
-    "## 10. Counterevidence",
 )
 
 # Values a §15 writer could emit that would otherwise open a block, an inline
@@ -300,9 +299,7 @@ def test_renderer_is_byte_deterministic_and_uses_closed_order_and_empty_headings
 
 def test_answered_since_synthesis_is_explicit_and_question_stays_beside_id() -> None:
     text = render_report(assessment_graph(answered=True)).decode("utf-8")
-    unknown_section = text.split("## 9. Unknowns and Open Questions", 1)[1].split(
-        "## 10. Counterevidence", 1
-    )[0]
+    unknown_section = text.split("## 9. Unknowns and Open Questions", 1)[1]
     # §17: an answered-after-synthesis question keeps its block — question
     # first, gap ID beside it — plus the explicit marker.
     assert (
@@ -377,3 +374,54 @@ def test_claim_section_is_total_over_exportable_statuses(
             verification_status=status,
         )
         assert claim_section(claim) in range(3, 10)
+
+
+def test_counterevidence_renders_inline_and_never_as_a_section() -> None:
+    # §17: counterevidence is an annotation inside the claim block it
+    # qualifies — the standalone section is gone (#179).
+    text = render_report(assessment_graph()).decode("utf-8")
+    assert "## 10." not in text
+    assert "\n## " + "Counterevidence" not in text
+    contradiction_section = text.split("## 7. Contradictions", 1)[1].split(
+        "## 8. Risks / Failure Modes", 1
+    )[0]
+    assert (
+        "- You validated the scale in question.\n"
+        "  **Claim ID:** claim_vera_contradicted_0001\n"
+        "  **Status:** contradicted\n" in contradiction_section
+    )
+    assert (
+        "  - **Verifier-grounded contrary evidence:** The supplied source "
+        "evidence supports only a prototype.\n"
+        "    **Source:** experience_fact fact_vera_export_0001\n"
+        in contradiction_section
+    )
+
+
+def test_every_claim_block_carries_its_claim_id_line() -> None:
+    text = render_report(assessment_graph()).decode("utf-8")
+    for claim_id in (
+        "claim_vera_summary_0001",
+        "claim_vera_signal_0001",
+        "claim_vera_strength_0001",
+        "claim_vera_weak_0001",
+        "claim_vera_gap_0001",
+        "claim_vera_contradicted_0001",
+        "claim_vera_risk_0001",
+        "claim_vera_unknown_0001",
+    ):
+        assert f"**Claim ID:** {claim_id}\n" in text
+
+
+def test_contradiction_rows_carry_the_fixed_origin_label() -> None:
+    # §13.4/§17: a detection is never read as a verified conclusion beside
+    # the claim verdicts it coexists with.
+    text = render_report(assessment_graph()).decode("utf-8")
+    contradiction_section = text.split("## 7. Contradictions", 1)[1].split(
+        "## 8. Risks / Failure Modes", 1
+    )[0]
+    assert (
+        "- Scale evidence conflicts.\n"
+        "  **Origin:** unadjudicated detector output\n"
+        "  **Description:** " in contradiction_section
+    )

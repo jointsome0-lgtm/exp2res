@@ -240,7 +240,7 @@ def test_hostile_values_stay_text_and_never_become_markup() -> None:
     # The renderer's own structure survives beside the hostile values.
     assert parsed.tags.count("style") == 1
     assert parsed.tags.count("h1") == 1
-    assert parsed.tags.count("h2") == 10
+    assert parsed.tags.count("h2") == 9
 
 
 def test_escape_html_is_total_normalizing_and_position_independent() -> None:
