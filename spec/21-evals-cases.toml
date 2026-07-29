@@ -1933,9 +1933,10 @@ Given the selected snapshot's managed set is missing, stale by a §13.14 render-
 When either route is requested
 Then no partial, cached, or re-rendered content is served and the fail-closed page names the §14.9 export the owner must run
 
-Given the final ID path instead holds a set §13.14 rule 5 will not overwrite — incomplete, invalid-manifest, or published under a superseded manifest_version
+Given a §13.14 state no re-export can replace on its own — an incomplete, invalid-manifest, or superseded-manifest_version set at the final ID path, or a rule 6 containment skip such as a symlinked out/ root, ancestor, or entry
 When either route is requested
-Then the outcome is distinct from the replaceable-output one and the page says the owner removes the reported residual before that export can publish
+Then the outcome is the single residual one, distinct from both the replaceable-output outcome and any unexpected-failure outcome
+And the page says the owner removes or repairs the reported residual before that export can publish
 
 Given the selected snapshot carries no single narrative_summary claim matching AssessmentSnapshot.summary, or a stored aggregate that is not a fresh reduction of its current claims
 When either route is requested
