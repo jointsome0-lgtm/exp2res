@@ -52,7 +52,7 @@ def detection_response(
                     "question": (
                         "Which exact scale did you validate?"
                         if not paraphrased
-                        else "What validation scale did Vera Example record?"
+                        else "What validation scale did you record?"
                     ),
                     "reason": "missing_scale",
                     "priority": "medium",
@@ -61,9 +61,9 @@ def detection_response(
             "contradictions": [
                 {
                     "title": (
-                        "Vera Example environment tension"
+                        "Environment evidence tension"
                         if not paraphrased
-                        else "Vera Example environment mismatch"
+                        else "Environment evidence mismatch"
                     ),
                     "description": (
                         "The two supplied facts describe incompatible environments."

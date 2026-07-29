@@ -83,7 +83,7 @@ def test_generate_replaces_then_retains_complete_sets_and_standard_fields(
         right=("experience_fact", fact_id),
         reason="missing_metric",
         priority="low",
-        question="Which exact metric did Vera Example record?",
+        question="Which exact metric did you record?",
         title="Paraphrased Vera Example conflict",
         description="The same supplied objects remain in tension.",
     )
