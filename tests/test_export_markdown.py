@@ -127,8 +127,8 @@ def test_escape_generated_keeps_prose_instants_and_typed_ids_legible() -> None:
     legible = (
         "2026-07-25T02:29:22.288649+00:00",
         "fact_vera_export_0001",
-        "Vera Example validated the pipeline (approximately 20 or more runs).",
-        "Which exact scale did Vera Example validate?",
+        "You validated the pipeline (approximately 20 or more runs).",
+        "Which exact scale did you validate?",
         "Approximate range: 2026-04-01T00:00:00+00:00 / 2026-04-30T00:00:00+00:00",
         "missing_scale",
     )
@@ -299,7 +299,7 @@ def test_answered_since_synthesis_is_explicit_and_question_stays_beside_id() -> 
     # §17: an answered-after-synthesis question keeps its block — question
     # first, gap ID beside it — plus the explicit marker.
     assert (
-        "- What scale did Vera Example validate?\n"
+        "- What scale did you validate?\n"
         "  **Gap ID:** gap_vera_export_0001\n" in unknown_section
     )
     assert "**Answered since synthesis:** yes" in unknown_section

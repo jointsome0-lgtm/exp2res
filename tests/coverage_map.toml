@@ -618,3 +618,12 @@ nodes = [
   "tests/test_export_occurred.py::test_open_occurred_rendering_is_attested_explicit_and_clock_free",
   "tests/test_export_occurred.py::test_open_occurred_rendering_requires_attestation",
 ]
+
+["21.54"]
+status = "partial"
+nodes = [
+  "tests/test_voice_owner_reference.py::test_every_llm_instruction_block_pins_the_owner_reference_form",
+  "tests/test_voice_owner_reference.py::test_generated_prose_in_goldens_carries_no_third_person_owner_nouns",
+]
+phase = "3"
+note = "Offline scans pin the §16.14 instruction binding and keep golden generated prose free of third-person owner nouns; semantic referent judgment remains live-only"

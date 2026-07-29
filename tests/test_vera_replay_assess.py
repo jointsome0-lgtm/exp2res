@@ -67,7 +67,10 @@ def test_vera_e4_cli_assessment_is_navigable_then_signal_replacement_invalidates
     assert listed_result.exit_code == shown_result.exit_code == 0
     assert [item["id"] for item in listed["result"]["snapshots"]] == [snapshot_id]
     assert shown["result"]["snapshot"]["id"] == snapshot_id
-    assert all("Vera Example" in item["claim"] for item in shown["result"]["claims"])
+    assert {item["claim"] for item in shown["result"]["claims"]} == {
+        "You currently show a provenance-aware working pattern.",
+        "Current evidence suggests provenance-aware pattern 1.",
+    }
     with read_database(workspace) as connection:
         assert len(list_assessment_snapshots(connection)) == 1
 
@@ -76,7 +79,7 @@ def test_vera_e4_cli_assessment_is_navigable_then_signal_replacement_invalidates
             signal_response(
                 list(fact_ids),
                 confidence="low",
-                statement="Vera Example replacement direction signal.",
+                statement="You changed direction after the replacement evidence.",
             )
         ]
     )

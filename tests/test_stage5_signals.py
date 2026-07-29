@@ -55,7 +55,7 @@ def signal_response(
     *,
     counter_fact_ids: list[str] | None = None,
     confidence: str = "medium",
-    statement: str = "Vera Example repeatedly designs provenance-aware workflows.",
+    statement: str = "You repeatedly design provenance-aware workflows.",
     warnings: list[dict[str, str]] | None = None,
 ) -> bytes:
     return json.dumps(
@@ -88,7 +88,7 @@ def multi_fact_response(
     for index in range(count):
         candidate = dict(template)
         candidate["claim"] = (
-            f"Vera Example designed provenance workflow slice {index + 1}."
+            f"Designed provenance workflow slice {index + 1}."
         )
         facts.append(candidate)
     return json.dumps(
@@ -215,7 +215,7 @@ def test_happy_path_persists_sorted_lists_shared_generation_and_telemetry(
                 counter_fact_ids=[facts[2], facts[1]],
                 confidence="low",
                 warnings=[
-                    {"type": "vera_note", "message": "Vera Example note."}
+                    {"type": "vera_note", "message": "One supplied record carries a synthetic note."}
                 ],
             )
         ]
@@ -503,7 +503,7 @@ def test_stage3_replacement_supersedes_signals_but_empty_stage3_does_not(
         id="signal_vera_sourceless",
         created_at=FIXED_NOW,
         signal_type="interest_signal",
-        statement="Vera Example has no supplied support yet.",
+        statement="This pattern has no supplied support yet.",
         supporting_fact_ids=[],
         confidence="unknown",
     )
@@ -614,7 +614,7 @@ def test_insert_self_signal_guards_lifecycle_references_and_commit_cap(
             created_at=FIXED_NOW,
             superseded_at=FIXED_NOW if superseded else None,
             signal_type="skill_signal",
-            statement="Vera Example demonstrates guarded persistence.",
+            statement="You demonstrate guarded persistence.",
             supporting_fact_ids=support,
             confidence=confidence,
         )
@@ -680,7 +680,7 @@ def test_self_signal_guards_allow_only_supersession_or_owner_delete(
         with pytest.raises(sqlite3.IntegrityError, match="self_signal_lifecycle_only"):
             connection.execute(
                 "UPDATE self_signals SET statement = ? WHERE id = ?",
-                ("Vera Example forbidden rewrite.", signal_id),
+                ("An illegal rewrite.", signal_id),
             )
         with pytest.raises(
             sqlite3.IntegrityError, match="self_signal_owner_purge_required"

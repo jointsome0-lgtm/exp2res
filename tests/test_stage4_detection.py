@@ -48,10 +48,10 @@ def detector_response(
     target_id: str,
     left: tuple[str, str],
     right: tuple[str, str],
-    question: str = "What scale did Vera Example validate?",
+    question: str = "What scale did you validate?",
     reason: str = "missing_scale",
     priority: str = "medium",
-    title: str = "Vera Example scope conflict",
+    title: str = "A scope conflict",
     description: str = "The supplied objects describe incompatible scopes.",
     warnings: list[dict[str, str]] | None = None,
 ) -> bytes:
@@ -153,7 +153,7 @@ def test_happy_path_persists_shared_generation_and_complete_telemetry(
                     target_id=fact_id,
                     left=("experience_fact", fact_id),
                     right=("raw_log", log_id),
-                    warnings=[{"type": "vera_note", "message": "Vera Example note."}],
+                    warnings=[{"type": "vera_note", "message": "One supplied record carries a synthetic note."}],
                 )
             ]
         ),
@@ -555,14 +555,14 @@ def test_stage3_replacement_invalidates_detections_but_empty_stage3_does_not(
                 {
                     "target_type": "raw_log",
                     "target_id": raw_log.id,
-                    "question": "What context is missing for Vera Example?",
+                    "question": "What context is missing for this fact?",
                     "reason": "missing_context",
                     "priority": "low",
                 }
             ],
             "contradictions": [
                 {
-                    "title": "Vera Example evidence tension",
+                    "title": "An evidence tension",
                     "description": "The supplied record and evidence item differ.",
                     "left_ref_type": "raw_log",
                     "left_ref_id": raw_log.id,
@@ -597,7 +597,7 @@ def test_detector_candidates_require_explicit_non_null_model_judgments() -> None
     valid = {
         "target_type": "raw_log",
         "target_id": "log_vera",
-        "question": "What did Vera Example measure?",
+        "question": "What did you measure?",
         "reason": "missing_metric",
         "priority": "high",
     }
@@ -705,21 +705,21 @@ def test_stage3_invalidation_reports_detection_ids_in_id_byte_order(
                 {
                     "target_type": "experience_fact",
                     "target_id": fact_id,
-                    "question": "What scale did Vera Example validate?",
+                    "question": "What scale did you validate here?",
                     "reason": "missing_scale",
                     "priority": "medium",
                 },
                 {
                     "target_type": "experience_fact",
                     "target_id": fact_id,
-                    "question": "What metric did Vera Example capture?",
+                    "question": "What metric did you capture?",
                     "reason": "missing_metric",
                     "priority": "medium",
                 },
             ],
             "contradictions": [
                 {
-                    "title": "Vera Example scope conflict",
+                    "title": "A scope conflict",
                     "description": "The supplied objects describe incompatible scopes.",
                     "left_ref_type": "experience_fact",
                     "left_ref_id": fact_id,
@@ -727,7 +727,7 @@ def test_stage3_invalidation_reports_detection_ids_in_id_byte_order(
                     "right_ref_id": log_id,
                 },
                 {
-                    "title": "Vera Example evidence tension",
+                    "title": "An evidence tension",
                     "description": "The supplied record and evidence item differ.",
                     "left_ref_type": "experience_fact",
                     "left_ref_id": fact_id,

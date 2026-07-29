@@ -76,7 +76,7 @@ The retrospective capture operation persists this text as a `RawLog` with `occur
 [
   {
     "signal_type": "direction_signal",
-    "statement": "The user is drawn to systems that preserve truth through provenance and verification.",
+    "statement": "You are drawn to systems that preserve truth through provenance and verification.",
     "supporting_fact_ids": ["fact_001", "fact_002"],
     "confidence": "medium"
   }

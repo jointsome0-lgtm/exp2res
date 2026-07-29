@@ -448,7 +448,7 @@ And Stage 7 leaves the claim text unchanged
 title = "Evidence-Grounded Mirror Prose Passes Unchanged"
 enforces = "§16.2"
 case = '''
-Given current facts and signals support the writer-generated assessment claim "In the supplied projects, ambitious plans repeatedly remained unfinished alongside owner-reported burnout"
+Given current facts and signals support the writer-generated assessment claim "In the supplied projects, ambitious plans repeatedly remained unfinished alongside self-reported burnout"
 When Stage 7 performs its single semantic verifier pass
 Then the assessment verifier returns supported
 And the persisted SelfClaim.claim remains byte-for-byte identical to the writer candidate
@@ -1804,4 +1804,26 @@ When §17 renders it
 Then the rendering shows the stored start, an explicit open-period label, the approximate flavor when the precision is approximate_range, and the attesting recorded_at as a labeled as-of anchor in one canonical offset-preserving ISO 8601 form
 And it contains no end bound, no present-tense continuation such as "to the present", "currently", or "still", and no export wall-clock value
 And rendering the same value at two different wall-clock times produces identical bytes
+'''
+
+["21.54"]
+title = "Generated Voice Refers to the Owner in Second Person or Not at All"
+enforces = "§13.7, §16.11–§16.12, and §16.14"
+case = '''
+Given current facts and signals support recurring provenance-heavy work
+When the assessment writer emits the generated claim "The user shows a recurring attraction to provenance-heavy systems"
+And Stage 7 verifies that candidate
+Then the assessment verifier returns rejected under §16.14
+And the claim cannot pass assessment export
+And Stage 7 leaves the claim text unchanged
+
+Given the same evidence
+When the writer emits the second-person claim "You show a recurring attraction to provenance-heavy systems" and the subject-free claim "Recurring work concentrates on provenance-heavy systems"
+And Stage 7 verifies those candidates
+Then neither candidate is rejected under §16.14
+
+Given a retained raw log whose owner-authored text names the owner in the third person or by personal name
+When §16.12 validates a byte-verified excerpt of that text
+Then the excerpt is source voice, violates no §16.14 rule, and is never rewritten or blocked
+And a faithfully preserved job-description demand phrased about "the candidate" characterizes the vacancy, not the owner
 '''

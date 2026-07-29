@@ -154,4 +154,8 @@ Enforces §5.2, §5.5, §11's Model validation policy and §11.1, §13.1, §13.3
 
 Enforces §5.4, §5.5, §11.1, §12 rules 3 and 5, §13.3 rules 2 and 10, §14.3, §14.4, §14.14 rule 8, §15.2, §16.7, and §17.
 
+## §21.54 Generated Voice Refers to the Owner in Second Person or Not at All
+
+Enforces §13.7, §16.11–§16.12, and §16.14.
+
 ---

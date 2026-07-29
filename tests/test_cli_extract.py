@@ -166,7 +166,7 @@ def test_extract_success_reports_standard_fields_and_contract_warnings(
     evidence_id = seed_lineage(workspace, "happy")
     warning = {
         "type": "limited_support",
-        "message": "Vera Example has only one owner-authored source for this fact.",
+        "message": "This fact has only one owner-authored source.",
     }
     fake = FakeContractRunner([fact_response([evidence_id], warnings=[warning])])
     install_fake_execution(monkeypatch, fake)

@@ -64,7 +64,7 @@ def assessment_graph(
     fact = ExperienceFact(
         id="fact_vera_export_0001",
         created_at=EXPORT_TIME,
-        claim="Vera Example built a deterministic renderer.",
+        claim="Built a deterministic renderer.",
         claim_kind="observed_fact",
         context="independent_project",
         ownership_level="built",
@@ -77,7 +77,7 @@ def assessment_graph(
         id="signal_vera_export_0001",
         created_at=EXPORT_TIME,
         signal_type="execution_pattern",
-        statement="Vera Example repeats deterministic delivery.",
+        statement="You repeat deterministic delivery.",
         supporting_fact_ids=[fact.id],
         counter_fact_ids=[],
         confidence="high",
@@ -87,7 +87,7 @@ def assessment_graph(
         created_at=EXPORT_TIME,
         target_type="experience_fact",
         target_id=fact.id,
-        question="What scale did Vera Example validate?",
+        question="What scale did you validate?",
         reason="missing_scale",
         priority="high",
         answered=answered,
@@ -96,7 +96,7 @@ def assessment_graph(
     contradiction = Contradiction(
         id="contradiction_vera_export_0001",
         created_at=EXPORT_TIME,
-        title="Vera Example scale evidence conflicts.",
+        title="Scale evidence conflicts.",
         description="One synthetic source supports a prototype; another does not support scale.",
         left_ref_type="experience_fact",
         left_ref_id=fact.id,
@@ -107,7 +107,7 @@ def assessment_graph(
     claim_specs = [
         (
             "claim_vera_summary_0001",
-            "Current evidence suggests Vera Example delivers deterministic local tools.",
+            "Current evidence suggests you deliver deterministic local tools.",
             "narrative_summary",
             "trajectory",
             "supported",
@@ -116,13 +116,13 @@ def assessment_graph(
     if all_sections:
         claim_specs.extend(
             [
-                ("claim_vera_signal_0001", "Vera Example repeats the pattern.", "pattern_signal", "working_style", "supported"),
-                ("claim_vera_strength_0001", "Vera Example has a current strength.", "hypothesis", "technical_skill", "supported"),
-                ("claim_vera_weak_0001", "Vera Example has a bounded strength.", "hypothesis", "technical_skill", "partially_supported"),
-                ("claim_vera_gap_0001", "Vera Example evidence has a gap.", "hypothesis", "gap", "needs_clarification"),
-                ("claim_vera_contradicted_0001", "Vera Example scale is established.", "hypothesis", "technical_skill", "contradicted"),
-                ("claim_vera_risk_0001", "Vera Example has a delivery risk.", "hypothesis", "risk", "supported"),
-                ("claim_vera_unknown_0001", "Vera Example scale remains uncertain.", "hypothesis", "technical_skill", "needs_clarification"),
+                ("claim_vera_signal_0001", "You repeat the pattern.", "pattern_signal", "working_style", "supported"),
+                ("claim_vera_strength_0001", "You have a current strength.", "hypothesis", "technical_skill", "supported"),
+                ("claim_vera_weak_0001", "You have a bounded strength.", "hypothesis", "technical_skill", "partially_supported"),
+                ("claim_vera_gap_0001", "The supplied evidence leaves a gap.", "hypothesis", "gap", "needs_clarification"),
+                ("claim_vera_contradicted_0001", "You validated the scale in question.", "hypothesis", "technical_skill", "contradicted"),
+                ("claim_vera_risk_0001", "You carry a delivery risk.", "hypothesis", "risk", "supported"),
+                ("claim_vera_unknown_0001", "The validated scale remains uncertain.", "hypothesis", "technical_skill", "needs_clarification"),
             ]
         )
     claims: list[StoredRecord[SelfClaim]] = []
@@ -131,7 +131,7 @@ def assessment_graph(
         if status == "contradicted":
             counterevidence = [
                 CounterevidenceItem(
-                    statement="The Vera Example source supports only a prototype.",
+                    statement="The supplied source evidence supports only a prototype.",
                     source_ref_type="experience_fact",
                     source_ref_id=fact.id,
                 )
@@ -149,7 +149,7 @@ def assessment_graph(
             verification_status=status,
             counterevidence=counterevidence,
             uncertainty=(
-                "Vera Example needs another synthetic record."
+                "Evidence remains limited to the supplied records."
                 if status == "needs_clarification"
                 else None
             ),
