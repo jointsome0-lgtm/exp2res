@@ -1951,6 +1951,8 @@ Given a HEAD request for the mirror route with an accepted selector, and a GET r
 When each is handled
 Then the HEAD response carries the GET's status and headers with an empty body after the same resolution and revalidation
 And the body-declaring request is refused as malformed without being read
+And a request whose header section or framing cannot be parsed, such as unequal duplicate Content-Length values, reaches that same malformed outcome with its class rather than a parser-owned response outside the table
+And interrupting `view serve` mid-request drains that accepted request to its own outcome before the exit class 9 envelope
 And every response of either kind declares text/html; charset=utf-8, Cache-Control: no-store, and its literal Exp2Res-View-Outcome class
 And the served mirror body states no outcome metadata, so it stays byte-identical to the published member
 
