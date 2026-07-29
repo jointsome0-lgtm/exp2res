@@ -1924,9 +1924,10 @@ Then the page presents only the question values of that set's self_claims.json u
 And a question answered after synthesis is absent from the page
 And no gap ID, target, reason, priority, claim, contradiction, raw text, manifest value, or workspace path appears in the response
 
-Given a request whose selector is absent, unknown, repeated, combined with the other form, malformed, names a project scope, or names a superseded snapshot
+Given a request whose selector is absent, unknown, repeated, combined with the other form, malformed, names a project scope, names the ID of a current project-scoped snapshot, or names a superseded snapshot
 When the view resolves it
-Then it fails closed in its §30 rule 7 outcome, no snapshot is chosen by a default or latest-of-several rule, and no response reflects the request bytes back
+Then it fails closed in its §30 rule 7 outcome under that row's literal class, no snapshot is chosen by a default or latest-of-several rule, and no response reflects the request bytes back
+And the project-scoped ID is refused as the deferred slice rather than served through the ID form
 
 Given the selected snapshot's managed set is missing, stale by a §13.14 render-input change, invalidated by a later gap answer, or published under a superseded manifest_version
 When either route is requested
@@ -1941,6 +1942,7 @@ Given a HEAD request for the mirror route with an accepted selector, and a GET r
 When each is handled
 Then the HEAD response carries the GET's status and headers with an empty body after the same resolution and revalidation
 And the body-declaring request is refused as malformed without being read
+And every response of either kind declares text/html; charset=utf-8 and Cache-Control: no-store
 
 Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
