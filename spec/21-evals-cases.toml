@@ -1466,7 +1466,7 @@ When §9.4 computes the confidence ceiling
 Then it is one non-manual item but its RawLog counts as only one source, so the ceiling is medium rather than automatically high
 And high is reachable only when the complete linked set satisfies §9.4's distinct-RawLog rule, remains a cap rather than an entitlement, and grants no scope beyond knowledge attribution
 
-Given either deferred §30 view is implemented for selfos embedding
+Given any §30 view — the §14.17-served mirror and gap-question views or the deferred JD-to-bullet-pack view — is used for selfos embedding
 When the shell embeds and uses it
 Then embedding uses only a loopback local URL configured outside Exp2Res
 And Exp2Res stores no consumer identity, shell schema, callback, webhook, or consumer-specific protocol
@@ -1480,10 +1480,11 @@ Then it presents the §14.14 blocked outcome, reason, and findings as a first-cl
 And an operational validation or cleanup failure remains failed and is never relabeled as a semantic refusal
 
 Given an export-eligible selected current assessment view contains one still-unanswered gap and one gap answered since synthesis
-When §13.12–§13.14 publish the selected snapshot's manifest-backed out/assessment/<snapshot-id>/self_claims.json and the shell discovers it through a successful §14.14 export result or by revalidating current output for its configured assessment-view identity
-Then the shell performs §13.14's complete current-output revalidation and validates the closed companion schema
-And it projects only unknowns entries with answered = false and presents only their question values selected by §17
+When §13.12–§13.14 publish the selected snapshot's manifest-backed out/assessment/<snapshot-id>/self_claims.json and the shell requests the §30 gap-question view at the one embedded loopback URL
+Then Exp2Res, not the shell, performs §13.14's complete current-output revalidation and validates the closed companion schema
+And the served page projects only unknowns entries with answered = false and presents only their question values selected by §17
 And it exposes no other companion field, answered question, consumer identity, callback, gap ID, or answer link-back token
+And the shell reads no companion file, manifest, or workspace path of its own and so can neither bypass revalidation nor inherit the companion schema
 Given the owner answers a question surfaced through that projection
 When the answer returns to Exp2Res
 Then it enters only as an ordinary diary or activity RawLog through an existing capture or import flow
@@ -1934,8 +1935,14 @@ Then no partial, cached, or re-rendered content is served and the fail-closed pa
 Given the selected snapshot's aggregate verification status fails the §16.11 assessment-export allowlist
 When either route is requested
 Then the outcome is a completed semantic refusal naming the §14.9 verification and is distinguishable from every operational failure outcome
+And a snapshot that fails that allowlist while its managed set is also stale or invalidated still completes as exactly that refusal, because §30 rule 7 orders the gate before revalidation
 
-Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority is not the bound one, a request using an unsafe method, and a request outside the closed route set
+Given a HEAD request for the mirror route with an accepted selector, and a GET request declaring a body
+When each is handled
+Then the HEAD response carries the GET's status and headers with an empty body after the same resolution and revalidation
+And the body-declaring request is refused as malformed without being read
+
+Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
 Then the bind fails closed in exit class 2 before any socket is served, each request is refused without reading business state, and no diagnostic line echoes request bytes
 And serving takes no writer lock, writes no business row, managed output, or telemetry row, and makes no §15 call or outbound connection
