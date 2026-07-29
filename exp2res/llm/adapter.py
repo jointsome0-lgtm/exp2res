@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
+import json
 from pathlib import Path
 import random
 import sqlite3
@@ -33,6 +34,7 @@ from .contracts import (
     ContractDefinition,
     ContractValidationError,
     ServiceEnrichmentError,
+    mixed_script_tokens_in_json,
     prompt_policy_hash,
     runner_instruction,
     schema_bytes,
@@ -171,6 +173,11 @@ def invoke_contract(
     # sees the declared typed input with its offsets preserved, while the
     # §12.15 hashes stay canonical for exact-recomputation identity.
     serialized_input = input_payload.model_dump_json().encode("utf-8")
+    # §16.13: the input's own mixed-script tokens are the only ones a
+    # response may carry — anything else is a model-invented mutant.
+    allowed_mixed_tokens = mixed_script_tokens_in_json(
+        json.loads(serialized_input)
+    )
     input_hash = canonical_model_hash(input_payload)
     now = clock or (lambda: datetime.now(timezone.utc))
     random_jitter = jitter or random.SystemRandom().uniform
@@ -364,6 +371,7 @@ def invoke_contract(
                     contract,
                     result.final_message_bytes,
                     enrich=enrich,  # type: ignore[arg-type]
+                    allowed_mixed_script_tokens=allowed_mixed_tokens,
                 )
             except ContractValidationError as error:
                 if validation_round == 1:

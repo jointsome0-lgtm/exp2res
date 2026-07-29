@@ -29,7 +29,7 @@ do not insert partial invalid objects
 
 This retry handles only invalid structured output, including reference-validation errors. A schema-valid negative semantic verdict is successful output under §15.10 rule 1, never a retry trigger.
 
-Structured-output validation includes §12 rule 10; §12.13 defines the failed `processing_runs` result, stable `failure_code`, and diagnostic metadata.
+Structured-output validation includes §12 rule 10 and §16.13's deterministic mixed-script tripwire over every model-authored response string; §12.13 defines the failed `processing_runs` result, stable `failure_code`, and diagnostic metadata.
 
 Every contract `warnings` field is `list[ContractWarning]`, where each item has exactly two non-empty string fields and no extras:
 
@@ -131,6 +131,8 @@ An extractor may select a displaced-support descriptor's `id` only as support wi
 Each fact output selects its supporting evidence explicitly through `evidence_item_ids`. Persistence accepts only item IDs supplied in `evidence_items` or `displaced_support_items`, verifies §13.3 rule 10 and §12.4 selectability, and derives `source_log_ids` as exactly their distinct raw-log set before writing one `direct` §12.4 row per item (§13.3 rule 7). A selected descriptor's owner `RawLog` is intentionally absent from `raw_logs`, but its `raw_log_id` still appears in the derived set. Every linked item participates in §9.4 confidence calibration within its evidential scope.
 
 The extractor's emitted `confidence` must satisfy §9.4's deterministic ceiling and its materially-conflicting-context cap for the selected evidence, and may be conservatively lower.
+
+Proper nouns and identifiers in extracted facts follow §16.13's script-fidelity rule — source-script spelling, never transliteration; the gloss convention and the deterministic tripwire live in §16.13, and rule 10 above binds every contract to them, extractor included.
 
 Every fact output carries every model-authored §11.4 field shown above; Stage 3 supplies the service-owned fields per §15.11. Optional/default model-authored fields are explicit in the contract so a model change cannot silently fall outside the structured boundary.
 

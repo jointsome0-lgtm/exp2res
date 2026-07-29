@@ -343,9 +343,12 @@ nodes = [
   "tests/test_cli_phase0.py::test_local_time_requires_workspace_config_and_ignores_ambient_timezone",
   "tests/test_capture_phase0.py::test_workspace_timezone_rejects_dst_gap_and_fold_but_accepts_offset",
   "tests/test_capture_phase0.py::test_oversize_and_forbidden_source_files_leave_no_record",
+  "tests/test_mixed_script_gate.py::test_invented_token_takes_the_validation_retry_and_recovers",
+  "tests/test_mixed_script_gate.py::test_input_carried_token_is_accepted_without_retry",
+  "tests/test_mixed_script_gate.py::test_stored_mixed_script_content_hydrates_without_tripwire",
 ]
 phase = "5"
-note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit-offset preservation, and Windows-path rejection are covered; canonical hashing, generated-language scope, Unicode identities, and integration locators remain"
+note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit-offset preservation, Windows-path rejection, and the §16.13 input-relative mixed-script tripwire — content-free retry diagnostics, input-carried token acceptance, and ungated stored-content hydration — are covered; canonical hashing, generated-language scope, Unicode identities, and integration locators remain"
 
 ["21.43"]
 status = "partial"

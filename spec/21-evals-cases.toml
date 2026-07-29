@@ -1121,6 +1121,18 @@ When an English candidate claims that the owner deployed or operated the system 
 Then §16.6 rejects the unsupported production claim exactly as it would for an English-language source
 And cross-language extraction grants no evidence or overclaim exception
 
+Given a Russian-language RawLog naming the project "Городская Аналитика" and a first extractor response whose English claim renders the name as the mixed-script token "Аналитиka"
+When §15.1 response validation applies §16.13's mixed-script tripwire to the response
+Then the response fails as invalid structured output because no complete NFC-equal mixed-script token in the call's serialized input matches "Аналитиka"
+And the retry diagnostic names the field location and the stable code mixed_script_token and never the token bytes
+And a retry response that keeps "Городская Аналитика" in its source script inside the English claim validates
+When a source itself carries the mixed-script project token "Яndex" and a response repeats that token, byte-identical or NFC-equal
+Then the response validates without a retry because the token is input-carried rather than model-invented
+
+Given previously stored content containing any mixed-script token
+When it hydrates from §12 storage
+Then no tripwire evaluation runs and hydration succeeds unchanged
+
 Given one label pair has code-point sequences "Caf\u00e9" and "Cafe\u0301" and another pair is "I" and "i"
 When either pair is used as a project scope target and copied project provenance, or as a branch name and selector
 Then NFC plus locale-independent Unicode Default Case Folding yields one project match and assessment-view identity and one branch replacement identity

@@ -6,7 +6,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
-from typing import Any, Callable
+import re
+from typing import Any, Callable, Iterator
+import unicodedata
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -192,6 +194,55 @@ def validation_diagnostics(
     return _diagnostics(errors, _declared_names(contract))
 
 
+# §16.13 mixed-script tripwire: closed, Unicode-version-independent classes.
+# A token is a maximal run over the three classes; the combining marks join
+# a token without carrying a script.
+_LATIN_CLASS = "A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u024f"
+_CYRILLIC_CLASS = "\u0400-\u052f"
+_CONTINUATION_CLASS = "\u0300-\u036f"
+_TOKEN = re.compile(f"[{_LATIN_CLASS}{_CYRILLIC_CLASS}{_CONTINUATION_CLASS}]+")
+_LATIN = re.compile(f"[{_LATIN_CLASS}]")
+_CYRILLIC = re.compile(f"[{_CYRILLIC_CLASS}]")
+
+
+def mixed_script_tokens(text: str) -> frozenset[str]:
+    """Collect §16.13 mixed Latin/Cyrillic tokens in NFC identity form.
+
+    Tokenization reads the code points as written; NFC applies to the
+    collected token only. Normalizing first could compose a pair out of the
+    closed classes and split the run, hiding a mixed token.
+    """
+
+    return frozenset(
+        unicodedata.normalize("NFC", token)
+        for token in _TOKEN.findall(text)
+        if _LATIN.search(token) and _CYRILLIC.search(token)
+    )
+
+
+def _json_strings(
+    value: object, location: tuple[str | int, ...] = ()
+) -> Iterator[tuple[tuple[str | int, ...], str]]:
+    if isinstance(value, str):
+        yield location, value
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            yield from _json_strings(child, (*location, str(key)))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _json_strings(child, (*location, index))
+
+
+def mixed_script_tokens_in_json(value: object) -> frozenset[str]:
+    """Collect the mixed-script tokens of every string in a JSON value."""
+
+    return frozenset(
+        token
+        for _location, text in _json_strings(value)
+        for token in mixed_script_tokens(text)
+    )
+
+
 def _find_service_field(
     value: object,
     service_owned: frozenset[str],
@@ -231,8 +282,13 @@ def validate_output(
     output_bytes: bytes,
     *,
     enrich: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    allowed_mixed_script_tokens: frozenset[str],
 ) -> BaseModel:
-    """Parse, reject service authorship, enrich, then validate with Pydantic."""
+    """Parse, reject service authorship, enrich, then validate with Pydantic.
+
+    `allowed_mixed_script_tokens` is the §16.13 input-token set the invoking
+    adapter collects from this call's serialized typed input.
+    """
 
     declared = _declared_names(contract)
     try:
@@ -254,6 +310,16 @@ def validate_output(
         raise ContractValidationError(
             _diagnostics([{"loc": injected, "type": "service_owned_field"}], declared)
         )
+    # §16.13 mixed-script tripwire: a mixed Latin/Cyrillic token the call's
+    # input never carried is model-invented. The diagnostic names only the
+    # field location and a stable code, never the token bytes.
+    for location, text in _json_strings(decoded):
+        if not mixed_script_tokens(text) <= allowed_mixed_script_tokens:
+            raise ContractValidationError(
+                _diagnostics(
+                    [{"loc": location, "type": "mixed_script_token"}], declared
+                )
+            )
     try:
         candidate = decoded if enrich is None else enrich(deepcopy(decoded))
     except ContractValidationError:
