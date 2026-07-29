@@ -1935,7 +1935,7 @@ Then no partial, cached, or re-rendered content is served and the fail-closed pa
 
 Given the selected snapshot's aggregate verification status fails the §16.11 assessment-export allowlist
 When either route is requested
-Then the outcome is a completed semantic refusal naming the §14.9 verification and is distinguishable from every operational failure outcome
+Then the outcome is a completed semantic refusal that names the §14.9 verification for an unverified snapshot and the §14.9 generation for a completed negative verdict, and is distinguishable from every operational failure outcome
 And a snapshot that fails that allowlist while its managed set is also stale or invalidated still completes as exactly that refusal, because §30 rule 7 orders the gate before revalidation
 
 Given a HEAD request for the mirror route with an accepted selector, and a GET request declaring a body
@@ -1945,7 +1945,7 @@ And the body-declaring request is refused as malformed without being read
 And every response of either kind declares text/html; charset=utf-8, Cache-Control: no-store, and its literal Exp2Res-View-Outcome class
 And the served mirror body states no outcome metadata, so it stays byte-identical to the published member
 
-Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
+Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority, declared origin, or fetch-metadata site declaration is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
 Then the bind fails closed in exit class 2 before any socket is served, each request is refused without reading business state, and no diagnostic line echoes request bytes
 And serving takes no writer lock, writes no business row, managed output, or telemetry row, and makes no §15 call or outbound connection

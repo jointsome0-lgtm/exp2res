@@ -423,7 +423,7 @@ nodes = [
   "tests/test_managed_output.py::test_superseded_manifest_version_is_never_matching_or_overwritten",
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
-note = "The managed set publishes report.html beside report.md with golden-pinned deterministic bytes, one document behind both members, an inert self-contained page under a hash-pinned policy, and residual reporting for a superseded manifest version; the §30 mirror view that serves those revalidated bytes is deferred with §30 itself"
+note = "The managed set publishes report.html beside report.md with golden-pinned deterministic bytes, one document behind both members, an inert self-contained page under a hash-pinned policy, and residual reporting for a superseded manifest version; §24.59 tracks the §30 mirror view that serves those revalidated bytes, and only the project-scoped and JD-to-bullet-pack views stay deferred"
 
 ["24.59"]
 status = "pending"
