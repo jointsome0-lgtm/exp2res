@@ -308,7 +308,7 @@ status = "partial"
 phases = ["1", "2", "3", "4"]
 evals = ["21.43"]
 issues = ["#69", "PR #101", "#82", "PR #125", "#151"]
-note = "The runner plus Stage 3 CLI prove bounded foreground attempts, budgets, deadlines, retry telemetry, complete-stage rollback, fresh failed-run telemetry, and handled cancellation with no partial facts; the two new rule-10 rejection classes now prove distinct non-retryable codes across every registered adapter with a catch-all fallback, and human mode names the failing stage and contract — for an orchestration-level failure as much as a transport one — while echoing no provider byte; the exhaustive failure matrix, all adapters, hard crashes, late responses, and every interruption timing remain"
+note = "The runner plus Stage 3 CLI prove bounded foreground attempts, budgets, deadlines, retry telemetry, complete-stage rollback, fresh failed-run telemetry, and handled cancellation with no partial facts; the two new rule-10 rejection classes now prove distinct non-retryable codes from a typed envelope status, with the catch-all kept for an unmapped status and for every error channel across every registered adapter, and human mode names the failing stage and contract — for an orchestration-level failure as much as a transport one — while echoing no provider byte; the exhaustive failure matrix, all adapters, hard crashes, late responses, and every interruption timing remain"
 
 ["24.47"]
 status = "partial"

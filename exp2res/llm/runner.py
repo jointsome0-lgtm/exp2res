@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from decimal import Decimal
 import os
 from pathlib import Path
-import re
 import signal
 import stat
 import subprocess
@@ -79,52 +78,29 @@ class RawResult:
 # shape means fix the build or configuration; an unserviceable model means fix
 # the `[llm]` selection. Both are non-retryable.
 #
-# The channel is a mixed surface: §15.10 rule 9 acknowledges it may carry
-# source-derived text, so a token found anywhere in it says nothing about who
-# wrote it. Classification therefore reads field positions, not the channel:
-# only the value of a provider error-code field — the `type`/`code` pair every
-# adapter in the §15.13 lineup surfaces from the provider's own error body —
-# can name a class. Owner text that discusses `invalid_request_error`, in
-# prose or as a bare token, is never in that position and never classifies. A
-# rejection this table cannot bound falls to the catch-all, which is what rule
-# 10 prescribes rather than a marker that can name the wrong remedy: an
-# adapter emitting only a prose message keeps `transport_provider_error`, a
-# less specific remedy but never a wrong one. Every caller runs this only
-# after its retryable-outage markers, so an outage whose channel happens to
-# echo rejection wording keeps its retry.
-PROVIDER_CODE_FIELD = re.compile(
-    rb'"(?:error_)?(?:code|type)"\s*:\s*"([A-Za-z0-9_.-]+)"', re.IGNORECASE
-)
-MODEL_UNAVAILABLE_CODES = frozenset(
-    {b"model_not_found", b"model_not_supported", b"unsupported_model"}
-)
-REQUEST_REJECTED_CODES = frozenset(
-    {
-        b"invalid_json_schema",
-        b"invalid_request_error",
-        b"invalid_schema",
-        b"malformed_request",
-        b"unsupported_parameter",
-        b"unsupported_value",
-        b"unprocessable_entity",
-    }
-)
+# The error channel names no rejection class, in any shape. §15.10 rule 9
+# acknowledges it may carry source-derived text, and nothing in a process
+# channel distinguishes what the provider wrote from what it echoed — not a
+# prose phrase, not a bare token, not a well-formed JSON error body, since
+# owner text can contain each of those verbatim. Only a typed field the
+# adapter parsed out of its own runtime's envelope qualifies, which for the
+# §15.13 CLI adapters means the reported HTTP status and nothing else. An
+# adapter whose runtime reports no such field names no rejection class: rule
+# 10 sends it to `transport_provider_error`, a less specific remedy but never
+# a wrong one. Callers apply this only after their retryable-outage markers.
+def classify_rejection_status(status: int | None) -> str | None:
+    """Name a §15.10 rule 10 rejection class from a typed provider status.
 
-
-def classify_rejection_shape(channel: bytes) -> str | None:
-    """Name a §15.10 rule 10 rejection class, or None to keep the catch-all.
-
-    The model check precedes the request-shape check because a provider
-    reports an unserviceable model through the same rejected-request
-    envelope, and the model remedy is the more specific one.
+    A 4xx the provider reports through a parsed envelope is the request's own
+    outcome, so its remedy is local. 404 on a fixed adapter-owned endpoint
+    can only be the `[llm]` model selection; a refused or unprocessable
+    request shape is a build or configuration fix. Every other 4xx keeps the
+    catch-all rather than being guessed into a narrower class.
     """
 
-    codes = {
-        match.group(1).lower() for match in PROVIDER_CODE_FIELD.finditer(channel)
-    }
-    if codes & MODEL_UNAVAILABLE_CODES:
+    if status == 404:
         return "transport_model_unavailable"
-    if codes & REQUEST_REJECTED_CODES:
+    if status in {400, 422}:
         return "transport_request_rejected"
     return None
 

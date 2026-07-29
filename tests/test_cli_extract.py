@@ -58,12 +58,15 @@ def seed_lineage(workspace: Path, suffix: str = "cli") -> str:
 
 
 def install_fake_execution(
-    monkeypatch: pytest.MonkeyPatch, fake: FakeContractRunner
+    monkeypatch: pytest.MonkeyPatch,
+    fake: FakeContractRunner,
+    *,
+    selection: LLMSelection = SELECTION,
 ) -> None:
     monkeypatch.setattr(
         extraction_service,
         "build_llm_execution",
-        lambda _workspace: (SELECTION, budgets(), fake),
+        lambda _workspace: (selection, budgets(), fake),
     )
 
 

@@ -366,24 +366,26 @@ nodes = [
   "tests/test_cli_extract.py::test_build_llm_execution_uses_workspace_selection_and_budget_defaults",
   "tests/test_cli_extract.py::test_extract_invalid_after_retry_reports_failure_and_durable_telemetry",
   "tests/test_cli_extract.py::test_extract_interrupt_is_cancelled_without_partial_facts",
-  "tests/test_transport_diagnostics.py::test_unclassifiable_rejection_keeps_the_catch_all[codex-cli]",
-  "tests/test_transport_diagnostics.py::test_unclassifiable_rejection_keeps_the_catch_all[claude-agent-sdk]",
-  "tests/test_transport_diagnostics.py::test_claude_typed_4xx_status_still_names_the_rejection_shape",
+  "tests/test_transport_diagnostics.py::test_a_typed_status_names_the_rejection_shape[400-transport_request_rejected]",
+  "tests/test_transport_diagnostics.py::test_a_typed_status_names_the_rejection_shape[404-transport_model_unavailable]",
+  "tests/test_transport_diagnostics.py::test_an_unmapped_typed_status_keeps_the_catch_all",
+  "tests/test_transport_diagnostics.py::test_a_channel_without_a_typed_status_names_no_rejection_class[codex-cli]",
+  "tests/test_transport_diagnostics.py::test_a_channel_without_a_typed_status_names_no_rejection_class[claude-agent-sdk]",
   "tests/test_transport_diagnostics.py::test_rejection_classes_stay_in_the_provider_transport_exit_class",
   "tests/test_transport_diagnostics.py::test_human_mode_names_the_failing_surface_without_provider_bytes",
   "tests/test_transport_diagnostics.py::test_cancellation_names_no_failing_surface",
-  "tests/test_transport_diagnostics.py::test_new_codes_are_registered_transport_classes_for_every_adapter",
+  "tests/test_transport_diagnostics.py::test_no_registered_adapter_names_a_rejection_class_from_the_channel",
   "tests/test_transport_diagnostics.py::test_a_retryable_outage_keeps_its_retry_despite_echoed_rejection_wording[codex-cli]",
   "tests/test_transport_diagnostics.py::test_a_retryable_outage_keeps_its_retry_despite_echoed_rejection_wording[claude-agent-sdk]",
   "tests/test_transport_diagnostics.py::test_owner_prose_in_the_channel_never_names_a_rejection_class[invalid-request-prose-codex-cli]",
   "tests/test_transport_diagnostics.py::test_owner_prose_in_the_channel_never_names_a_rejection_class[unknown-model-prose-claude-agent-sdk]",
   "tests/test_transport_diagnostics.py::test_owner_prose_in_the_channel_never_names_a_rejection_class[unsupported-parameter-prose-codex-cli]",
   "tests/test_transport_diagnostics.py::test_owner_prose_in_the_channel_never_names_a_rejection_class[bare-token-prose-codex-cli]",
-  "tests/test_transport_diagnostics.py::test_owner_prose_in_the_channel_never_names_a_rejection_class[quoted-token-prose-claude-agent-sdk]",
+  "tests/test_transport_diagnostics.py::test_owner_prose_in_the_channel_never_names_a_rejection_class[echoed-error-body-claude-agent-sdk]",
   "tests/test_transport_diagnostics.py::test_orchestration_level_failures_also_name_the_failing_surface",
 ]
 phase = "1"
-note = "Runner and Stage 3 fixtures prove bounded foreground calls, whole-stage rollback, durable failed telemetry, budget preflight, and handled cancellation; the rejection-shape fixtures prove both new rule-10 codes across every registered adapter, their class-6 exit, the catch-all fallback for an unclassifiable channel, a mixed channel keeping its retryable outage class, owner text naming no rejection whether it paraphrases the remedy or carries the exact token outside a provider field, and an orchestration-level failure naming the same surface, and a stage/contract stderr diagnostic that echoes no provider byte and leaves the envelope unchanged; the full transport-failure matrix, hard-crash timings, late-response discard, stderr progress limits, and other named stages remain"
+note = "Runner and Stage 3 fixtures prove bounded foreground calls, whole-stage rollback, durable failed telemetry, budget preflight, and handled cancellation; the rejection-shape fixtures prove both new rule-10 codes from a typed envelope status and their class-6 exit, the catch-all for an unmapped status, no rejection class from any error channel for any registered adapter — prose, exact token, or whole error body alike — a mixed channel keeping its retryable outage class, and an orchestration-level failure naming the same surface, and a stage/contract stderr diagnostic that echoes no provider byte and leaves the envelope unchanged; the full transport-failure matrix, hard-crash timings, late-response discard, stderr progress limits, and other named stages remain"
 
 ["21.44"]
 status = "partial"

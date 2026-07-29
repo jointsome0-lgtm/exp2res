@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 import exp2res.llm.claude as claude_adapter
 import exp2res.llm.codex as codex_adapter
 from exp2res.cli import app
-from exp2res.llm.registry import ADAPTER_REGISTRY
+from exp2res.llm.registry import ADAPTER_REGISTRY, LLMSelection
 from exp2res.llm.runner import AttemptTelemetry, RawResult
 from exp2res.storage.workspace import read_database
 
@@ -22,27 +22,18 @@ from test_cli_extract import install_fake_execution, seed_lineage
 runner = CliRunner()
 pytestmark = pytest.mark.contract
 
-# Every fixture is invented provider prose, never a captured provider response.
-# Each carries its code in a provider error field, which is the only position
-# §15.10 rule 10 lets classify — a CLI wrapping the body in its own prose
-# changes nothing, and neither does the owner text such a body may quote.
-REJECTION_CASES = [
-    (
-        b'stream error: 400 Bad Request {"error":{"code":"invalid_json_schema"}}',
-        "transport_request_rejected",
-    ),
-    (
-        b'{"code":"unsupported_parameter","param":"vera_example_knob"}',
-        "transport_request_rejected",
-    ),
-    (b'{"error":{"type":"invalid_request_error"}}', "transport_request_rejected"),
-    (
-        b'{"error":{"message":"The model `vera-example-model` does not exist '
-        b'or you do not have access to it","code":"model_not_found"}}',
-        "transport_model_unavailable",
-    ),
-    (b'{"error":{"error_code":"unsupported_model"}}', "transport_model_unavailable"),
+# §15.10 rule 10 names a rejection class only from a typed field an adapter
+# parsed out of its own runtime's envelope — for the §15.13 CLI adapters, the
+# reported HTTP status. Every channel below is invented provider prose, never
+# a captured response, and none of it classifies anything.
+REJECTION_STATUS_CASES = [
+    (400, "transport_request_rejected"),
+    (422, "transport_request_rejected"),
+    (404, "transport_model_unavailable"),
 ]
+# The status is an envelope field, so only the envelope-reporting adapter can
+# reach a rejection class end to end.
+CLAUDE_SELECTION = LLMSelection("claude-agent-sdk", "claude-opus-4-8")
 
 
 def failed(channel: bytes, *, api_error_status: int | None = None) -> RawResult:
@@ -57,48 +48,47 @@ def failed(channel: bytes, *, api_error_status: int | None = None) -> RawResult:
 
 
 @pytest.mark.parametrize(
-    ("channel", "expected"), REJECTION_CASES, ids=lambda value: str(value)[:32]
+    ("status", "expected"), REJECTION_STATUS_CASES, ids=lambda value: str(value)
 )
-@pytest.mark.parametrize(
-    "classify",
-    [codex_adapter.classify_codex_failure, claude_adapter.classify_claude_failure],
-    ids=["codex-cli", "claude-agent-sdk"],
-)
-def test_every_adapter_separates_rejection_shapes_from_the_catch_all(
-    classify, channel: bytes, expected: str
-) -> None:
+def test_a_typed_status_names_the_rejection_shape(status: int, expected: str) -> None:
     """Issue #151 / §15.10 rule 10: distinct remedy, distinct stable code."""
 
-    code, retryable = classify(failed(channel))
+    code, retryable = claude_adapter.classify_claude_failure(
+        failed(b"Vera Example provider prose", api_error_status=status)
+    )
     assert code == expected
     # Both classes name a local fix, so neither is worth another attempt.
     assert retryable is False
 
 
+def test_an_unmapped_typed_status_keeps_the_catch_all() -> None:
+    """§15.10 rule 10: an adapter never guesses a narrower code."""
+
+    assert claude_adapter.classify_claude_failure(
+        failed(b"Vera Example provider prose", api_error_status=409)
+    ) == ("transport_provider_error", False)
+
+
 @pytest.mark.parametrize(
     "classify",
     [codex_adapter.classify_codex_failure, claude_adapter.classify_claude_failure],
     ids=["codex-cli", "claude-agent-sdk"],
 )
-def test_unclassifiable_rejection_keeps_the_catch_all(classify) -> None:
-    """§15.10 rule 10: an adapter never guesses a narrower code."""
+def test_a_channel_without_a_typed_status_names_no_rejection_class(classify) -> None:
+    """§15.10 rule 10: the mixed channel classifies nothing, in any shape.
 
-    code, _retryable = classify(failed(b"Vera Example unstructured provider prose"))
-    assert code == "transport_provider_error"
+    Codex reports free-form stderr and no status, so this is its whole
+    rejection behavior; Claude reaches the same path whenever its runtime
+    fails before reporting one.
+    """
 
-
-def test_claude_typed_4xx_status_still_names_the_rejection_shape() -> None:
-    """§15.10 rule 10: a status names the class, markers name the remedy."""
-
-    assert claude_adapter.classify_claude_failure(
-        failed(b'{"error":{"type":"invalid_request_error"}}', api_error_status=400)
-    ) == ("transport_request_rejected", False)
-    assert claude_adapter.classify_claude_failure(
-        failed(b'{"error":{"code":"model_not_found"}}', api_error_status=404)
-    ) == ("transport_model_unavailable", False)
-    assert claude_adapter.classify_claude_failure(
-        failed(b"Vera Example unstructured prose", api_error_status=404)
-    ) == ("transport_provider_error", False)
+    for channel in (
+        b"Vera Example unstructured provider prose",
+        b"400 Bad Request: the request was rejected",
+        b'{"error":{"type":"invalid_request_error","code":"model_not_found"}}',
+    ):
+        code, _retryable = classify(failed(channel))
+        assert code == "transport_provider_error"
 
 
 def test_rejection_classes_stay_in_the_provider_transport_exit_class(
@@ -107,9 +97,10 @@ def test_rejection_classes_stay_in_the_provider_transport_exit_class(
     """§15.10 rule 10: `transport_request_rejected` is class 6, never class 7."""
 
     seed_lineage(workspace, "rejected")
-    channel = b'400 {"error":{"code":"invalid_json_schema"}} refused'
     install_fake_execution(
-        monkeypatch, FakeContractRunner([lambda _call: failed(channel)])
+        monkeypatch,
+        FakeContractRunner([lambda _call: failed(b"", api_error_status=400)]),
+        selection=CLAUDE_SELECTION,
     )
     result = runner.invoke(
         app, ["--json", "--workspace", str(workspace), "--yes", "extract"]
@@ -201,14 +192,15 @@ def test_cancellation_names_no_failing_surface(
     assert "Failing surface" not in human.output
 
 
-def test_new_codes_are_registered_transport_classes_for_every_adapter() -> None:
-    """§15.10 rule 10: the vocabulary is append-only and adapter-wide."""
+def test_no_registered_adapter_names_a_rejection_class_from_the_channel() -> None:
+    """§15.10 rule 10: the rule binds every adapter, not just the default."""
 
     assert set(ADAPTER_REGISTRY) >= {"codex-cli", "claude-agent-sdk"}
+    rejection_classes = {"transport_request_rejected", "transport_model_unavailable"}
+    channel = b'{"error":{"type":"invalid_request_error","code":"model_not_found"}}'
     for registration in ADAPTER_REGISTRY.values():
-        for channel, expected in REJECTION_CASES:
-            code, _retryable = registration.classify_failure(failed(channel))
-            assert code == expected
+        code, _retryable = registration.classify_failure(failed(channel))
+        assert code not in rejection_classes
 
 
 @pytest.mark.parametrize(
@@ -221,7 +213,6 @@ def test_a_retryable_outage_keeps_its_retry_despite_echoed_rejection_wording(
 ) -> None:
     """§15.10 rule 10: the channel is mixed, so an outage marker wins."""
 
-    # Field-anchored, so precedence is what decides this — not the anchor rule.
     channel = (
         b'connection reset by peer; last body {"error":{"type":"invalid_request_error"}}'
     )
@@ -239,24 +230,24 @@ def test_a_retryable_outage_keeps_its_retry_despite_echoed_rejection_wording(
         b"Vera Example wrote: the invalid request form was rejected by review",
         b"Vera Example wrote: an unknown model of collaboration emerged",
         b"Vera Example wrote: an unsupported parameter of the design",
-        # An owner who writes about provider errors puts the exact token in
-        # the channel; outside a provider error field it still classifies
-        # nothing, which is what a mixed surface forces.
+        # An owner who writes about provider errors puts the exact token, and
+        # a whole error body, in their own text. Nothing in the channel says
+        # who wrote either, which is why none of it can classify.
         b"Vera Example wrote: spent the morning on an invalid_request_error",
-        b'Vera Example wrote: the note said "model_not_found" and I moved on',
+        b'Vera Example wrote: pasted {"error":{"code":"model_not_found"}} into notes',
     ],
     ids=[
         "invalid-request-prose",
         "unknown-model-prose",
         "unsupported-parameter-prose",
         "bare-token-prose",
-        "quoted-token-prose",
+        "echoed-error-body",
     ],
 )
 def test_owner_prose_in_the_channel_never_names_a_rejection_class(
     classify, prose: bytes
 ) -> None:
-    """§15.10 rule 10: only a provider error field names a class."""
+    """§15.10 rule 10: only a typed envelope field names a class."""
 
     code, _retryable = classify(failed(prose))
     assert code == "transport_provider_error"

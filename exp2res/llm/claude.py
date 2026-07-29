@@ -29,7 +29,7 @@ from .runner import (
     RawResult,
     _read_output,
     _write_private,
-    classify_rejection_shape,
+    classify_rejection_status,
     run_subprocess,
 )
 from .sandbox import (
@@ -505,12 +505,11 @@ def classify_claude_failure(result: RawResult) -> tuple[str | None, bool]:
         if 500 <= status <= 599:
             return "transport_provider_error", True
         if 400 <= status <= 499:
-            # A typed 4xx status names the class but not the remedy: the
-            # rejection shape comes from the same deterministic markers every
-            # adapter shares, and an unmatched one keeps the catch-all.
+            # `api_error_status` is parsed out of the runtime's own result
+            # envelope, so it is the one rejection surface this adapter owns.
+            # An unmapped 4xx keeps the catch-all.
             return (
-                classify_rejection_shape(result.error_channel)
-                or "transport_provider_error"
+                classify_rejection_status(status) or "transport_provider_error"
             ), False
     if result.exit_code == 0 and result.final_message_bytes is not None:
         return None, False
@@ -557,7 +556,7 @@ def classify_claude_failure(result: RawResult) -> tuple[str | None, bool]:
             b"529",
         )
     ):
-        # The retryable-outage markers win over rejection wording the channel
-        # may merely echo; only an otherwise unexplained failure is classified.
         return "transport_provider_error", True
-    return classify_rejection_shape(channel) or "transport_provider_error", False
+    # No typed status: the runtime failed before reporting one, leaving only
+    # the mixed channel, which §15.10 rule 10 lets name no rejection class.
+    return "transport_provider_error", False

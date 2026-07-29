@@ -28,7 +28,6 @@ from .runner import (
     RawResult,
     _read_output,
     _write_private,
-    classify_rejection_shape,
     run_subprocess,
 )
 from .sandbox import (
@@ -428,8 +427,7 @@ def classify_codex_failure(result: RawResult) -> tuple[str | None, bool]:
         marker in channel
         for marker in (b"connection", b"tls", b"overload", b"http 5", b" 500")
     )
-    if retryable:
-        # A channel that names a retryable outage keeps its retry even when it
-        # also echoes rejection wording: losing an attempt is the worse error.
-        return "transport_provider_error", True
-    return classify_rejection_shape(channel) or "transport_provider_error", False
+    # Codex reports its failures as free-form stderr and no typed status, so
+    # under §15.10 rule 10 this adapter names no rejection class at all: the
+    # remaining outcomes are a retryable outage or the catch-all.
+    return "transport_provider_error", retryable
