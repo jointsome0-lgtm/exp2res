@@ -1847,7 +1847,7 @@ case = '''
 Given a current assessment snapshot that passes the §16.11 export gate
 When the assessment set is published twice from unchanged state
 Then the published set contains exactly report.md, report.html, self_claims.json, evidence_map.json, and manifest.json
-And manifest.json declares manifest_version 2 and lists report.html with its exact member hash
+And manifest.json declares manifest_version 3 and lists report.html with its exact member hash
 And report.html matches its pinned golden bytes on both runs, is UTF-8 with LF line endings and exactly one final LF, and contains no export wall-clock value, nonce, workspace path, or host name
 
 Given the same published snapshot
@@ -1866,4 +1866,30 @@ Given an assessment set already published at the same ID-derived path under the 
 When the same snapshot is exported again
 Then that prior set is not matching and not current, is never read, indexed, or served as current output, and is never overwritten in place
 And publication aborts reporting its exact path as a residual, leaving the prior bytes untouched
+'''
+
+["21.56"]
+title = "A Claim's Dimension Names What It Characterizes"
+enforces = "§13.7, §15.4, and §17"
+case = '''
+Given current facts and signals support a demonstrated capability
+When the assessment writer emits an enum-valid claim asserting that capability with an orientation dimension such as working_style
+And Stage 7 verifies that candidate
+Then the assessment verifier returns rejected under §13.7 check 13
+And the claim cannot pass assessment export
+And Stage 7 leaves the claim text unchanged
+
+Given the same claim carries the capability dimension technical_skill
+When Stage 7 verifies that candidate
+Then the candidate is not rejected for its dimension
+
+Given the unique narrative_summary claim synthesizes capability, orientation, and limit claims
+When Stage 7 verifies it carrying any single dimension
+Then it is not rejected for its dimension
+And §17 renders it only in Summary
+
+Given a snapshot whose claims carry only §16.11 assessment-exportable statuses
+When §17 renders the report members
+Then every non-summary claim receives exactly one section keyed on its dimension and §16.11 status, never on claim_kind
+And a supported pattern_signal claim with a capability dimension renders under Current Strengths
 '''
