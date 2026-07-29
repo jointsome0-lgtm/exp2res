@@ -1906,3 +1906,37 @@ When §17 renders the report members
 Then every non-summary claim receives exactly one section keyed on its dimension and §16.11 status, never on claim_kind
 And a supported pattern_signal claim with a capability dimension renders under Current Strengths
 '''
+
+["21.57"]
+title = "The Loopback View Serves Only Revalidated Current State"
+enforces = "§8.1, §12.14, §13.14 rules 2–3, §14.14, §14.17, §16.11, §17, §29.1–§29.2, and §30"
+case = '''
+Given a workspace whose current global assessment snapshot passes the §16.11 export gate and whose managed set is current output
+When `view serve` binds its default loopback address and the mirror route is requested with an explicit view-identity selector
+Then the response body is byte-identical to that set's published report.html member and is served with no re-rendering
+And repeating the request over unchanged state returns the same bytes
+And the response sets no cookie, grants no cross-origin read, and carries no consumer-specific field
+
+Given the same served workspace
+When the gap-question route is requested with the same explicit selector
+Then the page presents only the question values of that set's self_claims.json unknowns whose answered value is false
+And a question answered after synthesis is absent from the page
+And no gap ID, target, reason, priority, claim, contradiction, raw text, manifest value, or workspace path appears in the response
+
+Given a request whose selector is absent, unknown, repeated, combined with the other form, malformed, names a project scope, or names a superseded snapshot
+When the view resolves it
+Then it fails closed in its §30 rule 7 outcome, no snapshot is chosen by a default or latest-of-several rule, and no response reflects the request bytes back
+
+Given the selected snapshot's managed set is missing, stale by a §13.14 render-input change, invalidated by a later gap answer, or published under a superseded manifest_version
+When either route is requested
+Then no partial, cached, or re-rendered content is served and the fail-closed page names the §14.9 export the owner must run
+
+Given the selected snapshot's aggregate verification status fails the §16.11 assessment-export allowlist
+When either route is requested
+Then the outcome is a completed semantic refusal naming the §14.9 verification and is distinguishable from every operational failure outcome
+
+Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority is not the bound one, a request using an unsafe method, and a request outside the closed route set
+When `view serve` starts or handles each of them
+Then the bind fails closed in exit class 2 before any socket is served, each request is refused without reading business state, and no diagnostic line echoes request bytes
+And serving takes no writer lock, writes no business row, managed output, or telemetry row, and makes no §15 call or outbound connection
+'''
