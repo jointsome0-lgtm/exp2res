@@ -12,7 +12,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence
 from pydantic import BaseModel
 
 from exp2res.errors import LLMCancelledError, LLMInvocationError
-from exp2res.llm.adapter import invoke_contract
+from exp2res.llm.adapter import invoke_contract, name_failing_surface
 from exp2res.llm.contracts import ContractDefinition, prompt_policy_hash
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import CallBudgets, ContractRunner
@@ -227,7 +227,11 @@ def run_complete_stage(
                         failure_code="deterministic_enrichment_failed",
                     ),
                 )
-                raise LLMInvocationError("deterministic_enrichment_failed") from None
+                raise name_failing_surface(
+                    LLMInvocationError("deterministic_enrichment_failed"),
+                    stage=stage,
+                    contract_id=contract.contract_id,
+                ) from None
 
         try:
 
@@ -256,7 +260,11 @@ def run_complete_stage(
                     failure_code="business_commit_failed",
                 ),
             )
-            raise LLMInvocationError("business_commit_failed") from None
+            raise name_failing_surface(
+                LLMInvocationError("business_commit_failed"),
+                stage=stage,
+                contract_id=contract.contract_id,
+            ) from None
     except KeyboardInterrupt:
         try:
             _transaction(

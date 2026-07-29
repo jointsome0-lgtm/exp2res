@@ -385,3 +385,74 @@ def test_missing_consent_fails_before_the_source_is_read(
     assert result.exit_code == 2
     assert envelope["diagnostic_class"] == "input_required"
     assert [log.id for log in list_logs(workspace)] == [target.id]
+
+
+def clear_workspace_timezone(workspace: Path) -> None:
+    config = workspace / ".exp2res" / "config.toml"
+    text = config.read_text(encoding="utf-8")
+    config.write_text(
+        text.replace('timezone = "Etc/UTC"', 'timezone = ""'), encoding="utf-8"
+    )
+
+
+def test_copied_placement_needs_no_workspace_timezone(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 8: copying an already-resolved placement uses no local time."""
+
+    target = seed_target(workspace)
+    install_lifecycle_runner(monkeypatch)
+    clear_workspace_timezone(workspace)
+    source = tmp_path / "Vera Example untimed.md"
+    source.write_text("Vera Example restates the record in full.\n")
+
+    result, envelope = invoke_json(
+        workspace,
+        [
+            "--yes",
+            "correction",
+            "add",
+            "--log-id",
+            target.id,
+            "--file",
+            str(source),
+            "--owner-authored",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    corrected = show_log(workspace, log_id=created_log_id(envelope))
+    assert corrected.raw_log.occurred == target.occurred
+
+
+def test_explicit_temporal_replacement_still_requires_the_timezone(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§14.14 rule 8: replacing a placement is the local-time feature boundary."""
+
+    target = seed_target(workspace)
+    clear_workspace_timezone(workspace)
+    source = tmp_path / "Vera Example replacement.md"
+    source.write_text("Vera Example restates the record in full.\n")
+
+    result, envelope = invoke_json(
+        workspace,
+        [
+            "--yes",
+            "correction",
+            "add",
+            "--log-id",
+            target.id,
+            "--file",
+            str(source),
+            "--owner-authored",
+            "--precision",
+            "month",
+            "--period",
+            "2026-07",
+            "--confidence",
+            "high",
+        ],
+    )
+    assert result.exit_code == 2
+    assert envelope["diagnostic_class"] == "workspace_timezone_required"
+    assert [log.id for log in list_logs(workspace)] == [target.id]

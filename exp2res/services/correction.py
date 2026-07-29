@@ -11,7 +11,7 @@ from typing import Callable
 
 from pydantic import ValidationError
 
-from exp2res.config import load_workspace_config, require_timezone
+from exp2res.config import load_workspace_config
 from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.errors import (
@@ -33,7 +33,6 @@ from exp2res.services.source_files import (
     authorize_artifact_locators,
     read_capture_file,
 )
-from exp2res.services.time_input import workspace_zone
 from exp2res.storage.repository import (
     get_raw_log,
     insert_evidence_item,
@@ -106,15 +105,18 @@ def read_correction_source(
 ) -> tuple[str, str | None]:
     """Acquire §14.4 non-prompt correction text under §14.2's gates.
 
-    Compatibility and the local-time contract fail closed before the private
-    source is opened, exactly as `capture_retro_file` orders them; the caller
-    reads outside the writer lock so no file I/O happens inside the §13.13
-    capture-and-rebuild transaction.
+    Compatibility fails closed before the private source is opened, and the
+    caller reads outside the writer lock so no file I/O happens inside the
+    §13.13 capture-and-rebuild transaction. Unlike `capture_retro_file` this
+    resolves no local time: a correction that copies the target's placement
+    uses no local-time feature, so §14.14 rule 8's timezone requirement
+    belongs to the explicit temporal-replacement branch alone — exactly as
+    the interactive form, which accepts an already-offset-aware placement,
+    has always behaved.
     """
 
     require_compatible(workspace)
     config = load_workspace_config(workspace)
-    workspace_zone(require_timezone(config))
     return read_capture_file(source_path, config=config)
 
 

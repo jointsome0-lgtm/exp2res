@@ -1182,7 +1182,8 @@ And the §14.14 envelope is unchanged by the diagnostic and still reports the ru
 Given error channels that mix a retryable-outage marker with echoed rejection wording, and channels carrying only owner-plausible prose such as "invalid request" or "unknown model"
 When each adapter classifies the failure
 Then the mixed channel keeps transport_provider_error and its retry rather than a non-retryable rejection class
-And the prose-only channels stay transport_provider_error, because a rejection class is named only from a structured provider field or an adapter-owned error-code token or exact provider sentence
+And the prose-only channels stay transport_provider_error, because a rejection class is named only from a structured provider field or an adapter-owned error-code token or exact provider sentence, never from a space-separated prose fragment
+And an operational failure the stage orchestrator raises after a call validated names the same stage and contract in the same human-mode diagnostic
 
 Given an adapter or model omits structured-output support, a declared model identifier, declared context or output bounds, timeout or cancellation support, or a required deterministic credential or token classifier
 When selection or configuration validation runs
@@ -1751,6 +1752,7 @@ Then the accepted RawLog.raw_text re-encodes byte-for-byte identically to the su
 And the path form records external_ref as the §29.4-authorized canonical real path while standard input records external_ref = null
 And the record retains exactly correction/manual_entry classification with corrects_log_id naming the target, and its bundle keeps the manual claim first and its artifact_reference items under §13.1
 And omitting the temporal and project flags copies the target's OccurredAt and project exactly, with no precision increase and no silent project strip
+And that copy resolves no local time, so it succeeds in a workspace with no configured timezone while an explicit temporal replacement still fails closed there under §14.14 rule 8
 
 Given correction add --file supplies --precision, --period, and --confidence, or supplies --project, or supplies --clear-project
 When each explicit replacement is captured

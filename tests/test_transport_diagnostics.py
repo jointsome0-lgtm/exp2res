@@ -25,7 +25,7 @@ pytestmark = pytest.mark.contract
 # Every fixture is invented provider prose, never a captured provider response.
 REJECTION_CASES = [
     (b"400 Bad Request: invalid_json_schema at $.properties", "transport_request_rejected"),
-    (b"Error: unsupported parameter 'vera_example_knob'", "transport_request_rejected"),
+    (b'{"code":"unsupported_parameter","param":"vera_example_knob"}', "transport_request_rejected"),
     (b'{"error":{"type":"invalid_request_error"}}', "transport_request_rejected"),
     (b"model_not_found: vera-example-model", "transport_model_unavailable"),
     (
@@ -228,8 +228,9 @@ def test_a_retryable_outage_keeps_its_retry_despite_echoed_rejection_wording(
     [
         b"Vera Example wrote: the invalid request form was rejected by review",
         b"Vera Example wrote: an unknown model of collaboration emerged",
+        b"Vera Example wrote: an unsupported parameter of the design",
     ],
-    ids=["invalid-request-prose", "unknown-model-prose"],
+    ids=["invalid-request-prose", "unknown-model-prose", "unsupported-parameter-prose"],
 )
 def test_owner_prose_in_the_channel_never_names_a_rejection_class(
     classify, prose: bytes
@@ -238,3 +239,43 @@ def test_owner_prose_in_the_channel_never_names_a_rejection_class(
 
     code, _retryable = classify(failed(prose))
     assert code == "transport_provider_error"
+
+
+def test_orchestration_level_failures_also_name_the_failing_surface(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§15.10 rule 9: an operational failure after the call still names it."""
+
+    from test_stage3_extraction import add_log, exact_day, fact_response
+    from conftest import FIXED_NOW
+
+    _log, items = add_log(
+        workspace,
+        log_id="log_vera_commit_surface",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example commit-surface lineage.",
+        occurred=exact_day(15),
+        item_specs=(("evi_vera_commit_surface", "manual_claim"),),
+        project="Vera Example Project",
+    )
+    # Two facts sharing one service-assigned ID make the complete-stage commit
+    # fail after every call has already validated — `business_commit_failed`
+    # is raised by the orchestrator, not inside `invoke_contract`.
+    first = json.loads(fact_response([items[0].id]))["facts"][0]
+    second = {**first, "claim": "Vera Example designed a second atomic fact."}
+    collision = json.dumps(
+        {"facts": [first, second], "warnings": []}, separators=(",", ":")
+    ).encode("utf-8")
+    monkeypatch.setattr(
+        "exp2res.services.extraction.new_id",
+        lambda kind: "fact_vera_collision" if kind == "fact" else f"{kind}_vera_1",
+    )
+    install_fake_execution(monkeypatch, FakeContractRunner([collision]))
+    human = runner.invoke(
+        app, ["--workspace", str(workspace), "--yes", "extract"]
+    )
+    assert human.exit_code == 7
+    assert (
+        "Failing surface: stage 13.3, contract fact-extractor "
+        "(business_commit_failed)." in human.output
+    )

@@ -377,9 +377,11 @@ nodes = [
   "tests/test_transport_diagnostics.py::test_a_retryable_outage_keeps_its_retry_despite_echoed_rejection_wording[claude-agent-sdk]",
   "tests/test_transport_diagnostics.py::test_owner_prose_in_the_channel_never_names_a_rejection_class[invalid-request-prose-codex-cli]",
   "tests/test_transport_diagnostics.py::test_owner_prose_in_the_channel_never_names_a_rejection_class[unknown-model-prose-claude-agent-sdk]",
+  "tests/test_transport_diagnostics.py::test_owner_prose_in_the_channel_never_names_a_rejection_class[unsupported-parameter-prose-codex-cli]",
+  "tests/test_transport_diagnostics.py::test_orchestration_level_failures_also_name_the_failing_surface",
 ]
 phase = "1"
-note = "Runner and Stage 3 fixtures prove bounded foreground calls, whole-stage rollback, durable failed telemetry, budget preflight, and handled cancellation; the rejection-shape fixtures prove both new rule-10 codes across every registered adapter, their class-6 exit, the catch-all fallback for an unclassifiable channel, a mixed channel keeping its retryable outage class and owner-plausible prose naming no rejection, and a stage/contract stderr diagnostic that echoes no provider byte and leaves the envelope unchanged; the full transport-failure matrix, hard-crash timings, late-response discard, stderr progress limits, and other named stages remain"
+note = "Runner and Stage 3 fixtures prove bounded foreground calls, whole-stage rollback, durable failed telemetry, budget preflight, and handled cancellation; the rejection-shape fixtures prove both new rule-10 codes across every registered adapter, their class-6 exit, the catch-all fallback for an unclassifiable channel, a mixed channel keeping its retryable outage class, owner-plausible prose naming no rejection, and an orchestration-level failure naming the same surface, and a stage/contract stderr diagnostic that echoes no provider byte and leaves the envelope unchanged; the full transport-failure matrix, hard-crash timings, late-response discard, stderr progress limits, and other named stages remain"
 
 ["21.44"]
 status = "partial"
@@ -578,6 +580,8 @@ nodes = [
   "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[missing-period]",
   "tests/test_correction_nonprompt.py::test_affirmation_does_not_supply_the_rebuild_consent",
   "tests/test_correction_nonprompt.py::test_missing_consent_fails_before_the_source_is_read",
+  "tests/test_correction_nonprompt.py::test_copied_placement_needs_no_workspace_timezone",
+  "tests/test_correction_nonprompt.py::test_explicit_temporal_replacement_still_requires_the_timezone",
 ]
 phase = "1"
 note = "All four non-prompt capture forms prove explicit pre-acquisition affirmation, multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate; correction proves copy-unless-replaced placement and project, the whole-typed-set replacement rules, mutually exclusive project flags, non-prompt-only flag scoping, and affirmation separate from rebuild consent."

@@ -80,8 +80,11 @@ class RawResult:
 #
 # The channel is a mixed surface: §15.10 rule 9 acknowledges it may carry
 # source-derived text, so only provider error-code tokens and exact provider
-# sentences qualify as markers. Bare prose an owner could plausibly write —
-# "invalid request", "unknown model" — is deliberately absent, and every
+# sentences qualify as markers. Every space-separated prose fragment an owner
+# could plausibly write — "invalid request", "unknown model", "unsupported
+# parameter" — is deliberately absent even where a provider does emit it: a
+# rejection the table cannot bound falls to the catch-all, which is what rule
+# 10 prescribes rather than a marker that can name the wrong remedy. Every
 # caller runs this classification only after its retryable-outage markers, so
 # an outage whose channel happens to echo rejection wording keeps its retry.
 # An unmatched rejection stays the catch-all rather than being guessed into a
@@ -98,7 +101,6 @@ REQUEST_REJECTED_MARKERS = (
     b"invalid_schema",
     b"malformed_request",
     b"unsupported_parameter",
-    b"unsupported parameter",
     b"unsupported_value",
     b"unprocessable_entity",
 )

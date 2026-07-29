@@ -72,6 +72,24 @@ def _transaction(
         raise
 
 
+def name_failing_surface(
+    error: LLMInvocationError, *, stage: str, contract_id: str
+) -> LLMInvocationError:
+    """§15.10 rule 9: attach the surface that broke, wherever it is raised.
+
+    Both values are service-owned constants, so the human-mode diagnostic the
+    CLI renders from them carries no provider bytes and no payload content.
+    Operational failures raised by the stage orchestrator after a call returns
+    — deterministic enrichment and the complete-stage commit — are the same
+    obligation, so they route through this one helper rather than each raise
+    site remembering the fields.
+    """
+
+    error.failing_stage = stage
+    error.failing_contract = contract_id
+    return error
+
+
 def invoke_contract(
     *,
     workspace: Path,
@@ -448,12 +466,9 @@ def invoke_contract(
         # one that did not fail.
         raise
     except LLMInvocationError as error:
-        # §15.10 rule 9: name the surface that broke. Both values are
-        # service-owned constants, so the human-mode diagnostic the CLI
-        # renders from them carries no provider bytes and no payload content.
-        error.failing_stage = stage
-        error.failing_contract = contract.contract_id
-        raise
+        raise name_failing_surface(
+            error, stage=stage, contract_id=contract.contract_id
+        )
     except KeyboardInterrupt:
         # §15.10 rule 8: an owner interrupt anywhere in the foreground
         # invocation — transport, backoff, validation, or the business
