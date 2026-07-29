@@ -162,4 +162,8 @@ Enforces §13.7, §16.11–§16.12, and §16.14.
 
 Enforces §13.12, §13.14 rules 2–3 and 5, §16.13, §17, §29.1–§29.2, and §30.
 
+## §21.56 A Claim's Dimension Names What It Characterizes
+
+Enforces §13.7, §15.4, and §17.
+
 ---
