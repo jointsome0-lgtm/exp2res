@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from exp2res.llm.assessment_verifier import ASSESSMENT_VERIFIER_INSTRUCTIONS
@@ -23,15 +25,15 @@ INSTRUCTION_BLOCKS = {
     "assessment-verifier": ASSESSMENT_VERIFIER_INSTRUCTIONS,
 }
 
-# §16.14's example role nouns. The rule itself is open-ended and semantic;
-# this closed list only guards the offline goldens and instruction text.
-FORBIDDEN_OWNER_NOUNS = (
-    "the user",
-    "the subject",
-    "the author",
-    "the owner",
-    "the developer",
-    "the candidate",
+# §16.14's example role nouns as word-bounded singular tokens, so a legal
+# non-owner referent such as "the users" of shipped software passes. This is
+# a pin on how the current goldens are constructed, not the rule itself —
+# §16.14 is semantic and open-ended, and a future golden that legitimately
+# needs one of these tokens for a non-owner referent adjusts this pin
+# alongside that golden.
+FORBIDDEN_OWNER_NOUN_PATTERNS = tuple(
+    re.compile(rf"\bthe {noun}\b")
+    for noun in ("user", "subject", "author", "owner", "developer", "candidate")
 )
 
 GOLDEN_PROSE_MEMBERS = ("report.md", "self_claims.json")
@@ -49,8 +51,8 @@ def test_generated_prose_in_goldens_carries_no_third_person_owner_nouns() -> Non
     for member in GOLDEN_PROSE_MEMBERS:
         text = (goldens / member).read_text(encoding="utf-8")
         lowered = text.lower()
-        for noun in FORBIDDEN_OWNER_NOUNS:
-            assert noun not in lowered, (member, noun)
+        for pattern in FORBIDDEN_OWNER_NOUN_PATTERNS:
+            assert not pattern.search(lowered), (member, pattern.pattern)
         # §16.14 forbids the owner's personal name in generated prose, so the
         # prose goldens are marker-exempt (scripts/check_public_hygiene.py);
         # fixture lineage lives in the vera entity IDs instead.

@@ -138,7 +138,7 @@ def test_vera_e3_cli_replay_persists_one_current_ordered_signal_generation(
                 {
                     "signal_type": "direction_signal",
                     "statement": (
-                        "Vera Example repeatedly chooses provenance-aware "
+                        "You repeatedly choose provenance-aware "
                         "local systems."
                     ),
                     "supporting_fact_ids": [right_fact.id, left_fact.id],
@@ -148,7 +148,7 @@ def test_vera_e3_cli_replay_persists_one_current_ordered_signal_generation(
                 {
                     "signal_type": "constraint_signal",
                     "statement": (
-                        "Vera Example records environment constraints explicitly."
+                        "You record environment constraints explicitly."
                     ),
                     "supporting_fact_ids": [left_fact.id],
                     "counter_fact_ids": [right_fact.id],
@@ -197,7 +197,10 @@ def test_vera_e3_cli_replay_persists_one_current_ordered_signal_generation(
     assert [item["id"] for item in listed_signals] == sorted(
         (item["id"] for item in listed_signals), key=str.encode
     )
-    assert all("Vera Example" in item["statement"] for item in listed_signals)
+    assert {item["statement"] for item in listed_signals} == {
+        "You repeatedly choose provenance-aware local systems.",
+        "You record environment constraints explicitly.",
+    }
     with read_database(workspace) as connection:
         assert len(list_self_signals(connection)) == 2
         generations = connection.execute(

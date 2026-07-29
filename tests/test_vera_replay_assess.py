@@ -79,7 +79,7 @@ def test_vera_e4_cli_assessment_is_navigable_then_signal_replacement_invalidates
             signal_response(
                 list(fact_ids),
                 confidence="low",
-                statement="Vera Example replacement direction signal.",
+                statement="You changed direction after the replacement evidence.",
             )
         ]
     )
