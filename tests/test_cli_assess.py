@@ -195,7 +195,7 @@ def test_verify_happy_envelope_and_complete_human_rewrite_presentation(
     snapshot_id, facts, _signals = generate_snapshot(workspace, monkeypatch)
     counterevidence = [
         {
-            "statement": "Vera Example counterevidence narrows the claim.",
+            "statement": "The supplied counterevidence narrows the claim.",
             "source_ref_type": "experience_fact",
             "source_ref_id": facts[0],
         }
@@ -267,9 +267,9 @@ def test_verify_happy_envelope_and_complete_human_rewrite_presentation(
     assert human.stdout.count("Finding ") == 2
     assert "Target claim:" in human.stdout
     assert "Status: partially_supported" in human.stdout
-    assert "Reason: Vera Example" in human.stdout
-    assert "Vera Example unsupported phrase" in human.stdout
-    assert "Suggested rewrite: Vera Example" in human.stdout
+    assert "Reason: The supplied evidence" in human.stdout
+    assert "unsupported scale wording" in human.stdout
+    assert "Suggested rewrite: The supplied evidence" in human.stdout
     assert (
         f"[experience_fact:{facts[0]}]" in human.stdout
     )

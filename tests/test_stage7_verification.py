@@ -52,20 +52,20 @@ def verifier_response(
         "unsupported_phrases": (
             []
             if status == "supported"
-            else ["Vera Example unsupported phrase"]
+            else ["unsupported scale wording"]
         ),
         "counterevidence": [] if counterevidence is None else counterevidence,
         "suggested_rewrite": (
             None
             if status == "supported"
-            else "Vera Example evidence supports a narrower statement."
+            else "The supplied evidence supports a narrower statement."
         ),
     }
     if include_reason:
         payload["reason"] = (
-            "Vera Example supplied evidence supports the claim."
+            "The supplied evidence supports the claim."
             if status == "supported"
-            else "Vera Example evidence requires a non-passing verdict."
+            else "The supplied evidence requires a non-passing verdict."
         )
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
@@ -154,7 +154,7 @@ def test_pass_changes_only_verification_fields_and_claim_prose_trigger_holds(
         with pytest.raises(sqlite3.IntegrityError, match="self_claim_lifecycle_only"):
             connection.execute(
                 "UPDATE self_claims SET claim = ? WHERE id = ?",
-                ("Vera Example rewritten claim.", generated.created_claim_ids[0]),
+                ("An illegally rewritten claim.", generated.created_claim_ids[0]),
             )
 
 
@@ -235,7 +235,7 @@ def test_invalid_counterevidence_retries_then_fails(
     if mode == "out_of_bundle":
         entries = [
             {
-                "statement": "Vera Example contrary source is outside the bundle.",
+                "statement": "The contrary source is outside the bundle.",
                 "source_ref_type": "experience_fact",
                 "source_ref_id": "fact_vera_outside_bundle",
             }
@@ -243,14 +243,14 @@ def test_invalid_counterevidence_retries_then_fails(
     elif mode == "wrong_type":
         entries = [
             {
-                "statement": "Vera Example contrary source uses the wrong type.",
+                "statement": "The contrary source uses the wrong type.",
                 "source_ref_type": "self_signal",
                 "source_ref_id": facts[0],
             }
         ]
     else:
         entry = {
-            "statement": "Vera Example contrary source is duplicated.",
+            "statement": "The contrary source is duplicated.",
             "source_ref_type": "self_signal",
             "source_ref_id": signals[0],
         }
@@ -272,13 +272,13 @@ def _sourceless_snapshot(workspace: Path):
         {
             "self_claims": [
                 {
-                    "claim": "Current evidence leaves Vera Example without a sourced conclusion.",
+                    "claim": "Current evidence leaves this conclusion without a source.",
                     "claim_kind": "narrative_summary",
                     "dimension": "gap",
                     "source_signal_ids": [],
                     "source_fact_ids": [],
                     "confidence": "unknown",
-                    "uncertainty": "Vera Example evidence is absent for this claim.",
+                    "uncertainty": "Evidence is absent for this claim.",
                 }
             ],
             "warnings": [],
@@ -319,7 +319,7 @@ def test_narrative_gate_fails_before_provider_or_run(workspace: Path) -> None:
     with writer_database(workspace, owner_delete=True) as connection:
         connection.execute(
             "UPDATE assessment_snapshots SET summary = ? WHERE id = ?",
-            ("Vera Example mismatched summary.", generated.snapshot_id),
+            ("A mismatched narrative summary.", generated.snapshot_id),
         )
     with read_database(workspace) as connection:
         before = connection.execute("SELECT COUNT(*) FROM processing_runs").fetchone()[0]
@@ -496,7 +496,7 @@ def test_findings_are_append_only_until_owner_purge(workspace: Path) -> None:
         ):
             connection.execute(
                 "UPDATE verification_findings SET reason = ? WHERE id = ?",
-                ("Vera Example altered reason.", finding_id),
+                ("An altered finding reason.", finding_id),
             )
         with pytest.raises(
             sqlite3.IntegrityError,
@@ -513,7 +513,7 @@ def test_findings_are_append_only_until_owner_purge(workspace: Path) -> None:
         ):
             connection.execute(
                 "UPDATE verification_findings SET reason = ? WHERE id = ?",
-                ("Vera Example altered reason.", finding_id),
+                ("An altered finding reason.", finding_id),
             )
 
 

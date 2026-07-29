@@ -130,7 +130,7 @@ def test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity(
         connection.execute(
             "UPDATE assessment_snapshots SET verification_status = 'supported', summary = ? "
             "WHERE id = ?",
-            ("Vera Example mismatched summary.", generated.snapshot_id),
+            ("A mismatched narrative summary.", generated.snapshot_id),
         )
         connection.commit()
     with pytest.raises(IntegrityFailureError, match="snapshot_narrative_gate_failed"):

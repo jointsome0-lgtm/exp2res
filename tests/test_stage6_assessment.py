@@ -547,7 +547,7 @@ def test_repository_fk_born_state_and_update_trigger(workspace: Path) -> None:
             id="claim_vera_born_counterevidence",
             created_at=FIXED_NOW,
             snapshot_id=result.snapshot.id,
-            claim="Vera Example born counterevidence claim.",
+            claim="A claim born carrying counterevidence.",
             claim_kind="hypothesis",
             dimension="gap",
             source_signal_ids=[],
@@ -556,7 +556,7 @@ def test_repository_fk_born_state_and_update_trigger(workspace: Path) -> None:
             verification_status="unverified",
             counterevidence=[
                 CounterevidenceItem(
-                    statement="Vera Example contrary source.",
+                    statement="A contrary source narrows the claim.",
                     source_ref_type="raw_log",
                     source_ref_id="log_vera_signal_0",
                 )
