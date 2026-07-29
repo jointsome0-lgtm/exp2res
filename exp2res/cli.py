@@ -54,6 +54,7 @@ from exp2res.domain.results import (
 from exp2res.errors import (
     Exp2ResError,
     InvalidInputError,
+    InvalidUsageError,
     MigrationFailedError,
     MigrationInterrupted,
     NonInteractiveInputRequired,
@@ -78,6 +79,7 @@ from exp2res.services.source_files import validate_artifact_locator_count
 from exp2res.services.correction import (
     CorrectionOutcome,
     capture_correction,
+    read_correction_source,
     validate_correction_selection,
 )
 from exp2res.services.assessment import (
@@ -288,6 +290,25 @@ def _noninteractive(controls: Controls) -> bool:
     return controls.no_input or not sys.stdin.isatty()
 
 
+def _failing_surface(error: Exp2ResError) -> str | None:
+    """§15.10 rule 9's human-mode naming of the §15 surface that failed.
+
+    Stage and contract identifier are service-owned constants, so this line
+    carries no provider bytes, payload content, or credential; the provider's
+    own error channel is never echoed. The §14.14 envelope is unchanged, and
+    the same run stays inspectable through the reported `run_ids`.
+    """
+
+    stage = getattr(error, "failing_stage", None)
+    contract = getattr(error, "failing_contract", None)
+    if stage is None or contract is None:
+        return None
+    return (
+        f"Failing surface: stage {stage}, contract {contract} "
+        f"({error.diagnostic_class})."
+    )
+
+
 def _run_command(
     context: typer.Context,
     command: CommandPath,
@@ -363,6 +384,10 @@ def _run_command(
             result=getattr(error, "result", None),
         )
         typer.echo(error.public_message, err=True)
+        if not controls.json_output:
+            surface = _failing_surface(error)
+            if surface is not None:
+                typer.echo(surface, err=True)
     except Exception:
         outcome = Outcome(exit_code=1, diagnostic_class="internal_error")
         typer.echo("The operation failed unexpectedly.", err=True)
@@ -719,6 +744,25 @@ def _lifecycle_outcome(
     )
 
 
+def _validate_non_prompt_period(
+    precision: str | None, period: str | None, confidence: str | None
+) -> None:
+    """§14.3's typed-set rules for a non-prompt temporal value.
+
+    The set is all-or-nothing: a partial set cannot be completed by a prompt
+    the non-prompt form never shows, and `unknown` with a period is a
+    contradiction rather than a value to discard.
+    """
+
+    if precision is None or confidence is None:
+        raise NonInteractiveInputRequired()
+    if precision == "unknown":
+        if period is not None:
+            raise PeriodNotAllowedError()
+    elif period is None:
+        raise NonInteractiveInputRequired()
+
+
 @log_app.command("today")
 def log_today(
     context: typer.Context,
@@ -776,13 +820,7 @@ def log_retro(
         if source_file is not None:
             if not owner_authored:
                 raise OwnerAuthorshipRequired()
-            if precision is None or confidence is None:
-                raise NonInteractiveInputRequired()
-            if precision == "unknown":
-                if period is not None:
-                    raise PeriodNotAllowedError()
-            elif period is None:
-                raise NonInteractiveInputRequired()
+            _validate_non_prompt_period(precision, period, confidence)
             validate_project_label(project)
             require_compatible(workspace)
             timezone_name = require_timezone(load_workspace_config(workspace))
@@ -858,12 +896,96 @@ def log_retro(
 def correction_add(
     context: typer.Context,
     log_id: str = typer.Option(..., "--log-id"),
+    source_file: str | None = typer.Option(None, "--file"),
+    owner_authored: bool = typer.Option(False, "--owner-authored"),
+    period: str | None = typer.Option(None, "--period"),
+    precision: str | None = typer.Option(None, "--precision"),
+    confidence: str | None = typer.Option(None, "--confidence"),
+    project_option: str | None = typer.Option(None, "--project"),
+    clear_project: bool = typer.Option(False, "--clear-project"),
     artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
         artifact_values = tuple(artifacts or ())
         validate_artifact_locator_count(artifact_values)
+        replaces_occurred = any(
+            value is not None for value in (period, precision, confidence)
+        )
+        # §14.4: the replacement flags belong to the non-prompt form. Without
+        # `--file` the command is about to ask for each of these anyway, so a
+        # flag here would be a silent partial answer rather than a shortcut.
+        if source_file is None and (
+            replaces_occurred or project_option is not None or clear_project
+        ):
+            error = InvalidUsageError()
+            error.public_message = (
+                "--precision, --period, --confidence, --project, and "
+                "--clear-project require --file."
+            )
+            raise error
+        if project_option is not None and clear_project:
+            error = InvalidUsageError()
+            error.public_message = (
+                "--project and --clear-project cannot be combined."
+            )
+            raise error
         target = validate_correction_selection(workspace, log_id=log_id)
+
+        if source_file is not None:
+            if not owner_authored:
+                raise OwnerAuthorshipRequired()
+            # Copy-unless-replaced, made explicit: no temporal flag copies the
+            # target's placement exactly, and any flag demands §14.3's whole
+            # typed set rather than a partial edit of the copied value.
+            if replaces_occurred:
+                _validate_non_prompt_period(precision, period, confidence)
+                require_compatible(workspace)
+                occurred = parse_occurred(
+                    period=period,
+                    precision=cast(TemporalPrecision, precision),
+                    confidence=cast(TemporalConfidence, confidence),
+                    timezone_name=require_timezone(
+                        load_workspace_config(workspace)
+                    ),
+                )
+            else:
+                occurred = target.occurred
+            project = (
+                target.project
+                if project_option is None and not clear_project
+                else project_option
+            )
+            validate_project_label(project)
+            # §14.14 rule 3: the affirmation covers authorship of the text,
+            # never the cost-bearing rebuild the capture triggers. A
+            # non-interactive run cannot supply that consent, so it fails
+            # before the source is touched — `--file -` would otherwise block
+            # on a pipe whose content the command was never going to use.
+            if not controls.yes and _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            raw_text, external_ref = read_correction_source(
+                workspace, source_path=source_file
+            )
+            # The interactive confirmation stays after acquisition: under
+            # `--file -` the record and the answer share one stream, so
+            # confirming first would consume the record's first line.
+            if not controls.yes and not typer.confirm(
+                "Store the correction and rebuild derived state through "
+                "Stage 5 with the configured model provider?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
+            return _store_correction(
+                workspace,
+                controls,
+                target_id=target.id,
+                raw_text=raw_text,
+                occurred=occurred,
+                project=project,
+                external_ref=external_ref,
+                artifacts=artifact_values,
+            )
+
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
 
@@ -913,92 +1035,123 @@ def correction_add(
         ):
             return Outcome(exit_code=9, diagnostic_class="cancelled")
 
-        # §8.1: one writer authority covers the §13.13 rule 4 capture
-        # boundary and the selected-lineage rebuild — no other business
-        # writer can interleave between them. Prompts and consent stay
-        # outside the lock.
-        with writer_database(workspace, reconcile=True) as connection:
-            try:
-                captured = capture_correction(
-                    workspace,
-                    log_id=target.id,
-                    raw_text=raw_text,
-                    occurred=occurred,
-                    project=project,
-                    artifacts=artifact_values,
-                    connection=connection,
-                )
-            except OperationCancelledError as error:
-                committed = cast(
-                    CorrectionOutcome | None,
-                    getattr(error, "correction_outcome", None),
-                )
-                if committed is not None:
-                    try:
-                        progress = record_cancelled_lifecycle(
-                            connection, log_id=committed.raw_log.id
-                        )
-                    except Exception:
-                        progress = None
-                    if progress is not None:
-                        error.run_ids = progress.run_ids
-                        error.lifecycle_result = progress
-                    # §14.14 rule 6: the committed capture is reported in
-                    # the cancelled envelope with its failed `13.13` run and
-                    # §14.12 retry.
-                    _decorate_lifecycle_error(
-                        error,
-                        base_affected=_correction_affected(committed),
-                        base_generation_ids=committed.superseded_generation_ids,
-                        base_invalidated_views=committed.invalidated_views,
-                        base_residual_paths=committed.residual_paths,
-                        retry=Retry(
-                            command="exp2res recompute --log-id "
-                            + shlex.quote(committed.raw_log.id)
-                        ),
-                    )
-                raise
-            retry = Retry(
-                command=f"exp2res recompute --log-id {shlex.quote(captured.raw_log.id)}"
-            )
-            try:
-                recomputed = run_recompute(
-                    workspace, log_id=captured.raw_log.id, connection=connection
-                )
-            except Exp2ResError as error:
-                _decorate_lifecycle_error(
-                    error,
-                    base_affected=_correction_affected(captured),
-                    base_generation_ids=captured.superseded_generation_ids,
-                    base_invalidated_views=captured.invalidated_views,
-                    base_residual_paths=captured.residual_paths,
-                    retry=retry,
-                )
-                raise
-
-        lifecycle = _lifecycle_outcome(
-            recomputed, base_invalidated_views=captured.invalidated_views
+        return _store_correction(
+            workspace,
+            controls,
+            target_id=target.id,
+            raw_text=raw_text,
+            occurred=occurred,
+            project=project,
+            external_ref=None,
+            artifacts=artifact_values,
         )
-        lifecycle.affected_ids = _merge_affected(
-            _correction_affected(captured), lifecycle.affected_ids
-        )
-        lifecycle.generation_ids = sorted(
-            {
-                *captured.superseded_generation_ids,
-                *lifecycle.generation_ids,
-            },
-            key=lambda value: value.encode("utf-8"),
-        )
-        lifecycle.residual_paths = sorted(
-            {*captured.residual_paths, *lifecycle.residual_paths},
-            key=os.fsencode,
-        )
-        lifecycle.human_result = (
-            f"Stored correction {captured.raw_log.id}.\n" + lifecycle.human_result
-        )
-        return lifecycle
 
     _run_command(context, "correction add", operation)
+
+
+def _store_correction(
+    workspace: Path,
+    controls: Controls,
+    *,
+    target_id: str,
+    raw_text: str,
+    occurred: OccurredAt,
+    project: str | None,
+    external_ref: str | None,
+    artifacts: tuple[str, ...],
+) -> Outcome:
+    """Commit one §14.4 correction and its §13.13 rebuild, however captured.
+
+    Both capture forms reach this identical boundary: prompts, the non-prompt
+    flags, source acquisition, and consent all resolve before it, so the
+    writer authority below covers exactly the capture-and-rebuild pair.
+    """
+
+    # §8.1: one writer authority covers the §13.13 rule 4 capture
+    # boundary and the selected-lineage rebuild — no other business
+    # writer can interleave between them. Prompts and consent stay
+    # outside the lock.
+    with writer_database(workspace, reconcile=True) as connection:
+        try:
+            captured = capture_correction(
+                workspace,
+                log_id=target_id,
+                raw_text=raw_text,
+                occurred=occurred,
+                project=project,
+                external_ref=external_ref,
+                artifacts=artifacts,
+                connection=connection,
+            )
+        except OperationCancelledError as error:
+            committed = cast(
+                CorrectionOutcome | None,
+                getattr(error, "correction_outcome", None),
+            )
+            if committed is not None:
+                try:
+                    progress = record_cancelled_lifecycle(
+                        connection, log_id=committed.raw_log.id
+                    )
+                except Exception:
+                    progress = None
+                if progress is not None:
+                    error.run_ids = progress.run_ids
+                    error.lifecycle_result = progress
+                # §14.14 rule 6: the committed capture is reported in
+                # the cancelled envelope with its failed `13.13` run and
+                # §14.12 retry.
+                _decorate_lifecycle_error(
+                    error,
+                    base_affected=_correction_affected(committed),
+                    base_generation_ids=committed.superseded_generation_ids,
+                    base_invalidated_views=committed.invalidated_views,
+                    base_residual_paths=committed.residual_paths,
+                    retry=Retry(
+                        command="exp2res recompute --log-id "
+                        + shlex.quote(committed.raw_log.id)
+                    ),
+                )
+            raise
+        retry = Retry(
+            command=f"exp2res recompute --log-id {shlex.quote(captured.raw_log.id)}"
+        )
+        try:
+            recomputed = run_recompute(
+                workspace, log_id=captured.raw_log.id, connection=connection
+            )
+        except Exp2ResError as error:
+            _decorate_lifecycle_error(
+                error,
+                base_affected=_correction_affected(captured),
+                base_generation_ids=captured.superseded_generation_ids,
+                base_invalidated_views=captured.invalidated_views,
+                base_residual_paths=captured.residual_paths,
+                retry=retry,
+            )
+            raise
+
+    lifecycle = _lifecycle_outcome(
+        recomputed, base_invalidated_views=captured.invalidated_views
+    )
+    lifecycle.affected_ids = _merge_affected(
+        _correction_affected(captured), lifecycle.affected_ids
+    )
+    lifecycle.generation_ids = sorted(
+        {
+            *captured.superseded_generation_ids,
+            *lifecycle.generation_ids,
+        },
+        key=lambda value: value.encode("utf-8"),
+    )
+    lifecycle.residual_paths = sorted(
+        {*captured.residual_paths, *lifecycle.residual_paths},
+        key=os.fsencode,
+    )
+    lifecycle.human_result = (
+        f"Stored correction {captured.raw_log.id}.\n" + lifecycle.human_result
+    )
+    return lifecycle
 
 
 @app.command("recompute")

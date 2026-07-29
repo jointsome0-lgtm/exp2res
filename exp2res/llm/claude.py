@@ -29,6 +29,7 @@ from .runner import (
     RawResult,
     _read_output,
     _write_private,
+    classify_rejection_status,
     run_subprocess,
 )
 from .sandbox import (
@@ -466,10 +467,15 @@ def build_runner(config: LLMConfig, repository_root: Path) -> ContractRunner:
     reasoning_effort = validate_reasoning_effort(
         config.reasoning_effort, DEFAULT_DECLARATION
     )
+    # §29.2's configured executable, on the same terms as Codex's: validated
+    # before the session so an unusable path fails `capability_mismatch`
+    # independently of the session check.
+    claude_binary = _resolve_claude_binary(config.claude_binary_path)
     claude_config_dir = resolve_claude_config_dir(config)
     runtime = preflight_adapter(
         repository_root=repository_root,
         claude_config_dir=claude_config_dir,
+        claude_binary=claude_binary,
         declaration=DEFAULT_DECLARATION,
     )
     return ClaudeAgentRunner(
@@ -499,7 +505,12 @@ def classify_claude_failure(result: RawResult) -> tuple[str | None, bool]:
         if 500 <= status <= 599:
             return "transport_provider_error", True
         if 400 <= status <= 499:
-            return "transport_provider_error", False
+            # `api_error_status` is parsed out of the runtime's own result
+            # envelope, so it is the one rejection surface this adapter owns.
+            # An unmapped 4xx keeps the catch-all.
+            return (
+                classify_rejection_status(status) or "transport_provider_error"
+            ), False
     if result.exit_code == 0 and result.final_message_bytes is not None:
         return None, False
     channel = result.error_channel.lower()
@@ -546,4 +557,6 @@ def classify_claude_failure(result: RawResult) -> tuple[str | None, bool]:
         )
     ):
         return "transport_provider_error", True
+    # No typed status: the runtime failed before reporting one, leaving only
+    # the mixed channel, which §15.10 rule 10 lets name no rejection class.
     return "transport_provider_error", False

@@ -29,7 +29,10 @@ from exp2res.services.capture import (
     new_id,
     validate_project_label,
 )
-from exp2res.services.source_files import authorize_artifact_locators
+from exp2res.services.source_files import (
+    authorize_artifact_locators,
+    read_capture_file,
+)
 from exp2res.storage.repository import (
     get_raw_log,
     insert_evidence_item,
@@ -97,6 +100,26 @@ def validate_correction_selection(workspace: Path, *, log_id: str) -> RawLog:
     return selected
 
 
+def read_correction_source(
+    workspace: Path, *, source_path: str
+) -> tuple[str, str | None]:
+    """Acquire §14.4 non-prompt correction text under §14.2's gates.
+
+    Compatibility fails closed before the private source is opened, and the
+    caller reads outside the writer lock so no file I/O happens inside the
+    §13.13 capture-and-rebuild transaction. Unlike `capture_retro_file` this
+    resolves no local time: a correction that copies the target's placement
+    uses no local-time feature, so §14.14 rule 8's timezone requirement
+    belongs to the explicit temporal-replacement branch alone — exactly as
+    the interactive form, which accepts an already-offset-aware placement,
+    has always behaved.
+    """
+
+    require_compatible(workspace)
+    config = load_workspace_config(workspace)
+    return read_capture_file(source_path, config=config)
+
+
 def _current_fact_ids(
     connection: sqlite3.Connection, member_ids: tuple[str, ...]
 ) -> tuple[str, ...]:
@@ -139,6 +162,7 @@ def capture_correction(
     raw_text: str,
     occurred: OccurredAt,
     project: str | None,
+    external_ref: str | None = None,
     artifacts: tuple[str, ...] = (),
     clock: Clock | None = None,
     id_factory: IdFactory = new_id,
@@ -216,7 +240,10 @@ def capture_correction(
                         occurred=occurred,
                         raw_text=raw_text,
                         project=project,
-                        external_ref=None,
+                        # §14.4's non-prompt form persists the canonical real
+                        # path §29.4 authorized; prompt and stdin capture
+                        # select no filesystem object and record none.
+                        external_ref=external_ref,
                         corrects_log_id=target.id,
                         metadata={},
                     )

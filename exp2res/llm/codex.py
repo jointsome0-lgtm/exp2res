@@ -360,10 +360,16 @@ def build_runner(config: LLMConfig, repository_root: Path) -> ContractRunner:
     reasoning_effort = validate_reasoning_effort(
         config.reasoning_effort, DEFAULT_DECLARATION
     )
+    # §29.2: the configured executable, when present, replaces PATH discovery
+    # entirely, and it is validated before the session so an unusable path
+    # fails `capability_mismatch` independently of whether a session exists —
+    # naming the configuration the owner has to repair.
+    codex_binary = _resolve_codex_binary(config.codex_binary_path)
     codex_home = resolve_codex_home(config)
     runtime = preflight_adapter(
         repository_root=repository_root,
         codex_home=codex_home,
+        codex_binary=codex_binary,
         declaration=DEFAULT_DECLARATION,
     )
     return CodexCLIRunner(
@@ -421,4 +427,7 @@ def classify_codex_failure(result: RawResult) -> tuple[str | None, bool]:
         marker in channel
         for marker in (b"connection", b"tls", b"overload", b"http 5", b" 500")
     )
+    # Codex reports its failures as free-form stderr and no typed status, so
+    # under §15.10 rule 10 this adapter names no rejection class at all: the
+    # remaining outcomes are a retryable outage or the catch-all.
     return "transport_provider_error", retryable

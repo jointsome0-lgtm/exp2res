@@ -73,6 +73,38 @@ class RawResult:
     api_error_status: int | None = None
 
 
+# §15.10 rule 10 separates a stable code from the `transport_provider_error`
+# catch-all only when it names a distinct owner remedy. A refused request
+# shape means fix the build or configuration; an unserviceable model means fix
+# the `[llm]` selection. Both are non-retryable.
+#
+# The error channel names no rejection class, in any shape. §15.10 rule 9
+# acknowledges it may carry source-derived text, and nothing in a process
+# channel distinguishes what the provider wrote from what it echoed — not a
+# prose phrase, not a bare token, not a well-formed JSON error body, since
+# owner text can contain each of those verbatim. Only a typed field the
+# adapter parsed out of its own runtime's envelope qualifies, which for the
+# §15.13 CLI adapters means the reported HTTP status and nothing else. An
+# adapter whose runtime reports no such field names no rejection class: rule
+# 10 sends it to `transport_provider_error`, a less specific remedy but never
+# a wrong one. Callers apply this only after their retryable-outage markers.
+def classify_rejection_status(status: int | None) -> str | None:
+    """Name a §15.10 rule 10 rejection class from a typed provider status.
+
+    A 4xx the provider reports through a parsed envelope is the request's own
+    outcome, so its remedy is local. 404 on a fixed adapter-owned endpoint
+    can only be the `[llm]` model selection; a refused or unprocessable
+    request shape is a build or configuration fix. Every other 4xx keeps the
+    catch-all rather than being guessed into a narrower class.
+    """
+
+    if status == 404:
+        return "transport_model_unavailable"
+    if status in {400, 422}:
+        return "transport_request_rejected"
+    return None
+
+
 class ContractRunner(Protocol):
     def run_contract(self, call: PreparedCall) -> RawResult:
         """Run one physical request attempt."""

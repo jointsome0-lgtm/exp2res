@@ -11,7 +11,7 @@ import re
 import stat
 from typing import Any
 
-from .domain.models import validate_structural
+from .domain.models import validate_posix_path, validate_structural
 from .errors import (
     ConfigurationError,
     InvalidInputError,
@@ -38,6 +38,13 @@ class LLMConfig:
     model: str | None
     codex_home_env: str
     claude_config_dir_env: str
+    # §29.2: each externally-managed-session adapter names its local
+    # executable here, so a launcher shim that resolves on PATH but cannot
+    # execute under §15.12 isolation has a configured remedy. Absent keeps
+    # the adapter's own PATH discovery; a value is resolved strictly at
+    # capability time and never carries a credential.
+    codex_binary_path: str | None
+    claude_binary_path: str | None
     reasoning_effort: str
     transport_attempt_cap: int
     backoff_lower_seconds: float
@@ -80,6 +87,8 @@ DEFAULT_LLM_CONFIG = LLMConfig(
     model=None,
     codex_home_env="CODEX_HOME",
     claude_config_dir_env="CLAUDE_CONFIG_DIR",
+    codex_binary_path=None,
+    claude_binary_path=None,
     reasoning_effort="high",
     transport_attempt_cap=2,
     backoff_lower_seconds=0.25,
@@ -92,6 +101,25 @@ DEFAULT_LLM_CONFIG = LLMConfig(
     per_invocation_cost_ceiling=Decimal("5"),
     per_run_cost_ceiling=Decimal("25"),
 )
+
+
+def _adapter_binary_path(section: dict[str, Any], key: str) -> str | None:
+    """Validate one §29.2 adapter-executable key without resolving it."""
+
+    value = section.get(key)
+    if value is None:
+        return None
+    # A command name would reintroduce the PATH dependency the key exists to
+    # remove, so only an absolute POSIX path is accepted. Existence and the
+    # executable bit belong to capability preflight, which fails closed as
+    # `capability_mismatch` rather than as a configuration error.
+    if not isinstance(value, str) or not value.startswith("/"):
+        raise ConfigurationError()
+    try:
+        validate_posix_path(value)
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise ConfigurationError() from error
+    return value
 
 
 def _parse_toml(data: bytes) -> dict[str, Any]:
@@ -229,6 +257,8 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
         "model",
         "codex_home_env",
         "claude_config_dir_env",
+        "codex_binary_path",
+        "claude_binary_path",
         "reasoning_effort",
         "transport_attempt_cap",
         "backoff_lower_seconds",
@@ -252,6 +282,8 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
     claude_config_dir_env = llm_section.get(
         "claude_config_dir_env", DEFAULT_LLM_CONFIG.claude_config_dir_env
     )
+    codex_binary_path = _adapter_binary_path(llm_section, "codex_binary_path")
+    claude_binary_path = _adapter_binary_path(llm_section, "claude_binary_path")
     reasoning_effort = llm_section.get(
         "reasoning_effort", DEFAULT_LLM_CONFIG.reasoning_effort
     )
@@ -306,6 +338,8 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
         model=selected_model,
         codex_home_env=codex_home_env,
         claude_config_dir_env=claude_config_dir_env,
+        codex_binary_path=codex_binary_path,
+        claude_binary_path=claude_binary_path,
         reasoning_effort=reasoning_effort,
         transport_attempt_cap=integer(
             "transport_attempt_cap", DEFAULT_LLM_CONFIG.transport_attempt_cap

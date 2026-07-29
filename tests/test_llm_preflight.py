@@ -482,3 +482,107 @@ def test_canary_proves_closed_read_namespace_or_skips_explicitly(
             "closed with capability_mismatch"
         )
     assert result.effective is True, result.reason
+
+
+def test_configured_codex_binary_replaces_path_discovery(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #150 / §29.2: the key names the executable preflight resolves."""
+
+    stub = tmp_path / "Vera Example codex"
+    stub.write_bytes(b"\x7fELF Vera Example inert native fixture")
+    stub.chmod(0o700)
+    write_llm_config(
+        workspace,
+        'adapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n'
+        f'codex_binary_path = "{stub}"',
+    )
+    config = load_workspace_config(workspace).llm
+    assert config.codex_binary_path == str(stub)
+
+    def refuse_path_lookup(_name: str) -> str | None:
+        raise AssertionError("PATH discovery ran for a configured executable")
+
+    monkeypatch.setattr(codex_adapter.shutil, "which", refuse_path_lookup)
+    assert codex_adapter._resolve_codex_binary(config.codex_binary_path) == stub
+
+    # An absent key leaves the adapter's own discovery untouched.
+    write_llm_config(
+        workspace, 'adapter = "codex-cli"\nmodel = "gpt-5.6-sol"'
+    )
+    assert load_workspace_config(workspace).llm.codex_binary_path is None
+
+
+@pytest.mark.parametrize(
+    "state", ["missing", "not-executable", "directory"]
+)
+def test_unusable_configured_binary_fails_capability_before_transport(
+    tmp_path: Path, state: str
+) -> None:
+    """Issue #150 / §24.54: a bad path is `capability_mismatch`, not an outage."""
+
+    candidate = tmp_path / f"Vera Example {state}"
+    if state == "not-executable":
+        candidate.write_bytes(b"\x7fELF Vera Example inert native fixture")
+        candidate.chmod(0o600)
+    elif state == "directory":
+        candidate.mkdir()
+    with pytest.raises(LLMInvocationError) as caught:
+        codex_adapter._resolve_codex_binary(candidate)
+    assert caught.value.failure_code == "capability_mismatch"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ['codex_binary_path = "codex"', 'codex_binary_path = 7', 'claude_binary_path = "relative/codex"'],
+    ids=["command-name", "non-string", "relative-path"],
+)
+def test_adapter_binary_key_requires_an_absolute_posix_path(
+    workspace: Path, value: str
+) -> None:
+    """Issue #150 / §29.2: a command name would reintroduce the PATH dependency."""
+
+    write_llm_config(
+        workspace, f'adapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n{value}'
+    )
+    with pytest.raises(ConfigurationError):
+        load_workspace_config(workspace)
+
+
+def test_adapter_binary_keys_are_recognized_and_carry_no_credential(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """Issue #150 / §29.2: a local program path is not a credential slot."""
+
+    stub = tmp_path / "Vera Example claude"
+    stub.write_text("#!/bin/sh\necho 1.0.0\n", encoding="utf-8")
+    write_llm_config(
+        workspace,
+        'adapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n'
+        f'claude_binary_path = "{stub}"',
+    )
+    config = load_workspace_config(workspace).llm
+    assert config.claude_binary_path == str(stub)
+    assert "codex_binary_path" in DEFAULT_LLM_CONFIG.__dataclass_fields__
+    assert DEFAULT_LLM_CONFIG.codex_binary_path is None
+    assert DEFAULT_LLM_CONFIG.claude_binary_path is None
+
+
+def test_configured_binary_is_validated_before_the_external_session(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #150 / §29.2: an unusable path fails independently of the session."""
+
+    missing = tmp_path / "Vera Example absent codex"
+    write_llm_config(
+        workspace,
+        'adapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n'
+        f'codex_binary_path = "{missing}"',
+    )
+    config = load_workspace_config(workspace).llm
+    # No external session either: the owner must still be told which
+    # configuration to repair, so the executable check comes first.
+    monkeypatch.delenv(config.codex_home_env, raising=False)
+    with pytest.raises(LLMInvocationError) as caught:
+        codex_adapter.build_runner(config, Path(__file__).resolve().parent.parent)
+    assert caught.value.failure_code == "capability_mismatch"

@@ -272,6 +272,11 @@ class LLMInvocationError(Exp2ResError):
         # §14.14 rule 5: the command boundary reports the committed
         # processing runs a failed or cancelled invocation leaves behind.
         self.run_ids: tuple[str, ...] = ()
+        # §15.10 rule 9: the invocation boundary fills these service-owned
+        # constants so human mode can name the surface that broke. They stay
+        # out of the §14.14 envelope and out of telemetry.
+        self.failing_stage: str | None = None
+        self.failing_contract: str | None = None
 
 
 class LLMCancelledError(LLMInvocationError):
