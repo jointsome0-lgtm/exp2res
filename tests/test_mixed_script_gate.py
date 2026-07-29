@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from exp2res.domain.models import ExperienceFact
 from exp2res.errors import LLMInvocationError
 from exp2res.llm.adapter import invoke_contract
 from exp2res.llm.contracts import (
@@ -17,10 +16,13 @@ from exp2res.llm.contracts import (
     validate_output,
 )
 from exp2res.llm.registry import LLMSelection
+from exp2res.services.capture import capture_daily
+from exp2res.storage.repository import get_experience_fact
+from exp2res.storage.workspace import read_database
 
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
-from test_facts_storage import fact_values
+from test_facts_storage import make_fact, persist_fact
 from test_llm_runner import (
     CONTRACT,
     SampleContractInput,
@@ -51,13 +53,15 @@ def test_separators_split_tokens_and_single_script_runs_never_register() -> None
     )
 
 
-def test_combining_marks_continue_a_token_and_never_start_one() -> None:
-    """\u00a716.13: U+0300\u2013U+036F extends a run; a bare mark opens nothing."""
+def test_combining_marks_join_tokens_without_carrying_a_script() -> None:
+    """§16.13: U+0300–U+036F joins the maximal run but brings no script."""
 
-    # Cyrillic \u0420\u0430 + combining acute (no NFC composition) + Latin y.
+    # Cyrillic Ра + combining acute (no NFC composition) + Latin y.
     stressed = "\u0420\u0430\u0301y"
     assert mixed_script_tokens(stressed) == frozenset({stressed})
     assert mixed_script_tokens("\u0301abc") == frozenset()
+    leading = "\u0301\u042fa"  # a leading mark joins the run it precedes
+    assert mixed_script_tokens(leading) == frozenset({leading})
 
 
 def test_tokens_compare_under_nfc() -> None:
@@ -78,25 +82,8 @@ def test_json_walk_collects_tokens_from_every_nested_string() -> None:
     ) == frozenset({OWNER_TOKEN, MUTANT_TOKEN})
 
 
-def test_validate_output_rejects_invented_token_with_content_free_diagnostics() -> None:
-    """§15.1: the empty allowed set is the strictest reading — all invented."""
-
-    response = json.dumps(
-        {"value": f"Vera Example ships {MUTANT_TOKEN}", "warnings": []},
-        ensure_ascii=False,
-    ).encode("utf-8")
-    with pytest.raises(ContractValidationError) as caught:
-        validate_output(CONTRACT, response, enrich=enrich)
-    diagnostics = caught.value.diagnostics
-    assert MUTANT_TOKEN.encode("utf-8") not in diagnostics
-    decoded = json.loads(diagnostics)
-    assert decoded["errors"] == [
-        {"location": ["value"], "type": "mixed_script_token"}
-    ]
-
-
-def test_validate_output_accepts_input_carried_tokens_only() -> None:
-    """§16.13: complete NFC-equal input tokens pass; others still fail."""
+def test_validate_output_gates_on_the_input_carried_allowance() -> None:
+    """§15.1/§16.13: input tokens pass; an invented one fails content-free."""
 
     allowed = frozenset({OWNER_TOKEN})
     accepted = json.dumps(
@@ -119,9 +106,11 @@ def test_validate_output_accepts_input_carried_tokens_only() -> None:
         validate_output(
             CONTRACT, rejected, enrich=enrich, allowed_mixed_script_tokens=allowed
         )
-    decoded = json.loads(caught.value.diagnostics)
-    assert decoded["errors"][0]["location"] == ["warnings", "0", "message"]
-    assert decoded["errors"][0]["type"] == "mixed_script_token"
+    diagnostics = caught.value.diagnostics
+    assert MUTANT_TOKEN.encode("utf-8") not in diagnostics
+    assert json.loads(diagnostics)["errors"] == [
+        {"location": ["warnings", "0", "message"], "type": "mixed_script_token"}
+    ]
 
 
 def invoke_with_subject(
@@ -201,14 +190,27 @@ def test_input_carried_token_is_accepted_without_retry(workspace: Path) -> None:
     assert OWNER_TOKEN in result.output.value
 
 
-def test_stored_mixed_script_content_hydrates_without_tripwire() -> None:
+def test_stored_mixed_script_content_hydrates_without_tripwire(
+    workspace: Path,
+) -> None:
     """§16.13 binds model responses only; §12 hydration stays ungated."""
 
-    values = fact_values(
+    bundle = capture_daily(
+        workspace,
+        raw_text=f"Vera Example builds {OWNER_TOKEN}",
+        project=None,
+        clock=lambda: FIXED_NOW,
+    )
+    fact = make_fact(
+        raw_log_id=bundle.raw_log.id,
+        evidence_item_id=bundle.evidence_items[0].id,
         claim=f"Maintained the {MUTANT_TOKEN} ingestion path.",
         technologies=[OWNER_TOKEN],
+        project=None,
     )
-    direct = ExperienceFact(**values)
-    hydrated = ExperienceFact.model_validate_json(direct.model_dump_json())
+    persist_fact(workspace, fact)
+    with read_database(workspace) as connection:
+        hydrated = get_experience_fact(connection, fact.id)
+    assert hydrated is not None
     assert MUTANT_TOKEN in hydrated.claim
     assert hydrated.technologies == [OWNER_TOKEN]

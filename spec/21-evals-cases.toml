@@ -1128,7 +1128,9 @@ And the retry diagnostic names the field location and the stable code mixed_scri
 And a retry response that keeps "Городская Аналитика" in its source script inside the English claim validates
 When a source itself carries the mixed-script project token "Яndex" and a response repeats that token, byte-identical or NFC-equal
 Then the response validates without a retry because the token is input-carried rather than model-invented
-When previously stored content containing any mixed-script token hydrates from §12 storage
+
+Given previously stored content containing any mixed-script token
+When it hydrates from §12 storage
 Then no tripwire evaluation runs and hydration succeeds unchanged
 
 Given one label pair has code-point sequences "Caf\u00e9" and "Cafe\u0301" and another pair is "I" and "i"

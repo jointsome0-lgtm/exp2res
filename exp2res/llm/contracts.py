@@ -6,7 +6,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
-from typing import Any, Callable
+import re
+from typing import Any, Callable, Iterator
 import unicodedata
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -194,89 +195,47 @@ def validation_diagnostics(
 
 
 # §16.13 mixed-script tripwire: closed, Unicode-version-independent classes.
-# Letters carry a script; the continuation marks extend a token without one.
-_LATIN_RANGES = ((0x41, 0x5A), (0x61, 0x7A), (0xC0, 0xD6), (0xD8, 0xF6), (0xF8, 0x24F))
-_CYRILLIC_RANGES = ((0x400, 0x4FF), (0x500, 0x52F))
-_CONTINUATION_RANGES = ((0x300, 0x36F),)
-
-
-def _in_ranges(code_point: int, ranges: tuple[tuple[int, int], ...]) -> bool:
-    return any(low <= code_point <= high for low, high in ranges)
+# A token is a maximal run over the three classes; the combining marks join
+# a token without carrying a script.
+_LATIN_CLASS = "A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u024f"
+_CYRILLIC_CLASS = "\u0400-\u052f"
+_CONTINUATION_CLASS = "\u0300-\u036f"
+_TOKEN = re.compile(f"[{_LATIN_CLASS}{_CYRILLIC_CLASS}{_CONTINUATION_CLASS}]+")
+_LATIN = re.compile(f"[{_LATIN_CLASS}]")
+_CYRILLIC = re.compile(f"[{_CYRILLIC_CLASS}]")
 
 
 def mixed_script_tokens(text: str) -> frozenset[str]:
-    """Collect §16.13 mixed Latin/Cyrillic tokens from NFC-normalized text.
+    """Collect §16.13 mixed Latin/Cyrillic tokens from NFC-normalized text."""
 
-    A token is a maximal run of Latin-class, Cyrillic-class, and continuation
-    code points; any other code point terminates it, so hyphenated constructs
-    split into single-script tokens and never register here.
-    """
+    return frozenset(
+        token
+        for token in _TOKEN.findall(unicodedata.normalize("NFC", text))
+        if _LATIN.search(token) and _CYRILLIC.search(token)
+    )
 
-    tokens: set[str] = set()
-    current: list[str] = []
-    has_latin = False
-    has_cyrillic = False
 
-    def flush() -> None:
-        nonlocal has_latin, has_cyrillic
-        if current and has_latin and has_cyrillic:
-            tokens.add("".join(current))
-        current.clear()
-        has_latin = False
-        has_cyrillic = False
-
-    for character in unicodedata.normalize("NFC", text):
-        code_point = ord(character)
-        if _in_ranges(code_point, _LATIN_RANGES):
-            current.append(character)
-            has_latin = True
-        elif _in_ranges(code_point, _CYRILLIC_RANGES):
-            current.append(character)
-            has_cyrillic = True
-        elif _in_ranges(code_point, _CONTINUATION_RANGES):
-            if current:
-                current.append(character)
-        else:
-            flush()
-    flush()
-    return frozenset(tokens)
+def _json_strings(
+    value: object, location: tuple[str | int, ...] = ()
+) -> Iterator[tuple[tuple[str | int, ...], str]]:
+    if isinstance(value, str):
+        yield location, value
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            yield from _json_strings(child, (*location, str(key)))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _json_strings(child, (*location, index))
 
 
 def mixed_script_tokens_in_json(value: object) -> frozenset[str]:
     """Collect the mixed-script tokens of every string in a JSON value."""
 
-    tokens: set[str] = set()
-    if isinstance(value, str):
-        tokens.update(mixed_script_tokens(value))
-    elif isinstance(value, dict):
-        for child in value.values():
-            tokens.update(mixed_script_tokens_in_json(child))
-    elif isinstance(value, list):
-        for child in value:
-            tokens.update(mixed_script_tokens_in_json(child))
-    return frozenset(tokens)
-
-
-def _find_invented_mixed_token(
-    value: object,
-    allowed: frozenset[str],
-    location: tuple[str | int, ...] = (),
-) -> tuple[str | int, ...] | None:
-    if isinstance(value, str):
-        for token in mixed_script_tokens(value):
-            if token not in allowed:
-                return location
-    elif isinstance(value, dict):
-        for key, child in value.items():
-            found = _find_invented_mixed_token(child, allowed, (*location, str(key)))
-            if found is not None:
-                return found
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            found = _find_invented_mixed_token(child, allowed, (*location, index))
-            if found is not None:
-                return found
-    return None
+    return frozenset(
+        token
+        for _location, text in _json_strings(value)
+        for token in mixed_script_tokens(text)
+    )
 
 
 def _find_service_field(
@@ -318,14 +277,12 @@ def validate_output(
     output_bytes: bytes,
     *,
     enrich: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-    allowed_mixed_script_tokens: frozenset[str] = frozenset(),
+    allowed_mixed_script_tokens: frozenset[str],
 ) -> BaseModel:
     """Parse, reject service authorship, enrich, then validate with Pydantic.
 
-    `allowed_mixed_script_tokens` is the §16.13 input-token set collected by
-    the invoking adapter from this call's serialized typed input; the default
-    empty set is the strictest reading — no input, so every mixed-script
-    response token is model-invented.
+    `allowed_mixed_script_tokens` is the §16.13 input-token set the invoking
+    adapter collects from this call's serialized typed input.
     """
 
     declared = _declared_names(contract)
@@ -351,11 +308,13 @@ def validate_output(
     # §16.13 mixed-script tripwire: a mixed Latin/Cyrillic token the call's
     # input never carried is model-invented. The diagnostic names only the
     # field location and a stable code, never the token bytes.
-    invented = _find_invented_mixed_token(decoded, allowed_mixed_script_tokens)
-    if invented is not None:
-        raise ContractValidationError(
-            _diagnostics([{"loc": invented, "type": "mixed_script_token"}], declared)
-        )
+    for location, text in _json_strings(decoded):
+        if not mixed_script_tokens(text) <= allowed_mixed_script_tokens:
+            raise ContractValidationError(
+                _diagnostics(
+                    [{"loc": location, "type": "mixed_script_token"}], declared
+                )
+            )
     try:
         candidate = decoded if enrich is None else enrich(deepcopy(decoded))
     except ContractValidationError:

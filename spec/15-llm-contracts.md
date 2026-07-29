@@ -132,7 +132,7 @@ Each fact output selects its supporting evidence explicitly through `evidence_it
 
 The extractor's emitted `confidence` must satisfy §9.4's deterministic ceiling and its materially-conflicting-context cap for the selected evidence, and may be conservatively lower.
 
-Proper nouns and identifiers follow §16.13's script-fidelity rule: a fact that names a source-named entity — a project label, product or organization name, acronym, or identifier — reproduces the source's spelling in its source script and never transliterates, romanizes, or mixes scripts within it. Where English prose needs a gloss, the source-script token stays and the gloss is added beside it; the gloss never replaces the token.
+Proper nouns and identifiers in extracted facts follow §16.13's script-fidelity rule — source-script spelling, never transliteration; the gloss convention and the deterministic tripwire live in §16.13, and rule 10 above binds every contract to them, extractor included.
 
 Every fact output carries every model-authored §11.4 field shown above; Stage 3 supplies the service-owned fields per §15.11. Optional/default model-authored fields are explicit in the contract so a model change cannot silently fall outside the structured boundary.
 
