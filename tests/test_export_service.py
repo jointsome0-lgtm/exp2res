@@ -187,7 +187,7 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
             "left_ref_type, left_ref_id, right_ref_type, right_ref_id, "
             "metadata_json, produced_by_run_id, generation_id) VALUES "
             "('contradiction_vera_stray', '2026-07-15T12:00:00+00:00', "
-            "'Vera Example stray conflict', 'Vera Example stray description.', "
+            "'A stray conflict', 'A stray conflict description.', "
             "'experience_fact', ?, 'experience_fact', ?, '{}', ?, "
             "'generation_vera_stray')",
             (fact_id, fact_id, run_id),
@@ -208,7 +208,7 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
             "target_id, question, reason, priority, answered, "
             "produced_by_run_id, generation_id) VALUES "
             "('gap_vera_stray', '2026-07-15T12:00:00+00:00', "
-            "'experience_fact', ?, 'Which Vera Example scale applies?', "
+            "'experience_fact', ?, 'Which recorded scale applies?', "
             "'missing_scale', 'medium', 0, ?, 'generation_vera_stray')",
             (fact_id, run_id),
         )
@@ -237,7 +237,7 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
             (
                 json.dumps(
                     {
-                        "question_text": "Which Vera Example scale applies?",
+                        "question_text": "Which recorded scale applies?",
                         "question_reason": "missing_scale",
                     }
                 ),
@@ -438,14 +438,14 @@ def test_chainless_supplemental_signal_fails_export(workspace: Path) -> None:
             "supporting_fact_ids_json, counter_fact_ids_json, confidence, "
             "produced_by_run_id, generation_id) VALUES "
             "('signal_vera_chainless', '2026-07-15T12:00:00+00:00', "
-            "'execution_pattern', 'Vera Example chainless statement.', "
+            "'execution_pattern', 'A chainless signal statement.', "
             "'[]', '[]', 'low', ?, 'generation_vera_chainless')",
             (run_id,),
         )
         connection.commit()
     counterevidence = [
         {
-            "statement": "A Vera Example signal disputes the claim.",
+            "statement": "A recorded signal disputes the claim.",
             "source_ref_type": "self_signal",
             "source_ref_id": "signal_vera_chainless",
         }
@@ -478,7 +478,7 @@ def test_displaced_counterevidence_raw_log_fails_export(workspace: Path) -> None
         ).fetchone()[0]
     counterevidence = [
         {
-            "statement": "A Vera Example source disputes the claim.",
+            "statement": "A recorded source disputes the claim.",
             "source_ref_type": "raw_log",
             "source_ref_id": raw_log_id,
         }
@@ -549,8 +549,8 @@ def test_displaced_detection_targets_fail_export(workspace: Path) -> None:
             "left_ref_type, left_ref_id, right_ref_type, right_ref_id, "
             "metadata_json, produced_by_run_id, generation_id) VALUES "
             "('contradiction_vera_displaced', '2026-07-15T12:00:00+00:00', "
-            "'Vera Example displaced conflict', "
-            "'Vera Example displaced description.', "
+            "'A displaced conflict', "
+            "'A displaced conflict description.', "
             "'experience_fact', ?, 'raw_log', ?, '{}', ?, "
             "'generation_vera_displaced')",
             (fact_id, raw_log_id, run_id),
@@ -631,7 +631,7 @@ def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
     )
     counterevidence = [
         {
-            "statement": "Vera Example holds one contrary scope fact.",
+            "statement": "One contrary scope fact exists.",
             "source_ref_type": "experience_fact",
             "source_ref_id": scope_fact,
         }
@@ -750,7 +750,7 @@ def test_displaced_selected_fact_source_fails_export(
                     "contradicted",
                     counterevidence=[
                         {
-                            "statement": "Vera Example holds contrary evidence.",
+                            "statement": "Contrary evidence exists in the bundle.",
                             "source_ref_type": "experience_fact",
                             "source_ref_id": scope_fact,
                         }
@@ -807,14 +807,14 @@ def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
             "signals": [
                 {
                     "signal_type": "execution_pattern",
-                    "statement": "Vera Example repeatedly cites the first fact.",
+                    "statement": "The claim repeatedly cites the first fact.",
                     "supporting_fact_ids": [cited_fact],
                     "counter_fact_ids": [],
                     "confidence": "medium",
                 },
                 {
                     "signal_type": "execution_pattern",
-                    "statement": "Vera Example holds an uncited contrary pattern.",
+                    "statement": "An uncited contrary pattern exists.",
                     "supporting_fact_ids": [scope_fact],
                     "counter_fact_ids": [],
                     "confidence": "medium",
@@ -828,8 +828,8 @@ def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
     by_statement = {
         item.statement: item.id for item in signal_result.current_signals
     }
-    cited_signal = by_statement["Vera Example repeatedly cites the first fact."]
-    uncited_signal = by_statement["Vera Example holds an uncited contrary pattern."]
+    cited_signal = by_statement["The claim repeatedly cites the first fact."]
+    uncited_signal = by_statement["An uncited contrary pattern exists."]
     generated = run_stage6(
         workspace,
         FakeContractRunner(
@@ -843,7 +843,7 @@ def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
     )
     counterevidence = [
         {
-            "statement": "Vera Example shows a contrary recurring pattern.",
+            "statement": "A contrary recurring pattern exists.",
             "source_ref_type": "self_signal",
             "source_ref_id": uncited_signal,
         }

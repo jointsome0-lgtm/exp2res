@@ -55,7 +55,7 @@ def _persist_facts_and_completed_calls(workspace: Path):
         ExperienceFact(
             id="fact_" + "a" * 32,
             created_at=FIXED_NOW,
-            claim="Vera Example selected derived fact.",
+            claim="Designed the selected derived fact.",
             context="independent_project",
             ownership_level="built",
             occurred=selected.raw_log.occurred,
@@ -66,7 +66,7 @@ def _persist_facts_and_completed_calls(workspace: Path):
         ExperienceFact(
             id="fact_" + "b" * 32,
             created_at=FIXED_NOW.replace(hour=13),
-            claim="Vera Example unrelated derived fact.",
+            claim="Designed an unrelated derived fact.",
             context="independent_project",
             ownership_level="built",
             occurred=retained.raw_log.occurred,
@@ -133,7 +133,7 @@ def _persist_signal(workspace: Path, fact_id: str) -> SelfSignal:
         id="signal_" + "f" * 32,
         created_at=FIXED_NOW,
         signal_type="execution_pattern",
-        statement="Vera Example repeats a provenance-aware workflow.",
+        statement="You repeat a provenance-aware workflow.",
         supporting_fact_ids=[fact_id],
         confidence="medium",
     )
@@ -177,7 +177,7 @@ def test_automation_cannot_rewrite_or_delete_but_owner_deletion_cascades(
         with pytest.raises(sqlite3.OperationalError):
             connection.execute(
                 "UPDATE raw_logs SET raw_text = ? WHERE id = ?",
-                ("Vera Example forbidden rewrite", bundle.raw_log.id),
+                ("An illegal rewrite", bundle.raw_log.id),
             )
         with pytest.raises(sqlite3.OperationalError):
             connection.execute("DELETE FROM raw_logs WHERE id = ?", (bundle.raw_log.id,))
@@ -447,15 +447,15 @@ def test_owner_delete_purges_detections_and_answer_log_fk_cannot_block(
         created_at=FIXED_NOW,
         target_type="experience_fact",
         target_id=facts[0].id,
-        question="Vera Example open question?",
+        question="Which open question remains?",
         reason="weak_evidence",
         priority="medium",
     )
     contradiction = Contradiction(
         id="contradiction_" + "a" * 32,
         created_at=FIXED_NOW,
-        title="Vera Example conflict",
-        description="Vera Example conflicting statements.",
+        title="A recorded conflict",
+        description="Two supplied records conflict.",
         left_ref_type="experience_fact",
         left_ref_id=facts[0].id,
         right_ref_type="raw_log",

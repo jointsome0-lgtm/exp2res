@@ -320,7 +320,7 @@ def test_interrupted_gap_answer_cleanup_reports_the_stale_set(
             "target_id, question, reason, priority, answered, "
             "produced_by_run_id, generation_id) VALUES "
             "('gap_vera_interrupt', '2026-07-15T12:00:00+00:00', "
-            "'experience_fact', ?, 'Which Vera Example scale applies?', "
+            "'experience_fact', ?, 'Which recorded scale applies?', "
             "'missing_scale', 'medium', 0, ?, 'generation_vera_interrupt')",
             (fact_id, run_id),
         )

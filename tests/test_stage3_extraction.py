@@ -277,7 +277,7 @@ def test_happy_path_persists_governing_provenance_and_telemetry(
     )
     warning = {
         "type": "missing_artifact",
-        "message": "Vera Example has no linked artifact in this lineage.",
+        "message": "This lineage has no linked artifact.",
     }
     fake = FakeContractRunner(
         [fact_response([items[0].id], warnings=[warning])]
@@ -1191,7 +1191,7 @@ def test_business_commit_failure_rolls_back_fact_and_fails_run(
             return super().__call__(kind)
 
     first = json.loads(fact_response([items[0].id]))["facts"][0]
-    second = {**first, "claim": "Vera Example designed a second atomic fact."}
+    second = {**first, "claim": "Designed a second atomic fact."}
     response = json.dumps(
         {"facts": [first, second], "warnings": []},
         separators=(",", ":"),

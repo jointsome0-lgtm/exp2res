@@ -53,8 +53,8 @@ def two_signal_response(fact_id: str, *, suffix: str) -> bytes:
     first = json.loads(signal_response([fact_id]).decode("utf-8"))["signals"][0]
     second = dict(first)
     second["signal_type"] = "interest_signal"
-    second["statement"] = f"Vera Example interest signal {suffix}."
-    first["statement"] = f"Vera Example execution signal {suffix}."
+    second["statement"] = f"You show recurring interest {suffix}."
+    first["statement"] = f"You show recurring execution {suffix}."
     return json.dumps(
         {"signals": [second, first], "warnings": []}, separators=(",", ":")
     ).encode("utf-8")
@@ -66,7 +66,7 @@ def test_generate_envelope_replaces_and_keeps_unlisted_result_null(
     fact_id = prepare_facts(workspace, SignalIds())[0]
     payload = signal_response(
         [fact_id],
-        warnings=[{"type": "vera_note", "message": "Vera Example note."}],
+        warnings=[{"type": "vera_note", "message": "One supplied record carries a synthetic note."}],
     )
     fake = FakeContractRunner([payload, payload, payload])
     install_fake_execution(monkeypatch, fake)

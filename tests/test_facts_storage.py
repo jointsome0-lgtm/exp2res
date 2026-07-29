@@ -61,7 +61,7 @@ def fact_values(**overrides: object) -> dict[str, object]:
         "id": FACT_A,
         "created_at": FIXED_NOW,
         "superseded_at": None,
-        "claim": "Vera Example built an offline provenance store.",
+        "claim": "Built an offline provenance store.",
         "claim_kind": "observed_fact",
         "project": " Exp2Res ",
         "role": "Engineer",
@@ -491,7 +491,7 @@ def test_fact_lifecycle_guards_allow_only_one_supersession_and_owner_purge(
     with writer_database(workspace) as connection:
         with pytest.raises(sqlite3.IntegrityError, match="experience_fact_lifecycle_only"):
             connection.execute(
-                "UPDATE experience_facts SET claim = 'Vera Example rewrite' WHERE id = ?",
+                "UPDATE experience_facts SET claim = 'An illegal rewrite' WHERE id = ?",
                 (fact.id,),
             )
         with pytest.raises(sqlite3.IntegrityError, match="experience_fact_owner_purge_required"):
@@ -1223,14 +1223,14 @@ def test_detection_models_storage_hydration_and_lifecycle_guards(
         created_at=FIXED_NOW,
         target_type="experience_fact",
         target_id=fact.id,
-        question="What scale did Vera Example validate?",
+        question="What scale did you validate here?",
         reason="missing_scale",
         priority="medium",
     )
     contradiction = Contradiction(
         id="contradiction_vera_storage",
         created_at=FIXED_NOW,
-        title="Vera Example scope conflict",
+        title="A scope conflict",
         description="The supplied fact and record describe different scopes.",
         left_ref_type="experience_fact",
         left_ref_id=fact.id,
@@ -1259,12 +1259,12 @@ def test_detection_models_storage_hydration_and_lifecycle_guards(
     with writer_database(workspace) as connection:
         with pytest.raises(sqlite3.IntegrityError, match="gap_question_lifecycle_only"):
             connection.execute(
-                "UPDATE gap_questions SET question = 'Vera Example rewrite' WHERE id = ?",
+                "UPDATE gap_questions SET question = 'An illegal rewrite' WHERE id = ?",
                 (gap.id,),
             )
         with pytest.raises(sqlite3.IntegrityError, match="contradiction_lifecycle_only"):
             connection.execute(
-                "UPDATE contradictions SET title = 'Vera Example rewrite' WHERE id = ?",
+                "UPDATE contradictions SET title = 'An illegal rewrite' WHERE id = ?",
                 (contradiction.id,),
             )
         with pytest.raises(sqlite3.IntegrityError, match="gap_question_owner_purge_required"):
@@ -1312,14 +1312,14 @@ def test_detection_insert_reference_validation_distinguishes_failure_kinds(
         created_at=FIXED_NOW,
         target_type="raw_log",
         target_id="log_vera_missing",
-        question="What evidence is missing for Vera Example?",
+        question="What evidence is missing for this fact?",
         reason="weak_evidence",
         priority="low",
     )
     contradiction = Contradiction(
         id="contradiction_vera_invalid_ref",
         created_at=FIXED_NOW,
-        title="Vera Example missing reference",
+        title="A missing reference conflict",
         description="One typed reference does not resolve.",
         left_ref_type="raw_log",
         left_ref_id=bundle.raw_log.id,
@@ -1393,7 +1393,7 @@ def test_gap_answered_iff_check_rejects_half_transitions(workspace: Path) -> Non
                     "gap_vera_half_answer",
                     FIXED_NOW.isoformat(),
                     bundle.raw_log.id,
-                    "What context is missing for Vera Example?",
+                    "What context is missing for this fact?",
                     RUN_A,
                     GEN_A,
                 ),

@@ -184,7 +184,7 @@ def test_gaps_only_global_mirrors_open_questions(workspace: Path) -> None:
                 {
                     "target_type": "raw_log",
                     "target_id": log.id,
-                    "question": "What scale did Vera Example validate?",
+                    "question": "What scale did you validate here?",
                     "reason": "missing_scale",
                     "priority": "medium",
                 }
@@ -207,7 +207,7 @@ def test_gaps_only_global_mirrors_open_questions(workspace: Path) -> None:
             "self_claims": [
                 {
                     "claim": (
-                        "Current evidence suggests Vera Example has open questions, "
+                        "Current evidence suggests open questions, "
                         "not conclusions."
                     ),
                     "claim_kind": "narrative_summary",
@@ -215,7 +215,7 @@ def test_gaps_only_global_mirrors_open_questions(workspace: Path) -> None:
                     "source_signal_ids": [],
                     "source_fact_ids": [],
                     "confidence": "unknown",
-                    "uncertainty": "Vera Example has no extracted facts yet.",
+                    "uncertainty": "No extracted facts exist yet.",
                 }
             ],
             "warnings": [],
@@ -495,7 +495,7 @@ def test_repository_fk_born_state_and_update_trigger(workspace: Path) -> None:
         id="claim_vera_missing",
         created_at=FIXED_NOW,
         snapshot_id="snapshot_vera_missing",
-        claim="Vera Example missing owner claim.",
+        claim="A claim missing its owner snapshot.",
         claim_kind="hypothesis",
         dimension="gap",
         source_signal_ids=[],
@@ -523,7 +523,7 @@ def test_repository_fk_born_state_and_update_trigger(workspace: Path) -> None:
             created_at=FIXED_NOW,
             superseded_at=FIXED_NOW,
             snapshot_id=result.snapshot.id,
-            claim="Vera Example born superseded claim.",
+            claim="A claim born superseded.",
             claim_kind="hypothesis",
             dimension="gap",
             source_signal_ids=[],
@@ -535,7 +535,7 @@ def test_repository_fk_born_state_and_update_trigger(workspace: Path) -> None:
             id="claim_vera_born_verified",
             created_at=FIXED_NOW,
             snapshot_id=result.snapshot.id,
-            claim="Vera Example born verified claim.",
+            claim="A claim born verified.",
             claim_kind="hypothesis",
             dimension="gap",
             source_signal_ids=[],
@@ -597,7 +597,7 @@ def test_repository_fk_born_state_and_update_trigger(workspace: Path) -> None:
         )
         with pytest.raises(sqlite3.IntegrityError, match="self_claim_lifecycle_only"):
             connection.execute(
-                "UPDATE self_claims SET claim = 'Vera Example mutation.' WHERE id = ?",
+                "UPDATE self_claims SET claim = 'An illegal mutation.' WHERE id = ?",
                 (claim_id,),
             )
         connection.rollback()
@@ -625,7 +625,7 @@ def test_stage5_replacement_invalidates_claims_snapshot_and_reports_view(
     stale_set = plant_assessment_set(workspace, assessed.snapshot_id)
     replaced = run_stage5(
         workspace,
-        FakeContractRunner([signal_response(list(facts), statement="Vera Example replacement signal.")]),
+        FakeContractRunner([signal_response(list(facts), statement="A replacement signal statement.")]),
         ids,
     )
     assert replaced.superseded_snapshot_ids == (assessed.snapshot_id,)
