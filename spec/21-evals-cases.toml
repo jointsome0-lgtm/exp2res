@@ -1827,3 +1827,31 @@ When §16.12 validates a byte-verified excerpt of that text
 Then the excerpt is source voice, violates no §16.14 rule, and is never rewritten or blocked
 And a faithfully preserved job-description demand phrased about "the candidate" characterizes the vacancy, not the owner
 '''
+
+["21.55"]
+title = "The Static Mirror Page Is Self-Contained, Deterministic, and Inert"
+enforces = "§13.12, §13.14 rules 2–3 and 5, §16.13, §17, §29.1–§29.2, and §30"
+case = '''
+Given a current assessment snapshot that passes the §16.11 export gate
+When the assessment set is published twice from unchanged state
+Then the published set contains exactly report.md, report.html, self_claims.json, and manifest.json
+And manifest.json declares manifest_version 2 and lists report.html with its exact member hash
+And report.html matches its pinned golden bytes on both runs, is UTF-8 with LF line endings and exactly one final LF, and contains no export wall-clock value, nonce, workspace path, or host name
+
+Given the same published snapshot
+When report.html and report.md are compared
+Then every rendered claim with its status, uncertainty, and source trail, and every strongly supported fact, gap block, contradiction, and counterevidence entry appears in both members under the same fixed headings in the same order
+And a section with no selected row renders its heading with no filler in both members
+And neither member is rendered from the other's bytes, so report.html carries no Markdown escape sequence and needs no unescape step
+
+Given generated values containing <script>alert(1)</script>, an HTML comment, quotation marks, an ampersand entity, and an embedded line break
+When report.html renders them
+Then each value appears as text only, escaped by one total function that leaves no code point able to open or close an element or attribute
+And the document contains no script, form, iframe, object, embed, image, event-handler attribute, inline style attribute, or absolute or relative URL, and its only styling is one inline stylesheet admitted by its own SHA-256 hash under a default-src 'none' policy
+And parsing the rendered file yields no element the renderer did not emit
+
+Given an assessment set already published at the same ID-derived path under the superseded manifest_version 1 without report.html
+When the same snapshot is exported again
+Then that prior set is not matching and not current, is never read, indexed, or served as current output, and is never overwritten in place
+And publication aborts reporting its exact path as a residual, leaving the prior bytes untouched
+'''

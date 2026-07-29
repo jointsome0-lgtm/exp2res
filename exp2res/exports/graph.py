@@ -206,7 +206,7 @@ class FactSourceRenderEntry(_BundleModel):
 
 
 class AssessmentRenderInputBundle(_BundleModel):
-    manifest_version: Literal[1] = 1
+    manifest_version: Literal[2] = 2
     output_kind: Literal["assessment"] = "assessment"
     assessment_snapshots: list[SnapshotRenderEntry]
     self_claims: list[ClaimRenderEntry]

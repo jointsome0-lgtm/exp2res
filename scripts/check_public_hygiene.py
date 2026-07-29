@@ -86,17 +86,18 @@ PRIVATE_HOME_MARKERS = (b"/home/", b"/Users/", b"/root/", b"\\Users\\")
 MARKER_EXEMPT_PATHS: frozenset[str] = frozenset(
     {
         # Add only exact paths here, with a comment explaining each exception.
-        # The closed version-1 assessment golden set (§13.12) cannot carry the
-        # marker: evidence_map.json is structural by design — opaque entity
-        # IDs and enums under extra=forbid — and report.md/self_claims.json
-        # are generated prose, where §16.14 forbids the synthetic owner's
-        # personal name. Invented provenance is still enforced: the replay
-        # derives all three members in one run from marker-carrying capture
-        # input, every entity ID keeps the vera lineage, and
-        # tests/test_voice_owner_reference.py asserts the name stays out of
-        # the prose members.
+        # The closed assessment golden set (§13.12) cannot carry the marker:
+        # evidence_map.json is structural by design — opaque entity IDs and
+        # enums under extra=forbid — and report.md, report.html, and
+        # self_claims.json are generated prose, where §16.14 forbids the
+        # synthetic owner's personal name. Invented provenance is still
+        # enforced: the replay derives all four members in one run from
+        # marker-carrying capture input, every entity ID keeps the vera
+        # lineage, and tests/test_voice_owner_reference.py asserts the name
+        # stays out of the prose members.
         "tests/goldens/assessment/evidence_map.json",
         "tests/goldens/assessment/report.md",
+        "tests/goldens/assessment/report.html",
         "tests/goldens/assessment/self_claims.json",
     }
 )

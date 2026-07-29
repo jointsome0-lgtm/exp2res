@@ -54,6 +54,7 @@ def test_private_modes_idempotent_reexport_and_same_view_stale_replacement(
     assert [Path(path).name for path in first_paths] == [
         "evidence_map.json",
         "manifest.json",
+        "report.html",
         "report.md",
         "self_claims.json",
     ]
@@ -92,6 +93,40 @@ def test_noncanonical_prior_manifest_is_not_accepted_for_idempotent_reexport(
         _publish(workspace, graph)
     assert caught.value.residual_paths == (str(final),)
     assert manifest_path.read_bytes().startswith(b"{\n  ")
+
+
+def test_superseded_manifest_version_is_never_matching_or_overwritten(
+    workspace: Path,
+) -> None:
+    """§13.14 rule 2: `report.html` joined the fixed members at version 2, so a
+    version-1 set is not matching and publication reports it rather than
+    rewriting bytes whose manifest the writer has already rejected."""
+
+    graph = assessment_graph(all_sections=False)
+    _publish(workspace, graph)
+    final = workspace / "out" / "assessment" / graph.snapshot.value.id
+    manifest_path = final / "manifest.json"
+    parsed = json.loads(manifest_path.read_bytes())
+    parsed["manifest_version"] = 1
+    parsed["members"] = [
+        member for member in parsed["members"] if member["name"] != "report.html"
+    ]
+    (final / "report.html").unlink()
+    manifest_path.write_bytes(
+        json.dumps(parsed, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        + b"\n"
+    )
+    manifest_path.chmod(0o600)
+    before = _bytes(final)
+
+    with pytest.raises(ManagedOutputIncompleteError) as caught:
+        _publish(workspace, graph)
+    assert caught.value.residual_paths == (str(final),)
+    assert _bytes(final) == before
+    assert not any(
+        path.name.startswith(".exp2res-")
+        for path in (workspace / "out" / "assessment").iterdir()
+    )
 
 
 def test_reexport_after_gap_answer_replaces_prior_set(workspace: Path) -> None:

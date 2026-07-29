@@ -627,3 +627,17 @@ nodes = [
 ]
 phase = "3"
 note = "Offline scans pin the §16.14 instruction binding and keep golden generated prose free of third-person owner nouns; semantic referent judgment remains live-only"
+["21.55"]
+status = "covered"
+nodes = [
+  "tests/test_export_html.py::test_html_member_is_deterministic_and_carries_no_render_time_value",
+  "tests/test_export_html.py::test_both_report_members_render_the_same_content_in_the_same_order",
+  "tests/test_export_html.py::test_page_is_self_contained_with_no_reference_script_or_behavior",
+  "tests/test_export_html.py::test_hostile_values_stay_text_and_never_become_markup",
+  "tests/test_export_html.py::test_escape_html_is_total_normalizing_and_position_independent",
+  "tests/test_export_html.py::test_content_security_policy_admits_only_the_hashed_stylesheet",
+  "tests/test_managed_output.py::test_superseded_manifest_version_is_never_matching_or_overwritten",
+  "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
+]
+phase = "3"
+note = "The published set's fourth member is pinned by golden bytes and its manifest hash at manifest_version 2, both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'sha256-GG9XsOH4uIVsd031mfK35qwuYss83P249UPUzY8VMZk='; base-uri 'none'; form-action 'none'">
+<title>Self-Assessment Snapshot</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fbfbfa;
+  --fg: #1c1d20;
+  --muted: #5d636c;
+  --line: #e3e3df;
+  --card: #ffffff;
+  --ok: #2f6f4f;
+  --warn: #8a6320;
+  --note: #3f5f86;
+  --bad: #8f3a3a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --fg: #e7e9eb;
+    --muted: #99a0a9;
+    --line: #282c33;
+    --card: #191c21;
+    --ok: #7cc39a;
+    --warn: #d8b06a;
+    --note: #8fb0dc;
+    --bad: #e08e8e;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu,
+    "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+}
+main { max-width: 46rem; margin: 0 auto; padding: 3rem 1.25rem 4.5rem; }
+h1 { font-size: 1.55rem; letter-spacing: -0.01em; margin: 0 0 0.9rem; }
+h2 {
+  font-size: 1.02rem;
+  font-weight: 600;
+  margin: 2.4rem 0 0.8rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--line);
+}
+p { margin: 0 0 0.35rem; }
+p:last-child { margin-bottom: 0; }
+.meta { color: var(--muted); font-size: 0.9rem; }
+.key { font-weight: 600; color: var(--fg); }
+ul { list-style: none; margin: 0; padding: 0; }
+li {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.75rem 0.9rem;
+  margin: 0 0 0.6rem;
+}
+li ul { margin-top: 0.65rem; }
+li li {
+  background: none;
+  border: 0;
+  border-left: 2px solid var(--line);
+  border-radius: 0;
+  padding: 0 0 0 0.85rem;
+  margin: 0 0 0.55rem;
+}
+li li:last-child { margin-bottom: 0; }
+.field { color: var(--muted); font-size: 0.93rem; margin-top: 0.3rem; }
+.field strong { color: var(--fg); font-weight: 600; }
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}
+.tag {
+  display: inline-block;
+  font-size: 0.8rem;
+  padding: 0.02rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.tag-supported { color: var(--ok); border-color: currentColor; }
+.tag-partially_supported,
+.tag-inferred_but_acceptable { color: var(--warn); border-color: currentColor; }
+.tag-needs_clarification { color: var(--note); border-color: currentColor; }
+.tag-contradicted,
+.tag-unsupported,
+.tag-rejected { color: var(--bad); border-color: currentColor; }
+</style>
+</head>
+<body>
+<main>
+<h1>Self-Assessment Snapshot</h1>
+<p class="meta"><span class="key">Snapshot created:</span> <code>2026-07-15T12:30:00+00:00</code></p>
+<p class="meta"><span class="key">Scope:</span> <code>global</code></p>
+<section>
+<h2>1. Summary</h2>
+<ul>
+<li>
+<p>Current evidence suggests provenance-aware pattern 1.</p>
+<p class="field"><strong>Status:</strong> <span class="tag tag-supported">supported</span></p>
+<p class="field"><strong>Sources:</strong> <code>signal_vera_0001</code> (facts <code>fact_vera_0001</code>); facts <code>fact_vera_0001</code></p>
+</li>
+</ul>
+</section>
+<section>
+<h2>2. Strongly Supported Facts</h2>
+</section>
+<section>
+<h2>3. Recurring Signals</h2>
+<ul>
+<li>
+<p>You currently show a provenance-aware working pattern.</p>
+<p class="field"><strong>Status:</strong> <span class="tag tag-supported">supported</span></p>
+<p class="field"><strong>Uncertainty:</strong> Evidence remains limited to the supplied records.</p>
+<p class="field"><strong>Sources:</strong> <code>signal_vera_0001</code> (facts <code>fact_vera_0001</code>); facts <code>fact_vera_0001</code></p>
+</li>
+</ul>
+</section>
+<section>
+<h2>4. Current Strengths</h2>
+</section>
+<section>
+<h2>5. Weakly Supported Strengths</h2>
+</section>
+<section>
+<h2>6. Gaps</h2>
+</section>
+<section>
+<h2>7. Contradictions</h2>
+</section>
+<section>
+<h2>8. Risks / Failure Modes</h2>
+</section>
+<section>
+<h2>9. Unknowns and Open Questions</h2>
+<ul>
+<li>
+<p>Which exact scale did you validate?</p>
+<p class="field"><strong>Gap ID:</strong> <code>gap_vera_0001</code></p>
+<p class="field"><strong>Target:</strong> <code>experience_fact</code> <code>fact_vera_0001</code></p>
+<p class="field"><strong>Reason:</strong> missing_scale</p>
+<p class="field"><strong>Priority:</strong> <code>medium</code></p>
+</li>
+</ul>
+</section>
+<section>
+<h2>10. Counterevidence</h2>
+</section>
+</main>
+</body>
+</html>

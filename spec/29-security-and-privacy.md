@@ -14,6 +14,8 @@ An agent-backed adapter (§15.12) executes its provider calls through the isolat
 
 Serving a §30 view only on the local host's loopback interface and returning it to a local browser is local presentation, not egress or a ninth model-call site; every view-triggered workflow that reaches §15 remains an explicit foreground user-initiated §14 action under the same authority and confirmation rules.
 
+The same classification covers the file case, which needs no server at all. The §17 `report.html` member is a managed local projection under §29.1, written into `out/` with §13.14's owner-only modes like every other member; §17 requires it to carry no script, no form, and no external reference of any kind, so opening it in a local browser reads one owner-private file and performs no request. Rendering it is local presentation, adds no model-call site, and grants no network, filesystem, or callback authority beyond what the exported set already holds — and because the §30 mirror serves those same bytes, the boundary is stated once here for both.
+
 Workspace timezone, provider, and ignore selection live in the local `.exp2res/config.toml` created by §14.1; they are configuration, not commands:
 
 ```toml

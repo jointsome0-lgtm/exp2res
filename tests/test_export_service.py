@@ -1096,7 +1096,7 @@ def test_repeated_service_export_keeps_fixed_members_identical_and_writes_no_row
     first = export_assessment(
         workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
     )
-    fixed_names = {"report.md", "self_claims.json", "evidence_map.json"}
+    fixed_names = {"report.md", "report.html", "self_claims.json", "evidence_map.json"}
     first_bytes = {
         Path(path).name: Path(path).read_bytes()
         for path in first.managed_paths
