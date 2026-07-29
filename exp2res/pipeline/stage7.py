@@ -428,6 +428,10 @@ def run_assessment_verification(
                         {
                             claim.id,
                             *(item[1] for item in bundle.bundle_refs),
+                            # §12.13 telemetry names every transited entity;
+                            # contradictions stay out of bundle_refs because
+                            # they cannot ground counterevidence.
+                            *(item.id for item in current_contradictions),
                         },
                         key=_id_key,
                     )

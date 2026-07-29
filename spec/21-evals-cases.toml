@@ -420,7 +420,8 @@ And after the owner corrects the underlying records and re-extraction reruns Sta
 Given the writer emits a claim that merely restates a supplied contradiction
 When Stage 7 verifies that candidate against the supplied current contradiction set
 Then the assessment verifier returns rejected under §13.7 check 14
-And the restated conflict renders only through its §17 contradiction row
+And the claim cannot pass assessment export
+And a regenerated snapshot without the restating claim renders the conflict only through its §17 contradiction row
 
 Given a current snapshot references a gap that the owner answers afterwards
 When the snapshot is rendered or exported without regeneration

@@ -413,6 +413,13 @@ def test_verifier_input_supplies_the_current_contradiction_set(
     for call in fake.calls:
         payload = json.loads(call.serialized_input)
         assert [item["id"] for item in payload["contradictions"]] == [contradiction_id]
+    with read_database(workspace) as connection:
+        input_ids = json.loads(
+            connection.execute(
+                "SELECT input_ids_json FROM processing_runs ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+    assert contradiction_id in input_ids
 
 
 def test_superseded_snapshot_selector_is_distinct(workspace: Path) -> None:
