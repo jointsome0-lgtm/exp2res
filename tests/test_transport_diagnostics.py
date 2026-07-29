@@ -23,16 +23,25 @@ runner = CliRunner()
 pytestmark = pytest.mark.contract
 
 # Every fixture is invented provider prose, never a captured provider response.
+# Each carries its code in a provider error field, which is the only position
+# §15.10 rule 10 lets classify — a CLI wrapping the body in its own prose
+# changes nothing, and neither does the owner text such a body may quote.
 REJECTION_CASES = [
-    (b"400 Bad Request: invalid_json_schema at $.properties", "transport_request_rejected"),
-    (b'{"code":"unsupported_parameter","param":"vera_example_knob"}', "transport_request_rejected"),
-    (b'{"error":{"type":"invalid_request_error"}}', "transport_request_rejected"),
-    (b"model_not_found: vera-example-model", "transport_model_unavailable"),
     (
-        b"The model `vera-example-model` does not exist or you do not have access to it",
+        b'stream error: 400 Bad Request {"error":{"code":"invalid_json_schema"}}',
+        "transport_request_rejected",
+    ),
+    (
+        b'{"code":"unsupported_parameter","param":"vera_example_knob"}',
+        "transport_request_rejected",
+    ),
+    (b'{"error":{"type":"invalid_request_error"}}', "transport_request_rejected"),
+    (
+        b'{"error":{"message":"The model `vera-example-model` does not exist '
+        b'or you do not have access to it","code":"model_not_found"}}',
         "transport_model_unavailable",
     ),
-    (b"unsupported_model: vera-example-model", "transport_model_unavailable"),
+    (b'{"error":{"error_code":"unsupported_model"}}', "transport_model_unavailable"),
 ]
 
 
@@ -85,7 +94,7 @@ def test_claude_typed_4xx_status_still_names_the_rejection_shape() -> None:
         failed(b'{"error":{"type":"invalid_request_error"}}', api_error_status=400)
     ) == ("transport_request_rejected", False)
     assert claude_adapter.classify_claude_failure(
-        failed(b"model_not_found", api_error_status=404)
+        failed(b'{"error":{"code":"model_not_found"}}', api_error_status=404)
     ) == ("transport_model_unavailable", False)
     assert claude_adapter.classify_claude_failure(
         failed(b"Vera Example unstructured prose", api_error_status=404)
@@ -98,7 +107,7 @@ def test_rejection_classes_stay_in_the_provider_transport_exit_class(
     """§15.10 rule 10: `transport_request_rejected` is class 6, never class 7."""
 
     seed_lineage(workspace, "rejected")
-    channel = b"400 invalid_json_schema: Vera Example schema was refused"
+    channel = b'400 {"error":{"code":"invalid_json_schema"}} refused'
     install_fake_execution(
         monkeypatch, FakeContractRunner([lambda _call: failed(channel)])
     )
@@ -212,8 +221,9 @@ def test_a_retryable_outage_keeps_its_retry_despite_echoed_rejection_wording(
 ) -> None:
     """§15.10 rule 10: the channel is mixed, so an outage marker wins."""
 
+    # Field-anchored, so precedence is what decides this — not the anchor rule.
     channel = (
-        b"connection reset by peer; echoed owner text: invalid_request_error"
+        b'connection reset by peer; last body {"error":{"type":"invalid_request_error"}}'
     )
     assert classify(failed(channel)) == ("transport_provider_error", True)
 
@@ -229,13 +239,24 @@ def test_a_retryable_outage_keeps_its_retry_despite_echoed_rejection_wording(
         b"Vera Example wrote: the invalid request form was rejected by review",
         b"Vera Example wrote: an unknown model of collaboration emerged",
         b"Vera Example wrote: an unsupported parameter of the design",
+        # An owner who writes about provider errors puts the exact token in
+        # the channel; outside a provider error field it still classifies
+        # nothing, which is what a mixed surface forces.
+        b"Vera Example wrote: spent the morning on an invalid_request_error",
+        b'Vera Example wrote: the note said "model_not_found" and I moved on',
     ],
-    ids=["invalid-request-prose", "unknown-model-prose", "unsupported-parameter-prose"],
+    ids=[
+        "invalid-request-prose",
+        "unknown-model-prose",
+        "unsupported-parameter-prose",
+        "bare-token-prose",
+        "quoted-token-prose",
+    ],
 )
 def test_owner_prose_in_the_channel_never_names_a_rejection_class(
     classify, prose: bytes
 ) -> None:
-    """§15.10 rule 10: only error-code tokens and exact provider sentences."""
+    """§15.10 rule 10: only a provider error field names a class."""
 
     code, _retryable = classify(failed(prose))
     assert code == "transport_provider_error"

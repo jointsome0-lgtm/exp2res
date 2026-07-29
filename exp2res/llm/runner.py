@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 import os
 from pathlib import Path
+import re
 import signal
 import stat
 import subprocess
@@ -79,30 +80,34 @@ class RawResult:
 # the `[llm]` selection. Both are non-retryable.
 #
 # The channel is a mixed surface: §15.10 rule 9 acknowledges it may carry
-# source-derived text, so only provider error-code tokens and exact provider
-# sentences qualify as markers. Every space-separated prose fragment an owner
-# could plausibly write — "invalid request", "unknown model", "unsupported
-# parameter" — is deliberately absent even where a provider does emit it: a
-# rejection the table cannot bound falls to the catch-all, which is what rule
-# 10 prescribes rather than a marker that can name the wrong remedy. Every
-# caller runs this classification only after its retryable-outage markers, so
-# an outage whose channel happens to echo rejection wording keeps its retry.
-# An unmatched rejection stays the catch-all rather than being guessed into a
-# narrower class.
-MODEL_UNAVAILABLE_MARKERS = (
-    b"model_not_found",
-    b"model_not_supported",
-    b"unsupported_model",
-    b"does not exist or you do not have access",
+# source-derived text, so a token found anywhere in it says nothing about who
+# wrote it. Classification therefore reads field positions, not the channel:
+# only the value of a provider error-code field — the `type`/`code` pair every
+# adapter in the §15.13 lineup surfaces from the provider's own error body —
+# can name a class. Owner text that discusses `invalid_request_error`, in
+# prose or as a bare token, is never in that position and never classifies. A
+# rejection this table cannot bound falls to the catch-all, which is what rule
+# 10 prescribes rather than a marker that can name the wrong remedy: an
+# adapter emitting only a prose message keeps `transport_provider_error`, a
+# less specific remedy but never a wrong one. Every caller runs this only
+# after its retryable-outage markers, so an outage whose channel happens to
+# echo rejection wording keeps its retry.
+PROVIDER_CODE_FIELD = re.compile(
+    rb'"(?:error_)?(?:code|type)"\s*:\s*"([A-Za-z0-9_.-]+)"', re.IGNORECASE
 )
-REQUEST_REJECTED_MARKERS = (
-    b"invalid_json_schema",
-    b"invalid_request_error",
-    b"invalid_schema",
-    b"malformed_request",
-    b"unsupported_parameter",
-    b"unsupported_value",
-    b"unprocessable_entity",
+MODEL_UNAVAILABLE_CODES = frozenset(
+    {b"model_not_found", b"model_not_supported", b"unsupported_model"}
+)
+REQUEST_REJECTED_CODES = frozenset(
+    {
+        b"invalid_json_schema",
+        b"invalid_request_error",
+        b"invalid_schema",
+        b"malformed_request",
+        b"unsupported_parameter",
+        b"unsupported_value",
+        b"unprocessable_entity",
+    }
 )
 
 
@@ -114,10 +119,12 @@ def classify_rejection_shape(channel: bytes) -> str | None:
     envelope, and the model remedy is the more specific one.
     """
 
-    lowered = channel.lower()
-    if any(marker in lowered for marker in MODEL_UNAVAILABLE_MARKERS):
+    codes = {
+        match.group(1).lower() for match in PROVIDER_CODE_FIELD.finditer(channel)
+    }
+    if codes & MODEL_UNAVAILABLE_CODES:
         return "transport_model_unavailable"
-    if any(marker in lowered for marker in REQUEST_REJECTED_MARKERS):
+    if codes & REQUEST_REJECTED_CODES:
         return "transport_request_rejected"
     return None
 
