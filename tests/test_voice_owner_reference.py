@@ -43,6 +43,7 @@ def test_every_llm_instruction_block_pins_the_owner_reference_form() -> None:
     for name, block in INSTRUCTION_BLOCKS.items():
         assert "§16.14" in block, name
         assert "second person" in block, name
+        assert "first or third person" in block, name
         assert "by name" in block, name
 
 

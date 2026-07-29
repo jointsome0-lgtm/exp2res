@@ -137,8 +137,9 @@ FACT_EXTRACTOR_INSTRUCTIONS = (
     "record, interpret the answer against question_text and question_reason metadata "
     "while attributing facts to the answer record. Assign the lowest defensible "
     "confidence at or below the deterministic ceiling and at most low when the selected "
-    "context materially conflicts. Write claim text subject-free or in the second person "
-    "per §16.14; never refer to the owner in the third person or by name. Produce all "
+    "context materially conflicts. Write every natural-language field you author — claim "
+    "text, action, object, outcome, and warning messages — subject-free or in the second person "
+    "per §16.14; never refer to the owner in the first or third person or by name. Produce all "
     "output in English."
 )
 

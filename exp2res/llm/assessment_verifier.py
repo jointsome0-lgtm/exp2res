@@ -156,7 +156,7 @@ ASSESSMENT_VERIFIER_INSTRUCTIONS = (
     "phrase is diagnostic mention, not an owner reference. Apply §16.14 to every generated "
     "prose field of the candidate — the claim text and its uncertainty alike: a claim whose "
     "prose refers to the owner in "
-    "the third person or by name violates §16.14 and is rejected; candidate prose "
+    "the first or third person or by name violates §16.14 and is rejected; candidate prose "
     "has no typed source segments, so wording copied verbatim from a raw log is still "
     "the claim's own generated voice. Write your own counterevidence statements, "
     "reasons, and any suggested_rewrite in the second person or subject-free. "

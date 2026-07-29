@@ -95,8 +95,9 @@ class AssessmentWriterOutput(StrictModel):
 
 ASSESSMENT_WRITER_INSTRUCTIONS = (
     "Characterize the supplied subject facts; never score or flatter. Address the owner "
-    "in the second person (you/your) or write subject-free per §16.14; never refer to "
-    "the owner in the third person or by name. "
+    "in the second person (you/your) or write subject-free per §16.14 in every "
+    "natural-language field you author, warning messages included; never refer to "
+    "the owner in the first or third person or by name. "
     "Do not use the §16.3 flattering terms without evidence. Claims may be uncomfortable and must "
     "never be rewritten into motivational language. Avoid permanent-identity phrasing; "
     "prefer bounded language such as 'Current evidence suggests…'. Never use medical, "
