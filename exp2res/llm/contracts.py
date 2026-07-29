@@ -206,11 +206,16 @@ _CYRILLIC = re.compile(f"[{_CYRILLIC_CLASS}]")
 
 
 def mixed_script_tokens(text: str) -> frozenset[str]:
-    """Collect §16.13 mixed Latin/Cyrillic tokens from NFC-normalized text."""
+    """Collect §16.13 mixed Latin/Cyrillic tokens in NFC identity form.
+
+    Tokenization reads the code points as written; NFC applies to the
+    collected token only. Normalizing first could compose a pair out of the
+    closed classes and split the run, hiding a mixed token.
+    """
 
     return frozenset(
-        token
-        for token in _TOKEN.findall(unicodedata.normalize("NFC", text))
+        unicodedata.normalize("NFC", token)
+        for token in _TOKEN.findall(text)
         if _LATIN.search(token) and _CYRILLIC.search(token)
     )
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import unicodedata
 
 import pytest
 
@@ -71,6 +72,18 @@ def test_tokens_compare_under_nfc() -> None:
     decomposed = "\u041f\u0440e\u0301lude"  # the same run with \u00e9 decomposed
     assert mixed_script_tokens(decomposed) == frozenset({composed})
     assert mixed_script_tokens(composed) == mixed_script_tokens(decomposed)
+
+
+def test_tokenization_precedes_nfc_so_composition_cannot_hide_a_token() -> None:
+    """PR #207 review: NFC-first would split a run whose pair composes out
+    of the closed classes; raw-code-point tokenization keeps it mixed."""
+
+    # Я + e + U+0323: NFC composes e+U+0323 to U+1EB9, outside the Latin
+    # class, so normalize-then-tokenize would see a lone Cyrillic run.
+    hidden = "\u042fe\u0323"
+    assert mixed_script_tokens(hidden) == frozenset(
+        {unicodedata.normalize("NFC", hidden)}
+    )
 
 
 def test_json_walk_collects_tokens_from_every_nested_string() -> None:
