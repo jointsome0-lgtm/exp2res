@@ -168,6 +168,6 @@ Enforces §13.7, §15.4, and §17.
 
 ## §21.57 The Loopback View Serves Only Revalidated Current State
 
-Enforces §8.1, §12.14, §13.14 rules 2–3, §14.14, §14.17, §16.11, §17, §29.1–§29.2, and §30.
+Enforces §8.1, §12.14, §13.14 rules 2–3 and 5–6, §14.14, §14.17, §16.11, §17, §29.1–§29.2, and §30.
 
 ---

@@ -1910,19 +1910,22 @@ And a supported pattern_signal claim with a capability dimension renders under C
 
 ["21.57"]
 title = "The Loopback View Serves Only Revalidated Current State"
-enforces = "§8.1, §12.14, §13.14 rules 2–3, §14.14, §14.17, §16.11, §17, §29.1–§29.2, and §30"
+enforces = "§8.1, §12.14, §13.14 rules 2–3 and 5–6, §14.14, §14.17, §16.11, §17, §29.1–§29.2, and §30"
 case = '''
 Given a workspace whose current global assessment snapshot passes the §16.11 export gate and whose managed set is current output
 When `view serve` binds its default loopback address and the mirror route is requested with an explicit view-identity selector
 Then the response body is byte-identical to that set's published report.html member and is served with no re-rendering
 And repeating the request over unchanged state returns the same bytes
-And the response sets no cookie, grants no cross-origin read, ignores an ambient host cookie the browser attached, declares no-store so a revisit reaches Exp2Res rather than a cache, and carries no consumer-specific field
+And the response sets no cookie, grants no cross-origin read, ignores an ambient host cookie the browser attached, declares no-store so a revisit that reaches the network is resolved again rather than replayed from a cache, and carries no consumer-specific field
+And the same request by one exact current global snapshot ID serves those same bytes, so both of rule 3's selector forms are exercised on success
+And `view serve --host ::1` binds and serves the same routes on that authority, so the second supported loopback form is not merely advertised
 
 Given the same served workspace
 When the gap-question route is requested with the same explicit selector
 Then the page presents only the question values of that set's self_claims.json unknowns whose answered value is false
 And a question answered after synthesis is absent from the page
 And no gap ID, target, reason, priority, claim, contradiction, raw text, manifest value, or workspace path appears in the response
+And requesting that route by the same exact current global snapshot ID projects the identical question set
 
 Given a request whose selector is absent, unknown, repeated, combined with the other form, malformed, names a project scope, names the ID of a current project-scoped snapshot, or names a superseded snapshot
 When the view resolves it
@@ -1938,9 +1941,9 @@ When either route is requested
 Then the outcome is the single residual one, distinct from both the replaceable-output outcome and any unexpected-failure outcome
 And the page says the owner removes or repairs the reported residual before that export can publish
 
-Given the selected snapshot carries no single narrative_summary claim matching AssessmentSnapshot.summary, or a stored aggregate that is not a fresh reduction of its current claims
+Given the selected snapshot carries no single narrative_summary claim matching AssessmentSnapshot.summary, or a stored aggregate that is not a fresh reduction of its current claims, or the identity selector resolves to more than one current snapshot
 When either route is requested
-Then the outcome is the §16.11 integrity refusal rather than the semantic one, even when the stored status is allowlisted
+Then the outcome is the stored-state integrity refusal rather than the semantic one or a malformed-request one, even when the stored status is allowlisted
 
 Given the selected snapshot's aggregate verification status fails the §16.11 assessment-export allowlist
 When either route is requested
