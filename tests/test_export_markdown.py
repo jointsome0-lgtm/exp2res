@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 from itertools import cycle
+from typing import get_args
 
 from markdown_it import MarkdownIt
 import pytest
 
+from exp2res.domain.enums import SelfClaimDimension
+from exp2res.domain.models import SelfClaim
 from exp2res.errors import IntegrityFailureError
+from exp2res.exports.document import claim_section
 from exp2res.exports.markdown import (
     escape_generated,
     normalize_generated_text,
@@ -16,7 +20,7 @@ from exp2res.exports.markdown import (
 )
 from exp2res.exports.report import render_report
 
-from export_helpers import assessment_graph
+from export_helpers import EXPORT_TIME, assessment_graph
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.golden]
@@ -27,7 +31,7 @@ PUNCTUATION = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 EXPECTED_HEADINGS = (
     "## 1. Summary",
     "## 2. Strongly Supported Facts",
-    "## 3. Recurring Signals",
+    "## 3. Recurring Patterns and Interests",
     "## 4. Current Strengths",
     "## 5. Weakly Supported Strengths",
     "## 6. Gaps",
@@ -287,7 +291,10 @@ def test_renderer_is_byte_deterministic_and_uses_closed_order_and_empty_headings
 
     sparse = assessment_graph(all_sections=False)
     sparse_text = render_report(sparse).decode("utf-8")
-    assert "## 3. Recurring Signals\n\n## 4. Current Strengths" in sparse_text
+    assert (
+        "## 3. Recurring Patterns and Interests\n\n## 4. Current Strengths"
+        in sparse_text
+    )
     assert "placeholder" not in sparse_text.lower()
 
 
@@ -318,3 +325,55 @@ def test_unmatched_non_summary_claim_fails_closed() -> None:
     bad = replace(graph, claims=(replace(original, value=invalid),))
     with pytest.raises(IntegrityFailureError, match="assessment_claim_section_invalid"):
         render_report(bad)
+
+
+def test_signal_derived_capability_claim_renders_as_strength() -> None:
+    # §17: section selection keys on dimension and status, never on the
+    # writer's synthesis form — a pattern_signal capability claim is a
+    # strength, not a recurring-pattern row (#178).
+    graph = assessment_graph()
+    strength = next(
+        item for item in graph.claims if item.value.id == "claim_vera_strength_0001"
+    )
+    updated = strength.value.model_copy(update={"claim_kind": "pattern_signal"})
+    claims = tuple(
+        replace(item, value=updated) if item is strength else item
+        for item in graph.claims
+    )
+    text = render_report(replace(graph, claims=claims)).decode("utf-8")
+    strengths = text.split("## 4. Current Strengths", 1)[1].split(
+        "## 5. Weakly Supported Strengths", 1
+    )[0]
+    assert "You have a current strength." in strengths
+
+
+@pytest.mark.parametrize("dimension", get_args(SelfClaimDimension))
+@pytest.mark.parametrize(
+    "status",
+    (
+        "supported",
+        "partially_supported",
+        "inferred_but_acceptable",
+        "needs_clarification",
+        "contradicted",
+    ),
+)
+def test_claim_section_is_total_over_exportable_statuses(
+    dimension: str, status: str
+) -> None:
+    # §17: the closed mapping places every non-summary claim a §16.11
+    # assessment-exportable snapshot can carry, for both non-summary kinds.
+    for kind in ("pattern_signal", "hypothesis"):
+        claim = SelfClaim(
+            id="claim_vera_total_0001",
+            created_at=EXPORT_TIME,
+            snapshot_id="snapshot_vera_total_0001",
+            claim="You show a bounded characteristic.",
+            claim_kind=kind,
+            dimension=dimension,
+            source_signal_ids=["signal_vera_total_0001"],
+            source_fact_ids=[],
+            confidence="medium",
+            verification_status=status,
+        )
+        assert claim_section(claim) in range(3, 10)

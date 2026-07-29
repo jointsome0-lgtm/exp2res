@@ -22,7 +22,7 @@ from .graph import AssessmentExportGraph, id_key
 HEADINGS = (
     "1. Summary",
     "2. Strongly Supported Facts",
-    "3. Recurring Signals",
+    "3. Recurring Patterns and Interests",
     "4. Current Strengths",
     "5. Weakly Supported Strengths",
     "6. Gaps",
@@ -102,7 +102,12 @@ def claim_section(claim: SelfClaim) -> int:
         return 7
     if claim.verification_status == "needs_clarification":
         return 9
-    if claim.claim_kind == "pattern_signal":
+    if claim.dimension in {
+        "domain_interest",
+        "working_style",
+        "trajectory",
+        "identity_hypothesis",
+    }:
         return 3
     if claim.verification_status == "supported":
         return 4

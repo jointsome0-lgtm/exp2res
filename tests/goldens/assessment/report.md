@@ -10,7 +10,7 @@ Scope: global
 
 ## 2. Strongly Supported Facts
 
-## 3. Recurring Signals
+## 3. Recurring Patterns and Interests
 - You currently show a provenance-aware working pattern.
   **Status:** supported
   **Uncertainty:** Evidence remains limited to the supplied records.

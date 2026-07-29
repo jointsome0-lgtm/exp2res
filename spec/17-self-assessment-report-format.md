@@ -15,7 +15,7 @@ Scope target: <AssessmentSnapshot.scope_target when present>
 
 ## 2. Strongly Supported Facts
 
-## 3. Recurring Signals
+## 3. Recurring Patterns and Interests
 
 ## 4. Current Strengths
 
@@ -40,11 +40,11 @@ The section projection is deterministic. The unique `narrative_summary` claim re
 | 2 | `dimension` is `risk` or `constraint` (§10) | Risks / Failure Modes |
 | 3 | §16.11 status is `contradicted` | Contradictions |
 | 4 | §16.11 status is `needs_clarification` | Unknowns and Open Questions |
-| 5 | `claim_kind = "pattern_signal"` (§10) | Recurring Signals |
+| 5 | `dimension` is `domain_interest`, `working_style`, `trajectory`, or `identity_hypothesis` (§10) | Recurring Patterns and Interests |
 | 6 | §16.11 status is `supported` | Current Strengths |
 | 7 | §16.11 status is `partially_supported` or `inferred_but_acceptable` | Weakly Supported Strengths |
 
-Any non-summary claim not selected by that closed mapping makes the report invalid rather than being hidden or placed heuristically. Strongly Supported Facts is not a second claim-placement channel: it renders the current `ExperienceFact.claim` values that are reached directly or through a signal from at least one rendered `supported` claim and whose `Confidence` is the maximum member under §10, with the fact ID, supporting claim IDs, and the fact's `source_log_ids` visible. Counterevidence remains the typed projection below.
+Any non-summary claim not selected by that closed mapping makes the report invalid rather than being hidden or placed heuristically. Section selection keys on what a claim characterizes — its `dimension` — and how well the evidence supports it — its §16.11 status — never on `claim_kind`, which records synthesis form under §15.4; the unique `narrative_summary` placement above is the only kind-driven rule. A kind-keyed row would route claims by how the writer derived them: because the §13.6 writer legitimately derives most claims from recurring signals, such a row drains the strength sections into one bucket regardless of what each claim asserts. Over the statuses the §16.11 assessment-export allowlist admits, the mapping is total: rules 1 and 2 place the `gap`, `risk`, and `constraint` dimensions at any status, rule 5 places the four orientation dimensions at any status rules 3 and 4 leave, and the two capability dimensions — `technical_skill` and `execution_capacity` — fall through to rules 3, 4, 6, and 7, which together cover every admitted status; the invalid-report rule remains the defense against out-of-contract state. Strongly Supported Facts is not a second claim-placement channel: it renders the current `ExperienceFact.claim` values that are reached directly or through a signal from at least one rendered `supported` claim and whose `Confidence` is the maximum member under §10, with the fact ID, supporting claim IDs, and the fact's `source_log_ids` visible. Counterevidence remains the typed projection below.
 
 The report carries its provenance at the claim level, inline: every rendered claim block ends with one renderer-owned sources line built from the claim's stored `source_signal_ids` and `source_fact_ids` — each cited signal with its `supporting_fact_ids` and, when non-empty, its `counter_fact_ids` fan-out, then the claim's direct fact IDs, every ID list ascending by UTF-8 bytes. The line contains typed IDs and fixed renderer-owned labels only, never explanatory factual prose, and it is never empty for a rendered claim because §16.1 bars a chainless claim from export. The record-level closure — facts to evidence items to retained raw logs — is not repeated in the report: the §13.12 `evidence_map.json` companion is the complete machine-checkable typed link closure, while the report renders the claim-level trail for verification by reading. No section dumps the four link classes as standalone ID lists.
 
@@ -80,7 +80,7 @@ An open-ended range (§11.1) renders visibly open through one deterministic form
 
 The Gaps section renders status-bearing snapshot claims with `dimension = "gap"`. Unknowns and Open Questions is the one section that carries the snapshot's open questions, so the owner reads each question next to the identity §14.7 `gaps answer` needs and never joins two lists by hand. It renders no free-form snapshot prose: after its status-selected claims, for every ID in the snapshot's `gap_question_ids` — complete and unanswered as of synthesis — it renders one block presenting the referenced `GapQuestion.question` first, then the gap ID and the `target_*`, `reason`, and `priority` values as missing-information context, in gap-ID order. The unanswered blocks are the report's **open-question set** — the selection §30's gap handoff names. A question answered after synthesis renders its block with an explicit answered-since-synthesis marker and leaves the open-question set; its answer reaches the model only through extraction and the next generation. Missing, duplicate, or superseded IDs fail before rendering under §12 rule 10; a post-synthesis answer is visible state, never a rendering or export failure. These references present uncertainty under §13.6's unknown-reference boundary; question prose renders only through the referenced row.
 
-Recurring Signals may render signal-derived language only through a current `SelfClaim` referenced by the snapshot, with that claim's status and source mapping intact. The report must not dump `SelfSignal` rows as independently reviewed conclusions.
+Recurring Patterns and Interests carries the claims whose dimension names an orientation rather than a capability or a limit — `domain_interest`, `working_style`, `trajectory`, or `identity_hypothesis` — when rules 1–4 have not placed the claim first. It may render signal-derived language only through a current `SelfClaim` referenced by the snapshot, with that claim's status and source mapping intact. The report must not dump `SelfSignal` rows as independently reviewed conclusions.
 
 The Contradictions section renders every contradiction referenced by the selected current snapshot, including its title, description, and both typed source references. Superseded contradictions appear only with historical snapshot inspection, never through current export.
 
