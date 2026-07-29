@@ -65,7 +65,7 @@ def assessment_response(
             "source_signal_ids": signal_ids,
             "source_fact_ids": fact_ids,
             "confidence": confidence,
-            "uncertainty": "Evidence remains limited to the supplied Vera Example records.",
+            "uncertainty": "Evidence remains limited to the supplied records.",
         }
     ]
     for index in range(narrative_count):

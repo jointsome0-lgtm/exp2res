@@ -51,9 +51,7 @@ def test_generated_prose_in_goldens_carries_no_third_person_owner_nouns() -> Non
         lowered = text.lower()
         for noun in FORBIDDEN_OWNER_NOUNS:
             assert noun not in lowered, (member, noun)
-        # "Vera Example" is a required fixture marker (check_public_hygiene.py
-        # owns its presence); §16.14 allows it here only as a record label,
-        # never as a sentence's actor.
-        assert text.count("Vera Example") == text.count(
-            "the supplied Vera Example records"
-        ), member
+        # §16.14 forbids the owner's personal name in generated prose, so the
+        # prose goldens are marker-exempt (scripts/check_public_hygiene.py);
+        # fixture lineage lives in the vera entity IDs instead.
+        assert "vera example" not in lowered, member

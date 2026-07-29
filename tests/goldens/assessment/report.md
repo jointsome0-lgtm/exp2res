@@ -13,7 +13,7 @@ Scope: global
 ## 3. Recurring Signals
 - You currently show a provenance-aware working pattern.
   **Status:** supported
-  **Uncertainty:** Evidence remains limited to the supplied Vera Example records.
+  **Uncertainty:** Evidence remains limited to the supplied records.
   **Sources:** signal_vera_0001 (facts fact_vera_0001); facts fact_vera_0001
 
 ## 4. Current Strengths

@@ -131,7 +131,7 @@ def assessment_graph(
         if status == "contradicted":
             counterevidence = [
                 CounterevidenceItem(
-                    statement="The supplied Vera Example source supports only a prototype.",
+                    statement="The supplied source evidence supports only a prototype.",
                     source_ref_type="experience_fact",
                     source_ref_id=fact.id,
                 )
@@ -149,7 +149,7 @@ def assessment_graph(
             verification_status=status,
             counterevidence=counterevidence,
             uncertainty=(
-                "Evidence remains limited to the supplied Vera Example records."
+                "Evidence remains limited to the supplied records."
                 if status == "needs_clarification"
                 else None
             ),
