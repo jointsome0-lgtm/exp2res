@@ -417,6 +417,11 @@ Then the contradiction row renders under the fixed origin label "unadjudicated d
 And no Stage 7 verdict retires, supersedes, resolves, or annotates the detection
 And after the owner corrects the underlying records and re-extraction reruns Stage 4, the replacement generation may omit the conflict its inputs no longer support
 
+Given the writer emits a claim that merely restates a supplied contradiction
+When Stage 7 verifies that candidate against the supplied current contradiction set
+Then the assessment verifier returns rejected under §13.7 check 14
+And the restated conflict renders only through its §17 contradiction row
+
 Given a current snapshot references a gap that the owner answers afterwards
 When the snapshot is rendered or exported without regeneration
 Then the snapshot, its branches, and its bullets remain current and the assessment stays exportable
@@ -541,6 +546,7 @@ Then raw_log_id linkage preserves §9.4's same-source rule for the verifier's ju
 Given the writer cites only favorable sources while a contrary signal or contrary fact exists in the same view's §13.6 selection
 When Stage 7 assembles the bundle
 Then scope_signals and scope_facts contain the complete view selection including the uncited contrary members as rows without extra raw logs
+And contradictions contains the snapshot's complete current Stage 4 contradiction set as view context that deepens into no evidence closure
 And the verifier grounds a non-passing status on that omission and may persist a typed counterevidence reference to the omitted member
 And every counterevidence reference stays inside the claim's supplied bundle
 

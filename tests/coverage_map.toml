@@ -238,6 +238,7 @@ note = "Stage 3 fact ceilings, Stage 5 signal propagation caps, and Stage 6 clai
 status = "covered"
 nodes = [
   "tests/test_stage7_verification.py::test_exact_closure_is_ordered_and_projects_displaced_support",
+  "tests/test_stage7_verification.py::test_verifier_input_supplies_the_current_contradiction_set",
 ]
 
 ["21.33"]

@@ -11,6 +11,7 @@ from exp2res.domain.enums import (
     CounterevidenceRefType,
 )
 from exp2res.domain.models import (
+    Contradiction,
     EvidenceItem,
     ExperienceFact,
     RawLog,
@@ -42,6 +43,7 @@ class AssessmentVerifierInput(StrictModel):
         max_length=1_000
     )
     source_logs: list[RawLog] = Field(max_length=1_000)
+    contradictions: list[Contradiction] = Field(max_length=1_000)
 
     @field_validator(
         "source_signals",
@@ -50,6 +52,7 @@ class AssessmentVerifierInput(StrictModel):
         "source_facts",
         "source_evidence_items",
         "source_logs",
+        "contradictions",
     )
     @classmethod
     def objects_are_id_ordered(cls, value: list[object]) -> list[object]:
@@ -140,7 +143,10 @@ ASSESSMENT_VERIFIER_INSTRUCTIONS = (
     "recurring orientation, and constraint, risk, or gap for a limit, failure mode, "
     "or missing evidence; a dimension that mis-categorizes the claim's assertion is "
     "rejected, except on the narrative_summary claim, which synthesizes across "
-    "categories and is not judged for its dimension. "
+    "categories and is not judged for its dimension. A claim that merely restates "
+    "a supplied contradiction instead of asserting its own evidence-grounded "
+    "content is rejected; a detection renders through its own report row, never "
+    "as an independent prose channel. "
     "Normalize ownership-bearing phrases to OwnershipLevel and compare the "
     "canonical order; absent ownership evidence supports only unknown, and an "
     "unnormalizable phrase fails closed. Metrics must occur in source logs, imported "
@@ -182,7 +188,7 @@ ASSESSMENT_VERIFIER_CONTRACT = ContractDefinition(
     contract_id="assessment-verifier",
     output_model=AssessmentVerifierOutput,
     fixed_instructions=ASSESSMENT_VERIFIER_INSTRUCTIONS,
-    schema_revision="1",
+    schema_revision="2",
     service_owned_fields=frozenset(
         {
             "id",
