@@ -1929,9 +1929,17 @@ When the view resolves it
 Then it fails closed in its §30 rule 7 outcome under that row's literal class, no snapshot is chosen by a default or latest-of-several rule, and no response reflects the request bytes back
 And the project-scoped ID is refused as the deferred slice rather than served through the ID form
 
-Given the selected snapshot's managed set is missing, stale by a §13.14 render-input change, invalidated by a later gap answer, or published under a superseded manifest_version
+Given the selected snapshot's managed set is missing, stale by a §13.14 render-input change, or invalidated by a later gap answer
 When either route is requested
 Then no partial, cached, or re-rendered content is served and the fail-closed page names the §14.9 export the owner must run
+
+Given the final ID path instead holds a set §13.14 rule 5 will not overwrite — incomplete, invalid-manifest, or published under a superseded manifest_version
+When either route is requested
+Then the outcome is distinct from the replaceable-output one and the page says the owner removes the reported residual before that export can publish
+
+Given the selected snapshot carries no single narrative_summary claim matching AssessmentSnapshot.summary, or a stored aggregate that is not a fresh reduction of its current claims
+When either route is requested
+Then the outcome is the §16.11 integrity refusal rather than the semantic one, even when the stored status is allowlisted
 
 Given the selected snapshot's aggregate verification status fails the §16.11 assessment-export allowlist
 When either route is requested
@@ -1945,8 +1953,14 @@ And the body-declaring request is refused as malformed without being read
 And every response of either kind declares text/html; charset=utf-8, Cache-Control: no-store, and its literal Exp2Res-View-Outcome class
 And the served mirror body states no outcome metadata, so it stays byte-identical to the published member
 
-Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority, declared origin, or fetch-metadata site declaration is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
+Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
 Then the bind fails closed in exit class 2 before any socket is served, each request is refused without reading business state, and no diagnostic line echoes request bytes
 And serving takes no writer lock, writes no business row, managed output, or telemetry row, and makes no §15 call or outbound connection
+And an otherwise accepted request carrying a cross-site or same-site fetch-metadata declaration is served, because the shell embeds the view from its own origin by URL
+
+Given a request percent-encoding a structural token, as in /m%69rror or ?%73cope=global, and a request percent-encoding a selector value once and another encoding it twice
+When each is handled
+Then the structural encodings are refused as route_not_found or invalid_selector without being decoded into a match
+And the singly encoded value is decoded exactly once and interpreted as UTF-8, while the doubly encoded one resolves to nothing rather than to another selector
 '''
