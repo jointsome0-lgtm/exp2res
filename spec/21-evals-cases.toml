@@ -1916,7 +1916,7 @@ Given a workspace whose current global assessment snapshot passes the §16.11 ex
 When `view serve` binds its default loopback address and the mirror route is requested with an explicit view-identity selector
 Then the response body is byte-identical to that set's published report.html member and is served with no re-rendering
 And repeating the request over unchanged state returns the same bytes
-And the response sets no cookie, grants no cross-origin read, declares no-store so a revisit reaches Exp2Res rather than a cache, and carries no consumer-specific field
+And the response sets no cookie, grants no cross-origin read, ignores an ambient host cookie the browser attached, declares no-store so a revisit reaches Exp2Res rather than a cache, and carries no consumer-specific field
 
 Given the same served workspace
 When the gap-question route is requested with the same explicit selector
@@ -1942,7 +1942,8 @@ Given a HEAD request for the mirror route with an accepted selector, and a GET r
 When each is handled
 Then the HEAD response carries the GET's status and headers with an empty body after the same resolution and revalidation
 And the body-declaring request is refused as malformed without being read
-And every response of either kind declares text/html; charset=utf-8 and Cache-Control: no-store
+And every response of either kind declares text/html; charset=utf-8, Cache-Control: no-store, and its literal Exp2Res-View-Outcome class
+And the served mirror body states no outcome metadata, so it stays byte-identical to the published member
 
 Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
