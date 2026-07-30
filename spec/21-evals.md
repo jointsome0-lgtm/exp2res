@@ -174,4 +174,8 @@ Enforces §8.1, §12.14, §13.14 rules 2–3 and 5–6, §14.14, §14.17, §16.1
 
 Enforces §12 rule 13, §12.15, §13.4, and §14.7.
 
+## §21.59 Displaced Support Is Selected in Scope or Reported Unused
+
+Enforces §9.4, §13.3 rules 10 and 14, §14.6, §14.14, and §15.2.
+
 ---

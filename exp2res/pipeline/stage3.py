@@ -294,6 +294,44 @@ def _resolve_for(
     return resolve
 
 
+def _unselected_support_warnings(
+    lineages: Sequence[_ResolvedLineage],
+) -> tuple[ContractWarning, ...]:
+    """§13.3 rule 14: report supplied displaced support no fact selected.
+
+    Presentation only — the warning gates nothing, persists nowhere, and
+    recurs on every such run; legitimate off-topic omission exists, but a
+    silent one would leave §9.4's descriptor-borne ceilings unreachable
+    without an owner-visible trace (§15.2).
+    """
+
+    warnings: list[ContractWarning] = []
+    for lineage in lineages:
+        descriptors = lineage.context.displaced_support_items
+        if not descriptors:
+            continue
+        selected = {
+            item_id
+            for fact in lineage.facts
+            for item_id in fact.evidence_item_ids
+        }
+        if any(descriptor.id in selected for descriptor in descriptors):
+            continue
+        descriptor_ids = ", ".join(
+            sorted((descriptor.id for descriptor in descriptors), key=_id_key)
+        )
+        warnings.append(
+            ContractWarning(
+                type="displaced_support_unselected",
+                message=(
+                    f"Lineage {lineage.context.root_id}: no replacement fact "
+                    f"selects displaced support {descriptor_ids}."
+                ),
+            )
+        )
+    return tuple(warnings)
+
+
 def _current_fact_ids_for_lineage(
     connection: sqlite3.Connection, member_ids: tuple[str, ...]
 ) -> tuple[str, ...]:
@@ -540,9 +578,14 @@ def run_fact_extraction(
                 ),
                 residual_paths=residuals,
                 warnings=tuple(
-                    warning
-                    for item in resolved_lineages
-                    for warning in item.warnings
+                    (
+                        *(
+                            warning
+                            for item in resolved_lineages
+                            for warning in item.warnings
+                        ),
+                        *_unselected_support_warnings(resolved_lineages),
+                    )
                 ),
             )
 

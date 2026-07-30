@@ -952,6 +952,69 @@ def test_confidence_ceiling_and_independent_displaced_support(
 
 
 @pytest.mark.lifecycle
+def test_wholly_unselected_displaced_support_reports_deterministic_warning(
+    workspace: Path,
+) -> None:
+    """§13.3 rule 14: unused supplied descriptors surface one warning per lineage."""
+
+    root, root_items, _correction, correction_items = displaced_lineage(workspace)
+    ids = TestIds()
+    unselected = run_stage3(
+        workspace,
+        FakeContractRunner([fact_response([correction_items[0].id])]),
+        ids,
+        log_id=root.id,
+    )
+    # The warning is presentation only: the replacement generation persists.
+    assert len(unselected.created) == 1
+    assert [
+        (warning.type, warning.message) for warning in unselected.warnings
+    ] == [
+        (
+            "displaced_support_unselected",
+            f"Lineage {root.id}: no replacement fact selects displaced "
+            f"support {root_items[1].id}.",
+        )
+    ]
+
+    repeated = run_stage3(
+        workspace,
+        FakeContractRunner([fact_response([correction_items[0].id])]),
+        ids,
+        log_id=root.id,
+    )
+    assert [warning.type for warning in repeated.warnings] == [
+        "displaced_support_unselected"
+    ]
+
+    selected = run_stage3(
+        workspace,
+        FakeContractRunner(
+            [fact_response([correction_items[0].id, root_items[1].id])]
+        ),
+        ids,
+        log_id=root.id,
+    )
+    assert selected.warnings == ()
+
+    _log, plain_items = add_log(
+        workspace,
+        log_id="log_vera_no_descriptors",
+        recorded_at=FIXED_NOW - timedelta(minutes=10),
+        raw_text="Vera Example logged a lineage with no correction.",
+        occurred=month(),
+        item_specs=(("evi_vera_no_descriptors", "manual_claim"),),
+    )
+    plain = run_stage3(
+        workspace,
+        FakeContractRunner([fact_response([plain_items[0].id])]),
+        ids,
+        log_id="log_vera_no_descriptors",
+    )
+    assert plain.warnings == ()
+
+
+@pytest.mark.lifecycle
 def test_zero_lineage_workspace_completes_empty_run_without_call(
     workspace: Path,
 ) -> None:

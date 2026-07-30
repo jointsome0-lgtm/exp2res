@@ -124,7 +124,7 @@ exp2res facts list
 exp2res facts show --fact-id fact_001
 ```
 
-Extraction follows the correction-lineage replacement and current-generation rules in §13.3; invalidation and regeneration reporting follow §13.3 rule 12 and §13.13 rule 9.
+Extraction follows the correction-lineage replacement and current-generation rules in §13.3; invalidation and regeneration reporting follow §13.3 rule 12 and §13.13 rule 9. A lineage whose supplied displaced-record support went unselected by every replacement fact surfaces §13.3 rule 14's `displaced_support_unselected` warning through the ordinary §14.14 `warnings` list in both output modes.
 
 Stage 3 is where the owner's words become the system's typed claims, so `facts show` renders that translation without a formatter: its human mode prints the selected fact as labeled lines carrying every §11.4 field except the inert service `metadata` map — ID, creation time, claim text, claim kind, ownership level, activity context, project, role, company, action, object, outcome, skills, technologies, themes, `occurred` placement, confidence, and the source log and evidence-item IDs. The rendering formats exactly the values §14.14 rule 5's `facts show` result already carries in full; that envelope is unchanged, and no record's `raw_text` is reached or printed.
 
