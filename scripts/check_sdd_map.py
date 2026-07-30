@@ -16,6 +16,7 @@ LINE_BUDGET = 250
 INDEX_HEADING = "## § Index"
 BULLET_RE = re.compile(r"^- \S")
 SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
+DECISION_LOG_BULLET_RE = re.compile(r"^- Decision Log — \S")
 SPEC_FILE_RE = re.compile(r"^([0-9]+)-.+\.md$")
 
 
@@ -100,7 +101,7 @@ def main() -> int:
                 errors.append(f"index line has no routing text: {bullet.rstrip()}")
         elif bullet.startswith("- §"):
             errors.append(f"malformed § index anchor (canonical form is §N): {bullet[:60]}…")
-        elif bullet.startswith("- Decision Log"):
+        elif DECISION_LOG_BULLET_RE.match(bullet):
             decision_log_bullets += 1
         else:
             errors.append(f"unowned § Index bullet: {bullet[:60]}…")
