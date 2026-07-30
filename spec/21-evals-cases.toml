@@ -1961,11 +1961,12 @@ When either route is requested
 Then the outcome is a completed semantic refusal that names the §14.9 verification for an unverified snapshot and the §14.9 generation for a completed negative verdict, and is distinguishable from every operational failure outcome
 And a snapshot that fails that allowlist while its managed set is also stale or invalidated still completes as exactly that refusal, because §30 rule 7 orders the gate before revalidation
 
-Given HEAD requests for both routes with accepted selectors, a HEAD request for the questions route whose matching-digest companion fails its closed schema, and a GET request declaring a body
+Given HEAD requests for both routes with accepted selectors, a HEAD request for the questions route whose matching-digest companion fails its closed schema, a GET request declaring a body, and a POST request declaring a body
 When each is handled
 Then each HEAD response carries its corresponding GET status and headers with an empty body after the same resolution and revalidation
 And the questions HEAD performs companion validation, returning served for the valid set and question_companion_invalid for the invalid one without emitting either page body
-And the body-declaring request is refused as malformed without being read
+And the body-declaring GET is refused as malformed_request without being read
+And the body-declaring POST is refused as method_not_allowed before the body check, declares exactly `Allow: GET, HEAD`, and is not relabeled malformed_request
 And a request whose header section or framing cannot be parsed, such as unequal duplicate Content-Length values, reaches that same malformed outcome with its class rather than a parser-owned response outside the table
 And every response of either kind declares text/html; charset=utf-8, Cache-Control: no-store, Connection: close, and its literal Exp2Res-View-Outcome class
 And the served mirror body states no outcome metadata, so it stays byte-identical to the published member
@@ -1995,6 +1996,14 @@ Given `view serve` has bound a compatible workspace and another build then migra
 When the next route request arrives
 Then the per-request compatibility gate returns schema_incompatible after the metadata read, performs no business-state or managed-member read, and serves no stale page
 
+Given another business command holds only the advisory workspace writer lock while SQLite remains readable
+When either view route is requested
+Then the request proceeds to its ordinary outcome without consulting that lock and is not workspace_busy
+
+Given SQLite contention blocks a view request's required read beyond §8.1's bounded busy_timeout
+When either view route is requested
+Then the response is workspace_busy with status 503 and no claim that the advisory writer lock caused it
+
 Given a fully received accepted request whose selector resolution or managed-file containment and revalidation stalls on server-side I/O
 When the first interruption arrives
 Then accepting stops and one absolute drain deadline of §8.1's contention timeout covers all remaining server-side work, response composition, and emission without any per-phase restart
@@ -2017,6 +2026,18 @@ And an otherwise accepted request carrying a cross-site or same-site fetch-metad
 Given a valid literal loopback address and allowed port that another socket already occupies
 When `view serve` attempts that requested bind
 Then it exits in class 2 with view_bind_failed, serves nothing, and does not retry another port, address, or interface
+
+Given one request and workspace-state fixture that reaches each row of §30 rule 7, including an unexpected local failure for internal_error and SQLite read contention beyond busy_timeout for workspace_busy
+When each fixture receives a completed response
+Then its `Exp2Res-View-Outcome` and HTTP status pair is exactly one of: served/200; malformed_request/400; invalid_selector/400; assessment_blocked/403; route_not_found/404; no_current_view/404; method_not_allowed/405; assessment_inconsistent/409; export_not_current/409; question_companion_invalid/409; export_residual/409; schema_incompatible/409; authority_not_bound/421; internal_error/500; workspace_busy/503
+And every row is exercised once, no fixture produces a pair outside that closed set, and no expected row falls through to internal_error
+
+Given a compatible workspace, a free allowed loopback port, and `view serve --json`
+When the command reports its bound URLs, receives an owner interruption with no request pending, and exits after its bounded drain
+Then the bound URLs and every progress event appear only on standard error
+And standard output is exactly one UTF-8 §14.14 envelope, optionally followed by one final newline, with envelope_version 1, command `view serve`, status cancelled, exit_code 9, result null, and every other required field present with its §14.14 cancelled value
+And the process exit status is 9
+And standard output contains no URL, banner, progress text, diagnostic outside the envelope, or additional JSON value
 
 Given a request percent-encoding a structural token, as in /m%69rror or ?%73cope=global, and a request percent-encoding a selector value once and another encoding it twice
 When each is handled
