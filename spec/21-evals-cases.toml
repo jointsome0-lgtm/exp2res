@@ -1932,6 +1932,7 @@ When an ordinary gap answer invalidates that set and a new network GET reaches e
 Then both requests re-read current state and return export_not_current with status 409
 And neither request returns the previously served report bytes or question projection
 And after the owner publishes the replacement current set, the next network GETs on that same server serve the replacement report bytes and updated question projection rather than either cached response
+And those byte-identical requests retain the same route parsing and selector interpretation while their state-dependent outcomes change
 
 Given a revalidated current set whose valid companion has no unanswered unknown, because every unknown is answered or the unknowns list is empty
 When the gap-question route is requested
