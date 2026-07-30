@@ -1962,6 +1962,12 @@ When either route is requested
 Then the outcome is the single residual one, distinct from both the replaceable-output outcome and any unexpected-failure outcome
 And the page says the owner removes or repairs the reported residual before that export can publish
 
+Given a request validates the current final path and a concurrent ordinary export atomically replaces that entry before the request's next no-follow operation
+When either route continues revalidation
+Then it returns export_changed with status 409 and serves no member or question value
+And it is not export_residual and gives no instruction to remove or repair the final path, because the replacement may already be healthy current output
+And a later request after publication completes revalidates the observed final entry from the beginning and serves it when it is current
+
 Given the selected snapshot carries no single narrative_summary claim matching AssessmentSnapshot.summary, or a stored aggregate that is not a fresh reduction of its current claims, or the identity selector resolves to more than one current snapshot
 When either route is requested
 Then the outcome is the stored-state integrity refusal rather than the semantic one or a malformed-request one, even when the stored status is allowlisted
@@ -1977,13 +1983,15 @@ When either route is requested
 Then the outcome is a completed semantic refusal that names the §14.9 verification for an unverified snapshot and the §14.9 generation for a completed negative verdict, and is distinguishable from every operational failure outcome
 And a snapshot that fails that allowlist while its managed set is also stale or invalidated still completes as exactly that refusal, because §30 rule 7 orders the gate before revalidation
 
-Given HEAD requests for both routes with accepted selectors, a HEAD request for the questions route whose matching-digest companion fails its closed schema, a GET request declaring a body, and a POST request declaring a body
+Given HEAD requests for both routes with accepted selectors, a HEAD request for the questions route whose matching-digest companion fails its closed schema, a GET carrying one canonical positive Content-Length, and a POST carrying one canonical positive Content-Length
 When each is handled
 Then each HEAD response carries its corresponding GET status and headers with an empty body after the same resolution and revalidation
 And the questions HEAD performs companion validation, returning served for the valid set and question_companion_invalid for the invalid one without emitting either page body
 And the body-declaring GET is refused as malformed_request without being read
 And the body-declaring POST is refused as method_not_allowed before the body check, declares exactly `Allow: GET, HEAD`, and is not relabeled malformed_request
-And a request whose header section or framing cannot be parsed, such as unequal duplicate Content-Length values, reaches that same malformed outcome with its class rather than a parser-owned response outside the table
+And an otherwise identical accepted GET or HEAD with no framing field, or exactly one case-insensitively named Content-Length whose optional-whitespace-trimmed value is the literal `0`, proceeds to its ordinary outcome as bodyless
+And any Transfer-Encoding field, any Content-Length plus Transfer-Encoding combination, equal or unequal repeated Content-Length fields, or a Content-Length value outside literal `0` and canonical positive decimal is malformed_request as a transport parse failure before the method check
+And none of those framing failures is normalized, comma-joined, integer-converted, or answered by a parser-owned response outside the table
 And every response of either kind declares text/html; charset=utf-8, Cache-Control: no-store, Connection: close, and its literal Exp2Res-View-Outcome class
 And the served mirror body states no outcome metadata, so it stays byte-identical to the published member
 
@@ -2009,6 +2017,11 @@ When their fixed receive deadlines expire
 Then every socket closes without an HTTP response or outcome and every admission slot is released
 And a later complete request acquires a released slot and reaches its ordinary response, so stalled clients cannot occupy the cap indefinitely
 
+Given an admitted client sends one request octet shortly before each §8.1 timeout interval would otherwise end
+When the one absolute receive deadline measured from admission-slot acquisition arrives before the request is complete
+Then the socket closes without an HTTP response or outcome and releases its slot despite the most recently received octet
+And no byte, line, fragmented read, or partial parser progress restarts, pauses, or replaces that deadline
+
 Given an incompatible §12.14 workspace before serving starts
 When `view serve` applies its startup gate
 Then it exits in class 4 before binding a socket or reading any business table
@@ -2031,6 +2044,11 @@ Then accepting stops and one absolute drain deadline of §8.1's contention timeo
 And a request completed inside the window writes its own §30 rule 7 response before the class-9 envelope
 And at the absolute deadline every unfinished connection closes without retry or an alternate response, is not mislabeled internal_error, and cannot delay that envelope
 And a peer whose emission began before the deadline may retain no response bytes or a partial response, never a promise of completed delivery
+
+Given a request remains stalled in resolution or emission after the first interruption starts its absolute drain deadline
+When a second owner interruption arrives before that deadline
+Then every unfinished connection closes immediately without waiting for the remaining drain interval, retrying, or emitting an alternate response
+And the command promptly emits its single class-9 cancelled envelope and exits 9 without relabeling the stalled request internal_error
 
 Given an ordinary served request has reached its outcome and closed its read transaction but the client stops reading a response larger than the socket buffer
 When the emit deadline expires without an interruption
@@ -2058,7 +2076,7 @@ Then each exits in class 2 with view_bind_invalid before any bind attempt and is
 
 Given one request and workspace-state fixture that reaches each row of §30 rule 7, including an unexpected local failure for internal_error and SQLite read contention beyond busy_timeout for workspace_busy
 When each fixture receives a completed response
-Then its `Exp2Res-View-Outcome` and HTTP status pair is exactly one of: served/200; malformed_request/400; invalid_selector/400; assessment_blocked/403; route_not_found/404; no_current_view/404; method_not_allowed/405; assessment_inconsistent/409; export_not_current/409; question_companion_invalid/409; export_residual/409; schema_incompatible/409; authority_not_bound/421; internal_error/500; workspace_busy/503
+Then its `Exp2Res-View-Outcome` and HTTP status pair is exactly one of: served/200; malformed_request/400; invalid_selector/400; assessment_blocked/403; route_not_found/404; no_current_view/404; method_not_allowed/405; assessment_inconsistent/409; export_not_current/409; question_companion_invalid/409; export_residual/409; schema_incompatible/409; authority_not_bound/421; internal_error/500; workspace_busy/503; export_changed/409
 And every row is exercised once, no fixture produces a pair outside that closed set, and no expected row falls through to internal_error
 
 Given the unexpected local failure carries the invented exception detail `Vera Example internal sentinel`, a stack token `TracebackSentinel`, a managed path, and the stored value `Vera Example stored sentinel`
