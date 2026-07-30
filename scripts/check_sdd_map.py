@@ -66,7 +66,11 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
     errors: list[str] = []
     for name in names:
         if match := SPEC_FILE_RE.fullmatch(name):
-            numbers.append(int(match.group(1)))
+            number = int(match.group(1))
+            if match.group(1) == f"{number:02d}":
+                numbers.append(number)
+            else:
+                errors.append(f"malformed numbered spec filename: spec/{name}")
         elif name.endswith(".md") and name[0].isdigit():
             errors.append(f"malformed numbered spec filename: spec/{name}")
     errors += [
