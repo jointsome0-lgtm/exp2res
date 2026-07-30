@@ -1954,6 +1954,11 @@ When the view resolves it
 Then it fails closed in its §30 rule 7 outcome under that row's literal class, no snapshot is chosen by a default or latest-of-several rule, and no response reflects the request bytes back
 And the project-scoped ID is refused as the deferred slice rather than served through the ID form
 
+Given the global identity has no current snapshot but one or more superseded historical snapshots remain
+When either route is requested with `scope=global`
+Then identity resolution returns no_current_view with status 404 and never chooses a historical latest
+And the page names the §14.9 generation for that identity without serving historical managed output
+
 Given snapshot selectors decoded to the one-byte ID `a`, a 128-byte lowercase ID matching §13.14 rule 1, an empty value, `../x`, an uppercase ID, a separator-bearing value, and a 129-byte value
 When each selector is parsed before lookup
 Then the two boundary-valid forms reach ordinary current-row resolution and become served or no_current_view according to stored state
@@ -2016,6 +2021,12 @@ When the request envelope is handled
 Then it is malformed_request before authority, method, route, selector, compatibility, or business-state evaluation
 And an absolute-form target naming another authority alongside a bound Host value is never normalized into an origin-form route
 
+Given one request uses rule 9's exact CRLF and field-line grammar, while others use bare LF or bare CR, obsolete folding, whitespace before the colon, an empty or non-tchar field name, or a field value containing a forbidden control, DEL, or byte at or above 0x80
+When each header section is parsed
+Then the exact form reaches the ordinary authority and method checks without rewriting its field bytes
+And every other form is malformed_request with status 400 before authority, method, compatibility, or business-state evaluation
+And no line is unfolded, tolerated, Unicode-decoded, or normalized by the HTTP framework
+
 Given 32 admitted connections are each holding an incomplete request within their receive deadlines
 When another connection arrives
 Then no 33rd parser, request worker, or application queue entry is created and the new socket is closed before any byte is read or response is emitted
@@ -2036,6 +2047,11 @@ Given an incompatible §12.14 workspace before serving starts
 When `view serve` applies its startup gate
 Then it exits in class 4 before binding a socket or reading any business table
 
+Given SQLite blocks the startup §12.14 compatibility read beyond its full busy_timeout
+When `view serve` starts
+Then the command exits in class 5 with workspace_busy before binding a socket, emitting either startup URL, or reading a business table
+And it does not convert startup contention into a per-request response or start the serving loop
+
 Given `view serve` has bound a compatible workspace and another build then migrates that workspace to a schema newer than this serving build supports
 When the next route request arrives
 Then the per-request compatibility gate returns schema_incompatible after the metadata read, performs no business-state or managed-member read, and serves no stale page
@@ -2047,7 +2063,7 @@ Then the request proceeds to its ordinary outcome without consulting that lock a
 Given SQLite contention blocks a view request's required read beyond §8.1's bounded busy_timeout
 When either view route is requested
 Then the response is workspace_busy with status 503 and no claim that the advisory writer lock caused it
-And the full busy_timeout completes before the two-timeout processing deadline, the request releases its read transaction, and the serving command remains available
+And the full busy_timeout completes with one full timeout of slack before the three-timeout processing deadline, the request releases its read transaction, and the serving command remains available
 And a later uncontended request reaches its ordinary outcome without restarting the server
 
 Given a fully received accepted request whose selector resolution or managed-file containment and revalidation stalls on server-side I/O
@@ -2072,10 +2088,10 @@ When the one absolute processing deadline measured from complete receipt expires
 Then the unfinished work is abandoned or cancelled, its read transaction is released, and the response is processing_timeout with status 503 and no stalled-operation detail
 And the fixed response receives only the ordinary emit deadline, the admission slot is released after emission or emit expiry, and no expired work continues behind that slot
 
-Given less than one full §8.1 contention timeout remains in the two-timeout processing budget before the request's first SQLite read would begin
+Given less than two full §8.1 contention timeouts remain in the three-timeout processing budget before the request's first SQLite read would begin
 When processing reaches that boundary
 Then it returns processing_timeout without opening the read transaction
-And when a contended SQLite read starts with the required full margin, its complete busy_timeout instead returns workspace_busy even if that expiry coincides with the outer deadline
+And when a contended SQLite read starts with the required two-timeout margin, its complete busy_timeout returns workspace_busy with one full timeout still reserved for scheduling, transaction release, and response composition
 
 Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
@@ -2084,6 +2100,11 @@ And each wildcard, routable, or name-resolved host produces view_bind_not_loopba
 And the unsupported-method response is 405 and declares exactly `Allow: GET, HEAD`
 And serving takes no writer lock, writes no business row, managed output, or telemetry row, and makes no §15 call or outbound connection
 And an otherwise accepted request carrying a cross-site or same-site fetch-metadata declaration is served, because the shell embeds the view from its own origin by URL
+
+Given an `OPTIONS` request names a closed route and accepted selector with the bound authority, no Origin, and no declared body
+When the request is handled
+Then it is method_not_allowed with status 405 and exactly `Allow: GET, HEAD`
+And it grants no CORS header, invokes no framework automatic OPTIONS response, and performs no compatibility or business-state read
 
 Given one request omits Origin, one carries exactly one Origin whose value is the literal bound `http://` origin, and requests carry a repeated Origin, `Origin: null`, a space-separated value, another syntactically valid single value, or the bound value with different casing or an omitted port
 When each request is handled
