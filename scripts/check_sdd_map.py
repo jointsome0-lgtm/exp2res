@@ -67,6 +67,11 @@ def without_html_comments(line: str, in_comment: bool) -> tuple[str, bool]:
         if start < 0:
             visible.append(line[cursor:])
             break
+        if line[cursor:start].strip():
+            # A block comment begins only when the marker is the first
+            # non-whitespace content, not inside inline code or an escape.
+            visible.append(line[cursor:])
+            break
         visible.append(line[cursor:start])
         visible.append(" " * 4)
         cursor = start + 4
@@ -150,15 +155,20 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
 
 def read_spec_numbers() -> tuple[set[int], list[str]]:
     try:
-        names = sorted(
-            entry.name for entry in SPEC_DIRECTORY.iterdir() if entry.is_file()
-        )
+        entries = sorted(SPEC_DIRECTORY.iterdir(), key=lambda entry: entry.name)
     except OSError as exc:
         return set(), [f"cannot list {SPEC_DIRECTORY.relative_to(REPOSITORY_ROOT)}: {exc}"]
 
     numbers: list[int] = []
     errors: list[str] = []
-    for name in names:
+    for entry in entries:
+        name = entry.name
+        is_numbered_markdown = name[:1].isdigit() and name.lower().endswith(".md")
+        if is_numbered_markdown and (entry.is_symlink() or not entry.is_file()):
+            errors.append(f"numbered spec path is not a regular file: spec/{name}")
+            continue
+        if not entry.is_file():
+            continue
         if match := SPEC_FILE_RE.fullmatch(name):
             number = int(match.group(1))
             if match.group(1) != f"{number:02d}":
@@ -175,7 +185,7 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
                     f"spec/{name} must contain exactly one rendered top-level "
                     f"'## §{number}. <title>' heading and no foreign root § heading"
                 )
-        elif name.lower().endswith(".md") and name[:1].isdigit():
+        elif is_numbered_markdown:
             errors.append(f"malformed numbered spec filename: spec/{name}")
     errors += [
         f"spec/ has multiple files for §{number}"

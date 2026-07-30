@@ -101,3 +101,30 @@ def test_index_heading_inside_fence_is_ignored(tmp_path, monkeypatch) -> None:
         "SDD.md must contain exactly one canonical '## § Index' heading "
         "and no variant spellings, found 0 candidate(s)"
     ]
+
+
+def test_inline_comment_literal_does_not_hide_foreign_heading() -> None:
+    body = """\
+## §30. Real section
+`<!--`
+## §31. Foreign section
+`-->`
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_numbered_non_regular_spec_paths_are_rejected(tmp_path, monkeypatch) -> None:
+    spec_directory = tmp_path / "spec"
+    spec_directory.mkdir()
+    (spec_directory / "31-dangling.md").symlink_to("missing.md")
+    (spec_directory / "32-directory.md").mkdir()
+    monkeypatch.setattr(check_sdd_map, "SPEC_DIRECTORY", spec_directory)
+
+    numbers, errors = check_sdd_map.read_spec_numbers()
+
+    assert numbers == set()
+    assert errors == [
+        "numbered spec path is not a regular file: spec/31-dangling.md",
+        "numbered spec path is not a regular file: spec/32-directory.md",
+    ]
