@@ -422,3 +422,22 @@ def test_index_separator_allows_markdown_indentation_and_trailing_space(
 
     assert bullets == ["- §0 real route", "- Decision Log — real route"]
     assert errors == []
+
+
+def test_section_heading_rejects_zero_padded_foreign_atx_root() -> None:
+    body = """\
+## §30. Real section
+## §031. Foreign section
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_section_heading_rejects_zero_padded_foreign_setext_root() -> None:
+    body = """\
+## §30. Real section
+§031. Foreign section
+---------------------
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
