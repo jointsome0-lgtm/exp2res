@@ -2047,6 +2047,8 @@ Then the request proceeds to its ordinary outcome without consulting that lock a
 Given SQLite contention blocks a view request's required read beyond §8.1's bounded busy_timeout
 When either view route is requested
 Then the response is workspace_busy with status 503 and no claim that the advisory writer lock caused it
+And the full busy_timeout completes before the two-timeout processing deadline, the request releases its read transaction, and the serving command remains available
+And a later uncontended request reaches its ordinary outcome without restarting the server
 
 Given a fully received accepted request whose selector resolution or managed-file containment and revalidation stalls on server-side I/O
 When the first interruption arrives
@@ -2069,6 +2071,11 @@ Given a fully received request stalls in selector resolution, a business read, o
 When the one absolute processing deadline measured from complete receipt expires before response composition
 Then the unfinished work is abandoned or cancelled, its read transaction is released, and the response is processing_timeout with status 503 and no stalled-operation detail
 And the fixed response receives only the ordinary emit deadline, the admission slot is released after emission or emit expiry, and no expired work continues behind that slot
+
+Given less than one full §8.1 contention timeout remains in the two-timeout processing budget before the request's first SQLite read would begin
+When processing reaches that boundary
+Then it returns processing_timeout without opening the read transaction
+And when a contended SQLite read starts with the required full margin, its complete busy_timeout instead returns workspace_busy even if that expiry coincides with the outer deadline
 
 Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
