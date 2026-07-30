@@ -199,3 +199,50 @@ def test_indented_duplicate_index_heading_is_rejected(tmp_path, monkeypatch) -> 
         "SDD.md must contain exactly one canonical '## § Index' heading "
         "and no variant spellings, found 2 candidate(s)"
     ]
+
+
+def test_setext_heading_ends_the_index_section(tmp_path, monkeypatch) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+Different section
+=================
+
+- §0 foreign route
+- Decision Log — foreign route
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == []
+    assert errors == ["§ Index contains no bullets"]
+
+
+def test_indented_code_list_marker_before_routes_is_ignored(
+    tmp_path, monkeypatch
+) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+    - §999 example shown as code
+
+- §0 real route
+- Decision Log — real route
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == ["- §0 real route", "- Decision Log — real route"]
+    assert errors == []

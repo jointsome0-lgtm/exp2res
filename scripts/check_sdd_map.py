@@ -101,6 +101,26 @@ def visible_markdown_lines(lines: list[str]) -> list[str | None]:
     return visible
 
 
+def is_indented_code(line: str) -> bool:
+    """True for indentation that cannot start a top-level Markdown block."""
+    return line.startswith("    ") or line.startswith("\t")
+
+
+def is_setext_boundary(lines: list[str | None], index: int) -> bool:
+    """True when index starts a visible, non-code Setext H1 or H2."""
+    if index + 1 >= len(lines):
+        return False
+    title = lines[index]
+    underline = lines[index + 1]
+    return bool(
+        title is not None
+        and title.strip()
+        and not is_indented_code(title)
+        and underline is not None
+        and SETEXT_UNDERLINE_RE.fullmatch(underline)
+    )
+
+
 def read_index_bullets() -> tuple[list[str], list[str]]:
     try:
         lines = SDD_PATH.read_text(encoding="utf-8").splitlines()
@@ -131,13 +151,20 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
 
     bullets: list[str] = []
     errors: list[str] = []
-    for visible_line in visible_lines[start:]:
+    for index, visible_line in enumerate(visible_lines[start:], start=start):
         line = visible_line or ""
-        if line == "---" or INDEX_BOUNDARY_RE.match(line):
+        if (
+            line == "---"
+            or INDEX_BOUNDARY_RE.match(line)
+            or is_setext_boundary(visible_lines, index)
+        ):
             break
         if BULLET_RE.match(line):
             bullets.append(line)
-        elif line.strip()[:1] in {"-", "*", "+"} or ORDERED_ITEM_RE.match(line.strip()):
+        elif not is_indented_code(line) and (
+            line.strip()[:1] in {"-", "*", "+"}
+            or ORDERED_ITEM_RE.match(line.strip())
+        ):
             errors.append(f"malformed § Index bullet: {line.strip()[:60]}…")
         elif not bullets or not line.strip():
             continue
