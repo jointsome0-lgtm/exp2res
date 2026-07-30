@@ -15,8 +15,8 @@ SPEC_DIRECTORY = REPOSITORY_ROOT / "spec"
 LINE_BUDGET = 250
 INDEX_HEADING = "## § Index"
 BULLET_RE = re.compile(r"^- \S")
-SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9]\d*) ")
-SPEC_FILE_RE = re.compile(r"^(\d+)-.+\.md$")
+SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
+SPEC_FILE_RE = re.compile(r"^([0-9]+)-.+\.md$")
 
 
 def read_index_bullets() -> tuple[list[str], list[str]]:
@@ -25,10 +25,10 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
     except (OSError, UnicodeError) as exc:
         return [], [f"cannot read {SDD_PATH.relative_to(REPOSITORY_ROOT)}: {exc}"]
 
-    try:
-        start = lines.index(INDEX_HEADING) + 1
-    except ValueError:
-        return [], [f"SDD.md has no {INDEX_HEADING!r} heading"]
+    headings = lines.count(INDEX_HEADING)
+    if headings != 1:
+        return [], [f"SDD.md must contain exactly one {INDEX_HEADING!r} heading, found {headings}"]
+    start = lines.index(INDEX_HEADING) + 1
 
     bullets: list[str] = []
     errors: list[str] = []
@@ -37,8 +37,8 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
             break
         if BULLET_RE.match(line):
             bullets.append(line)
-        elif line.startswith("-"):
-            errors.append(f"malformed § Index bullet: {line[:60]}…")
+        elif line.strip().startswith("-"):
+            errors.append(f"malformed § Index bullet: {line.strip()[:60]}…")
         elif not bullets or not line.strip():
             continue
         elif line[0].isspace():
