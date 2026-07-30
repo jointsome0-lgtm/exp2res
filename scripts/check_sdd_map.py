@@ -14,17 +14,17 @@ SDD_PATH = REPOSITORY_ROOT / "SDD.md"
 SPEC_DIRECTORY = REPOSITORY_ROOT / "spec"
 LINE_BUDGET = 250
 INDEX_HEADING = "## § Index"
-INDEX_HEADING_VARIANT_RE = re.compile(r"#{1,6}\s*§\s*Index\s*#*\s*")
+INDEX_HEADING_VARIANT_RE = re.compile(r" {0,3}#{1,6}\s*§\s*Index\s*#*\s*")
 SETEXT_TITLE_RE = re.compile(r" {0,3}§\s*Index[ \t]*")
 SETEXT_UNDERLINE_RE = re.compile(r" {0,3}[-=]+[ \t]*")
-INDEX_BOUNDARY_RE = re.compile(r"^#{1,2}(?:[ \t]+|$)")
+INDEX_BOUNDARY_RE = re.compile(r"^ {0,3}#{1,2}(?:[ \t]+|$)")
 ORDERED_ITEM_RE = re.compile(r"[0-9]+[.)]\s")
 BULLET_RE = re.compile(r"^- \S")
 SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
 DECISION_LOG_BULLET_RE = re.compile(r"^- Decision Log — \S")
 SPEC_FILE_RE = re.compile(r"^([0-9]+)-.+\.md$")
 OPENING_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-SECTION_HEADING_RE = re.compile(r"^## §(0|[1-9][0-9]*)\. \S")
+SECTION_HEADING_RE = re.compile(r"^ {0,3}## §(0|[1-9][0-9]*)\. \S")
 
 
 def opening_fence(line: str) -> tuple[str, int] | None:

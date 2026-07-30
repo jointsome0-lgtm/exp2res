@@ -73,7 +73,7 @@ def test_section_heading_ignores_html_comments() -> None:
 def test_section_heading_rejects_foreign_root_heading() -> None:
     body = """\
 ## §30. Real section
-## §31. Foreign section
+ ## §31. Foreign section
 """
 
     assert not check_sdd_map.has_section_heading(body, 30)
@@ -162,7 +162,7 @@ def test_h1_ends_the_index_section(tmp_path, monkeypatch) -> None:
         """\
 ## § Index
 
-# Different section
+ # Different section
 
 - §0 foreign route
 - Decision Log — foreign route
@@ -175,3 +175,27 @@ def test_h1_ends_the_index_section(tmp_path, monkeypatch) -> None:
 
     assert bullets == []
     assert errors == ["§ Index contains no bullets"]
+
+
+def test_indented_duplicate_index_heading_is_rejected(tmp_path, monkeypatch) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+- §0 real route
+- Decision Log — real route
+
+ ## § Index
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == []
+    assert errors == [
+        "SDD.md must contain exactly one canonical '## § Index' heading "
+        "and no variant spellings, found 2 candidate(s)"
+    ]
