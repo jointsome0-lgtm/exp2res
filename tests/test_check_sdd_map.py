@@ -246,3 +246,80 @@ def test_indented_code_list_marker_before_routes_is_ignored(
 
     assert bullets == ["- §0 real route", "- Decision Log — real route"]
     assert errors == []
+
+
+def test_final_list_item_before_separator_is_not_a_setext_heading(
+    tmp_path, monkeypatch
+) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+- §0 real route
+- Decision Log — real route
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == ["- §0 real route", "- Decision Log — real route"]
+    assert errors == []
+
+
+def test_indented_code_comment_marker_does_not_hide_foreign_heading() -> None:
+    body = """\
+## §30. Real section
+    <!--
+## §31. Foreign section
+    -->
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_atx_text_without_marker_whitespace_is_not_an_index_heading(
+    tmp_path, monkeypatch
+) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+#§ Index
+
+## § Index
+
+- §0 real route
+- Decision Log — real route
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == ["- §0 real route", "- Decision Log — real route"]
+    assert errors == []
+
+
+def test_section_heading_rejects_foreign_setext_root() -> None:
+    body = """\
+## §30. Real section
+§31. Foreign section
+--------------------
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_nested_list_heading_cannot_serve_as_section_root() -> None:
+    body = """\
+- item
+  ## §30. Nested heading
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)

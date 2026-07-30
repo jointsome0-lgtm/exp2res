@@ -14,17 +14,23 @@ SDD_PATH = REPOSITORY_ROOT / "SDD.md"
 SPEC_DIRECTORY = REPOSITORY_ROOT / "spec"
 LINE_BUDGET = 250
 INDEX_HEADING = "## § Index"
-INDEX_HEADING_VARIANT_RE = re.compile(r" {0,3}#{1,6}\s*§\s*Index\s*#*\s*")
+INDEX_HEADING_VARIANT_RE = re.compile(
+    r" {0,3}#{1,6}[ \t]+§\s*Index\s*#*\s*"
+)
 SETEXT_TITLE_RE = re.compile(r" {0,3}§\s*Index[ \t]*")
 SETEXT_UNDERLINE_RE = re.compile(r" {0,3}[-=]+[ \t]*")
 INDEX_BOUNDARY_RE = re.compile(r"^ {0,3}#{1,2}(?:[ \t]+|$)")
 ORDERED_ITEM_RE = re.compile(r"[0-9]+[.)]\s")
+BULLET_ITEM_RE = re.compile(r"^ {0,3}[-+*][ \t]+")
+ORDERED_ITEM_WITH_INDENT_RE = re.compile(r"^ {0,3}[0-9]+[.)][ \t]+")
 BULLET_RE = re.compile(r"^- \S")
 SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
 DECISION_LOG_BULLET_RE = re.compile(r"^- Decision Log — \S")
 SPEC_FILE_RE = re.compile(r"^([0-9]+)-.+\.md$")
 OPENING_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 SECTION_HEADING_RE = re.compile(r"^ {0,3}## §(0|[1-9][0-9]*)\. \S")
+CANONICAL_SECTION_HEADING_RE = re.compile(r"^## §(0|[1-9][0-9]*)\. \S")
+SETEXT_SECTION_TITLE_RE = re.compile(r"^ {0,3}§(0|[1-9][0-9]*)\. \S")
 
 
 def opening_fence(line: str) -> tuple[str, int] | None:
@@ -49,8 +55,23 @@ def is_closing_fence(line: str, fence: tuple[str, int]) -> bool:
     )
 
 
+def is_indented_code(line: str) -> bool:
+    """True for indentation that cannot start a top-level Markdown block."""
+    return line.startswith("    ") or line.startswith("\t")
+
+
+def is_list_item(line: str) -> bool:
+    """True when line begins a top-level Markdown list item."""
+    return bool(
+        BULLET_ITEM_RE.match(line) or ORDERED_ITEM_WITH_INDENT_RE.match(line)
+    )
+
+
 def without_html_comments(line: str, in_comment: bool) -> tuple[str, bool]:
     """Blank HTML comment spans while preserving visible text positions."""
+    if not in_comment and is_indented_code(line):
+        return line, False
+
     visible: list[str] = []
     cursor = 0
     while cursor < len(line):
@@ -101,11 +122,6 @@ def visible_markdown_lines(lines: list[str]) -> list[str | None]:
     return visible
 
 
-def is_indented_code(line: str) -> bool:
-    """True for indentation that cannot start a top-level Markdown block."""
-    return line.startswith("    ") or line.startswith("\t")
-
-
 def is_setext_boundary(lines: list[str | None], index: int) -> bool:
     """True when index starts a visible, non-code Setext H1 or H2."""
     if index + 1 >= len(lines):
@@ -116,6 +132,7 @@ def is_setext_boundary(lines: list[str | None], index: int) -> bool:
         title is not None
         and title.strip()
         and not is_indented_code(title)
+        and not is_list_item(title)
         and underline is not None
         and SETEXT_UNDERLINE_RE.fullmatch(underline)
     )
@@ -225,12 +242,24 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
 
 def has_section_heading(body: str, number: int) -> bool:
     """True when exactly one rendered root § heading matches the filename."""
-    headings = [
-        int(match.group(1))
-        for line in visible_markdown_lines(body.splitlines())
-        if line is not None and (match := SECTION_HEADING_RE.match(line))
-    ]
-    return headings == [number]
+    visible_lines = visible_markdown_lines(body.splitlines())
+    headings: list[int] = []
+    has_canonical_heading = False
+    for index, line in enumerate(visible_lines):
+        if line is None:
+            continue
+        if match := SECTION_HEADING_RE.match(line):
+            heading_number = int(match.group(1))
+            headings.append(heading_number)
+            canonical_match = CANONICAL_SECTION_HEADING_RE.match(line)
+            if canonical_match and heading_number == number:
+                has_canonical_heading = True
+        elif (
+            (match := SETEXT_SECTION_TITLE_RE.match(line))
+            and is_setext_boundary(visible_lines, index)
+        ):
+            headings.append(int(match.group(1)))
+    return has_canonical_heading and headings == [number]
 
 
 def main() -> int:
