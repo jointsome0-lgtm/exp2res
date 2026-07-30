@@ -23,6 +23,7 @@ from fakes import FakeContractRunner
 from test_stage3_extraction import SELECTION, budgets
 from test_stage4_detection import (
     DetectionIds,
+    alt_selection,
     detector_response,
     prepare_fact,
 )
@@ -40,13 +41,24 @@ def invoke_json(workspace: Path, arguments: list[str]):
 
 
 def install_fake_execution(
-    monkeypatch: pytest.MonkeyPatch, fake: FakeContractRunner
+    monkeypatch: pytest.MonkeyPatch,
+    fake: FakeContractRunner,
+    selections: list | None = None,
 ) -> None:
-    monkeypatch.setattr(
-        detection_service,
-        "build_llm_execution",
-        lambda _workspace: (SELECTION, budgets(), fake),
-    )
+    """Install the fake runner; `selections` rotates one entry per invocation.
+
+    Distinct models between reruns keep the §13.4 idempotent-rerun
+    short-circuit disqualified when a test must exercise the candidate-key
+    comparison; equal consecutive entries exercise the short-circuit itself.
+    """
+
+    remaining = list(selections or [])
+
+    def build(_workspace):
+        selection = remaining.pop(0) if remaining else SELECTION
+        return (selection, budgets(), fake)
+
+    monkeypatch.setattr(detection_service, "build_llm_execution", build)
 
 
 def seed_detection_inputs(workspace: Path):
@@ -96,7 +108,18 @@ def test_generate_replaces_then_retains_complete_sets_and_standard_fields(
             retained_paraphrase,
         ]
     )
-    install_fake_execution(monkeypatch, fake)
+    install_fake_execution(
+        monkeypatch,
+        fake,
+        selections=[
+            SELECTION,
+            alt_selection(1),
+            alt_selection(2),
+            alt_selection(3),
+            alt_selection(4),
+            alt_selection(4),
+        ],
+    )
 
     first_result, first = invoke_json(
         workspace, ["--yes", "detections", "generate"]
@@ -155,11 +178,16 @@ def test_generate_replaces_then_retains_complete_sets_and_standard_fields(
         ["--workspace", str(workspace), "--yes", "detections", "generate"],
     )
     assert human_replaced.exit_code == 0
-    assert "Replaced both complete detection sets." in human_replaced.stdout
+    # The gap key changed (priority) while the contradiction key is equal:
+    # §13.4 replaces exactly the gap set and reports it that way.
+    assert (
+        "Replaced the complete gap set; retained the contradiction set "
+        "unchanged." in human_replaced.stdout
+    )
     assert "Current gaps (1): gap_" in human_replaced.stdout
     assert "Current contradictions (1): contradiction_" in human_replaced.stdout
     assert (
-        "Invalidated artifact classes: gap_question, contradiction."
+        "Invalidated artifact classes: gap_question."
         in human_replaced.stdout
     )
     with read_database(workspace) as connection:
@@ -191,8 +219,23 @@ def test_generate_replaces_then_retains_complete_sets_and_standard_fields(
     )
     assert human.exit_code == 0
     assert human.stdout.strip() == (
-        "Retained the current detection generation unchanged."
+        "Retained both current detection sets unchanged."
     )
+    assert len(fake.calls) == 5
+
+    # An identical rerun under the same selection as the last completed run
+    # short-circuits: full retention with no provider call consumed.
+    short_circuit = runner.invoke(
+        app,
+        ["--workspace", str(workspace), "--yes", "detections", "generate"],
+    )
+    assert short_circuit.exit_code == 0
+    assert short_circuit.stdout.strip() == (
+        "Retained both current detection sets without a provider call: the "
+        "input, model selection, and prompt policy are unchanged since the "
+        "last completed detection run."
+    )
+    assert len(fake.calls) == 5
 
 
 def test_generate_consent_order_decline_and_zero_input_lazy_runner(
@@ -424,7 +467,11 @@ def test_detection_inspection_is_read_only_ordered_and_current_only(
             reason="missing_metric",
         ),
     ]
-    install_fake_execution(monkeypatch, FakeContractRunner(responses))
+    install_fake_execution(
+        monkeypatch,
+        FakeContractRunner(responses),
+        selections=[SELECTION, alt_selection(1)],
+    )
     first_result, first = invoke_json(
         workspace, ["--yes", "detections", "generate"]
     )
@@ -498,7 +545,9 @@ def test_invalid_detector_response_keeps_prior_generation_and_reports_run(
         right=("raw_log", log_id),
     )
     install_fake_execution(
-        monkeypatch, FakeContractRunner([valid, invalid, invalid])
+        monkeypatch,
+        FakeContractRunner([valid, invalid, invalid]),
+        selections=[SELECTION, alt_selection(1)],
     )
     first_result, first = invoke_json(
         workspace, ["--yes", "detections", "generate"]

@@ -50,7 +50,7 @@ def _iso(value: object) -> str | None:
     return value.isoformat()  # type: ignore[union-attr]
 
 
-def _utc_instant(stored: object) -> datetime:
+def utc_instant(stored: object) -> datetime:
     """Decode one stored §12 rule 3 datetime TEXT for UTC-instant comparison."""
 
     if not isinstance(stored, str):
@@ -284,7 +284,7 @@ def insert_experience_fact(
     effective = [row for row in reached_logs.values() if not row["displaced"]]
     governing = max(
         effective,
-        key=lambda row: (_utc_instant(row["recorded_at"]), row["id"].encode("utf-8")),
+        key=lambda row: (utc_instant(row["recorded_at"]), row["id"].encode("utf-8")),
     )
     if fact.project != governing["project"]:
         raise IntegrityFailureError()
@@ -328,7 +328,7 @@ def insert_experience_fact(
     governing_occurred = stored_occurred(governing)
     if not governing_contains(
         governing_occurred,
-        _utc_instant(governing["recorded_at"]),
+        utc_instant(governing["recorded_at"]),
         fact.occurred,
     ):
         raise IntegrityFailureError()

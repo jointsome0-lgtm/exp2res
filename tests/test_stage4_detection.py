@@ -13,6 +13,7 @@ import pytest
 
 from exp2res.errors import LLMCancelledError, LLMInvocationError
 from exp2res.llm.detector import DetectorOutput, GapCandidate
+from exp2res.llm.registry import LLMSelection
 from exp2res.pipeline.stage4 import run_detection_generation
 from exp2res.storage.repository import list_contradictions, list_gap_questions
 from exp2res.storage.workspace import read_database
@@ -99,14 +100,25 @@ def prepare_fact(workspace: Path, ids: DetectionIds):
     return extracted.created[0], log.id, items[0].id
 
 
+def alt_selection(ordinal: int) -> LLMSelection:
+    """A distinct model selection that disqualifies the §13.4 short-circuit.
+
+    Reruns that must exercise the candidate-key comparison change the model so
+    the recorded-telemetry comparison cannot retain them for free.
+    """
+
+    return LLMSelection("codex-cli", f"gpt-test-vera-example-alt-{ordinal}")
+
+
 def run_stage4(
     workspace: Path,
     fake: FakeContractRunner,
     ids: DetectionIds,
+    selection: LLMSelection = SELECTION,
 ):
     return run_detection_generation(
         workspace,
-        selection=SELECTION,
+        selection=selection,
         budgets=budgets(),
         runner=fake,
         id_factory=ids,
@@ -222,8 +234,10 @@ def test_paraphrase_and_swapped_sides_retain_ids_prose_and_generation(
             ]
         ),
         ids,
+        selection=alt_selection(1),
     )
     assert retained.retained is True
+    assert retained.short_circuited is False
     assert retained.generation_id is None
     assert retained.created_gap_ids == retained.created_contradiction_ids == ()
     assert current_rows(workspace) == (before_gaps, before_contradictions)
@@ -249,8 +263,10 @@ def test_paraphrase_and_swapped_sides_retain_ids_prose_and_generation(
             ]
         ),
         ids,
+        selection=alt_selection(2),
     )
     assert third.retained is True
+    assert third.short_circuited is False
     with read_database(workspace) as connection:
         for table in ("gap_questions", "contradictions"):
             assert connection.execute(
@@ -292,8 +308,11 @@ def test_changed_structural_key_replaces_both_sets_under_one_generation(
             ]
         ),
         ids,
+        selection=alt_selection(1),
     )
     assert replaced.retained is False
+    assert replaced.retained_gap_set is False
+    assert replaced.retained_contradiction_set is False
     assert replaced.generation_id and replaced.generation_id != first.generation_id
     assert replaced.superseded_gap_ids == first.created_gap_ids
     assert replaced.superseded_contradiction_ids == first.created_contradiction_ids
@@ -328,11 +347,22 @@ def test_answered_gap_forces_key_equal_replacement_and_resets_answer_state(
             "UPDATE gap_questions SET answered = 1, answer_log_id = ? WHERE id = ?",
             (log_id, first.created_gap_ids[0]),
         )
+    # The answered gap disqualifies the short-circuit even under an unchanged
+    # selection, and forces a gap-set replacement despite equal keys; the
+    # untouched contradiction set is retained per §13.4's per-set decision.
     replaced = run_stage4(workspace, FakeContractRunner([response]), ids)
     assert replaced.retained is False
-    gaps, _contradictions = current_rows(workspace)
+    assert replaced.short_circuited is False
+    assert replaced.retained_gap_set is False
+    assert replaced.retained_contradiction_set is True
+    assert replaced.superseded_contradiction_ids == ()
+    assert replaced.created_contradiction_ids == ()
+    gaps, contradictions = current_rows(workspace)
     assert len(gaps) == 1 and gaps[0].answered is False
     assert gaps[0].answer_log_id is None
+    assert tuple(item.id for item in contradictions) == (
+        first.created_contradiction_ids
+    )
 
 
 @pytest.mark.lifecycle
@@ -368,7 +398,7 @@ def test_duplicate_structural_keys_retry_once_then_fail_atomically(
     payload = json.dumps(invalid, separators=(",", ":")).encode()
     fake = FakeContractRunner([payload, payload])
     with pytest.raises(LLMInvocationError) as caught:
-        run_stage4(workspace, fake, ids)
+        run_stage4(workspace, fake, ids, selection=alt_selection(1))
     assert caught.value.failure_code == "response_validation_failed"
     assert len(fake.calls) == 2 and fake.calls[1].validation_errors is not None
     gaps, contradictions = current_rows(workspace)
@@ -488,7 +518,10 @@ def test_commit_failure_and_interrupt_keep_prior_current_generation(
         reason="missing_metric",
     )
     with pytest.raises(LLMInvocationError) as caught:
-        run_stage4(workspace, FakeContractRunner([changed]), ids)
+        run_stage4(
+            workspace, FakeContractRunner([changed]), ids,
+            selection=alt_selection(1),
+        )
     assert caught.value.failure_code == "business_commit_failed"
     gaps, contradictions = current_rows(workspace)
     assert tuple(gap.id for gap in gaps) == first.created_gap_ids
@@ -500,7 +533,10 @@ def test_commit_failure_and_interrupt_keep_prior_current_generation(
 
     monkeypatch.setattr(stage4, "insert_gap_question", insert_then_interrupt)
     with pytest.raises(LLMCancelledError):
-        run_stage4(workspace, FakeContractRunner([changed]), ids)
+        run_stage4(
+            workspace, FakeContractRunner([changed]), ids,
+            selection=alt_selection(2),
+        )
     gaps, contradictions = current_rows(workspace)
     assert tuple(gap.id for gap in gaps) == first.created_gap_ids
     assert tuple(item.id for item in contradictions) == first.created_contradiction_ids
@@ -590,6 +626,110 @@ def test_stage3_replacement_invalidates_detections_but_empty_stage3_does_not(
     assert tuple(item.id for item in contradictions) == (
         no_fact_detection.created_contradiction_ids
     )
+
+
+@pytest.mark.lifecycle
+def test_identical_rerun_short_circuits_without_a_provider_call(
+    workspace: Path,
+) -> None:
+    """§13.4/§12.15: an unchanged invocation completes free of any llm_calls row."""
+
+    ids = DetectionIds()
+    fact_id, log_id, _item_id = prepare_fact(workspace, ids)
+    first = run_stage4(
+        workspace,
+        FakeContractRunner(
+            [
+                detector_response(
+                    target_id=fact_id,
+                    left=("experience_fact", fact_id),
+                    right=("raw_log", log_id),
+                )
+            ]
+        ),
+        ids,
+    )
+    before = current_rows(workspace)
+    fake = FakeContractRunner([])
+    rerun = run_stage4(workspace, fake, ids)
+    assert rerun.short_circuited is True
+    assert rerun.retained is True
+    assert rerun.retained_gap_set is rerun.retained_contradiction_set is True
+    assert rerun.generation_id is None
+    assert rerun.superseded_gap_ids == rerun.superseded_contradiction_ids == ()
+    assert rerun.superseded_signal_ids == rerun.superseded_snapshot_ids == ()
+    assert rerun.invalidated_views == ()
+    assert fake.calls == []
+    assert current_rows(workspace) == before
+    assert first.generation_id is not None
+    with read_database(workspace) as connection:
+        run = connection.execute(
+            "SELECT status, input_ids_json FROM processing_runs WHERE id = ?",
+            (rerun.run_id,),
+        ).fetchone()
+        assert run[0] == "completed"
+        assert fact_id in json.loads(run[1])
+        assert connection.execute(
+            "SELECT COUNT(*) FROM llm_calls WHERE run_id = ?", (rerun.run_id,)
+        ).fetchone()[0] == 0
+
+
+@pytest.mark.lifecycle
+def test_input_change_selection_change_and_redacted_hash_disqualify_short_circuit(
+    workspace: Path,
+) -> None:
+    ids = DetectionIds()
+    fact_id, log_id, _item_id = prepare_fact(workspace, ids)
+    response = detector_response(
+        target_id=fact_id,
+        left=("experience_fact", fact_id),
+        right=("raw_log", log_id),
+    )
+    run_stage4(workspace, FakeContractRunner([response]), ids)
+
+    # A changed model selection disqualifies even over identical input.
+    changed_selection = FakeContractRunner([response])
+    result = run_stage4(
+        workspace, changed_selection, ids, selection=alt_selection(1)
+    )
+    assert result.short_circuited is False
+    assert result.retained is True
+    assert len(changed_selection.calls) == 1
+
+    # Identical rerun against the recorded alt-selection run is free again.
+    silent = FakeContractRunner([])
+    assert run_stage4(
+        workspace, silent, ids, selection=alt_selection(1)
+    ).short_circuited is True
+    assert silent.calls == []
+
+    # New capture changes the serialized input: the ordinary call proceeds.
+    add_log(
+        workspace,
+        log_id="log_vera_stage4_more",
+        recorded_at=FIXED_NOW - timedelta(minutes=30),
+        raw_text="Vera Example added one more record.",
+        occurred=exact_day(15),
+        item_specs=(("evi_vera_stage4_more", "manual_claim"),),
+    )
+    grown_input = FakeContractRunner([response])
+    grown = run_stage4(
+        workspace, grown_input, ids, selection=alt_selection(1)
+    )
+    assert grown.short_circuited is False
+    assert grown.retained is True
+    assert len(grown_input.calls) == 1
+
+    # A §13.13 privacy redaction of every retained content hash disqualifies.
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        connection.execute("UPDATE llm_calls SET input_hash = NULL")
+    redacted = FakeContractRunner([response])
+    after_redaction = run_stage4(
+        workspace, redacted, ids, selection=alt_selection(1)
+    )
+    assert after_redaction.short_circuited is False
+    assert len(redacted.calls) == 1
 
 
 @pytest.mark.unit

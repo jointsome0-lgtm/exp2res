@@ -123,20 +123,27 @@ def run_complete_stage(
     jitter: Callable[[float, float], float] | None = None,
     token_patterns: Iterable[Pattern[bytes]] | None = None,
     resolved_credentials: Iterable[bytes] = (),
+    input_ids: Sequence[str] | None = None,
 ) -> StageOutcome:
     """Validate every planned call before one caller-defined business swap.
 
     The caller must hold ``writer_database(..., reconcile=True)`` for the
     lifetime of this call. This module owns the single final transaction that
-    couples the business replacement to the run's completed transition.
+    couples the business replacement to the run's completed transition. An
+    explicit ``input_ids`` overrides the planned-call derivation so a run
+    completed without calls (a §13.4 short-circuit) still records its inputs.
     """
 
     now = clock or (lambda: datetime.now(timezone.utc))
     adjusted_budgets = replace(budgets, planned_call_count=len(planned))
-    input_ids = tuple(
-        sorted(
-            {item for call in planned for item in call.input_ids},
-            key=lambda value: value.encode("utf-8"),
+    resolved_input_ids = (
+        tuple(input_ids)
+        if input_ids is not None
+        else tuple(
+            sorted(
+                {item for call in planned for item in call.input_ids},
+                key=lambda value: value.encode("utf-8"),
+            )
         )
     )
 
@@ -153,7 +160,7 @@ def run_complete_stage(
                 model=selection.model,
                 prompt_policy_hash=prompt_policy_hash(contract),
                 parent_run_id=parent_run_id,
-                input_ids=(),
+                input_ids=resolved_input_ids,
                 metadata={
                     "adapter_id": selection.adapter,
                     "contract_id": contract.contract_id,
@@ -201,7 +208,7 @@ def run_complete_stage(
                 call_index=call_index,
                 finish_run=False,
                 cli_version=cli_version,
-                input_ids=input_ids if call_index == 1 else (),
+                input_ids=resolved_input_ids if call_index == 1 else (),
                 enrich=call.enrich,
                 persist_validated=None,
                 capability_check=capability_check,
