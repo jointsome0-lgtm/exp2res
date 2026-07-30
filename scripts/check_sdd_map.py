@@ -15,8 +15,8 @@ SPEC_DIRECTORY = REPOSITORY_ROOT / "spec"
 LINE_BUDGET = 250
 INDEX_HEADING = "## § Index"
 BULLET_RE = re.compile(r"^- \S")
-SECTION_BULLET_RE = re.compile(r"^- §(\d+) ")
-SPEC_FILE_RE = re.compile(r"^(\d+)-[a-z0-9-]+\.md$")
+SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9]\d*) ")
+SPEC_FILE_RE = re.compile(r"^(\d+)-.+\.md$")
 
 
 def read_index_bullets() -> tuple[list[str], list[str]]:
@@ -36,6 +36,12 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
             break
         if BULLET_RE.match(line):
             bullets.append(line)
+        elif bullets:
+            if not line.strip():
+                break
+            # A wrapped bullet is still one router: continuation text counts
+            # toward its budget.
+            bullets[-1] += " " + line.strip()
     if not bullets:
         return [], ["§ Index contains no bullets"]
     return bullets, []
@@ -76,6 +82,8 @@ def main() -> int:
             )
         if match := SECTION_BULLET_RE.match(bullet):
             index_numbers.append(int(match.group(1)))
+        elif bullet.startswith("- §"):
+            errors.append(f"malformed § index anchor (canonical form is §N): {bullet[:60]}…")
 
     errors.extend(
         f"duplicate § index line: §{number}"
