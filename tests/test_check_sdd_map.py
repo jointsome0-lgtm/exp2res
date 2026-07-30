@@ -1,4 +1,4 @@
-from scripts.check_sdd_map import has_section_heading
+from scripts import check_sdd_map
 
 
 def test_section_heading_ignores_shorter_fence_example_inside_longer_fence() -> None:
@@ -11,7 +11,7 @@ def test_section_heading_ignores_shorter_fence_example_inside_longer_fence() -> 
 ````
 """
 
-    assert not has_section_heading(body, 30)
+    assert not check_sdd_map.has_section_heading(body, 30)
 
 
 def test_section_heading_ignores_mismatched_closing_fence() -> None:
@@ -23,7 +23,7 @@ def test_section_heading_ignores_mismatched_closing_fence() -> None:
 ~~~~
 """
 
-    assert not has_section_heading(body, 30)
+    assert not check_sdd_map.has_section_heading(body, 30)
 
 
 def test_fence_with_info_string_does_not_close_open_fence() -> None:
@@ -35,7 +35,7 @@ def test_fence_with_info_string_does_not_close_open_fence() -> None:
 ```
 """
 
-    assert not has_section_heading(body, 30)
+    assert not check_sdd_map.has_section_heading(body, 30)
 
 
 def test_section_heading_is_found_after_compatible_closing_fence() -> None:
@@ -46,7 +46,7 @@ def test_section_heading_is_found_after_compatible_closing_fence() -> None:
 ## §30. Real section
 """
 
-    assert has_section_heading(body, 30)
+    assert check_sdd_map.has_section_heading(body, 30)
 
 
 def test_backtick_in_info_string_does_not_open_fence() -> None:
@@ -56,4 +56,48 @@ def test_backtick_in_info_string_does_not_open_fence() -> None:
 ```
 """
 
-    assert has_section_heading(body, 30)
+    assert check_sdd_map.has_section_heading(body, 30)
+
+
+def test_section_heading_ignores_html_comments() -> None:
+    body = """\
+## §99. Wrong section
+<!--
+## §30. Example inside comment
+-->
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_section_heading_rejects_foreign_root_heading() -> None:
+    body = """\
+## §30. Real section
+## §31. Foreign section
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_index_heading_inside_fence_is_ignored(tmp_path, monkeypatch) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+```
+## § Index
+
+- §0 fenced route
+- Decision Log — fenced route
+```
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == []
+    assert errors == [
+        "SDD.md must contain exactly one canonical '## § Index' heading "
+        "and no variant spellings, found 0 candidate(s)"
+    ]

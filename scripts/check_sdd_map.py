@@ -23,6 +23,76 @@ SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
 DECISION_LOG_BULLET_RE = re.compile(r"^- Decision Log — \S")
 SPEC_FILE_RE = re.compile(r"^([0-9]+)-.+\.md$")
 OPENING_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+SECTION_HEADING_RE = re.compile(r"^## §(0|[1-9][0-9]*)\. \S")
+
+
+def opening_fence(line: str) -> tuple[str, int] | None:
+    """Return a CommonMark fence's character and length, if line opens one."""
+    match = OPENING_FENCE_RE.fullmatch(line)
+    if not match:
+        return None
+    marker, info_string = match.groups()
+    if marker[0] == "`" and "`" in info_string:
+        return None
+    return marker[0], len(marker)
+
+
+def is_closing_fence(line: str, fence: tuple[str, int]) -> bool:
+    """True when line is a compatible CommonMark close for fence."""
+    character, length = fence
+    return bool(
+        re.fullmatch(
+            rf" {{0,3}}{re.escape(character)}{{{length},}}[ \t]*",
+            line,
+        )
+    )
+
+
+def without_html_comments(line: str, in_comment: bool) -> tuple[str, bool]:
+    """Blank HTML comment spans while preserving visible text positions."""
+    visible: list[str] = []
+    cursor = 0
+    while cursor < len(line):
+        if in_comment:
+            end = line.find("-->", cursor)
+            if end < 0:
+                visible.append(" " * (len(line) - cursor))
+                break
+            visible.append(" " * (end + 3 - cursor))
+            cursor = end + 3
+            in_comment = False
+            continue
+
+        start = line.find("<!--", cursor)
+        if start < 0:
+            visible.append(line[cursor:])
+            break
+        visible.append(line[cursor:start])
+        visible.append(" " * 4)
+        cursor = start + 4
+        in_comment = True
+    return "".join(visible), in_comment
+
+
+def visible_markdown_lines(lines: list[str]) -> list[str | None]:
+    """Hide fenced-code and HTML-comment lines from structural checks."""
+    visible: list[str | None] = []
+    fence: tuple[str, int] | None = None
+    in_comment = False
+    for raw_line in lines:
+        if fence is not None:
+            if is_closing_fence(raw_line, fence):
+                fence = None
+            visible.append(None)
+            continue
+
+        line, in_comment = without_html_comments(raw_line, in_comment)
+        fence = opening_fence(line)
+        if fence is not None:
+            visible.append(None)
+        else:
+            visible.append(line)
+    return visible
 
 
 def read_index_bullets() -> tuple[list[str], list[str]]:
@@ -31,14 +101,19 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
     except (OSError, UnicodeError) as exc:
         return [], [f"cannot read {SDD_PATH.relative_to(REPOSITORY_ROOT)}: {exc}"]
 
+    visible_lines = visible_markdown_lines(lines)
     headings = [
         index
-        for index, line in enumerate(lines)
-        if INDEX_HEADING_VARIANT_RE.fullmatch(line)
-        or (
-            SETEXT_TITLE_RE.fullmatch(line)
-            and index + 1 < len(lines)
-            and SETEXT_UNDERLINE_RE.fullmatch(lines[index + 1])
+        for index, line in enumerate(visible_lines)
+        if line is not None
+        and (
+            INDEX_HEADING_VARIANT_RE.fullmatch(line)
+            or (
+                SETEXT_TITLE_RE.fullmatch(line)
+                and index + 1 < len(visible_lines)
+                and visible_lines[index + 1] is not None
+                and SETEXT_UNDERLINE_RE.fullmatch(visible_lines[index + 1])
+            )
         )
     ]
     if len(headings) != 1 or lines[headings[0]] != INDEX_HEADING:
@@ -50,7 +125,8 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
 
     bullets: list[str] = []
     errors: list[str] = []
-    for line in lines[start:]:
+    for visible_line in visible_lines[start:]:
+        line = visible_line or ""
         if line == "---" or line.startswith("## "):
             break
         if BULLET_RE.match(line):
@@ -96,7 +172,8 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
                 continue
             if not has_section_heading(body, number):
                 errors.append(
-                    f"spec/{name} lacks its own top-level '## §{number}. ' heading"
+                    f"spec/{name} must contain exactly one rendered top-level "
+                    f"'## §{number}. <title>' heading and no foreign root § heading"
                 )
         elif name.lower().endswith(".md") and name[:1].isdigit():
             errors.append(f"malformed numbered spec filename: spec/{name}")
@@ -109,26 +186,13 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
 
 
 def has_section_heading(body: str, number: int) -> bool:
-    """True when the file declares '## §N. <title>' outside fenced code."""
-    fence: tuple[str, int] | None = None
-    for line in body.splitlines():
-        if fence is not None:
-            character, length = fence
-            closing_fence = re.compile(
-                rf"^ {{0,3}}{re.escape(character)}{{{length},}}[ \t]*$"
-            )
-            if closing_fence.fullmatch(line):
-                fence = None
-            continue
-
-        opening_fence = OPENING_FENCE_RE.fullmatch(line)
-        if opening_fence:
-            marker, info_string = opening_fence.groups()
-            if marker[0] != "`" or "`" not in info_string:
-                fence = (marker[0], len(marker))
-        elif line.startswith(f"## §{number}. "):
-            return True
-    return False
+    """True when exactly one rendered root § heading matches the filename."""
+    headings = [
+        int(match.group(1))
+        for line in visible_markdown_lines(body.splitlines())
+        if line is not None and (match := SECTION_HEADING_RE.match(line))
+    ]
+    return headings == [number]
 
 
 def main() -> int:
