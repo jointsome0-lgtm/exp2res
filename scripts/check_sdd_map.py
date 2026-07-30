@@ -15,6 +15,8 @@ SPEC_DIRECTORY = REPOSITORY_ROOT / "spec"
 LINE_BUDGET = 250
 INDEX_HEADING = "## § Index"
 INDEX_HEADING_VARIANT_RE = re.compile(r"#{1,6}\s*§\s*Index\s*#*\s*")
+SETEXT_TITLE_RE = re.compile(r"\s*§\s*Index\s*")
+SETEXT_UNDERLINE_RE = re.compile(r"\s*[-=]+\s*")
 ORDERED_ITEM_RE = re.compile(r"[0-9]+[.)]\s")
 BULLET_RE = re.compile(r"^- \S")
 SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
@@ -32,6 +34,11 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
         index
         for index, line in enumerate(lines)
         if INDEX_HEADING_VARIANT_RE.fullmatch(line)
+        or (
+            SETEXT_TITLE_RE.fullmatch(line)
+            and index + 1 < len(lines)
+            and SETEXT_UNDERLINE_RE.fullmatch(lines[index + 1])
+        )
     ]
     if len(headings) != 1 or lines[headings[0]] != INDEX_HEADING:
         return [], [
@@ -86,9 +93,7 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
             except (OSError, UnicodeError) as exc:
                 errors.append(f"cannot read spec/{name}: {exc}")
                 continue
-            if not any(
-                line.startswith(f"## §{number}. ") for line in body.splitlines()
-            ):
+            if not has_section_heading(body, number):
                 errors.append(
                     f"spec/{name} lacks its own top-level '## §{number}. ' heading"
                 )
@@ -100,6 +105,17 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
         if count > 1
     ]
     return set(numbers), errors
+
+
+def has_section_heading(body: str, number: int) -> bool:
+    """True when the file declares '## §N. <title>' outside fenced code."""
+    in_fence = False
+    for line in body.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+        elif not in_fence and line.startswith(f"## §{number}. "):
+            return True
+    return False
 
 
 def main() -> int:
