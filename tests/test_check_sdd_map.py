@@ -441,3 +441,22 @@ def test_section_heading_rejects_zero_padded_foreign_setext_root() -> None:
 """
 
     assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_section_heading_rejects_titleless_foreign_atx_root() -> None:
+    body = """\
+## §30. Real section
+## §31.
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_section_heading_rejects_titleless_foreign_setext_root() -> None:
+    body = """\
+## §30. Real section
+§31.
+-----
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)

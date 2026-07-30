@@ -30,9 +30,13 @@ SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
 DECISION_LOG_BULLET_RE = re.compile(r"^- Decision Log — \S")
 SPEC_FILE_RE = re.compile(r"^([0-9]+)-.+\.md$")
 OPENING_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-SECTION_HEADING_RE = re.compile(r"^ {0,3}## §([0-9]+)\. \S")
+SECTION_HEADING_RE = re.compile(
+    r"^ {0,3}##[ \t]+§([0-9]+)\.(?:[ \t]+.*)?$"
+)
 CANONICAL_SECTION_HEADING_RE = re.compile(r"^## §(0|[1-9][0-9]*)\. \S")
-SETEXT_SECTION_TITLE_RE = re.compile(r"^ {0,3}§([0-9]+)\. \S")
+SETEXT_SECTION_TITLE_RE = re.compile(
+    r"^ {0,3}§([0-9]+)\.(?:[ \t]+.*)?$"
+)
 
 
 def opening_fence(line: str) -> tuple[str, int] | None:
