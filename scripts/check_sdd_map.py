@@ -14,6 +14,8 @@ SDD_PATH = REPOSITORY_ROOT / "SDD.md"
 SPEC_DIRECTORY = REPOSITORY_ROOT / "spec"
 LINE_BUDGET = 250
 INDEX_HEADING = "## § Index"
+INDEX_HEADING_VARIANT_RE = re.compile(r"#{1,6}\s*§\s*Index\s*#*\s*")
+ORDERED_ITEM_RE = re.compile(r"[0-9]+[.)]\s")
 BULLET_RE = re.compile(r"^- \S")
 SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
 DECISION_LOG_BULLET_RE = re.compile(r"^- Decision Log — \S")
@@ -26,10 +28,17 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
     except (OSError, UnicodeError) as exc:
         return [], [f"cannot read {SDD_PATH.relative_to(REPOSITORY_ROOT)}: {exc}"]
 
-    headings = lines.count(INDEX_HEADING)
-    if headings != 1:
-        return [], [f"SDD.md must contain exactly one {INDEX_HEADING!r} heading, found {headings}"]
-    start = lines.index(INDEX_HEADING) + 1
+    headings = [
+        index
+        for index, line in enumerate(lines)
+        if INDEX_HEADING_VARIANT_RE.fullmatch(line)
+    ]
+    if len(headings) != 1 or lines[headings[0]] != INDEX_HEADING:
+        return [], [
+            f"SDD.md must contain exactly one canonical {INDEX_HEADING!r} heading "
+            f"and no variant spellings, found {len(headings)} candidate(s)"
+        ]
+    start = headings[0] + 1
 
     bullets: list[str] = []
     errors: list[str] = []
@@ -38,7 +47,7 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
             break
         if BULLET_RE.match(line):
             bullets.append(line)
-        elif line.strip()[:1] in {"-", "*", "+"}:
+        elif line.strip()[:1] in {"-", "*", "+"} or ORDERED_ITEM_RE.match(line.strip()):
             errors.append(f"malformed § Index bullet: {line.strip()[:60]}…")
         elif not bullets or not line.strip():
             continue
@@ -68,10 +77,21 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
     for name in names:
         if match := SPEC_FILE_RE.fullmatch(name):
             number = int(match.group(1))
-            if match.group(1) == f"{number:02d}":
-                numbers.append(number)
-            else:
+            if match.group(1) != f"{number:02d}":
                 errors.append(f"malformed numbered spec filename: spec/{name}")
+                continue
+            numbers.append(number)
+            try:
+                body = (SPEC_DIRECTORY / name).read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                errors.append(f"cannot read spec/{name}: {exc}")
+                continue
+            if not any(
+                line.startswith(f"## §{number}.") for line in body.splitlines()
+            ):
+                errors.append(
+                    f"spec/{name} lacks its own top-level '## §{number}.' heading"
+                )
         elif name.lower().endswith(".md") and name[:1].isdigit():
             errors.append(f"malformed numbered spec filename: spec/{name}")
     errors += [
@@ -115,6 +135,8 @@ def main() -> int:
         for number, count in sorted(Counter(index_numbers).items())
         if count > 1
     )
+    if index_numbers != sorted(index_numbers):
+        errors.append("§ index lines are not in ascending numeric order")
     if not errors:
         errors.extend(
             f"§{number} has an index line but no spec/{number:02d}-*.md file"
