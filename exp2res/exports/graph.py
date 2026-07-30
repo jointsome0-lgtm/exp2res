@@ -21,7 +21,7 @@ from exp2res.domain.models import (
     SelfSignal,
     StrictModel,
 )
-from exp2res.domain.enums import VerificationStatus
+from exp2res.domain.verification import aggregate_verification_status
 from exp2res.errors import (
     IntegrityFailureError,
     SelectorNotFoundError,
@@ -43,36 +43,12 @@ from exp2res.storage.repository import (
 
 T = TypeVar("T")
 
-_AGGREGATE_PRECEDENCE = (
-    "rejected",
-    "unsupported",
-    "contradicted",
-    "needs_clarification",
-    "partially_supported",
-    "inferred_but_acceptable",
-    "supported",
-)
-
 
 def id_key(value: str) -> bytes:
     # Filesystem-derived names may carry surrogateescape'd undecodable bytes;
     # fsencode round-trips them and equals UTF-8 for every valid string, so a
     # stray non-UTF-8 managed entry sorts instead of raising.
     return os.fsencode(value)
-
-
-def _reduce_verification_status(
-    statuses: list[VerificationStatus],
-) -> VerificationStatus:
-    values = set(statuses)
-    if not values:
-        raise IntegrityFailureError("snapshot_claim_set_empty")
-    if "unverified" in values:
-        return "unverified"
-    for status in _AGGREGATE_PRECEDENCE:
-        if status in values:
-            return cast(VerificationStatus, status)
-    raise IntegrityFailureError("snapshot_status_invalid")
 
 
 @dataclass(frozen=True)
@@ -403,7 +379,7 @@ def load_assessment_graph(
         claims.append(stored)
     claims.sort(key=lambda item: id_key(item.value.id))
 
-    fresh = _reduce_verification_status(
+    fresh = aggregate_verification_status(
         [item.value.verification_status for item in claims]
     )
     if snapshot.verification_status != fresh:

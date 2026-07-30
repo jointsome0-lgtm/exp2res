@@ -14,6 +14,7 @@ import exp2res.services.assessment as assessment_service
 import exp2res.services.detection as detection_service
 import exp2res.services.extraction as extraction_service
 from exp2res.cli import app
+from exp2res.errors import IntegrityFailureError
 from exp2res.storage.repository import (
     list_self_claims_for_snapshot,
     list_verification_findings,
@@ -598,6 +599,61 @@ def test_business_commit_interrupt_reports_the_committed_swap(
         ).fetchall()
     assert tuple(run) == ("completed", None)
     assert [row["id"] for row in current] == created["assessment_snapshot"]
+
+
+def test_failed_run_finalization_interrupt_still_reports_the_run(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§12.13/§14.14: cancellation during failed-run commit keeps its ID."""
+
+    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [verifier_response("rejected"), verifier_response()]
+            ),
+        ),
+    )
+    blocked, _ = invoke_json(
+        workspace, ["--yes", "assess", "verify", "--snapshot", snapshot_id]
+    )
+    assert blocked.exit_code == 10
+
+    def fail_candidate(*_args, **_kwargs):
+        raise IntegrityFailureError("Vera Example injected candidate failure")
+
+    monkeypatch.setattr(
+        stage6_module, "insert_assessment_snapshot", fail_candidate
+    )
+    # The first repair commit creates the run. The candidate fails before its
+    # commit, so commit 2 is the failed-run finalization we interrupt.
+    interrupt_repair_commit(monkeypatch, selected_commit=2)
+
+    result, envelope = invoke_json(
+        workspace, ["assess", "repair", "--snapshot", snapshot_id]
+    )
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert len(envelope["run_ids"]) == 1
+    assert envelope["affected_ids"] == {
+        "created": [],
+        "superseded": [],
+        "deleted": [],
+    }
+    with read_database(workspace) as connection:
+        run = connection.execute(
+            "SELECT status, failure_code FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
+        current = connection.execute(
+            "SELECT id FROM assessment_snapshots WHERE superseded_at IS NULL"
+        ).fetchall()
+    assert tuple(run) == ("failed", "business_commit_failed")
+    assert [row["id"] for row in current] == [snapshot_id]
 
 
 def test_repair_post_commit_interrupt_reports_the_committed_swap(

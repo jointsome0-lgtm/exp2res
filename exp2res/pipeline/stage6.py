@@ -21,6 +21,7 @@ from exp2res.domain.models import (
     canonical_project_key,
 )
 from exp2res.domain.temporal import confidence_exceeds
+from exp2res.domain.verification import aggregate_verification_status
 from exp2res.errors import (
     EmptyAssessmentViewError,
     Exp2ResError,
@@ -539,17 +540,26 @@ def run_assessment_repair(
             raise SnapshotNotCurrentError()
         members = tuple(
             sorted(
-                list_self_claims_for_snapshot(connection, snapshot_id),
+                list_self_claims_for_snapshot(
+                    connection, snapshot_id, current_only=False
+                ),
                 key=lambda item: _id_key(item.id),
             )
         )
         if not members:
             raise IntegrityFailureError("snapshot_claim_set_empty")
+        if any(item.superseded_at is not None for item in members):
+            raise IntegrityFailureError("snapshot_claim_not_current")
         summaries = tuple(
             item for item in members if item.claim_kind == "narrative_summary"
         )
         if len(summaries) != 1 or summaries[0].claim != snapshot.summary:
             raise IntegrityFailureError("snapshot_summary_mismatch")
+        fresh_status = aggregate_verification_status(
+            item.verification_status for item in members
+        )
+        if snapshot.verification_status != fresh_status:
+            raise IntegrityFailureError("snapshot_aggregate_mismatch")
         # §13.6 preconditions, checked fail-closed in order before any mutation.
         if any(item.verification_status == "unverified" for item in members):
             raise SnapshotNotVerifiedError()
@@ -582,6 +592,50 @@ def run_assessment_repair(
             snapshot.scope, snapshot.scope_target, snapshot.id
         )
         pending_stale_paths: tuple[str, ...] = ()
+
+        def finalize_durable_run(
+            failure_code: str, *, known_durable: bool = False
+        ) -> tuple[bool, bool]:
+            """Finish a discoverable run, retrying one ambiguous interrupt."""
+
+            durable = known_durable
+            interrupted = False
+            for _attempt in range(2):
+                try:
+                    row = connection.execute(
+                        "SELECT status FROM processing_runs WHERE id = ?",
+                        (run_id,),
+                    ).fetchone()
+                except KeyboardInterrupt:
+                    interrupted = True
+                    continue
+                except Exception:
+                    return durable, interrupted
+                if row is None:
+                    return durable, interrupted
+                durable = True
+                if row["status"] in {"completed", "failed"}:
+                    return durable, interrupted
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    finish_processing_run(
+                        connection,
+                        run_id=run_id,
+                        finished_at=now(),
+                        status="failed",
+                        failure_code=failure_code,
+                    )
+                    connection.commit()
+                except KeyboardInterrupt:
+                    connection.rollback()
+                    interrupted = True
+                    continue
+                except Exception:
+                    connection.rollback()
+                    return durable, interrupted
+                return durable, interrupted
+            return durable, interrupted
+
         # §12.13: the run row is the durable attempt record, committed on
         # its own before the candidate swap so a failed swap rolls back
         # every business row while the run survives as `failed`.
@@ -602,28 +656,8 @@ def run_assessment_repair(
         except BaseException as run_error:
             connection.rollback()
             if isinstance(run_error, KeyboardInterrupt):
-                durable = connection.execute(
-                    "SELECT status FROM processing_runs WHERE id = ?",
-                    (run_id,),
-                ).fetchone()
-                if durable is not None:
-                    # COMMIT may have become durable before Python delivered
-                    # the interrupt. Finalize that discoverable run instead
-                    # of leaving it `running`; a second ambiguous interrupt
-                    # is still reported against the durable run ID.
-                    try:
-                        connection.execute("BEGIN IMMEDIATE")
-                        if durable["status"] not in {"completed", "failed"}:
-                            finish_processing_run(
-                                connection,
-                                run_id=run_id,
-                                finished_at=now(),
-                                status="failed",
-                                failure_code="cancelled",
-                            )
-                        connection.commit()
-                    except BaseException:
-                        connection.rollback()
+                durable, _interrupted = finalize_durable_run("cancelled")
+                if durable:
                     cancelled = OperationCancelledError()
                     cancelled.run_ids = (run_id,)
                     raise cancelled from run_error
@@ -846,24 +880,15 @@ def run_assessment_repair(
                 if isinstance(swap_error, KeyboardInterrupt)
                 else "business_commit_failed"
             )
-            try:
-                connection.execute("BEGIN IMMEDIATE")
-                finish_processing_run(
-                    connection,
-                    run_id=run_id,
-                    finished_at=now(),
-                    status="failed",
-                    failure_code=failure_code,
-                )
-                connection.commit()
-            except Exception:
-                connection.rollback()
+            durable_run, finalization_interrupted = finalize_durable_run(
+                failure_code, known_durable=True
+            )
             # §14.14 rule 5: the command boundary reports the durable
             # failed run, so the raised error must carry its ID — a
             # non-typed storage failure is wrapped to reach the envelope.
-            if isinstance(swap_error, KeyboardInterrupt):
+            if isinstance(swap_error, KeyboardInterrupt) or finalization_interrupted:
                 cancelled = OperationCancelledError()
-                cancelled.run_ids = (run_id,)
+                cancelled.run_ids = (run_id,) if durable_run else ()
                 raise cancelled from swap_error
             if isinstance(swap_error, Exp2ResError):
                 swap_error.run_ids = (run_id,)

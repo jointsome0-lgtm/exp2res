@@ -405,6 +405,84 @@ def test_repair_rejects_a_snapshot_with_duplicate_narrative_summaries(
     assert repair_runs == before_runs
 
 
+def test_repair_rejects_a_snapshot_with_a_superseded_member(
+    workspace: Path,
+) -> None:
+    """§11/§13.6: snapshot membership is complete, never current-row filtered."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [verifier_response("rejected"), verifier_response("supported")]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    with writer_database(workspace) as connection:
+        supported_id = connection.execute(
+            """
+            SELECT id FROM self_claims
+            WHERE snapshot_id = ? AND verification_status = 'supported'
+            LIMIT 1
+            """,
+            (generated.snapshot_id,),
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE self_claims SET superseded_at = ? WHERE id = ?",
+            (FIXED_NOW.isoformat(), supported_id),
+        )
+        before_runs = connection.execute(
+            "SELECT COUNT(*) FROM processing_runs WHERE stage = '13.6'"
+        ).fetchone()[0]
+
+    with pytest.raises(IntegrityFailureError) as caught:
+        repair(workspace, ids, generated.snapshot_id)
+    assert caught.value.args == ("snapshot_claim_not_current",)
+    with read_database(workspace) as connection:
+        repair_runs = connection.execute(
+            "SELECT COUNT(*) FROM processing_runs WHERE stage = '13.6'"
+        ).fetchone()[0]
+    assert repair_runs == before_runs
+
+
+def test_repair_rejects_a_mismatched_snapshot_aggregate(
+    workspace: Path,
+) -> None:
+    """§16.11: repair cannot consume member statuses under a stale aggregate."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [verifier_response("rejected"), verifier_response("supported")]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    with writer_database(workspace) as connection:
+        connection.execute(
+            """
+            UPDATE assessment_snapshots
+            SET verification_status = 'supported'
+            WHERE id = ?
+            """,
+            (generated.snapshot_id,),
+        )
+        before_runs = connection.execute(
+            "SELECT COUNT(*) FROM processing_runs WHERE stage = '13.6'"
+        ).fetchone()[0]
+
+    with pytest.raises(IntegrityFailureError) as caught:
+        repair(workspace, ids, generated.snapshot_id)
+    assert caught.value.args == ("snapshot_aggregate_mismatch",)
+    with read_database(workspace) as connection:
+        repair_runs = connection.execute(
+            "SELECT COUNT(*) FROM processing_runs WHERE stage = '13.6'"
+        ).fetchone()[0]
+    assert repair_runs == before_runs
+
+
 def test_precondition_failures_are_stable_and_change_nothing(
     workspace: Path,
 ) -> None:

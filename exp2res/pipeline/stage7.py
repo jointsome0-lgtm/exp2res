@@ -24,6 +24,7 @@ from exp2res.domain.models import (
     SelfSignal,
     VerificationFinding,
 )
+from exp2res.domain.verification import aggregate_verification_status
 from exp2res.errors import (
     IntegrityFailureError,
     SelectorNotFoundError,
@@ -66,17 +67,6 @@ from .orchestration import PlannedCall, run_complete_stage
 from .view_selection import select_assessment_view
 
 
-_AGGREGATE_PRECEDENCE = (
-    "rejected",
-    "unsupported",
-    "contradicted",
-    "needs_clarification",
-    "partially_supported",
-    "inferred_but_acceptable",
-    "supported",
-)
-
-
 @dataclass(frozen=True)
 class Stage7Result:
     run_id: str
@@ -103,18 +93,6 @@ class _ResolvedVerification:
 
 def _id_key(value: str) -> bytes:
     return value.encode("utf-8")
-
-
-def _aggregate(statuses: Iterable[VerificationStatus]) -> VerificationStatus:
-    values = set(statuses)
-    if not values:
-        raise IntegrityFailureError("snapshot_claim_set_empty")
-    if "unverified" in values:
-        return "unverified"
-    for status in _AGGREGATE_PRECEDENCE:
-        if status in values:
-            return cast(VerificationStatus, status)
-    raise IntegrityFailureError("snapshot_status_invalid")
 
 
 def _require_current_members(
@@ -470,7 +448,7 @@ def run_assessment_verification(
                     candidate.finding,
                     bundle_refs=candidate.bundle_refs,
                 )
-            snapshot_status = _aggregate(
+            snapshot_status = aggregate_verification_status(
                 candidate.finding.status for candidate in candidates
             )
             update_assessment_snapshot_verification(
@@ -479,7 +457,7 @@ def run_assessment_verification(
                 verification_status=snapshot_status,
             )
             fresh_claims = list_self_claims_for_snapshot(held, snapshot_id)
-            fresh_aggregate = _aggregate(
+            fresh_aggregate = aggregate_verification_status(
                 item.verification_status for item in fresh_claims
             )
             stored = get_assessment_snapshot(held, snapshot_id)

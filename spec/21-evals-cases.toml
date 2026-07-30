@@ -2256,6 +2256,10 @@ Given a current snapshot whose stored member set contains zero or multiple `narr
 When `assess repair` runs
 Then it fails closed for stored-state integrity before creating a repair run and never propagates the corrupt summary cardinality
 
+Given a current snapshot that owns a superseded member claim, or whose stored aggregate status disagrees with the complete member-status reduction
+When `assess repair` runs
+Then it fails closed for stored-state integrity before creating a repair run, without omitting the superseded member or masking the aggregate mismatch in a replacement
+
 Given an interrupt delivered after the stage-`13.6` run-row commit becomes durable but before that commit call returns
 When cancellation is reported
 Then the durable run is discovered, finalized as `failed` with failure code `cancelled`, and reported in `run_ids` while no candidate business row exists
@@ -2264,6 +2268,10 @@ Given a repair whose candidate swap fails after the run row is created
 When the candidate transaction rolls back
 Then the stage-`13.6` run row survives as the §12.13 durable failed attempt with a stable failure code, owning no business rows, and the prior snapshot stays current with its verified claims untouched
 And the raised typed error carries the failed run's ID so the §14.14 envelope reports it in `run_ids`
+
+Given cancellation is delivered while the rolled-back candidate's durable run is being finalized as failed
+When that finalization commit returns ambiguously
+Then the durable run is re-inspected and finalized when necessary, class 9 takes precedence, and the cancelled envelope still reports its run ID
 
 Given an interrupt delivered after the candidate swap commit becomes durable but before that commit call returns
 When cancellation is reported
