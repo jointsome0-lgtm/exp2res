@@ -323,3 +323,54 @@ def test_nested_list_heading_cannot_serve_as_section_root() -> None:
 """
 
     assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_index_text_with_unspaced_hashes_is_not_a_duplicate_heading(
+    tmp_path, monkeypatch
+) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index###
+
+## § Index
+
+- §0 real route
+- Decision Log — real route
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == ["- §0 real route", "- Decision Log — real route"]
+    assert errors == []
+
+
+def test_unicode_whitespace_does_not_make_prose_a_list_item(
+    tmp_path, monkeypatch
+) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+1.\u00a0ordinary prose
+-\u00a0ordinary prose
+
+- §0 real route
+- Decision Log — real route
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == ["- §0 real route", "- Decision Log — real route"]
+    assert errors == []

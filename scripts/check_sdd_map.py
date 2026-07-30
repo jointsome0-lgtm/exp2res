@@ -15,14 +15,15 @@ SPEC_DIRECTORY = REPOSITORY_ROOT / "spec"
 LINE_BUDGET = 250
 INDEX_HEADING = "## § Index"
 INDEX_HEADING_VARIANT_RE = re.compile(
-    r" {0,3}#{1,6}[ \t]+§\s*Index\s*#*\s*"
+    r" {0,3}#{1,6}[ \t]+§[ \t]*Index(?:[ \t]+#+)?[ \t]*"
 )
 SETEXT_TITLE_RE = re.compile(r" {0,3}§\s*Index[ \t]*")
 SETEXT_UNDERLINE_RE = re.compile(r" {0,3}[-=]+[ \t]*")
 INDEX_BOUNDARY_RE = re.compile(r"^ {0,3}#{1,2}(?:[ \t]+|$)")
-ORDERED_ITEM_RE = re.compile(r"[0-9]+[.)]\s")
-BULLET_ITEM_RE = re.compile(r"^ {0,3}[-+*][ \t]+")
-ORDERED_ITEM_WITH_INDENT_RE = re.compile(r"^ {0,3}[0-9]+[.)][ \t]+")
+BULLET_ITEM_RE = re.compile(r"^ {0,3}[-+*](?:[ \t]+|$)")
+ORDERED_ITEM_WITH_INDENT_RE = re.compile(
+    r"^ {0,3}[0-9]+[.)](?:[ \t]+|$)"
+)
 BULLET_RE = re.compile(r"^- \S")
 SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
 DECISION_LOG_BULLET_RE = re.compile(r"^- Decision Log — \S")
@@ -178,10 +179,7 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
             break
         if BULLET_RE.match(line):
             bullets.append(line)
-        elif not is_indented_code(line) and (
-            line.strip()[:1] in {"-", "*", "+"}
-            or ORDERED_ITEM_RE.match(line.strip())
-        ):
+        elif not is_indented_code(line) and is_list_item(line):
             errors.append(f"malformed § Index bullet: {line.strip()[:60]}…")
         elif not bullets or not line.strip():
             continue
