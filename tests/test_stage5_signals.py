@@ -33,7 +33,7 @@ from test_stage3_extraction import (
     fact_response,
     run_stage3,
 )
-from test_stage4_detection import detector_response
+from test_stage4_detection import alt_selection, detector_response
 
 
 pytestmark = pytest.mark.contract
@@ -573,7 +573,7 @@ def test_stage4_retention_keeps_signals_and_replacement_supersedes_them(
 
     replaced = run_detection_generation(
         workspace,
-        selection=SELECTION,
+        selection=alt_selection(1),
         budgets=budgets(),
         runner=FakeContractRunner(
             [
@@ -590,7 +590,116 @@ def test_stage4_retention_keeps_signals_and_replacement_supersedes_them(
         jitter=lambda lower, _upper: lower,
     )
     assert replaced.retained is False
+    assert replaced.retained_contradiction_set is False
     assert replaced.superseded_signal_ids == signal.created_signal_ids
+    with read_database(workspace) as connection:
+        assert list_self_signals(connection) == ()
+
+
+@pytest.mark.lifecycle
+def test_gap_only_swap_keeps_signals_current_but_contradiction_swap_supersedes(
+    workspace: Path,
+) -> None:
+    """§13.4: invalidation follows the replaced set's dependency graph."""
+
+    ids = SignalIds()
+    fact_id = prepare_facts(workspace, ids)[0]
+    first = run_detection_generation(
+        workspace,
+        selection=SELECTION,
+        budgets=budgets(),
+        runner=FakeContractRunner(
+            [
+                detector_response(
+                    target_id=fact_id,
+                    left=("experience_fact", fact_id),
+                    right=("raw_log", "log_vera_signal_0"),
+                )
+            ]
+        ),
+        id_factory=ids,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    signal = run_stage5(
+        workspace, FakeContractRunner([signal_response([fact_id])]), ids
+    )
+
+    gap_only = run_detection_generation(
+        workspace,
+        selection=alt_selection(1),
+        budgets=budgets(),
+        runner=FakeContractRunner(
+            [
+                detector_response(
+                    target_id=fact_id,
+                    left=("experience_fact", fact_id),
+                    right=("raw_log", "log_vera_signal_0"),
+                    reason="missing_metric",
+                    priority="high",
+                )
+            ]
+        ),
+        id_factory=ids,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    assert gap_only.retained_gap_set is False
+    assert gap_only.retained_contradiction_set is True
+    assert gap_only.superseded_gap_ids == first.created_gap_ids
+    assert gap_only.superseded_contradiction_ids == ()
+    assert gap_only.superseded_signal_ids == ()
+    assert gap_only.created_contradiction_ids == ()
+    with read_database(workspace) as connection:
+        assert [item.id for item in list_self_signals(connection)] == list(
+            signal.created_signal_ids
+        )
+        current_contradiction_generations = {
+            row[0]
+            for row in connection.execute(
+                "SELECT DISTINCT generation_id FROM contradictions "
+                "WHERE superseded_at IS NULL"
+            )
+        }
+        current_gap_generations = {
+            row[0]
+            for row in connection.execute(
+                "SELECT DISTINCT generation_id FROM gap_questions "
+                "WHERE superseded_at IS NULL"
+            )
+        }
+    # The retained contradiction rows keep their prior generation while the
+    # replaced gap set takes the one fresh swap generation.
+    assert current_contradiction_generations == {first.generation_id}
+    assert current_gap_generations == {gap_only.generation_id}
+
+    contradiction_swap = run_detection_generation(
+        workspace,
+        selection=alt_selection(2),
+        budgets=budgets(),
+        runner=FakeContractRunner(
+            [
+                detector_response(
+                    target_id=fact_id,
+                    left=("experience_fact", fact_id),
+                    right=("evidence_item", "evi_vera_signal_0"),
+                    reason="missing_metric",
+                    priority="high",
+                )
+            ]
+        ),
+        id_factory=ids,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    assert contradiction_swap.retained_gap_set is True
+    assert contradiction_swap.retained_contradiction_set is False
+    assert contradiction_swap.superseded_signal_ids == signal.created_signal_ids
+    assert contradiction_swap.superseded_gap_ids == ()
+    assert contradiction_swap.created_gap_ids == ()
     with read_database(workspace) as connection:
         assert list_self_signals(connection) == ()
 

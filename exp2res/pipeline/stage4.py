@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 
 from pydantic import BaseModel, ValidationError
 
+from exp2res.domain.canonical import canonical_model_hash
 from exp2res.domain.models import Contradiction, GapQuestion
 from exp2res.domain.results import InvalidatedView, invalidated_view
 from exp2res.errors import LLMCancelledError
@@ -20,6 +21,7 @@ from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.llm.contracts import (
     ContractValidationError,
     ContractWarning,
+    prompt_policy_hash,
     validation_diagnostics,
 )
 from exp2res.llm.detector import (
@@ -47,6 +49,7 @@ from exp2res.storage.repository import (
     mark_gap_questions_superseded,
     mark_self_signals_superseded,
     mark_self_claims_superseded,
+    utc_instant,
 )
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
@@ -70,6 +73,9 @@ ContradictionStructuralKey = tuple[tuple[str, str], ...]
 class Stage4Result:
     run_id: str
     retained: bool
+    retained_gap_set: bool
+    retained_contradiction_set: bool
+    short_circuited: bool
     created_gap_ids: tuple[str, ...]
     created_contradiction_ids: tuple[str, ...]
     superseded_gap_ids: tuple[str, ...]
@@ -273,6 +279,40 @@ def _resolve_for(
     return resolve
 
 
+def _matches_last_recorded_invocation(
+    connection: sqlite3.Connection,
+    *,
+    selection: LLMSelection,
+    input_payload: DetectorInput,
+) -> bool:
+    """§13.4 idempotent-rerun short-circuit comparison.
+
+    Compares the invocation Stage 4 would make against the most recent
+    completed §13.4 run that recorded a first-call `input_hash` (§12.15); a
+    redacted hash or absent prior run disqualifies. §12 rule 3: recency is
+    decided on the parsed UTC instant, never on stored TEXT bytes.
+    """
+
+    rows = connection.execute(
+        "SELECT runs.started_at, runs.id, runs.provider, runs.model, "
+        "runs.prompt_policy_hash, calls.input_hash "
+        "FROM processing_runs AS runs "
+        "JOIN llm_calls AS calls "
+        "ON calls.run_id = runs.id AND calls.call_index = 1 "
+        "WHERE runs.stage = '13.4' AND runs.status = 'completed' "
+        "AND calls.input_hash IS NOT NULL"
+    ).fetchall()
+    if not rows:
+        return False
+    latest = max(rows, key=lambda row: (utc_instant(row[0]), _id_key(row[1])))
+    return (
+        latest[2] == selection.adapter
+        and latest[3] == selection.model
+        and latest[4] == prompt_policy_hash(DETECTOR_CONTRACT)
+        and latest[5] == canonical_model_hash(input_payload)
+    )
+
+
 def run_detection_generation(
     workspace: Path,
     *,
@@ -336,9 +376,19 @@ def run_detection_generation(
                 key=_id_key,
             )
         )
+        # §13.4 idempotent-rerun short-circuit: an unchanged input, adapter,
+        # model, and prompt policy over an all-unanswered gap set completes as
+        # full retention with no provider call and no `llm_calls` row.
+        short_circuited = (
+            bool(facts or effective_logs)
+            and all(not gap.answered for gap in list_gap_questions(connection))
+            and _matches_last_recorded_invocation(
+                connection, selection=selection, input_payload=input_payload
+            )
+        )
         planned = (
             ()
-            if not facts and not effective_logs
+            if short_circuited or (not facts and not effective_logs)
             else (
                 PlannedCall(
                     input_payload=input_payload,
@@ -350,6 +400,8 @@ def run_detection_generation(
         )
 
         retained = not planned
+        retained_gap_set = retained
+        retained_contradiction_set = retained
         created_gap_ids: tuple[str, ...] = ()
         created_contradiction_ids: tuple[str, ...] = ()
         superseded_gap_ids: tuple[str, ...] = ()
@@ -364,7 +416,7 @@ def run_detection_generation(
         def commit(
             held: sqlite3.Connection, resolved: Sequence[object]
         ) -> Iterable[str]:
-            nonlocal retained
+            nonlocal retained, retained_gap_set, retained_contradiction_set
             nonlocal created_gap_ids, created_contradiction_ids
             nonlocal superseded_gap_ids, superseded_contradiction_ids
             nonlocal superseded_signal_ids
@@ -384,22 +436,31 @@ def run_detection_generation(
                 contradiction_structural_key(item)
                 for item in candidate.contradictions
             }
-            if (
-                candidate_gap_keys == current_gap_keys
-                and candidate_contradiction_keys == current_contradiction_keys
-                and all(not gap.answered for gap in current_gaps)
-            ):
-                retained = True
+            # §13.4: retention is decided per output set; replacing one set
+            # never supersedes or rewrites the other set's retained rows.
+            retained_gap_set = candidate_gap_keys == current_gap_keys and all(
+                not gap.answered for gap in current_gaps
+            )
+            retained_contradiction_set = (
+                candidate_contradiction_keys == current_contradiction_keys
+            )
+            retained = retained_gap_set and retained_contradiction_set
+            if retained:
                 return ()
 
-            retained = False
             swap_time = now()
-            superseded_gap_ids = tuple(gap.id for gap in current_gaps)
-            superseded_contradiction_ids = tuple(
-                item.id for item in current_contradictions
-            )
-            current_signals = list_self_signals(held)
-            superseded_signal_ids = tuple(item.id for item in current_signals)
+            if not retained_gap_set:
+                superseded_gap_ids = tuple(gap.id for gap in current_gaps)
+            if not retained_contradiction_set:
+                superseded_contradiction_ids = tuple(
+                    item.id for item in current_contradictions
+                )
+                # The contradiction set is §13.5 input, so its replacement
+                # supersedes signals; a gap-only replacement never does.
+                current_signals = list_self_signals(held)
+                superseded_signal_ids = tuple(
+                    item.id for item in current_signals
+                )
             current_snapshots = list_assessment_snapshots(held)
             superseded_snapshot_ids = tuple(item.id for item in current_snapshots)
             superseded_claim_ids = tuple(
@@ -443,25 +504,31 @@ def run_detection_generation(
             mark_assessment_snapshots_superseded(
                 held, superseded_snapshot_ids, swap_time
             )
+            # §12 rule 13: one shared generation ID for the set or sets
+            # replaced in this swap; a retained set keeps its prior rows,
+            # generation, and provenance, and its candidate half persists
+            # nowhere.
             generation_id = id_factory("gen")
-            for gap in candidate.gaps:
-                insert_gap_question(
-                    held,
-                    gap,
-                    produced_by_run_id=run_id,
-                    generation_id=generation_id,
+            if not retained_gap_set:
+                for gap in candidate.gaps:
+                    insert_gap_question(
+                        held,
+                        gap,
+                        produced_by_run_id=run_id,
+                        generation_id=generation_id,
+                    )
+                created_gap_ids = tuple(gap.id for gap in candidate.gaps)
+            if not retained_contradiction_set:
+                for contradiction in candidate.contradictions:
+                    insert_contradiction(
+                        held,
+                        contradiction,
+                        produced_by_run_id=run_id,
+                        generation_id=generation_id,
+                    )
+                created_contradiction_ids = tuple(
+                    item.id for item in candidate.contradictions
                 )
-            for contradiction in candidate.contradictions:
-                insert_contradiction(
-                    held,
-                    contradiction,
-                    produced_by_run_id=run_id,
-                    generation_id=generation_id,
-                )
-            created_gap_ids = tuple(gap.id for gap in candidate.gaps)
-            created_contradiction_ids = tuple(
-                item.id for item in candidate.contradictions
-            )
             # Pre-commit pending report: the paths this supersession makes
             # stale are reported before COMMIT, so an interrupt anywhere in
             # the commit-to-cleanup window still reports the retained set. A
@@ -496,6 +563,7 @@ def run_detection_generation(
             jitter=jitter,
             token_patterns=token_patterns,
                 resolved_credentials=resolved_credentials,
+                input_ids=input_ids,
             )
         except BaseException:
             # Withdraw the pre-commit pending report only when the rollback
@@ -524,6 +592,9 @@ def run_detection_generation(
             return Stage4Result(
                 run_id=run_id,
                 retained=retained,
+                retained_gap_set=retained_gap_set,
+                retained_contradiction_set=retained_contradiction_set,
+                short_circuited=short_circuited,
                 created_gap_ids=created_gap_ids,
                 created_contradiction_ids=created_contradiction_ids,
                 superseded_gap_ids=superseded_gap_ids,

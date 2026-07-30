@@ -26,7 +26,7 @@ $ exp2res --workspace demo/workspace --yes extract
 Extracted 3 facts (0 superseded).
 
 $ exp2res --workspace demo/workspace --yes detections generate
-Replaced both complete detection sets. Current gaps (1): gap_demo_0001. Current contradictions (1): contradiction_demo_0001. Invalidated artifact classes: none.
+Replaced the complete gap and contradiction sets. Current gaps (1): gap_demo_0001. Current contradictions (1): contradiction_demo_0001. Invalidated artifact classes: none.
 
 $ exp2res --workspace demo/workspace gaps list
 gap_demo_0001	medium	missing_metric	false

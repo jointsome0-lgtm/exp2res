@@ -665,3 +665,16 @@ note = "Offline tests pin the dimension- and status-keyed §17 routing and its t
 ["21.57"]
 status = "pending"
 phase = "3"
+
+["21.58"]
+status = "partial"
+nodes = [
+  "tests/test_stage4_detection.py::test_identical_rerun_short_circuits_without_a_provider_call",
+  "tests/test_stage4_detection.py::test_input_change_selection_change_and_redacted_hash_disqualify_short_circuit",
+  "tests/test_stage4_detection.py::test_answered_gap_forces_key_equal_replacement_and_resets_answer_state",
+  "tests/test_stage5_signals.py::test_gap_only_swap_keeps_signals_current_but_contradiction_swap_supersedes",
+  "tests/test_stage6_assessment.py::test_stage4_retention_preserves_view_but_changed_generation_invalidates_it",
+  "tests/test_cli_detections.py::test_generate_replaces_then_retains_complete_sets_and_standard_fields",
+]
+phase = "2"
+note = "Offline tests prove the free identical-input rerun with zero llm_calls rows, every named disqualifier, per-set retention with per-swap generations, gap-only replacement that keeps signals current, contradiction replacement that supersedes signals and snapshots, and the §14.7 per-set envelope; resume branch/bullet supersession stays with the later Stage 10 phase"

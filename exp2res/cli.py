@@ -1358,7 +1358,8 @@ def detections_generate(context: typer.Context) -> None:
             if _noninteractive(controls):
                 raise NonInteractiveInputRequired()
             if not typer.confirm(
-                "Replace both complete detection sets using the configured model provider?",
+                "Regenerate the detection sets with the configured model "
+                "provider, replacing any changed complete set?",
                 err=True,
             ):
                 return Outcome(exit_code=9, diagnostic_class="cancelled")
@@ -1396,15 +1397,42 @@ def detections_generate(context: typer.Context) -> None:
                 )
             )
         invalidated_views = list(generated.invalidated_views)
-        if generated.retained:
-            human = "Retained the current detection generation unchanged."
+        if generated.short_circuited:
+            human = (
+                "Retained both current detection sets without a provider "
+                "call: the input, model selection, and prompt policy are "
+                "unchanged since the last completed detection run."
+            )
+        elif generated.retained:
+            human = "Retained both current detection sets unchanged."
         else:
+            replaced = [
+                name
+                for name, kept in (
+                    ("gap", generated.retained_gap_set),
+                    ("contradiction", generated.retained_contradiction_set),
+                )
+                if not kept
+            ]
+            kept_names = [
+                name
+                for name in ("gap", "contradiction")
+                if name not in replaced
+            ]
             invalidated = (
                 ", ".join(group.entity_type for group in superseded_groups)
                 or "none"
             )
+            described = (
+                f"Replaced the complete {' and '.join(replaced)} "
+                f"set{'s' if len(replaced) > 1 else ''}"
+            )
+            if kept_names:
+                described += (
+                    f"; retained the {kept_names[0]} set unchanged"
+                )
             human = (
-                "Replaced both complete detection sets. "
+                f"{described}. "
                 f"Current gaps ({len(gaps)}): "
                 f"{', '.join(gap.id for gap in gaps) or 'none'}. "
                 f"Current contradictions ({len(contradictions)}): "

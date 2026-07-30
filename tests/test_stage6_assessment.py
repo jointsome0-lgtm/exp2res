@@ -32,7 +32,7 @@ from test_stage3_extraction import (
     run_stage3,
 )
 from test_stage5_signals import SignalIds, prepare_facts, run_stage5, signal_response
-from test_stage4_detection import detector_response, run_stage4
+from test_stage4_detection import alt_selection, detector_response, run_stage4
 from exp2res.services.logs import delete_log
 
 
@@ -666,6 +666,7 @@ def test_stage4_retention_preserves_view_but_changed_generation_invalidates_it(
             ]
         ),
         ids,
+        selection=alt_selection(1),
     )
     assert changed.retained is False
     assert changed.superseded_snapshot_ids == (assessed.snapshot_id,)
