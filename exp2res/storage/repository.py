@@ -11,7 +11,7 @@ from typing import Iterable
 from pydantic import ValidationError
 
 from exp2res.domain.calibration import claim_confidence_cap, signal_confidence_cap
-from exp2res.domain.enums import VerificationStatus
+from exp2res.domain.enums import VerificationStatus, VerificationTargetRefType
 from exp2res.domain.models import (
     Contradiction,
     AssessmentSnapshot,
@@ -1030,6 +1030,7 @@ def list_verification_findings(
     connection: sqlite3.Connection,
     *,
     run_id: str | None = None,
+    target_type: VerificationTargetRefType | None = None,
     target_id: str | None = None,
 ) -> tuple[VerificationFinding, ...]:
     clauses: list[str] = []
@@ -1037,6 +1038,9 @@ def list_verification_findings(
     if run_id is not None:
         clauses.append("produced_by_run_id = ?")
         parameters.append(run_id)
+    if target_type is not None:
+        clauses.append("target_type = ?")
+        parameters.append(target_type)
     if target_id is not None:
         clauses.append("target_id = ?")
         parameters.append(target_id)

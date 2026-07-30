@@ -170,6 +170,7 @@ exp2res assess generate --scope project --project Exp2Res
 exp2res assess list
 exp2res assess show --snapshot snapshot_001
 exp2res assess verify --snapshot snapshot_001
+exp2res assess repair --snapshot snapshot_001
 exp2res export assessment --snapshot snapshot_001
 ```
 
@@ -183,7 +184,9 @@ On success, `export assessment` publishes the selected snapshot only at its §13
 
 V1 defines no claim-confirm, dispute, or override command. `assess verify` is the system verifier gate defined by §5.10, not an owner verdict stored on a regenerated claim.
 
-`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion follows the §13.7 advisory-rewrite lifecycle; revised claim wording belongs to a later explicit `assess generate` generation.
+`assess verify` presents every complete §15.5 finding, including `reason` and `suggested_rewrite`, to the owner. The suggestion follows the §13.7 advisory-rewrite lifecycle; revised claim wording belongs to a later explicit `assess generate` generation or to `assess repair`.
+
+`assess repair` runs §13.6's deterministic repair form on the selected current snapshot: no provider call, no §15 contract, and therefore no cost-bearing consent requirement — but it is a §8.1 business writer performing an ordinary Stage 6 swap. §13.6 owns its fail-closed preconditions and their stable exit-class-2 diagnostics (`snapshot_not_verified`, `nothing_to_repair`, `rewrite_unavailable`, beside the shared selector classes). It is not an owner verdict, confirm, or override surface: every produced claim starts `unverified` and must pass an ordinary `assess verify` before export, so the §5.10 boundary above is unchanged.
 
 ## §14.10 Verified Bullet-Pack Flow
 
@@ -311,6 +314,7 @@ This contract binds every command-specific form above and every later §14 addit
    | `jd delete` (§14.15) | `{selected_job_description: {id, created_at, title, company}, purged_branches: list[{id, name}], removed_managed_paths: list[str]}`; `purged_branches` contains every current and historical dependent branch captured before deletion, while residual paths use the envelope's top-level `residual_paths`. |
    | `runs list` | `{runs: list[{id, stage, parent_run_id, started_at, finished_at, status}]}`, exactly the §14.13 list projection from §12.13. |
    | `runs show` | `{run: <complete §12.13 row with metadata_json carried as its stored JSON TEXT string>, calls: list[<complete §12.15 row>]}`; every field is a closed scalar — the string-typed `metadata_json` keeps the projection `extra = forbid`-validatable while §12.13's content prohibition governs what the stored text may contain — and its §11.14 rows use the top-level `findings` field. |
+   | `assess repair` | `null`; its complete primary result is carried by the standard `affected_ids`, `generation_ids`, and `run_ids` fields. |
    | `bullets generate`, `bullets verify` | `null`; their complete primary result is carried by the standard `affected_ids`, `generation_ids`, `run_ids`, and `findings` fields as applicable. |
    | `export assessment`, `bullets export` | `{manifest_path: str, managed_paths: list[str]}`. `manifest_path` is the final ID-keyed `manifest.json`; `managed_paths` is the complete deterministic list containing that manifest and every fixed §13.12 member path. The result is emitted only after §13.14 revalidates the matching manifest, exact member set, current render-input hash, source graph, and member hashes; a missing, invalid, stale, or mismatched manifest yields no partial result. |
    | `view serve` (§14.17) | `null`. Each served request completes in its own §30 rule 7 outcome, so the command reaches no completed primary result of its own; its envelope reports the termination of serving. |

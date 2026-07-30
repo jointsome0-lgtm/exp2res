@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 );
 ```
 
-Each LLM-backed `processing_runs` row owns one `llm_calls` row per planned provider invocation of the run's single §15 contract, with `call_index` a contiguous ordinal starting at 1 in invocation order. Granularity follows the owning stage's definition: Stage 3 owns one call per correction lineage, Stage 7 one per current claim, Stage 10 one per planned bullet, and Stage 11 one per current bullet; each single-invocation LLM stage — Stages 4, 5, 6, and 8 — owns exactly one row, except that a §13.4 idempotent-rerun short-circuit completes its run with none. Non-LLM runs and `13.13` orchestration rows own none.
+Each LLM-backed `processing_runs` row owns one `llm_calls` row per planned provider invocation of the run's single §15 contract, with `call_index` a contiguous ordinal starting at 1 in invocation order. Granularity follows the owning stage's definition: Stage 3 owns one call per correction lineage, Stage 7 one per current claim, Stage 10 one per planned bullet, and Stage 11 one per current bullet; each single-invocation LLM stage — Stages 4, 5, 6, and 8 — owns exactly one row, except that a §13.4 idempotent-rerun short-circuit completes its run with none. Non-LLM runs — including a stage-`13.6` deterministic repair run — and `13.13` orchestration rows own none.
 
 Transport and schema retries of the same planned invocation update that call row's retry counters and never create another row; one call row is one logical invocation, not one HTTP attempt. Every call in a run executes under the run's single `provider`, `model`, and `prompt_policy_hash`; changing any of that configuration mid-run is non-conforming and requires a new run.
 

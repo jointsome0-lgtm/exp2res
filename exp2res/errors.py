@@ -102,6 +102,23 @@ class SnapshotNotCurrentError(InvalidInputError):
     public_message = "The selected assessment snapshot is not current."
 
 
+class SnapshotNotVerifiedError(InvalidInputError):
+    diagnostic_class = "snapshot_not_verified"
+    public_message = "Repair requires a fully verified snapshot."
+
+
+class NothingToRepairError(InvalidInputError):
+    diagnostic_class = "nothing_to_repair"
+    public_message = "No member claim is rejected or unsupported."
+
+
+class RewriteUnavailableError(InvalidInputError):
+    diagnostic_class = "rewrite_unavailable"
+    public_message = (
+        "A repairable claim's latest finding carries no suggested rewrite."
+    )
+
+
 class GapAlreadyAnsweredError(InvalidInputError):
     diagnostic_class = "gap_already_answered"
     public_message = "The selected gap has already been answered."

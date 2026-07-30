@@ -16,7 +16,11 @@ from exp2res.domain.models import (
     canonical_project_key,
 )
 from exp2res.errors import InvalidUsageError, LLMInvocationError, SelectorNotFoundError
-from exp2res.pipeline.stage6 import Stage6Result, run_assessment_generation
+from exp2res.pipeline.stage6 import (
+    Stage6Result,
+    run_assessment_generation,
+    run_assessment_repair,
+)
 from exp2res.pipeline.stage7 import Stage7Result, run_assessment_verification
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import build_llm_execution
@@ -103,6 +107,13 @@ def run_assess_generate(
     except LLMInvocationError as error:
         error.run_ids = _committed_runs(workspace, allocated_runs)
         raise
+
+
+def run_assess_repair(workspace: Path, *, snapshot_id: str) -> Stage6Result:
+    """§13.6 deterministic repair — no LLM execution is built or consented."""
+
+    require_compatible(workspace)
+    return run_assessment_repair(workspace, snapshot_id=snapshot_id)
 
 
 def run_assess_verify(workspace: Path, *, snapshot_id: str) -> Stage7Result:

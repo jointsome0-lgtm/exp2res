@@ -255,7 +255,7 @@ When §15.1 retries validation once
 Then that retry cannot consume a valid negative verdict or become semantic repair
 
 When the owner later requests revised wording
-Then it appears only in an explicit Stage 6 or Stage 10 replacement generation
+Then it appears only in an explicit Stage 6 or Stage 10 replacement generation, including §13.6's explicit deterministic repair form
 '''
 
 ["21.21"]
@@ -816,7 +816,7 @@ Given the same current claim or bullet receives two completed verifier invocatio
 Then each invocation persists one immutable finding for that target, so both attempt sets remain inspectable
 And the target carries only the latest denormalized operational status, phrases, reason, or counterevidence applicable to its type
 And the candidate claim or bullet prose remains byte-for-byte unchanged
-And any suggested_rewrite is retained only in finding history and never enters a writer prompt or §17/§18 export
+And any suggested_rewrite is retained only in finding history and never enters a writer prompt or §17/§18 export, though §13.6's explicit repair form may adopt it as a new unverified claim
 
 Given two provider invocations in different runs return byte-identical validated outputs
 Then their llm_calls rows remain distinct under (run_id, call_index)
@@ -2215,4 +2215,70 @@ Then no `displaced_support_unselected` warning is reported
 
 Given the §15.2 contract instructions
 Then they state the positive required-selection rule — an in-scope supplied descriptor is selected beside the fact's effective items, and omitting every supplied descriptor is not a conservative default — and whether a live extractor follows it remains live-provider behavior outside this offline eval
+'''
+
+["21.60"]
+title = "Repair Adopts the Persisted Rewrite Deterministically and Re-Verifies Everything"
+enforces = "§8.1, §11, §11.14, §12.13, §12.15, §13.6, §13.7, §14.9, §14.14, and §16.11"
+case = '''
+Given a current, fully verified assessment snapshot with one `rejected` member claim whose latest finding carries a `suggested_rewrite`, one `supported` claim, and a `supported` narrative summary
+When the owner runs `assess repair --snapshot` for it
+Then one §13.6 swap supersedes the prior snapshot and all its claims and creates a new current snapshot for the same view
+And every member claim is copied as a new `unverified` row with empty counterevidence — the rejected claim carrying exactly the adopted rewrite text, every other claim its prior text byte-for-byte
+And `gap_question_ids` and `contradiction_ids` are recomputed from current rows and `summary` equals the `narrative_summary` member's text
+And the snapshot metadata carries `repaired_from_snapshot_id` and each repaired claim carries `adopted_rewrite_of_claim_id`, both inert
+And the completed run is one stage-`13.6` `processing_runs` row with NULL provider, model, and prompt_policy_hash owning zero `llm_calls` rows
+And no provider call, prompt serialization, or §15 contract is involved and no consent prompt is required
+
+Given a verified snapshot produced by an earlier repair
+When another repair copies a passing member and adopts a new rewrite for another member
+Then the passing member retains its existing metadata unchanged
+And the adopted member copies its existing metadata and sets or overwrites only `adopted_rewrite_of_claim_id` with the newly adopted source-claim ID
+And the human result counts only rewrites adopted by this swap, never retained provenance from an earlier repair
+
+Given a `SelfClaim` and `ResumeBullet` whose table-scoped IDs collide and whose finding histories interleave
+When claim repair selects the latest rewrite
+Then it considers only `self_claim` findings and cannot adopt bullet prose or fail on a bullet finding's null rewrite
+
+Given the repaired snapshot
+When `assess verify` runs on it
+Then every member claim receives an ordinary fresh Stage 7 verdict and only that pass reopens the §16.11 export gate
+
+Given a snapshot with an `unverified` member, or none of its members `rejected` or `unsupported`, or a repairable member whose latest finding has a null `suggested_rewrite`
+When `assess repair` runs
+Then the command fails closed in class 2 with the matching stable diagnostic — `snapshot_not_verified`, `nothing_to_repair`, or `rewrite_unavailable` — and changes nothing
+
+Given a superseded snapshot selector
+When `assess repair` runs
+Then it fails closed with `snapshot_not_current` and changes nothing
+
+Given a current snapshot whose stored member set contains zero or multiple `narrative_summary` claims or whose one summary disagrees with the snapshot
+When `assess repair` runs
+Then it fails closed for stored-state integrity before creating a repair run and never propagates the corrupt summary cardinality
+
+Given a current snapshot that owns a superseded member claim, or whose stored aggregate status disagrees with the complete member-status reduction
+When `assess repair` runs
+Then it fails closed for stored-state integrity before creating a repair run, without omitting the superseded member or masking the aggregate mismatch in a replacement
+
+Given an interrupt delivered after the stage-`13.6` run-row commit becomes durable but before that commit call returns
+When cancellation is reported
+Then the durable run is discovered, finalized as `failed` with failure code `cancelled`, and reported in `run_ids` while no candidate business row exists
+
+Given a repair whose candidate swap fails after the run row is created
+When the candidate transaction rolls back
+Then the stage-`13.6` run row survives as the §12.13 durable failed attempt with a stable failure code, owning no business rows, and the prior snapshot stays current with its verified claims untouched
+And the raised typed error carries the failed run's ID so the §14.14 envelope reports it in `run_ids`
+
+Given cancellation is delivered while the rolled-back candidate's durable run is being finalized as failed
+When that finalization commit returns ambiguously
+Then the durable run is re-inspected and finalized when necessary, class 9 takes precedence, and the cancelled envelope still reports its run ID
+
+Given an interrupt delivered after the candidate swap commit becomes durable but before that commit call returns
+When cancellation is reported
+Then the exact completed run and current candidate rows prove the swap committed
+And the cancelled envelope reports the complete created and superseded IDs, generation IDs, completed run, and pending stale paths rather than misreporting a rollback
+
+Given a repair interrupted during post-commit stale-set removal
+When the command exits in class 9
+Then the cancelled envelope still reports the committed swap — created and superseded IDs, generation IDs, and the completed run — with the pending stale paths as residuals
 '''
