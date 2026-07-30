@@ -23,6 +23,7 @@ from exp2res.domain.models import (
 from exp2res.domain.temporal import confidence_exceeds
 from exp2res.errors import (
     EmptyAssessmentViewError,
+    Exp2ResError,
     IntegrityFailureError,
     NothingToRepairError,
     OperationCancelledError,
@@ -731,7 +732,19 @@ def run_assessment_repair(
                 connection.commit()
             except Exception:
                 connection.rollback()
-            raise
+            # §14.14 rule 5: the command boundary reports the durable
+            # failed run, so the raised error must carry its ID — a
+            # non-typed storage failure is wrapped to reach the envelope.
+            if isinstance(swap_error, KeyboardInterrupt):
+                cancelled = OperationCancelledError()
+                cancelled.run_ids = (run_id,)
+                raise cancelled from swap_error
+            if isinstance(swap_error, Exp2ResError):
+                swap_error.run_ids = (run_id,)
+                raise
+            wrapped = IntegrityFailureError(failure_code)
+            wrapped.run_ids = (run_id,)
+            raise wrapped from swap_error
 
         def committed_result(
             residuals: tuple[str, ...],

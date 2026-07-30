@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from exp2res.errors import (
+    IntegrityFailureError,
     NothingToRepairError,
     OperationCancelledError,
     RewriteUnavailableError,
@@ -310,7 +311,7 @@ def test_failed_swap_leaves_a_durable_failed_run(workspace: Path) -> None:
             return generated.snapshot_id
         return ids(prefix)
 
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityFailureError) as caught:
         run_assessment_repair(
             workspace,
             snapshot_id=generated.snapshot_id,
@@ -322,6 +323,10 @@ def test_failed_swap_leaves_a_durable_failed_run(workspace: Path) -> None:
             "SELECT status, failure_code, provider FROM processing_runs "
             "WHERE stage = '13.6' AND provider IS NULL"
         ).fetchone()
+        run_id = connection.execute(
+            "SELECT id FROM processing_runs "
+            "WHERE stage = '13.6' AND provider IS NULL"
+        ).fetchone()[0]
         calls = connection.execute(
             "SELECT COUNT(*) FROM llm_calls WHERE run_id IN "
             "(SELECT id FROM processing_runs "
@@ -330,6 +335,9 @@ def test_failed_swap_leaves_a_durable_failed_run(workspace: Path) -> None:
         current = [item.id for item in list_assessment_snapshots(connection)]
         claims = list_self_claims_for_snapshot(connection, generated.snapshot_id)
     assert run is not None and tuple(run) == ("failed", "business_commit_failed", None)
+    # §14.14 rule 5: the raised error carries the durable failed run's ID
+    # so the command envelope can report it.
+    assert caught.value.run_ids == (run_id,)
     assert calls == 0
     # The failed run owns no business rows: the prior view stays current
     # with its verified claims untouched.
