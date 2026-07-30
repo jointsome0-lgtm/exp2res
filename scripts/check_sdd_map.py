@@ -15,8 +15,9 @@ SPEC_DIRECTORY = REPOSITORY_ROOT / "spec"
 LINE_BUDGET = 250
 INDEX_HEADING = "## § Index"
 INDEX_HEADING_VARIANT_RE = re.compile(r"#{1,6}\s*§\s*Index\s*#*\s*")
-SETEXT_TITLE_RE = re.compile(r"\s*§\s*Index\s*")
-SETEXT_UNDERLINE_RE = re.compile(r"\s*[-=]+\s*")
+SETEXT_TITLE_RE = re.compile(r" {0,3}§\s*Index[ \t]*")
+SETEXT_UNDERLINE_RE = re.compile(r" {0,3}[-=]+[ \t]*")
+INDEX_BOUNDARY_RE = re.compile(r"^#{1,2}(?:[ \t]+|$)")
 ORDERED_ITEM_RE = re.compile(r"[0-9]+[.)]\s")
 BULLET_RE = re.compile(r"^- \S")
 SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
@@ -132,7 +133,7 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
     errors: list[str] = []
     for visible_line in visible_lines[start:]:
         line = visible_line or ""
-        if line == "---" or line.startswith("## "):
+        if line == "---" or INDEX_BOUNDARY_RE.match(line):
             break
         if BULLET_RE.match(line):
             bullets.append(line)

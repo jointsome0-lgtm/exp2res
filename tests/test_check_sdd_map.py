@@ -128,3 +128,50 @@ def test_numbered_non_regular_spec_paths_are_rejected(tmp_path, monkeypatch) -> 
         "numbered spec path is not a regular file: spec/31-dangling.md",
         "numbered spec path is not a regular file: spec/32-directory.md",
     ]
+
+
+def test_indented_setext_example_is_not_an_index_heading(
+    tmp_path, monkeypatch
+) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+    § Index
+    -------
+
+## § Index
+
+- §0 real route
+- Decision Log — real route
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == ["- §0 real route", "- Decision Log — real route"]
+    assert errors == []
+
+
+def test_h1_ends_the_index_section(tmp_path, monkeypatch) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+# Different section
+
+- §0 foreign route
+- Decision Log — foreign route
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == []
+    assert errors == ["§ Index contains no bullets"]
