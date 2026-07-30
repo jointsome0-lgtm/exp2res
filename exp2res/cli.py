@@ -85,6 +85,7 @@ from exp2res.services.correction import (
 from exp2res.services.assessment import (
     list_current_snapshots,
     run_assess_generate,
+    run_assess_repair,
     run_assess_verify,
     show_snapshot,
     validate_assessment_selection,
@@ -1740,6 +1741,71 @@ def assess_generate(
         )
 
     _run_command(context, "assess generate", operation)
+
+
+@assess_app.command("repair")
+def assess_repair(
+    context: typer.Context,
+    snapshot_id: str = typer.Option(..., "--snapshot"),
+) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        # §14.9: no provider call and no cost-bearing consent; the §13.6
+        # preconditions and swap run under the ordinary writer authority.
+        repaired = run_assess_repair(workspace, snapshot_id=snapshot_id)
+        assert repaired.snapshot is not None and repaired.snapshot_id is not None
+        adopted = sum(
+            1
+            for claim in repaired.claims
+            if "adopted_rewrite_of_claim_id" in claim.metadata
+        )
+        created_groups = [
+            EntityIdGroup(
+                entity_type="assessment_snapshot", ids=[repaired.snapshot_id]
+            ),
+            EntityIdGroup(
+                entity_type="self_claim", ids=list(repaired.created_claim_ids)
+            ),
+        ]
+        superseded_groups = [
+            EntityIdGroup(
+                entity_type="self_claim",
+                ids=list(repaired.superseded_claim_ids),
+            ),
+            EntityIdGroup(
+                entity_type="assessment_snapshot",
+                ids=list(repaired.superseded_snapshot_ids),
+            ),
+        ]
+        return Outcome(
+            affected_ids=AffectedIds(
+                created=created_groups,
+                superseded=superseded_groups,
+                deleted=[],
+            ),
+            generation_ids=sorted(
+                {
+                    *(
+                        [repaired.generation_id]
+                        if repaired.generation_id is not None
+                        else []
+                    ),
+                    *repaired.superseded_generation_ids,
+                },
+                key=lambda value: value.encode("utf-8"),
+            ),
+            run_ids=[repaired.run_id],
+            residual_paths=list(repaired.residual_paths),
+            result=None,
+            human_result=(
+                f"Repaired {repaired.snapshot.id} — {repaired.snapshot.title}; "
+                f"adopted {adopted} of {len(repaired.claims)} claims; "
+                f"superseded {repaired.superseded_snapshot_ids[0]}. "
+                f"Every claim is unverified; run exp2res assess verify "
+                f"--snapshot {repaired.snapshot.id}."
+            ),
+        )
+
+    _run_command(context, "assess repair", operation)
 
 
 @assess_app.command("verify")

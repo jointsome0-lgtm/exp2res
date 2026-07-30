@@ -314,6 +314,86 @@ def test_verify_blocked_is_completed_semantic_result(
     }
 
 
+def test_repair_envelope_requires_no_consent_and_reports_the_swap(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.9/§14.14 rule 5: `assess repair` is promptless with a null result."""
+
+    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+
+    # Precondition surface: an unverified snapshot fails closed in class 2.
+    early, early_envelope = invoke_json(
+        workspace, ["assess", "repair", "--snapshot", snapshot_id]
+    )
+    assert early.exit_code == 2
+    assert early_envelope["diagnostic_class"] == "snapshot_not_verified"
+
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [verifier_response("rejected"), verifier_response()]
+            ),
+        ),
+    )
+    blocked, _ = invoke_json(
+        workspace, ["--yes", "assess", "verify", "--snapshot", snapshot_id]
+    )
+    assert blocked.exit_code == 10
+
+    # No --yes: repair makes no cost-bearing call and prompts for nothing.
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
+    )
+    result, envelope = invoke_json(
+        workspace, ["assess", "repair", "--snapshot", snapshot_id]
+    )
+    assert result.exit_code == 0, (result.stderr, envelope)
+    assert envelope["status"] == "ok"
+    assert envelope["result"] is None
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    superseded = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["superseded"]
+    }
+    new_snapshot_id = created["assessment_snapshot"][0]
+    assert new_snapshot_id != snapshot_id
+    assert len(created["self_claim"]) == 2
+    assert superseded["assessment_snapshot"] == [snapshot_id]
+    assert len(superseded["self_claim"]) == 2
+    assert len(envelope["generation_ids"]) == 2
+    assert len(envelope["run_ids"]) == 1
+    assert envelope["findings"] == []
+    with read_database(workspace) as connection:
+        run = connection.execute(
+            "SELECT stage, status, provider FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
+        calls = connection.execute(
+            "SELECT COUNT(*) FROM llm_calls WHERE run_id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()[0]
+        claims = list_self_claims_for_snapshot(connection, new_snapshot_id)
+    assert tuple(run) == ("13.6", "completed", None)
+    assert calls == 0
+    assert {item.verification_status for item in claims} == {"unverified"}
+
+    human = runner.invoke(
+        app,
+        ["--workspace", str(workspace), "assess", "repair", "--snapshot", new_snapshot_id],
+    )
+    # The freshly repaired snapshot is unverified again: class 2, no prompt.
+    assert human.exit_code == 2
+
+
 def test_verify_invalid_after_retry_reports_failed_run(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

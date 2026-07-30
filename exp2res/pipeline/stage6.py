@@ -21,7 +21,15 @@ from exp2res.domain.models import (
     canonical_project_key,
 )
 from exp2res.domain.temporal import confidence_exceeds
-from exp2res.errors import EmptyAssessmentViewError, IntegrityFailureError
+from exp2res.errors import (
+    EmptyAssessmentViewError,
+    IntegrityFailureError,
+    NothingToRepairError,
+    RewriteUnavailableError,
+    SelectorNotFoundError,
+    SnapshotNotCurrentError,
+    SnapshotNotVerifiedError,
+)
 from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
 from exp2res.llm.assessment_writer import (
     ASSESSMENT_WRITER_CONTRACT,
@@ -37,15 +45,18 @@ from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
 from exp2res.storage.repository import (
+    get_assessment_snapshot,
     insert_assessment_snapshot,
     insert_self_claim,
     list_assessment_snapshots,
     list_contradictions,
     list_gap_questions,
     list_self_claims_for_snapshot,
+    list_verification_findings,
     mark_assessment_snapshots_superseded,
     mark_self_claims_superseded,
 )
+from exp2res.storage.telemetry import create_processing_run, finish_processing_run
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     report_managed_residuals,
@@ -497,4 +508,222 @@ def run_assessment_generation(
         warnings=resolved.warnings,
         snapshot=snapshot,
         claims=claims,
+    )
+
+
+REPAIRABLE_STATUSES = frozenset({"rejected", "unsupported"})
+
+
+def run_assessment_repair(
+    workspace: Path,
+    *,
+    snapshot_id: str,
+    id_factory: Callable[[str], str] = new_id,
+    clock: Callable[[], datetime] | None = None,
+    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+) -> Stage6Result:
+    """§13.6 deterministic repair: adopt latest rewrites into a new generation.
+
+    Non-LLM second form of Stage 6 — no provider call, no §15 contract, one
+    stage-`13.6` run row with NULL execution identity and zero llm_calls rows.
+    """
+
+    now = clock or (lambda: datetime.now(timezone.utc))
+    with writer_database(workspace, timeout_ms=timeout_ms, reconcile=True) as connection:
+        snapshot = get_assessment_snapshot(connection, snapshot_id, current_only=False)
+        if snapshot is None:
+            raise SelectorNotFoundError()
+        if snapshot.superseded_at is not None:
+            raise SnapshotNotCurrentError()
+        members = tuple(
+            sorted(
+                list_self_claims_for_snapshot(connection, snapshot_id),
+                key=lambda item: _id_key(item.id),
+            )
+        )
+        if not members:
+            raise IntegrityFailureError("snapshot_claim_set_empty")
+        # §13.6 preconditions, checked fail-closed in order before any mutation.
+        if any(item.verification_status == "unverified" for item in members):
+            raise SnapshotNotVerifiedError()
+        repairable = tuple(
+            item for item in members if item.verification_status in REPAIRABLE_STATUSES
+        )
+        if not repairable:
+            raise NothingToRepairError()
+        rewrites: dict[str, str] = {}
+        for claim in repairable:
+            findings = list_verification_findings(connection, target_id=claim.id)
+            if not findings:
+                raise RewriteUnavailableError()
+            latest = max(
+                findings, key=lambda item: (item.created_at, _id_key(item.id))
+            )
+            if latest.suggested_rewrite is None:
+                raise RewriteUnavailableError()
+            rewrites[claim.id] = latest.suggested_rewrite
+
+        run_id = id_factory("run")
+        superseded_snapshot_ids = (snapshot.id,)
+        superseded_claim_ids = tuple(item.id for item in members)
+        superseded_generation_ids: set[str] = set()
+        replaced_view = ReplacedAssessmentView(
+            snapshot.scope, snapshot.scope_target, snapshot.id
+        )
+        pending_stale_paths: tuple[str, ...] = ()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            create_processing_run(
+                connection,
+                run_id=run_id,
+                stage="13.6",
+                started_at=now(),
+                provider=None,
+                model=None,
+                prompt_policy_hash=None,
+                input_ids=(snapshot.id, *superseded_claim_ids),
+                metadata={"mode": "repair"},
+            )
+            new_snapshot_id = id_factory("snapshot")
+            new_claims = tuple(
+                SelfClaim(
+                    id=id_factory("claim"),
+                    created_at=now(),
+                    superseded_at=None,
+                    snapshot_id=new_snapshot_id,
+                    claim=rewrites.get(old.id, old.claim),
+                    claim_kind=old.claim_kind,
+                    dimension=old.dimension,
+                    source_signal_ids=list(old.source_signal_ids),
+                    source_fact_ids=list(old.source_fact_ids),
+                    confidence=old.confidence,
+                    verification_status="unverified",
+                    counterevidence=[],
+                    uncertainty=old.uncertainty,
+                    metadata=(
+                        {"adopted_rewrite_of_claim_id": old.id}
+                        if old.id in rewrites
+                        else {}
+                    ),
+                )
+                for old in members
+            )
+            narrative = next(
+                item for item in new_claims if item.claim_kind == "narrative_summary"
+            )
+            new_snapshot = AssessmentSnapshot(
+                id=new_snapshot_id,
+                created_at=now(),
+                superseded_at=None,
+                scope=snapshot.scope,
+                scope_target=snapshot.scope_target,
+                title=snapshot.title,
+                summary=narrative.claim,
+                gap_question_ids=sorted(
+                    (
+                        gap.id
+                        for gap in list_gap_questions(connection)
+                        if not gap.answered
+                    ),
+                    key=_id_key,
+                ),
+                contradiction_ids=sorted(
+                    (item.id for item in list_contradictions(connection)),
+                    key=_id_key,
+                ),
+                verification_status="unverified",
+                metadata={"repaired_from_snapshot_id": snapshot.id},
+            )
+            swap_time = now()
+            for table, ids in (
+                ("assessment_snapshots", superseded_snapshot_ids),
+                ("self_claims", superseded_claim_ids),
+            ):
+                placeholders = ",".join("?" for _ in ids)
+                superseded_generation_ids.update(
+                    row[0]
+                    for row in connection.execute(
+                        f"SELECT DISTINCT generation_id FROM {table} "
+                        f"WHERE id IN ({placeholders})",
+                        ids,
+                    )
+                )
+            mark_self_claims_superseded(connection, superseded_claim_ids, swap_time)
+            mark_assessment_snapshots_superseded(
+                connection, superseded_snapshot_ids, swap_time
+            )
+            generation_id = id_factory("gen")
+            insert_assessment_snapshot(
+                connection,
+                new_snapshot,
+                produced_by_run_id=run_id,
+                generation_id=generation_id,
+            )
+            for claim in new_claims:
+                insert_self_claim(
+                    connection,
+                    claim,
+                    produced_by_run_id=run_id,
+                    generation_id=generation_id,
+                )
+            # The ordinary §12 Stage 6 transaction checks bind this swap too.
+            current_after = list_assessment_snapshots(connection)
+            keys = [
+                assessment_view_key(item.scope, item.scope_target)
+                for item in current_after
+            ]
+            if len(keys) != len(set(keys)):
+                raise IntegrityFailureError("assessment_view_not_unique")
+            orphan = connection.execute(
+                """
+                SELECT 1 FROM self_claims AS claim
+                JOIN assessment_snapshots AS snapshot ON snapshot.id = claim.snapshot_id
+                WHERE claim.superseded_at IS NULL AND snapshot.superseded_at IS NOT NULL
+                LIMIT 1
+                """
+            ).fetchone()
+            if orphan is not None:
+                raise IntegrityFailureError("current_claim_superseded_snapshot")
+            finish_processing_run(
+                connection,
+                run_id=run_id,
+                finished_at=now(),
+                status="completed",
+                output_ids=(new_snapshot.id, *(item.id for item in new_claims)),
+            )
+            # Same pre-commit pending-report pattern as the generated form.
+            pending_stale_paths = assessment_set_paths(
+                workspace, superseded_snapshot_ids
+            )
+            report_managed_residuals(pending_stale_paths)
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            withdraw_pending_unless_superseded(
+                connection, pending_stale_paths, superseded_snapshot_ids
+            )
+            raise
+        residual_paths = remove_assessment_sets(workspace, superseded_snapshot_ids)
+        stored_snapshot = next(
+            item
+            for item in list_assessment_snapshots(connection)
+            if item.id == new_snapshot.id
+        )
+        stored_claims = list_self_claims_for_snapshot(connection, new_snapshot.id)
+
+    return Stage6Result(
+        run_id=run_id,
+        snapshot_id=new_snapshot.id,
+        created_claim_ids=tuple(sorted((item.id for item in new_claims), key=_id_key)),
+        superseded_snapshot_ids=superseded_snapshot_ids,
+        superseded_claim_ids=superseded_claim_ids,
+        generation_id=generation_id,
+        superseded_generation_ids=tuple(
+            sorted(superseded_generation_ids, key=_id_key)
+        ),
+        replaced_view=replaced_view,
+        residual_paths=residual_paths,
+        warnings=(),
+        snapshot=stored_snapshot,
+        claims=stored_claims,
     )

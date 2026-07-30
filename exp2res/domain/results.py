@@ -49,6 +49,7 @@ CommandPath = Literal[
     "signals generate",
     "signals list",
     "assess generate",
+    "assess repair",
     "assess verify",
     "assess list",
     "assess show",

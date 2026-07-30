@@ -688,3 +688,15 @@ nodes = [
 ]
 phase = "2"
 note = "Offline tests prove the §13.3 rule 14 warning lifecycle — emitted per lineage as one bounded root-and-count message when supplied descriptors go wholly unselected, absent on selection or empty supply, recurring, non-gating, reserved against model-authored duplicates, and rendered as §14.14's human-mode stderr line — and the descriptor-selected §9.4 route (b) high ceiling; whether a live extractor follows §15.2's required-selection rule remains live-provider behavior"
+["21.60"]
+status = "covered"
+nodes = [
+  "tests/test_stage6_repair.py::test_repair_adopts_latest_rewrite_and_supersedes_the_view",
+  "tests/test_stage6_repair.py::test_repaired_snapshot_takes_an_ordinary_full_reverification",
+  "tests/test_stage6_repair.py::test_latest_finding_wins_when_history_holds_two_attempts",
+  "tests/test_stage6_repair.py::test_precondition_failures_are_stable_and_change_nothing",
+  "tests/test_stage6_repair.py::test_superseded_snapshot_selector_is_not_repairable",
+  "tests/test_cli_assess.py::test_repair_envelope_requires_no_consent_and_reports_the_swap",
+]
+phase = "3"
+note = "Offline tests prove the full §13.6 repair contract: latest-finding adoption into a complete new unverified generation, byte-preserved untouched claims, recomputed gap/contradiction sets, inert provenance metadata, the promptless NULL-identity stage-13.6 run with zero llm_calls rows, every fail-closed precondition diagnostic, and the ordinary Stage 7 re-verification path"

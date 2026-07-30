@@ -178,4 +178,8 @@ Enforces §12 rule 13, §12.15, §13.4, and §14.7.
 
 Enforces §9.4, §13.3 rules 10 and 14, §14.6, §14.14, and §15.2.
 
+## §21.60 Repair Adopts the Persisted Rewrite Deterministically and Re-Verifies Everything
+
+Enforces §8.1, §11, §11.14, §12.13, §12.15, §13.6, §13.7, §14.9, §14.14, and §16.11.
+
 ---

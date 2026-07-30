@@ -255,7 +255,7 @@ When §15.1 retries validation once
 Then that retry cannot consume a valid negative verdict or become semantic repair
 
 When the owner later requests revised wording
-Then it appears only in an explicit Stage 6 or Stage 10 replacement generation
+Then it appears only in an explicit Stage 6 or Stage 10 replacement generation, including §13.6's explicit deterministic repair form
 '''
 
 ["21.21"]
@@ -816,7 +816,7 @@ Given the same current claim or bullet receives two completed verifier invocatio
 Then each invocation persists one immutable finding for that target, so both attempt sets remain inspectable
 And the target carries only the latest denormalized operational status, phrases, reason, or counterevidence applicable to its type
 And the candidate claim or bullet prose remains byte-for-byte unchanged
-And any suggested_rewrite is retained only in finding history and never enters a writer prompt or §17/§18 export
+And any suggested_rewrite is retained only in finding history and never enters a writer prompt or §17/§18 export, though §13.6's explicit repair form may adopt it as a new unverified claim
 
 Given two provider invocations in different runs return byte-identical validated outputs
 Then their llm_calls rows remain distinct under (run_id, call_index)
@@ -2215,4 +2215,30 @@ Then no `displaced_support_unselected` warning is reported
 
 Given the §15.2 contract instructions
 Then they state the positive required-selection rule — an in-scope supplied descriptor is selected beside the fact's effective items, and omitting every supplied descriptor is not a conservative default — and whether a live extractor follows it remains live-provider behavior outside this offline eval
+'''
+
+["21.60"]
+title = "Repair Adopts the Persisted Rewrite Deterministically and Re-Verifies Everything"
+enforces = "§8.1, §11, §11.14, §12.13, §12.15, §13.6, §13.7, §14.9, §14.14, and §16.11"
+case = '''
+Given a current, fully verified assessment snapshot with one `rejected` member claim whose latest finding carries a `suggested_rewrite`, one `supported` claim, and a `supported` narrative summary
+When the owner runs `assess repair --snapshot` for it
+Then one §13.6 swap supersedes the prior snapshot and all its claims and creates a new current snapshot for the same view
+And every member claim is copied as a new `unverified` row with empty counterevidence — the rejected claim carrying exactly the adopted rewrite text, every other claim its prior text byte-for-byte
+And `gap_question_ids` and `contradiction_ids` are recomputed from current rows and `summary` equals the `narrative_summary` member's text
+And the snapshot metadata carries `repaired_from_snapshot_id` and each repaired claim carries `adopted_rewrite_of_claim_id`, both inert
+And the completed run is one stage-`13.6` `processing_runs` row with NULL provider, model, and prompt_policy_hash owning zero `llm_calls` rows
+And no provider call, prompt serialization, or §15 contract is involved and no consent prompt is required
+
+Given the repaired snapshot
+When `assess verify` runs on it
+Then every member claim receives an ordinary fresh Stage 7 verdict and only that pass reopens the §16.11 export gate
+
+Given a snapshot with an `unverified` member, or none of its members `rejected` or `unsupported`, or a repairable member whose latest finding has a null `suggested_rewrite`
+When `assess repair` runs
+Then the command fails closed in class 2 with the matching stable diagnostic — `snapshot_not_verified`, `nothing_to_repair`, or `rewrite_unavailable` — and changes nothing
+
+Given a superseded snapshot selector
+When `assess repair` runs
+Then it fails closed with `snapshot_not_current` and changes nothing
 '''
