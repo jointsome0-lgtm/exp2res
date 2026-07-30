@@ -661,3 +661,7 @@ nodes = [
 ]
 phase = "3"
 note = "Offline tests pin the dimension- and status-keyed §17 routing and its totality over the §16.11 exportable statuses; the §13.7 check 13 semantic dimension judgment remains live-only"
+
+["21.57"]
+status = "pending"
+phase = "3"

@@ -1466,7 +1466,7 @@ When §9.4 computes the confidence ceiling
 Then it is one non-manual item but its RawLog counts as only one source, so the ceiling is medium rather than automatically high
 And high is reachable only when the complete linked set satisfies §9.4's distinct-RawLog rule, remains a cap rather than an entitlement, and grants no scope beyond knowledge attribution
 
-Given either deferred §30 view is implemented for selfos embedding
+Given any §30 view — the §14.17-served mirror and gap-question views or the deferred JD-to-bullet-pack view — is used for selfos embedding
 When the shell embeds and uses it
 Then embedding uses only a loopback local URL configured outside Exp2Res
 And Exp2Res stores no consumer identity, shell schema, callback, webhook, or consumer-specific protocol
@@ -1480,10 +1480,11 @@ Then it presents the §14.14 blocked outcome, reason, and findings as a first-cl
 And an operational validation or cleanup failure remains failed and is never relabeled as a semantic refusal
 
 Given an export-eligible selected current assessment view contains one still-unanswered gap and one gap answered since synthesis
-When §13.12–§13.14 publish the selected snapshot's manifest-backed out/assessment/<snapshot-id>/self_claims.json and the shell discovers it through a successful §14.14 export result or by revalidating current output for its configured assessment-view identity
-Then the shell performs §13.14's complete current-output revalidation and validates the closed companion schema
-And it projects only unknowns entries with answered = false and presents only their question values selected by §17
+When §13.12–§13.14 publish the selected snapshot's manifest-backed out/assessment/<snapshot-id>/self_claims.json and the shell requests the §30 gap-question view at the one embedded loopback URL
+Then Exp2Res, not the shell, performs §13.14's complete current-output revalidation and validates the closed companion schema
+And the served page projects only unknowns entries with answered = false and presents only their question values selected by §17
 And it exposes no other companion field, answered question, consumer identity, callback, gap ID, or answer link-back token
+And the shell reads no companion file, manifest, or workspace path of its own and so can neither bypass revalidation nor inherit the companion schema
 Given the owner answers a question surfaced through that projection
 When the answer returns to Exp2Res
 Then it enters only as an ordinary diary or activity RawLog through an existing capture or import flow
@@ -1905,4 +1906,257 @@ Given a snapshot whose claims carry only §16.11 assessment-exportable statuses
 When §17 renders the report members
 Then every non-summary claim receives exactly one section keyed on its dimension and §16.11 status, never on claim_kind
 And a supported pattern_signal claim with a capability dimension renders under Current Strengths
+'''
+
+["21.57"]
+title = "The Loopback View Serves Only Revalidated Current State"
+enforces = "§8.1, §12.14, §13.14 rules 2–3 and 5–6, §14.14, §14.17, §16.11, §17, §29.1–§29.2, and §30"
+case = '''
+Given a workspace whose current global assessment snapshot passes the §16.11 export gate and whose managed set is current output
+When `view serve` binds its default loopback address and the mirror route is requested with an explicit view-identity selector
+Then the response body is byte-identical to that set's published report.html member and is served with no re-rendering
+And repeating the request over unchanged state returns the same bytes
+And the response sets no cookie, grants no cross-origin read, ignores an ambient host cookie the browser attached, declares no-store so a revisit that reaches the network is resolved again rather than replayed from a cache, and carries no consumer-specific field
+And the same request by one exact current global snapshot ID serves those same bytes, so both of rule 3's selector forms are exercised on success
+And `view serve --host ::1` binds and serves the same routes on that authority, so the second supported loopback form is not merely advertised
+
+Given the same served workspace
+When the gap-question route is requested with the same explicit selector
+Then the page presents only the question values of that set's self_claims.json unknowns whose answered value is false
+And a question answered after synthesis is absent from the page
+And no gap ID, target, reason, priority, claim, contradiction, raw text, manifest value, or workspace path appears in the response
+And requesting that route by the same exact current global snapshot ID projects the identical question set
+
+Given one running server has already served both routes from the same current managed set
+When an ordinary gap answer invalidates that set and a new network GET reaches each route without restarting the server
+Then both requests re-read current state and return export_not_current with status 409
+And neither request returns the previously served report bytes or question projection
+And after the owner publishes the replacement current set, the next network GETs on that same server serve the replacement report bytes and updated question projection rather than either cached response
+And those byte-identical requests retain the same route parsing and selector interpretation while their state-dependent outcomes change
+
+Given a revalidated current set whose valid companion has no unanswered unknown, because every unknown is answered or the unknowns list is empty
+When the gap-question route is requested
+Then the response is served with status 200 as a valid self-contained document with an empty question projection
+And no companion value is exposed, and the empty projection is not relabeled no_current_view, internal_error, or another refusal
+
+Given that current companion contains an unanswered question whose value is `<img src=https://example.invalid/q onerror=alert(1)> & "quoted"`
+When the gap-question route renders it
+Then the complete value appears as text under §17's total escaping and cannot create an img element, event-handler attribute, URL-bearing DOM attribute, or external request
+And parsing the response yields no element the renderer did not emit
+
+Given self_claims.json bytes that match their digest in an otherwise current manifest but violate the closed §13.12 companion schema
+When the gap-question route is requested
+Then complete current-output revalidation succeeds before the companion validation fails closed as question_companion_invalid
+And no question or other companion value is served, the page names the §14.9 export, and the failure is not classified as internal_error
+
+Given a request whose selector is absent, unknown, repeated, combined with the other form, malformed, names a project scope, names the ID of a current project-scoped snapshot, or names a superseded snapshot
+When the view resolves it
+Then it fails closed in its §30 rule 7 outcome under that row's literal class, no snapshot is chosen by a default or latest-of-several rule, and no response reflects the request bytes back
+And the project-scoped ID is refused as the deferred slice rather than served through the ID form
+
+Given the global identity has no current snapshot but one or more superseded historical snapshots remain
+When either route is requested with `scope=global`
+Then identity resolution returns no_current_view with status 404 and never chooses a historical latest
+And the page names the §14.9 generation for that identity without serving historical managed output
+
+Given snapshot selectors decoded to the one-byte ID `a`, a 128-byte lowercase ID matching §13.14 rule 1, an empty value, `../x`, an uppercase ID, a separator-bearing value, and a 129-byte value
+When each selector is parsed before lookup
+Then the two boundary-valid forms reach ordinary current-row resolution and become served or no_current_view according to stored state
+And every nonmatching form is invalid_selector with status 400 before any compatibility or business-state read
+
+Given the selected snapshot's managed set is missing, stale by a §13.14 render-input change, or invalidated by a later gap answer
+When either route is requested
+Then no partial, cached, or re-rendered content is served and the fail-closed page names the §14.9 export the owner must run
+
+Given a §13.14 state no re-export can replace on its own — an incomplete, invalid-manifest, or superseded-manifest_version set at the final ID path, or a rule 6 containment skip such as a symlinked out/ root, ancestor, or entry
+When either route is requested
+Then the outcome is the single residual one, distinct from both the replaceable-output outcome and any unexpected-failure outcome
+And the page says the owner removes or repairs the reported residual before that export can publish
+
+Given a request validates the current final path and a concurrent ordinary export atomically replaces that entry before the request's next no-follow operation
+When either route continues revalidation
+Then it returns export_changed with status 409 and serves no member or question value
+And it is not export_residual and gives no instruction to remove or repair the final path, because the replacement may already be healthy current output
+And a later request after publication completes revalidates the observed final entry from the beginning and serves it when it is current
+
+Given the selected snapshot carries no single narrative_summary claim matching AssessmentSnapshot.summary, or a stored aggregate that is not a fresh reduction of its current claims, or the identity selector resolves to more than one current snapshot
+When either route is requested
+Then the outcome is the stored-state integrity refusal rather than the semantic one or a malformed-request one, even when the stored status is allowlisted
+And the duplicated-identity outcome names no generation remedy, because §13.6 does not repair multiple corrupt current rows
+And a narrative-summary failure selected by identity names generation, while the same failure selected by exact ID names only the assessment listing and never claims generation repairs that URL
+And a mismatched aggregate names the verification that updates the selected snapshot under either selector
+
+Given the selected snapshot's stored aggregate is not a fresh reduction of its current claims and its stored status also fails the §16.11 allowlist
+When either route is requested
+Then the integrity half runs first and returns assessment_inconsistent with status 409 and the aggregate-recomputing verification remedy
+And the request is not assessment_blocked with status 403, because the inconsistent aggregate is not a verdict whose status can decide serving
+
+Given the selected snapshot's aggregate verification status fails the §16.11 assessment-export allowlist
+When either route is requested
+Then the outcome is a completed semantic refusal that names the §14.9 verification for an unverified snapshot and the §14.9 generation for a completed negative verdict, and is distinguishable from every operational failure outcome
+And a snapshot that fails that allowlist while its managed set is also stale or invalidated still completes as exactly that refusal, because §30 rule 7 orders the gate before revalidation
+And verification is named for an unverified snapshot under either selector because it updates the selected ID
+And a completed negative selected by identity names generation, while one selected by exact ID names only the assessment listing and never claims generation repairs that URL
+
+Given HEAD requests for both routes with accepted selectors, a HEAD request for the questions route whose matching-digest companion fails its closed schema, a GET carrying one canonical positive Content-Length, and a POST carrying one canonical positive Content-Length
+When each is handled
+Then each HEAD response carries its corresponding GET status and headers with an empty body after the same resolution and revalidation
+And the questions HEAD performs companion validation, returning served for the valid set and question_companion_invalid for the invalid one without emitting either page body
+And the body-declaring GET is refused as malformed_request without being read
+And the body-declaring POST is refused as method_not_allowed before the body check, declares exactly `Allow: GET, HEAD`, and is not relabeled malformed_request
+And an otherwise identical accepted GET or HEAD with no framing field, or exactly one case-insensitively named Content-Length whose optional-whitespace-trimmed value is the literal `0`, proceeds to its ordinary outcome as bodyless
+And any Transfer-Encoding field, any Content-Length plus Transfer-Encoding combination, equal or unequal repeated Content-Length fields, or a Content-Length value outside literal `0` and canonical positive decimal is malformed_request as a transport parse failure before the method check
+And none of those framing failures is normalized, comma-joined, integer-converted, or answered by a parser-owned response outside the table
+And every response of either kind declares text/html; charset=utf-8, Cache-Control: no-store, Connection: close, and its literal Exp2Res-View-Outcome class
+And the served mirror body states no outcome metadata, so it stays byte-identical to the published member
+
+Given a raw request line of 8193 octets, a header section of 32769 octets, and a header section containing 65 field lines, including variants split across many socket reads
+When `view serve` receives each request
+Then each exceeds §30 rule 9's fixed envelope, is refused as malformed_request before any compatibility or business-state read, and closes after the response
+And the parser buffers at most the applicable byte cap plus the one octet that decides overflow
+And an otherwise valid request exactly at each byte or field-count cap continues to the ordinary authority, method, route, and selector checks rather than failing for size
+
+Given an HTTP/1.1 request carrying an absolute-form, authority-form, or asterisk-form target, another version token, no Host field, or repeated Host fields including differently cased names
+When the request envelope is handled
+Then it is malformed_request before authority, method, route, selector, compatibility, or business-state evaluation
+And an absolute-form target naming another authority alongside a bound Host value is never normalized into an origin-form route
+
+Given one request uses rule 9's exact CRLF and field-line grammar, while others use bare LF or bare CR, obsolete folding, whitespace before the colon, an empty or non-tchar field name, or a field value containing a forbidden control, DEL, or byte at or above 0x80
+When each header section is parsed
+Then the exact form reaches the ordinary authority and method checks without rewriting its field bytes
+And every other form is malformed_request with status 400 before authority, method, compatibility, or business-state evaluation
+And no line is unfolded, tolerated, Unicode-decoded, or normalized by the HTTP framework
+
+Given 32 admitted connections are each holding an incomplete request within their receive deadlines
+When another connection arrives
+Then no 33rd parser, request worker, or application queue entry is created and the new socket is closed before any byte is read or response is emitted
+And after one admitted connection closes, exactly one later connection can acquire the released slot
+And every completed response closes its connection after one request, so keep-alive or pipelining cannot bypass admission
+
+Given 32 admitted connections each stop sending before completing a request
+When their fixed receive deadlines expire
+Then every socket closes without an HTTP response or outcome and every admission slot is released
+And a later complete request acquires a released slot and reaches its ordinary response, so stalled clients cannot occupy the cap indefinitely
+
+Given an admitted client sends one request octet shortly before each §8.1 timeout interval would otherwise end
+When the one absolute receive deadline measured from admission-slot acquisition arrives before the request is complete
+Then the socket closes without an HTTP response or outcome and releases its slot despite the most recently received octet
+And no byte, line, fragmented read, or partial parser progress restarts, pauses, or replaces that deadline
+
+Given an incompatible §12.14 workspace before serving starts
+When `view serve` applies its startup gate
+Then it exits in class 4 before binding a socket or reading any business table
+
+Given SQLite blocks the startup §12.14 compatibility read beyond its full busy_timeout
+When `view serve` starts
+Then the command exits in class 5 with workspace_busy before binding a socket, emitting either startup URL, or reading a business table
+And it does not convert startup contention into a per-request response or start the serving loop
+
+Given `view serve` has bound a compatible workspace and another build then migrates that workspace to a schema newer than this serving build supports
+When the next route request arrives
+Then the per-request compatibility gate returns schema_incompatible after the metadata read, performs no business-state or managed-member read, and serves no stale page
+
+Given another business command holds only the advisory workspace writer lock while SQLite remains readable
+When either view route is requested
+Then the request proceeds to its ordinary outcome without consulting that lock and is not workspace_busy
+
+Given SQLite contention blocks a view request's required read beyond §8.1's bounded busy_timeout
+When either view route is requested
+Then the response is workspace_busy with status 503 and no claim that the advisory writer lock caused it
+And the full busy_timeout completes with one full timeout of slack before the three-timeout processing deadline, the request releases its read transaction, and the serving command remains available
+And a later uncontended request reaches its ordinary outcome without restarting the server
+
+Given a fully received accepted request whose selector resolution or managed-file containment and revalidation stalls on server-side I/O
+When the first interruption arrives
+Then accepting stops and one absolute drain deadline of §8.1's contention timeout covers all remaining server-side work, response composition, and emission without any per-phase restart
+And a request completed inside the window writes its own §30 rule 7 response before the class-9 envelope
+And at the absolute deadline every unfinished connection closes without retry or an alternate response, is not mislabeled internal_error, and cannot delay that envelope
+And a peer whose emission began before the deadline may retain no response bytes or a partial response, never a promise of completed delivery
+
+Given a request remains stalled in resolution or emission after the first interruption starts its absolute drain deadline
+When a second owner interruption arrives before that deadline
+Then every unfinished connection closes immediately without waiting for the remaining drain interval, retrying, or emitting an alternate response
+And the command promptly emits its single class-9 cancelled envelope and exits 9 without relabeling the stalled request internal_error
+
+Given an ordinary served request has reached its outcome and closed its read transaction but the client stops reading a response larger than the socket buffer
+When the emit deadline expires without an interruption
+Then the connection closes without retry and the peer may hold no response or a partial response
+And the computed outcome is not relabeled, no alternate response is attempted, and the client cannot extend a SQLite reader
+
+Given a fully received request stalls in selector resolution, a business read, or managed-filesystem revalidation during ordinary serving
+When the one absolute processing deadline measured from complete receipt expires before response composition
+Then the unfinished work is abandoned or cancelled, its read transaction is released, and the response is processing_timeout with status 503 and no stalled-operation detail
+And the fixed response receives only the ordinary emit deadline, the admission slot is released after emission or emit expiry, and no expired work continues behind that slot
+
+Given less than two full §8.1 contention timeouts remain in the three-timeout processing budget before the request's first SQLite read would begin
+When processing reaches that boundary
+Then it returns processing_timeout without opening the read transaction
+And when a contended SQLite read starts with the required two-timeout margin, its complete busy_timeout returns workspace_busy with one full timeout still reserved for scheduling, transaction release, and response composition
+
+Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
+When `view serve` starts or handles each of them
+Then the bind fails closed in exit class 2 before any socket is served, each request is refused without reading business state, and no diagnostic line echoes request bytes
+And each wildcard, routable, or name-resolved host produces view_bind_not_loopback, while port `0` produces view_bind_invalid, before any socket operation
+And the unsupported-method response is 405 and declares exactly `Allow: GET, HEAD`
+And serving takes no writer lock, writes no business row, managed output, or telemetry row, and makes no §15 call or outbound connection
+And an otherwise accepted request carrying a cross-site or same-site fetch-metadata declaration is served, because the shell embeds the view from its own origin by URL
+
+Given an `OPTIONS` request names a closed route and accepted selector with the bound authority, no Origin, and no declared body
+When the request is handled
+Then it is method_not_allowed with status 405 and exactly `Allow: GET, HEAD`
+And it grants no CORS header, invokes no framework automatic OPTIONS response, and performs no compatibility or business-state read
+
+Given one request omits Origin, one carries exactly one Origin whose value is the literal bound `http://` origin, and requests carry a repeated Origin, `Origin: null`, a space-separated value, another syntactically valid single value, or the bound value with different casing or an omitted port
+When each request is handled
+Then the absent and exact-bound forms proceed to their ordinary outcomes
+And repeated fields are malformed_request with status 400 before authority evaluation
+And every other single field-value is authority_not_bound with status 421 without splitting, decoding, case-folding, or normalizing it
+
+Given four requests carry distinct invented sentinels in an unsupported method, an unknown route, an unbound authority, and a malformed header section, including the literal marker `Vera Example`
+When each request is refused
+Then their outcomes and statuses are respectively method_not_allowed/405, route_not_found/404, authority_not_bound/421, and malformed_request/400
+And no sentinel or offending request byte appears in a response body, response header, or standard-error diagnostic
+And each surface carries only rule 6's permitted fixed outcome metadata, renderer-owned literal text, and the closed route when one was successfully parsed
+
+Given a valid literal loopback address and allowed port that another socket already occupies
+When `view serve` attempts that requested bind
+Then it exits in class 2 with view_bind_failed, serves nothing, and does not retry another port, address, or interface
+
+Given free loopback ports at the two allowed boundaries
+When `view serve --port 1024` and `view serve --port 65535` start separately
+Then each value passes argument validation and binds the exact requested port
+
+Given the just-outside values 1023 and 65536
+When `view serve` is invoked with each value
+Then each exits in class 2 with view_bind_invalid before any bind attempt and is not relabeled view_bind_failed
+
+Given one request and workspace-state fixture that reaches each row of §30 rule 7, including an unexpected local failure for internal_error and SQLite read contention beyond busy_timeout for workspace_busy
+When each fixture receives a completed response
+Then its `Exp2Res-View-Outcome` and HTTP status pair is exactly one of: served/200; malformed_request/400; invalid_selector/400; assessment_blocked/403; route_not_found/404; no_current_view/404; method_not_allowed/405; assessment_inconsistent/409; export_not_current/409; question_companion_invalid/409; export_residual/409; schema_incompatible/409; authority_not_bound/421; internal_error/500; workspace_busy/503; export_changed/409; processing_timeout/503
+And every row is exercised once, no fixture produces a pair outside that closed set, and no expected row falls through to internal_error
+
+Given the unexpected local failure carries the invented exception detail `Vera Example internal sentinel`, a stack token `TracebackSentinel`, a managed path, and the stored value `Vera Example stored sentinel`
+When its internal_error response and diagnostic are emitted
+Then the response body contains only renderer-owned literal text and the internal_error class, its headers contain only the fixed response metadata including that class, and standard error contains only the class and closed route
+And none of the sentinels, exception detail, stack trace, managed path, stored value, or framework-default error page appears in the body, headers, or standard error
+
+Given a compatible workspace, a free allowed loopback port, and `view serve --json`
+When the command reports its bound URLs, receives an owner interruption with no request pending, and exits after its bounded drain
+Then standard error reports exactly `http://127.0.0.1:<selected-port>/mirror?scope=global` and `http://127.0.0.1:<selected-port>/questions?scope=global`, once each in that order, and every progress event appears only there
+And an IPv6 bind reports the same ordered paths and selectors under `http://[::1]:<selected-port>` with its exact selected port
+And neither bind reports a selectorless base route, template, snapshot or project selector, trailing path, fragment, or additional query parameter
+And standard output is exactly one UTF-8 §14.14 envelope, optionally followed by one final newline, with envelope_version 1, command `view serve`, status cancelled, exit_code 9, result null, and every other required field present with its §14.14 cancelled value
+And the process exit status is 9
+And standard output contains no URL, banner, progress text, diagnostic outside the envelope, or additional JSON value
+
+Given a compatible workspace, a free allowed loopback port, and human-mode `view serve`
+When the command reports its bound URLs, receives an owner interruption with no request pending, and exits after its bounded drain
+Then the bound URLs and every progress or cancellation diagnostic appear only on standard error
+And standard output contains no bound URL, banner, progress text, or primary result
+And the process exit status is 9
+
+Given a request percent-encoding a structural token, as in /m%69rror or ?%73cope=global, and a request percent-encoding a selector value once and another encoding it twice
+When each is handled
+Then the structural encodings are refused as route_not_found or invalid_selector without being decoded into a match
+And the singly encoded value is decoded exactly once and interpreted as UTF-8, while the doubly encoded one resolves to nothing rather than to another selector
 '''
