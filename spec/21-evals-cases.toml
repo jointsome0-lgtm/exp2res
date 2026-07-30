@@ -2252,10 +2252,23 @@ Given a superseded snapshot selector
 When `assess repair` runs
 Then it fails closed with `snapshot_not_current` and changes nothing
 
+Given a current snapshot whose stored member set contains zero or multiple `narrative_summary` claims or whose one summary disagrees with the snapshot
+When `assess repair` runs
+Then it fails closed for stored-state integrity before creating a repair run and never propagates the corrupt summary cardinality
+
+Given an interrupt delivered after the stage-`13.6` run-row commit becomes durable but before that commit call returns
+When cancellation is reported
+Then the durable run is discovered, finalized as `failed` with failure code `cancelled`, and reported in `run_ids` while no candidate business row exists
+
 Given a repair whose candidate swap fails after the run row is created
 When the candidate transaction rolls back
 Then the stage-`13.6` run row survives as the §12.13 durable failed attempt with a stable failure code, owning no business rows, and the prior snapshot stays current with its verified claims untouched
 And the raised typed error carries the failed run's ID so the §14.14 envelope reports it in `run_ids`
+
+Given an interrupt delivered after the candidate swap commit becomes durable but before that commit call returns
+When cancellation is reported
+Then the exact completed run and current candidate rows prove the swap committed
+And the cancelled envelope reports the complete created and superseded IDs, generation IDs, completed run, and pending stale paths rather than misreporting a rollback
 
 Given a repair interrupted during post-commit stale-set removal
 When the command exits in class 9

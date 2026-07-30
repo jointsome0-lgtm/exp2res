@@ -545,6 +545,11 @@ def run_assessment_repair(
         )
         if not members:
             raise IntegrityFailureError("snapshot_claim_set_empty")
+        summaries = tuple(
+            item for item in members if item.claim_kind == "narrative_summary"
+        )
+        if len(summaries) != 1 or summaries[0].claim != snapshot.summary:
+            raise IntegrityFailureError("snapshot_summary_mismatch")
         # §13.6 preconditions, checked fail-closed in order before any mutation.
         if any(item.verification_status == "unverified" for item in members):
             raise SnapshotNotVerifiedError()
@@ -594,9 +599,117 @@ def run_assessment_repair(
                 metadata={"mode": "repair"},
             )
             connection.commit()
-        except BaseException:
+        except BaseException as run_error:
             connection.rollback()
+            if isinstance(run_error, KeyboardInterrupt):
+                durable = connection.execute(
+                    "SELECT status FROM processing_runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()
+                if durable is not None:
+                    # COMMIT may have become durable before Python delivered
+                    # the interrupt. Finalize that discoverable run instead
+                    # of leaving it `running`; a second ambiguous interrupt
+                    # is still reported against the durable run ID.
+                    try:
+                        connection.execute("BEGIN IMMEDIATE")
+                        if durable["status"] not in {"completed", "failed"}:
+                            finish_processing_run(
+                                connection,
+                                run_id=run_id,
+                                finished_at=now(),
+                                status="failed",
+                                failure_code="cancelled",
+                            )
+                        connection.commit()
+                    except BaseException:
+                        connection.rollback()
+                    cancelled = OperationCancelledError()
+                    cancelled.run_ids = (run_id,)
+                    raise cancelled from run_error
             raise
+
+        new_snapshot: AssessmentSnapshot | None = None
+        new_claims: tuple[SelfClaim, ...] = ()
+        generation_id: str | None = None
+
+        def committed_result(
+            residuals: tuple[str, ...],
+            snapshot_row: AssessmentSnapshot,
+            claim_rows: Sequence[SelfClaim],
+        ) -> Stage6Result:
+            assert new_snapshot is not None and generation_id is not None
+            return Stage6Result(
+                run_id=run_id,
+                snapshot_id=new_snapshot.id,
+                created_claim_ids=tuple(
+                    sorted((item.id for item in new_claims), key=_id_key)
+                ),
+                superseded_snapshot_ids=superseded_snapshot_ids,
+                superseded_claim_ids=superseded_claim_ids,
+                generation_id=generation_id,
+                superseded_generation_ids=tuple(
+                    sorted(superseded_generation_ids, key=_id_key)
+                ),
+                replaced_view=replaced_view,
+                residual_paths=residuals,
+                warnings=(),
+                snapshot=snapshot_row,
+                claims=list(claim_rows),
+            )
+
+        def durable_committed_result() -> Stage6Result | None:
+            """Prove the candidate swap committed after an ambiguous interrupt."""
+
+            if new_snapshot is None or generation_id is None or connection.in_transaction:
+                return None
+            run_row = connection.execute(
+                "SELECT status FROM processing_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            snapshot_row = connection.execute(
+                """
+                SELECT produced_by_run_id, generation_id
+                FROM assessment_snapshots
+                WHERE id = ? AND superseded_at IS NULL
+                """,
+                (new_snapshot.id,),
+            ).fetchone()
+            claim_rows = connection.execute(
+                """
+                SELECT id, produced_by_run_id, generation_id
+                FROM self_claims
+                WHERE snapshot_id = ? AND superseded_at IS NULL
+                """,
+                (new_snapshot.id,),
+            ).fetchall()
+            expected_claim_ids = {item.id for item in new_claims}
+            if (
+                run_row is None
+                or run_row["status"] != "completed"
+                or snapshot_row is None
+                or snapshot_row["produced_by_run_id"] != run_id
+                or snapshot_row["generation_id"] != generation_id
+                or {row["id"] for row in claim_rows} != expected_claim_ids
+                or any(
+                    row["produced_by_run_id"] != run_id
+                    or row["generation_id"] != generation_id
+                    for row in claim_rows
+                )
+            ):
+                return None
+            stored_snapshot = get_assessment_snapshot(
+                connection, new_snapshot.id, current_only=True
+            )
+            stored_claims = list_self_claims_for_snapshot(
+                connection, new_snapshot.id
+            )
+            if stored_snapshot is None or len(stored_claims) != len(new_claims):
+                return None
+            return committed_result(
+                pending_stale_paths, stored_snapshot, stored_claims
+            )
+
         try:
             connection.execute("BEGIN IMMEDIATE")
             new_snapshot_id = id_factory("snapshot")
@@ -720,6 +833,12 @@ def run_assessment_repair(
             withdraw_pending_unless_superseded(
                 connection, pending_stale_paths, superseded_snapshot_ids
             )
+            if isinstance(swap_error, KeyboardInterrupt):
+                durable_result = durable_committed_result()
+                if durable_result is not None:
+                    cancelled = OperationCancelledError()
+                    cancelled.stage_result = durable_result
+                    raise cancelled from swap_error
             # §12.13: the rolled-back candidate leaves the run behind as
             # the durable failed attempt owning no business rows.
             failure_code = (
@@ -752,30 +871,6 @@ def run_assessment_repair(
             wrapped = IntegrityFailureError(failure_code)
             wrapped.run_ids = (run_id,)
             raise wrapped from swap_error
-
-        def committed_result(
-            residuals: tuple[str, ...],
-            snapshot_row: AssessmentSnapshot,
-            claim_rows: Sequence[SelfClaim],
-        ) -> Stage6Result:
-            return Stage6Result(
-                run_id=run_id,
-                snapshot_id=new_snapshot.id,
-                created_claim_ids=tuple(
-                    sorted((item.id for item in new_claims), key=_id_key)
-                ),
-                superseded_snapshot_ids=superseded_snapshot_ids,
-                superseded_claim_ids=superseded_claim_ids,
-                generation_id=generation_id,
-                superseded_generation_ids=tuple(
-                    sorted(superseded_generation_ids, key=_id_key)
-                ),
-                replaced_view=replaced_view,
-                residual_paths=residuals,
-                warnings=(),
-                snapshot=snapshot_row,
-                claims=list(claim_rows),
-            )
 
         # §13 stale-export trigger class 1: the swap is already committed;
         # cleanup failure or interruption never rolls it back.

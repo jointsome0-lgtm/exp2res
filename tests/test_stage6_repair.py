@@ -351,6 +351,60 @@ def test_repeated_repair_preserves_and_refreshes_claim_metadata(
     assert third_by_kind[first_untouched.claim_kind].metadata == newly_adopted.metadata
 
 
+def test_repair_rejects_a_snapshot_with_duplicate_narrative_summaries(
+    workspace: Path,
+) -> None:
+    """§12/§13.6: repair never propagates a corrupt summary cardinality."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [verifier_response("rejected"), verifier_response("supported")]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    with writer_database(workspace) as connection:
+        supported_id = connection.execute(
+            """
+            SELECT id FROM self_claims
+            WHERE snapshot_id = ? AND verification_status = 'supported'
+            LIMIT 1
+            """,
+            (generated.snapshot_id,),
+        ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO self_claims(
+                id, created_at, superseded_at, snapshot_id, claim, claim_kind,
+                dimension, source_signal_ids_json, source_fact_ids_json,
+                confidence, verification_status, counterevidence_json,
+                uncertainty, metadata_json, produced_by_run_id, generation_id
+            )
+            SELECT ?, created_at, NULL, snapshot_id, claim, 'narrative_summary',
+                   dimension, source_signal_ids_json, source_fact_ids_json,
+                   confidence, 'supported', counterevidence_json,
+                   uncertainty, metadata_json, produced_by_run_id, generation_id
+            FROM self_claims WHERE id = ?
+            """,
+            ("claim_vera_duplicate_narrative", supported_id),
+        )
+        before_runs = connection.execute(
+            "SELECT COUNT(*) FROM processing_runs WHERE stage = '13.6'"
+        ).fetchone()[0]
+
+    with pytest.raises(IntegrityFailureError):
+        repair(workspace, ids, generated.snapshot_id)
+    with read_database(workspace) as connection:
+        current = list_assessment_snapshots(connection)
+        repair_runs = connection.execute(
+            "SELECT COUNT(*) FROM processing_runs WHERE stage = '13.6'"
+        ).fetchone()[0]
+    assert [item.id for item in current] == [generated.snapshot_id]
+    assert repair_runs == before_runs
+
+
 def test_precondition_failures_are_stable_and_change_nothing(
     workspace: Path,
 ) -> None:

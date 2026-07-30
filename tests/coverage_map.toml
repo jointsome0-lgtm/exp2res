@@ -696,13 +696,16 @@ nodes = [
   "tests/test_stage6_repair.py::test_latest_finding_wins_when_history_holds_two_attempts",
   "tests/test_stage6_repair.py::test_repair_ignores_newer_bullet_finding_with_colliding_target_id",
   "tests/test_stage6_repair.py::test_repeated_repair_preserves_and_refreshes_claim_metadata",
+  "tests/test_stage6_repair.py::test_repair_rejects_a_snapshot_with_duplicate_narrative_summaries",
   "tests/test_stage6_repair.py::test_precondition_failures_are_stable_and_change_nothing",
   "tests/test_stage6_repair.py::test_failed_swap_leaves_a_durable_failed_run",
   "tests/test_stage6_repair.py::test_post_commit_interrupt_carries_the_committed_result",
   "tests/test_stage6_repair.py::test_superseded_snapshot_selector_is_not_repairable",
   "tests/test_cli_assess.py::test_repair_envelope_requires_no_consent_and_reports_the_swap",
   "tests/test_cli_assess.py::test_repeated_repair_human_result_counts_only_current_adoptions",
+  "tests/test_cli_assess.py::test_run_creation_commit_interrupt_reports_and_finalizes_the_run",
+  "tests/test_cli_assess.py::test_business_commit_interrupt_reports_the_committed_swap",
   "tests/test_cli_assess.py::test_repair_post_commit_interrupt_reports_the_committed_swap",
 ]
 phase = "3"
-note = "Offline tests prove the full §13.6 repair contract: target-typed latest-finding adoption into a complete new unverified generation, byte-preserved untouched claims and metadata across repeated repair, refreshed adopted-claim provenance and current-swap human counting, recomputed gap/contradiction sets, inert provenance metadata, the promptless NULL-identity stage-13.6 run with zero llm_calls rows, every fail-closed precondition diagnostic, the §12.13 durable failed attempt on a rolled-back candidate, the class-9 committed-swap report under interrupted cleanup, and the ordinary Stage 7 re-verification path"
+note = "Offline tests prove the full §13.6 repair contract: target-typed latest-finding adoption into a complete new unverified generation, byte-preserved untouched claims and metadata across repeated repair, refreshed adopted-claim provenance and current-swap human counting, exact-one summary integrity, recomputed gap/contradiction sets, inert provenance metadata, the promptless NULL-identity stage-13.6 run with zero llm_calls rows, every fail-closed precondition diagnostic, the §12.13 durable failed attempt on a rolled-back candidate, state-proven class-9 reporting across both ambiguous commit-return windows and interrupted cleanup, and the ordinary Stage 7 re-verification path"

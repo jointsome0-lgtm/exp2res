@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 from pathlib import Path
 
@@ -29,6 +30,39 @@ from test_stage7_verification import verifier_response
 
 runner = CliRunner()
 pytestmark = [pytest.mark.contract, pytest.mark.lifecycle]
+
+
+class InterruptAfterCommit:
+    """Proxy one SQLite connection and interrupt after a selected durable commit."""
+
+    def __init__(self, connection, selected_commit: int) -> None:
+        self._connection = connection
+        self._selected_commit = selected_commit
+        self._commit_count = 0
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def commit(self) -> None:
+        self._connection.commit()
+        self._commit_count += 1
+        if self._commit_count == self._selected_commit:
+            raise KeyboardInterrupt()
+
+
+def interrupt_repair_commit(
+    monkeypatch: pytest.MonkeyPatch, *, selected_commit: int
+) -> None:
+    real_writer_database = stage6_module.writer_database
+
+    @contextmanager
+    def interrupted_writer_database(*args, **kwargs):
+        with real_writer_database(*args, **kwargs) as connection:
+            yield InterruptAfterCommit(connection, selected_commit)
+
+    monkeypatch.setattr(
+        stage6_module, "writer_database", interrupted_writer_database
+    )
 
 
 def invoke_json(workspace: Path, arguments: list[str]):
@@ -464,6 +498,106 @@ def test_repeated_repair_human_result_counts_only_current_adoptions(
     )
     assert second.exit_code == 0
     assert "adopted 1 of 2 claims" in second.stdout
+
+
+def test_run_creation_commit_interrupt_reports_and_finalizes_the_run(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§12.13/§14.14: an ambiguous run-row commit is discovered and cancelled."""
+
+    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [verifier_response("rejected"), verifier_response()]
+            ),
+        ),
+    )
+    blocked, _ = invoke_json(
+        workspace, ["--yes", "assess", "verify", "--snapshot", snapshot_id]
+    )
+    assert blocked.exit_code == 10
+    interrupt_repair_commit(monkeypatch, selected_commit=1)
+
+    result, envelope = invoke_json(
+        workspace, ["assess", "repair", "--snapshot", snapshot_id]
+    )
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert len(envelope["run_ids"]) == 1
+    assert envelope["affected_ids"] == {
+        "created": [],
+        "superseded": [],
+        "deleted": [],
+    }
+    with read_database(workspace) as connection:
+        run = connection.execute(
+            "SELECT status, failure_code FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
+        current = connection.execute(
+            "SELECT id FROM assessment_snapshots WHERE superseded_at IS NULL"
+        ).fetchall()
+    assert tuple(run) == ("failed", "cancelled")
+    assert [row["id"] for row in current] == [snapshot_id]
+
+
+def test_business_commit_interrupt_reports_the_committed_swap(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14: an ambiguous swap commit carries its exact durable result."""
+
+    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [verifier_response("rejected"), verifier_response()]
+            ),
+        ),
+    )
+    blocked, _ = invoke_json(
+        workspace, ["--yes", "assess", "verify", "--snapshot", snapshot_id]
+    )
+    assert blocked.exit_code == 10
+    interrupt_repair_commit(monkeypatch, selected_commit=2)
+
+    result, envelope = invoke_json(
+        workspace, ["assess", "repair", "--snapshot", snapshot_id]
+    )
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    superseded = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["superseded"]
+    }
+    assert len(created["assessment_snapshot"]) == 1
+    assert len(created["self_claim"]) == 2
+    assert superseded["assessment_snapshot"] == [snapshot_id]
+    assert len(superseded["self_claim"]) == 2
+    assert len(envelope["generation_ids"]) == 2
+    assert len(envelope["run_ids"]) == 1
+    with read_database(workspace) as connection:
+        run = connection.execute(
+            "SELECT status, failure_code FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
+        current = connection.execute(
+            "SELECT id FROM assessment_snapshots WHERE superseded_at IS NULL"
+        ).fetchall()
+    assert tuple(run) == ("completed", None)
+    assert [row["id"] for row in current] == created["assessment_snapshot"]
 
 
 def test_repair_post_commit_interrupt_reports_the_committed_swap(
