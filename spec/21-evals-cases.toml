@@ -1927,6 +1927,11 @@ And a question answered after synthesis is absent from the page
 And no gap ID, target, reason, priority, claim, contradiction, raw text, manifest value, or workspace path appears in the response
 And requesting that route by the same exact current global snapshot ID projects the identical question set
 
+Given self_claims.json bytes that match their digest in an otherwise current manifest but violate the closed §13.12 companion schema
+When the gap-question route is requested
+Then complete current-output revalidation succeeds before the companion validation fails closed as question_companion_invalid
+And no question or other companion value is served, the page names the §14.9 export, and the failure is not classified as internal_error
+
 Given a request whose selector is absent, unknown, repeated, combined with the other form, malformed, names a project scope, names the ID of a current project-scoped snapshot, or names a superseded snapshot
 When the view resolves it
 Then it fails closed in its §30 rule 7 outcome under that row's literal class, no snapshot is chosen by a default or latest-of-several rule, and no response reflects the request bytes back
@@ -1955,9 +1960,28 @@ When each is handled
 Then the HEAD response carries the GET's status and headers with an empty body after the same resolution and revalidation
 And the body-declaring request is refused as malformed without being read
 And a request whose header section or framing cannot be parsed, such as unequal duplicate Content-Length values, reaches that same malformed outcome with its class rather than a parser-owned response outside the table
-And interrupting `view serve` mid-request drains that accepted request to its own outcome before the exit class 9 envelope
 And every response of either kind declares text/html; charset=utf-8, Cache-Control: no-store, and its literal Exp2Res-View-Outcome class
 And the served mirror body states no outcome metadata, so it stays byte-identical to the published member
+
+Given a raw request line of 8193 octets, a header section of 32769 octets, and a header section containing 65 field lines, including variants split across many socket reads
+When `view serve` receives each request
+Then each exceeds §30 rule 9's fixed envelope, is refused as malformed_request before any compatibility or business-state read, and closes after the response
+And the parser buffers at most the applicable byte cap plus the one octet that decides overflow
+And an otherwise valid request exactly at each byte or field-count cap continues to the ordinary authority, method, route, and selector checks rather than failing for size
+
+Given an incompatible §12.14 workspace before serving starts
+When `view serve` applies its startup gate
+Then it exits in class 4 before binding a socket or reading any business table
+
+Given `view serve` has bound a compatible workspace and another build then migrates that workspace to a schema newer than this serving build supports
+When the next route request arrives
+Then the per-request compatibility gate returns schema_incompatible after the metadata read, performs no business-state or managed-member read, and serves no stale page
+
+Given a fully received accepted request whose selector resolution or managed-file containment and revalidation stalls on server-side I/O
+When the first interruption arrives
+Then accepting stops and one absolute drain deadline of §8.1's contention timeout covers all remaining server-side work, response composition, and emission without any per-phase restart
+And a request completed inside the window writes its own §30 rule 7 response before the class-9 envelope
+And at the absolute deadline every unfinished connection closes without a response or partial response, is not mislabeled internal_error, and cannot delay that envelope
 
 Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
