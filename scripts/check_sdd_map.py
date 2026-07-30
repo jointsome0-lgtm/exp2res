@@ -87,10 +87,10 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
                 errors.append(f"cannot read spec/{name}: {exc}")
                 continue
             if not any(
-                line.startswith(f"## §{number}.") for line in body.splitlines()
+                line.startswith(f"## §{number}. ") for line in body.splitlines()
             ):
                 errors.append(
-                    f"spec/{name} lacks its own top-level '## §{number}.' heading"
+                    f"spec/{name} lacks its own top-level '## §{number}. ' heading"
                 )
         elif name.lower().endswith(".md") and name[:1].isdigit():
             errors.append(f"malformed numbered spec filename: spec/{name}")
