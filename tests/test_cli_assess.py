@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import exp2res.pipeline.stage6 as stage6_module
 import exp2res.services.assessment as assessment_service
 import exp2res.services.detection as detection_service
 import exp2res.services.extraction as extraction_service
@@ -392,6 +393,67 @@ def test_repair_envelope_requires_no_consent_and_reports_the_swap(
     )
     # The freshly repaired snapshot is unverified again: class 2, no prompt.
     assert human.exit_code == 2
+
+
+def test_repair_post_commit_interrupt_reports_the_committed_swap(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rules 5/6: a cleanup interrupt keeps the repair envelope full."""
+
+    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [verifier_response("rejected"), verifier_response()]
+            ),
+        ),
+    )
+    blocked, _ = invoke_json(
+        workspace, ["--yes", "assess", "verify", "--snapshot", snapshot_id]
+    )
+    assert blocked.exit_code == 10
+
+    def interrupt_cleanup(_workspace, _snapshot_ids):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        stage6_module, "remove_assessment_sets", interrupt_cleanup
+    )
+    result, envelope = invoke_json(
+        workspace, ["assess", "repair", "--snapshot", snapshot_id]
+    )
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    # The committed swap survives into the cancelled envelope instead of
+    # vanishing with the Outcome: created, superseded, generations, run.
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    superseded = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["superseded"]
+    }
+    assert superseded["assessment_snapshot"] == [snapshot_id]
+    assert len(created["self_claim"]) == 2
+    new_snapshot_id = created["assessment_snapshot"][0]
+    assert new_snapshot_id != snapshot_id
+    assert envelope["generation_ids"]
+    assert len(envelope["run_ids"]) == 1
+    with read_database(workspace) as connection:
+        run = connection.execute(
+            "SELECT stage, status FROM processing_runs WHERE id = ?",
+            (envelope["run_ids"][0],),
+        ).fetchone()
+        current = connection.execute(
+            "SELECT id FROM assessment_snapshots WHERE superseded_at IS NULL"
+        ).fetchall()
+    assert tuple(run) == ("13.6", "completed")
+    assert [row[0] for row in current] == [new_snapshot_id]
 
 
 def test_verify_invalid_after_retry_reports_failed_run(

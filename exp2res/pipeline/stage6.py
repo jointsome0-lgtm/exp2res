@@ -25,6 +25,7 @@ from exp2res.errors import (
     EmptyAssessmentViewError,
     IntegrityFailureError,
     NothingToRepairError,
+    OperationCancelledError,
     RewriteUnavailableError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
@@ -571,6 +572,9 @@ def run_assessment_repair(
             snapshot.scope, snapshot.scope_target, snapshot.id
         )
         pending_stale_paths: tuple[str, ...] = ()
+        # §12.13: the run row is the durable attempt record, committed on
+        # its own before the candidate swap so a failed swap rolls back
+        # every business row while the run survives as `failed`.
         try:
             connection.execute("BEGIN IMMEDIATE")
             create_processing_run(
@@ -584,6 +588,12 @@ def run_assessment_repair(
                 input_ids=(snapshot.id, *superseded_claim_ids),
                 metadata={"mode": "repair"},
             )
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        try:
+            connection.execute("BEGIN IMMEDIATE")
             new_snapshot_id = id_factory("snapshot")
             new_claims = tuple(
                 SelfClaim(
@@ -697,13 +707,72 @@ def run_assessment_repair(
             )
             report_managed_residuals(pending_stale_paths)
             connection.commit()
-        except BaseException:
+        except BaseException as swap_error:
             connection.rollback()
             withdraw_pending_unless_superseded(
                 connection, pending_stale_paths, superseded_snapshot_ids
             )
+            # §12.13: the rolled-back candidate leaves the run behind as
+            # the durable failed attempt owning no business rows.
+            failure_code = (
+                "cancelled"
+                if isinstance(swap_error, KeyboardInterrupt)
+                else "business_commit_failed"
+            )
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                finish_processing_run(
+                    connection,
+                    run_id=run_id,
+                    finished_at=now(),
+                    status="failed",
+                    failure_code=failure_code,
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
             raise
-        residual_paths = remove_assessment_sets(workspace, superseded_snapshot_ids)
+
+        def committed_result(
+            residuals: tuple[str, ...],
+            snapshot_row: AssessmentSnapshot,
+            claim_rows: Sequence[SelfClaim],
+        ) -> Stage6Result:
+            return Stage6Result(
+                run_id=run_id,
+                snapshot_id=new_snapshot.id,
+                created_claim_ids=tuple(
+                    sorted((item.id for item in new_claims), key=_id_key)
+                ),
+                superseded_snapshot_ids=superseded_snapshot_ids,
+                superseded_claim_ids=superseded_claim_ids,
+                generation_id=generation_id,
+                superseded_generation_ids=tuple(
+                    sorted(superseded_generation_ids, key=_id_key)
+                ),
+                replaced_view=replaced_view,
+                residual_paths=residuals,
+                warnings=(),
+                snapshot=snapshot_row,
+                claims=list(claim_rows),
+            )
+
+        # §13 stale-export trigger class 1: the swap is already committed;
+        # cleanup failure or interruption never rolls it back.
+        try:
+            residual_paths = remove_assessment_sets(
+                workspace, superseded_snapshot_ids
+            )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the class-9 error carries the complete
+            # committed result; the pending stale paths stay reported.
+            cancelled = OperationCancelledError()
+            cancelled.stage_result = committed_result(
+                pending_stale_paths,
+                new_snapshot,
+                sorted(new_claims, key=lambda item: _id_key(item.id)),
+            )
+            raise cancelled from None
         stored_snapshot = next(
             item
             for item in list_assessment_snapshots(connection)
@@ -711,19 +780,4 @@ def run_assessment_repair(
         )
         stored_claims = list_self_claims_for_snapshot(connection, new_snapshot.id)
 
-    return Stage6Result(
-        run_id=run_id,
-        snapshot_id=new_snapshot.id,
-        created_claim_ids=tuple(sorted((item.id for item in new_claims), key=_id_key)),
-        superseded_snapshot_ids=superseded_snapshot_ids,
-        superseded_claim_ids=superseded_claim_ids,
-        generation_id=generation_id,
-        superseded_generation_ids=tuple(
-            sorted(superseded_generation_ids, key=_id_key)
-        ),
-        replaced_view=replaced_view,
-        residual_paths=residual_paths,
-        warnings=(),
-        snapshot=stored_snapshot,
-        claims=stored_claims,
-    )
+    return committed_result(residual_paths, stored_snapshot, stored_claims)

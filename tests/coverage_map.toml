@@ -695,8 +695,11 @@ nodes = [
   "tests/test_stage6_repair.py::test_repaired_snapshot_takes_an_ordinary_full_reverification",
   "tests/test_stage6_repair.py::test_latest_finding_wins_when_history_holds_two_attempts",
   "tests/test_stage6_repair.py::test_precondition_failures_are_stable_and_change_nothing",
+  "tests/test_stage6_repair.py::test_failed_swap_leaves_a_durable_failed_run",
+  "tests/test_stage6_repair.py::test_post_commit_interrupt_carries_the_committed_result",
   "tests/test_stage6_repair.py::test_superseded_snapshot_selector_is_not_repairable",
   "tests/test_cli_assess.py::test_repair_envelope_requires_no_consent_and_reports_the_swap",
+  "tests/test_cli_assess.py::test_repair_post_commit_interrupt_reports_the_committed_swap",
 ]
 phase = "3"
-note = "Offline tests prove the full §13.6 repair contract: latest-finding adoption into a complete new unverified generation, byte-preserved untouched claims, recomputed gap/contradiction sets, inert provenance metadata, the promptless NULL-identity stage-13.6 run with zero llm_calls rows, every fail-closed precondition diagnostic, and the ordinary Stage 7 re-verification path"
+note = "Offline tests prove the full §13.6 repair contract: latest-finding adoption into a complete new unverified generation, byte-preserved untouched claims, recomputed gap/contradiction sets, inert provenance metadata, the promptless NULL-identity stage-13.6 run with zero llm_calls rows, every fail-closed precondition diagnostic, the §12.13 durable failed attempt on a rolled-back candidate, the class-9 committed-swap report under interrupted cleanup, and the ordinary Stage 7 re-verification path"

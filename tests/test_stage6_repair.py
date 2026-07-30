@@ -9,12 +9,14 @@ import pytest
 
 from exp2res.errors import (
     NothingToRepairError,
+    OperationCancelledError,
     RewriteUnavailableError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
     SnapshotNotVerifiedError,
 )
-from exp2res.pipeline.stage6 import run_assessment_repair
+import exp2res.pipeline.stage6 as stage6_module
+from exp2res.pipeline.stage6 import Stage6Result, run_assessment_repair
 from exp2res.storage.repository import (
     list_assessment_snapshots,
     list_self_claims_for_snapshot,
@@ -286,6 +288,100 @@ def test_precondition_failures_are_stable_and_change_nothing(
     with pytest.raises(RewriteUnavailableError):
         repair(workspace, ids, generated.snapshot_id)
     assert snapshot_state() == before
+
+
+def test_failed_swap_leaves_a_durable_failed_run(workspace: Path) -> None:
+    """§12.13: a rolled-back candidate keeps the run as the failed attempt."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [verifier_response("rejected"), verifier_response("supported")]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+
+    def colliding(prefix: str) -> str:
+        # Reusing the current snapshot's ID makes the candidate insert
+        # violate the primary key mid-swap, after the run row committed.
+        if prefix == "snapshot":
+            return generated.snapshot_id
+        return ids(prefix)
+
+    with pytest.raises(Exception):
+        run_assessment_repair(
+            workspace,
+            snapshot_id=generated.snapshot_id,
+            id_factory=colliding,
+            clock=lambda: FIXED_NOW,
+        )
+    with read_database(workspace) as connection:
+        run = connection.execute(
+            "SELECT status, failure_code, provider FROM processing_runs "
+            "WHERE stage = '13.6' AND provider IS NULL"
+        ).fetchone()
+        calls = connection.execute(
+            "SELECT COUNT(*) FROM llm_calls WHERE run_id IN "
+            "(SELECT id FROM processing_runs "
+            "WHERE stage = '13.6' AND provider IS NULL)"
+        ).fetchone()[0]
+        current = [item.id for item in list_assessment_snapshots(connection)]
+        claims = list_self_claims_for_snapshot(connection, generated.snapshot_id)
+    assert run is not None and tuple(run) == ("failed", "business_commit_failed", None)
+    assert calls == 0
+    # The failed run owns no business rows: the prior view stays current
+    # with its verified claims untouched.
+    assert current == [generated.snapshot_id]
+    assert {item.verification_status for item in claims} == {
+        "rejected",
+        "supported",
+    }
+
+
+def test_post_commit_interrupt_carries_the_committed_result(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: a cleanup interrupt still reports the committed swap."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [verifier_response("rejected"), verifier_response("supported")]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    stale_path = plant_assessment_set(workspace, generated.snapshot_id)
+
+    def interrupt_cleanup(_workspace, _snapshot_ids):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        stage6_module, "remove_assessment_sets", interrupt_cleanup
+    )
+    with pytest.raises(OperationCancelledError) as caught:
+        repair(workspace, ids, generated.snapshot_id)
+    carried = caught.value.stage_result
+    assert isinstance(carried, Stage6Result)
+    assert carried.snapshot_id is not None
+    assert carried.snapshot_id != generated.snapshot_id
+    assert carried.superseded_snapshot_ids == (generated.snapshot_id,)
+    assert carried.run_id and carried.generation_id is not None
+    assert carried.residual_paths
+    assert stale_path.exists()
+    with read_database(workspace) as connection:
+        current = [item.id for item in list_assessment_snapshots(connection)]
+        run = connection.execute(
+            "SELECT status FROM processing_runs WHERE id = ?",
+            (carried.run_id,),
+        ).fetchone()
+    # The swap committed before the interrupt: the carried result names
+    # exactly the durable state.
+    assert current == [carried.snapshot_id]
+    assert run[0] == "completed"
 
 
 def test_superseded_snapshot_selector_is_not_repairable(workspace: Path) -> None:
