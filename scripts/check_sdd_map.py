@@ -31,20 +31,25 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
         return [], [f"SDD.md has no {INDEX_HEADING!r} heading"]
 
     bullets: list[str] = []
+    errors: list[str] = []
     for line in lines[start:]:
         if line == "---" or line.startswith("## "):
             break
         if BULLET_RE.match(line):
             bullets.append(line)
-        elif bullets:
-            if not line.strip():
-                break
+        elif not bullets or not line.strip():
+            continue
+        elif line[0].isspace():
             # A wrapped bullet is still one router: continuation text counts
             # toward its budget.
             bullets[-1] += " " + line.strip()
+        else:
+            errors.append(
+                f"unexpected non-bullet text inside the § Index list: {line[:60]}…"
+            )
     if not bullets:
-        return [], ["§ Index contains no bullets"]
-    return bullets, []
+        return [], [*errors, "§ Index contains no bullets"]
+    return bullets, errors
 
 
 def read_spec_numbers() -> tuple[set[int], list[str]]:
@@ -55,12 +60,14 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
     except OSError as exc:
         return set(), [f"cannot list {SPEC_DIRECTORY.relative_to(REPOSITORY_ROOT)}: {exc}"]
 
-    numbers = [
-        int(match.group(1))
-        for name in names
-        if (match := SPEC_FILE_RE.fullmatch(name))
-    ]
-    errors = [
+    numbers: list[int] = []
+    errors: list[str] = []
+    for name in names:
+        if match := SPEC_FILE_RE.fullmatch(name):
+            numbers.append(int(match.group(1)))
+        elif name.endswith(".md") and name[0].isdigit():
+            errors.append(f"malformed numbered spec filename: spec/{name}")
+    errors += [
         f"spec/ has multiple files for §{number}"
         for number, count in sorted(Counter(numbers).items())
         if count > 1
@@ -82,6 +89,8 @@ def main() -> int:
             )
         if match := SECTION_BULLET_RE.match(bullet):
             index_numbers.append(int(match.group(1)))
+            if not bullet[match.end():].strip():
+                errors.append(f"index line has no routing text: {bullet.rstrip()}")
         elif bullet.startswith("- §"):
             errors.append(f"malformed § index anchor (canonical form is §N): {bullet[:60]}…")
 
