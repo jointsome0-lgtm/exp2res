@@ -2234,6 +2234,7 @@ Given a verified snapshot produced by an earlier repair
 When another repair copies a passing member and adopts a new rewrite for another member
 Then the passing member retains its existing metadata unchanged
 And the adopted member copies its existing metadata and sets or overwrites only `adopted_rewrite_of_claim_id` with the newly adopted source-claim ID
+And the human result counts only rewrites adopted by this swap, never retained provenance from an earlier repair
 
 Given a `SelfClaim` and `ResumeBullet` whose table-scoped IDs collide and whose finding histories interleave
 When claim repair selects the latest rewrite

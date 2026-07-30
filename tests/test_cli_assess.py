@@ -395,6 +395,77 @@ def test_repair_envelope_requires_no_consent_and_reports_the_swap(
     assert human.exit_code == 2
 
 
+def test_repeated_repair_human_result_counts_only_current_adoptions(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14: retained repair provenance does not inflate this swap's count."""
+
+    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [verifier_response("rejected"), verifier_response()]
+            ),
+        ),
+    )
+    blocked, _ = invoke_json(
+        workspace, ["--yes", "assess", "verify", "--snapshot", snapshot_id]
+    )
+    assert blocked.exit_code == 10
+    first, first_envelope = invoke_json(
+        workspace, ["assess", "repair", "--snapshot", snapshot_id]
+    )
+    assert first.exit_code == 0
+    first_snapshot_id = first_envelope["affected_ids"]["created"][0]["ids"][0]
+
+    with read_database(workspace) as connection:
+        claims = sorted(
+            list_self_claims_for_snapshot(connection, first_snapshot_id),
+            key=lambda claim: claim.id.encode("utf-8"),
+        )
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner(
+                [
+                    verifier_response(
+                        "supported"
+                        if "adopted_rewrite_of_claim_id" in claim.metadata
+                        else "rejected"
+                    )
+                    for claim in claims
+                ]
+            ),
+        ),
+    )
+    blocked, _ = invoke_json(
+        workspace,
+        ["--yes", "assess", "verify", "--snapshot", first_snapshot_id],
+    )
+    assert blocked.exit_code == 10
+
+    second = runner.invoke(
+        app,
+        [
+            "--workspace",
+            str(workspace),
+            "assess",
+            "repair",
+            "--snapshot",
+            first_snapshot_id,
+        ],
+    )
+    assert second.exit_code == 0
+    assert "adopted 1 of 2 claims" in second.stdout
+
+
 def test_repair_post_commit_interrupt_reports_the_committed_swap(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

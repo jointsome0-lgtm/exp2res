@@ -1775,10 +1775,11 @@ def _repair_outcome(repaired: Stage6Result) -> Outcome:
     """One §14.14 rule 5 composition for completed and interrupted swaps."""
 
     assert repaired.snapshot is not None and repaired.snapshot_id is not None
+    superseded_claim_ids = set(repaired.superseded_claim_ids)
     adopted = sum(
         1
         for claim in repaired.claims
-        if "adopted_rewrite_of_claim_id" in claim.metadata
+        if claim.metadata.get("adopted_rewrite_of_claim_id") in superseded_claim_ids
     )
     created_groups = [
         EntityIdGroup(

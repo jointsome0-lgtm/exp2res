@@ -442,5 +442,6 @@ nodes = [
   "tests/test_stage6_repair.py::test_repeated_repair_preserves_and_refreshes_claim_metadata",
   "tests/test_stage6_repair.py::test_precondition_failures_are_stable_and_change_nothing",
   "tests/test_cli_assess.py::test_repair_envelope_requires_no_consent_and_reports_the_swap",
+  "tests/test_cli_assess.py::test_repeated_repair_human_result_counts_only_current_adoptions",
 ]
-note = "Covered eval 21.60 proves deterministic promptless target-typed repair adoption, metadata preservation across repeated repair, the class-2 precondition diagnostics, the ordinary §13.6 swap with inert provenance metadata and a zero-call non-LLM run row, and export reachable again only through full re-verification."
+note = "Covered eval 21.60 proves deterministic promptless target-typed repair adoption, metadata preservation and current-swap human counting across repeated repair, the class-2 precondition diagnostics, the ordinary §13.6 swap with inert provenance metadata and a zero-call non-LLM run row, and export reachable again only through full re-verification."
