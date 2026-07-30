@@ -22,6 +22,7 @@ BULLET_RE = re.compile(r"^- \S")
 SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
 DECISION_LOG_BULLET_RE = re.compile(r"^- Decision Log — \S")
 SPEC_FILE_RE = re.compile(r"^([0-9]+)-.+\.md$")
+OPENING_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 
 def read_index_bullets() -> tuple[list[str], list[str]]:
@@ -109,11 +110,23 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
 
 def has_section_heading(body: str, number: int) -> bool:
     """True when the file declares '## §N. <title>' outside fenced code."""
-    in_fence = False
+    fence: tuple[str, int] | None = None
     for line in body.splitlines():
-        if line.lstrip().startswith(("```", "~~~")):
-            in_fence = not in_fence
-        elif not in_fence and line.startswith(f"## §{number}. "):
+        if fence is not None:
+            character, length = fence
+            closing_fence = re.compile(
+                rf"^ {{0,3}}{re.escape(character)}{{{length},}}[ \t]*$"
+            )
+            if closing_fence.fullmatch(line):
+                fence = None
+            continue
+
+        opening_fence = OPENING_FENCE_RE.fullmatch(line)
+        if opening_fence:
+            marker, info_string = opening_fence.groups()
+            if marker[0] != "`" or "`" not in info_string:
+                fence = (marker[0], len(marker))
+        elif line.startswith(f"## §{number}. "):
             return True
     return False
 
