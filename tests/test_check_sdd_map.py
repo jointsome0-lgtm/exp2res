@@ -374,3 +374,51 @@ def test_unicode_whitespace_does_not_make_prose_a_list_item(
 
     assert bullets == ["- §0 real route", "- Decision Log — real route"]
     assert errors == []
+
+
+def test_mixed_setext_markers_do_not_end_the_index_section(
+    tmp_path, monkeypatch
+) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+ordinary prose
+=-=
+
+- §0 real route
+- Decision Log — real route
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == ["- §0 real route", "- Decision Log — real route"]
+    assert errors == []
+
+
+def test_index_separator_allows_markdown_indentation_and_trailing_space(
+    tmp_path, monkeypatch
+) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+- §0 real route
+- Decision Log — real route
+"""
+        + "   ---   \n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == ["- §0 real route", "- Decision Log — real route"]
+    assert errors == []

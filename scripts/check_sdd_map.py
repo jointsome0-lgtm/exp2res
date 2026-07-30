@@ -18,7 +18,8 @@ INDEX_HEADING_VARIANT_RE = re.compile(
     r" {0,3}#{1,6}[ \t]+§[ \t]*Index(?:[ \t]+#+)?[ \t]*"
 )
 SETEXT_TITLE_RE = re.compile(r" {0,3}§\s*Index[ \t]*")
-SETEXT_UNDERLINE_RE = re.compile(r" {0,3}[-=]+[ \t]*")
+SETEXT_UNDERLINE_RE = re.compile(r" {0,3}(?:-+|=+)[ \t]*")
+THEMATIC_SEPARATOR_RE = re.compile(r"^ {0,3}---[ \t]*$")
 INDEX_BOUNDARY_RE = re.compile(r"^ {0,3}#{1,2}(?:[ \t]+|$)")
 BULLET_ITEM_RE = re.compile(r"^ {0,3}[-+*](?:[ \t]+|$)")
 ORDERED_ITEM_WITH_INDENT_RE = re.compile(
@@ -172,7 +173,7 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
     for index, visible_line in enumerate(visible_lines[start:], start=start):
         line = visible_line or ""
         if (
-            line == "---"
+            THEMATIC_SEPARATOR_RE.fullmatch(line)
             or INDEX_BOUNDARY_RE.match(line)
             or is_setext_boundary(visible_lines, index)
         ):
