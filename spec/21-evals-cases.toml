@@ -1949,18 +1949,20 @@ And the page says the owner removes or repairs the reported residual before that
 Given the selected snapshot carries no single narrative_summary claim matching AssessmentSnapshot.summary, or a stored aggregate that is not a fresh reduction of its current claims, or the identity selector resolves to more than one current snapshot
 When either route is requested
 Then the outcome is the stored-state integrity refusal rather than the semantic one or a malformed-request one, even when the stored status is allowlisted
+And the duplicated-identity outcome names no generation remedy, because §13.6 does not repair multiple corrupt current rows
 
 Given the selected snapshot's aggregate verification status fails the §16.11 assessment-export allowlist
 When either route is requested
 Then the outcome is a completed semantic refusal that names the §14.9 verification for an unverified snapshot and the §14.9 generation for a completed negative verdict, and is distinguishable from every operational failure outcome
 And a snapshot that fails that allowlist while its managed set is also stale or invalidated still completes as exactly that refusal, because §30 rule 7 orders the gate before revalidation
 
-Given a HEAD request for the mirror route with an accepted selector, and a GET request declaring a body
+Given HEAD requests for both routes with accepted selectors, a HEAD request for the questions route whose matching-digest companion fails its closed schema, and a GET request declaring a body
 When each is handled
-Then the HEAD response carries the GET's status and headers with an empty body after the same resolution and revalidation
+Then each HEAD response carries its corresponding GET status and headers with an empty body after the same resolution and revalidation
+And the questions HEAD performs companion validation, returning served for the valid set and question_companion_invalid for the invalid one without emitting either page body
 And the body-declaring request is refused as malformed without being read
 And a request whose header section or framing cannot be parsed, such as unequal duplicate Content-Length values, reaches that same malformed outcome with its class rather than a parser-owned response outside the table
-And every response of either kind declares text/html; charset=utf-8, Cache-Control: no-store, and its literal Exp2Res-View-Outcome class
+And every response of either kind declares text/html; charset=utf-8, Cache-Control: no-store, Connection: close, and its literal Exp2Res-View-Outcome class
 And the served mirror body states no outcome metadata, so it stays byte-identical to the published member
 
 Given a raw request line of 8193 octets, a header section of 32769 octets, and a header section containing 65 field lines, including variants split across many socket reads
@@ -1968,6 +1970,17 @@ When `view serve` receives each request
 Then each exceeds §30 rule 9's fixed envelope, is refused as malformed_request before any compatibility or business-state read, and closes after the response
 And the parser buffers at most the applicable byte cap plus the one octet that decides overflow
 And an otherwise valid request exactly at each byte or field-count cap continues to the ordinary authority, method, route, and selector checks rather than failing for size
+
+Given an HTTP/1.1 request carrying an absolute-form, authority-form, or asterisk-form target, another version token, no Host field, or repeated Host fields including differently cased names
+When the request envelope is handled
+Then it is malformed_request before authority, method, route, selector, compatibility, or business-state evaluation
+And an absolute-form target naming another authority alongside a bound Host value is never normalized into an origin-form route
+
+Given 32 admitted connections are each holding an incomplete request within their receive deadlines
+When another connection arrives
+Then no 33rd parser, request worker, or application queue entry is created and the new socket is closed before any byte is read or response is emitted
+And after one admitted connection closes, exactly one later connection can acquire the released slot
+And every completed response closes its connection after one request, so keep-alive or pipelining cannot bypass admission
 
 Given an incompatible §12.14 workspace before serving starts
 When `view serve` applies its startup gate
@@ -1981,7 +1994,13 @@ Given a fully received accepted request whose selector resolution or managed-fil
 When the first interruption arrives
 Then accepting stops and one absolute drain deadline of §8.1's contention timeout covers all remaining server-side work, response composition, and emission without any per-phase restart
 And a request completed inside the window writes its own §30 rule 7 response before the class-9 envelope
-And at the absolute deadline every unfinished connection closes without a response or partial response, is not mislabeled internal_error, and cannot delay that envelope
+And at the absolute deadline every unfinished connection closes without retry or an alternate response, is not mislabeled internal_error, and cannot delay that envelope
+And a peer whose emission began before the deadline may retain no response bytes or a partial response, never a promise of completed delivery
+
+Given an ordinary served request has reached its outcome and closed its read transaction but the client stops reading a response larger than the socket buffer
+When the emit deadline expires without an interruption
+Then the connection closes without retry and the peer may hold no response or a partial response
+And the computed outcome is not relabeled, no alternate response is attempted, and the client cannot extend a SQLite reader
 
 Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
