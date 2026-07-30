@@ -38,7 +38,7 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
             break
         if BULLET_RE.match(line):
             bullets.append(line)
-        elif line.strip().startswith("-"):
+        elif line.strip()[:1] in {"-", "*", "+"}:
             errors.append(f"malformed § Index bullet: {line.strip()[:60]}…")
         elif not bullets or not line.strip():
             continue
@@ -72,7 +72,7 @@ def read_spec_numbers() -> tuple[set[int], list[str]]:
                 numbers.append(number)
             else:
                 errors.append(f"malformed numbered spec filename: spec/{name}")
-        elif name.endswith(".md") and name[0].isdigit():
+        elif name.lower().endswith(".md") and name[:1].isdigit():
             errors.append(f"malformed numbered spec filename: spec/{name}")
     errors += [
         f"spec/ has multiple files for §{number}"
