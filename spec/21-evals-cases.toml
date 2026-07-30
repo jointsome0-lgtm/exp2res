@@ -1927,6 +1927,11 @@ And a question answered after synthesis is absent from the page
 And no gap ID, target, reason, priority, claim, contradiction, raw text, manifest value, or workspace path appears in the response
 And requesting that route by the same exact current global snapshot ID projects the identical question set
 
+Given that current companion contains an unanswered question whose value is `<img src=https://example.invalid/q onerror=alert(1)> & "quoted"`
+When the gap-question route renders it
+Then the complete value appears as text under §17's total escaping and cannot create an img element, event-handler attribute, URL-bearing DOM attribute, or external request
+And parsing the response yields no element the renderer did not emit
+
 Given self_claims.json bytes that match their digest in an otherwise current manifest but violate the closed §13.12 companion schema
 When the gap-question route is requested
 Then complete current-output revalidation succeeds before the companion validation fails closed as question_companion_invalid
@@ -2005,8 +2010,13 @@ And the computed outcome is not relabeled, no alternate response is attempted, a
 Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
 Then the bind fails closed in exit class 2 before any socket is served, each request is refused without reading business state, and no diagnostic line echoes request bytes
+And the unsupported-method response is 405 and declares exactly `Allow: GET, HEAD`
 And serving takes no writer lock, writes no business row, managed output, or telemetry row, and makes no §15 call or outbound connection
 And an otherwise accepted request carrying a cross-site or same-site fetch-metadata declaration is served, because the shell embeds the view from its own origin by URL
+
+Given a valid literal loopback address and allowed port that another socket already occupies
+When `view serve` attempts that requested bind
+Then it exits in class 2 with view_bind_failed, serves nothing, and does not retry another port, address, or interface
 
 Given a request percent-encoding a structural token, as in /m%69rror or ?%73cope=global, and a request percent-encoding a selector value once and another encoding it twice
 When each is handled
