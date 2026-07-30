@@ -1927,6 +1927,17 @@ And a question answered after synthesis is absent from the page
 And no gap ID, target, reason, priority, claim, contradiction, raw text, manifest value, or workspace path appears in the response
 And requesting that route by the same exact current global snapshot ID projects the identical question set
 
+Given one running server has already served both routes from the same current managed set
+When an ordinary gap answer invalidates that set and a new network GET reaches each route without restarting the server
+Then both requests re-read current state and return export_not_current with status 409
+And neither request returns the previously served report bytes or question projection
+And after the owner publishes the replacement current set, the next network GETs on that same server serve the replacement report bytes and updated question projection rather than either cached response
+
+Given a revalidated current set whose valid companion has no unanswered unknown, because every unknown is answered or the unknowns list is empty
+When the gap-question route is requested
+Then the response is served with status 200 as a valid self-contained document with an empty question projection
+And no companion value is exposed, and the empty projection is not relabeled no_current_view, internal_error, or another refusal
+
 Given that current companion contains an unanswered question whose value is `<img src=https://example.invalid/q onerror=alert(1)> & "quoted"`
 When the gap-question route renders it
 Then the complete value appears as text under §17's total escaping and cannot create an img element, event-handler attribute, URL-bearing DOM attribute, or external request
@@ -1955,6 +1966,11 @@ Given the selected snapshot carries no single narrative_summary claim matching A
 When either route is requested
 Then the outcome is the stored-state integrity refusal rather than the semantic one or a malformed-request one, even when the stored status is allowlisted
 And the duplicated-identity outcome names no generation remedy, because §13.6 does not repair multiple corrupt current rows
+
+Given the selected snapshot's stored aggregate is not a fresh reduction of its current claims and its stored status also fails the §16.11 allowlist
+When either route is requested
+Then the integrity half runs first and returns assessment_inconsistent with status 409 and the aggregate-recomputing verification remedy
+And the request is not assessment_blocked with status 403, because the inconsistent aggregate is not a verdict whose status can decide serving
 
 Given the selected snapshot's aggregate verification status fails the §16.11 assessment-export allowlist
 When either route is requested
@@ -1987,6 +2003,11 @@ When another connection arrives
 Then no 33rd parser, request worker, or application queue entry is created and the new socket is closed before any byte is read or response is emitted
 And after one admitted connection closes, exactly one later connection can acquire the released slot
 And every completed response closes its connection after one request, so keep-alive or pipelining cannot bypass admission
+
+Given 32 admitted connections each stop sending before completing a request
+When their fixed receive deadlines expire
+Then every socket closes without an HTTP response or outcome and every admission slot is released
+And a later complete request acquires a released slot and reaches its ordinary response, so stalled clients cannot occupy the cap indefinitely
 
 Given an incompatible §12.14 workspace before serving starts
 When `view serve` applies its startup gate
@@ -2027,10 +2048,23 @@ Given a valid literal loopback address and allowed port that another socket alre
 When `view serve` attempts that requested bind
 Then it exits in class 2 with view_bind_failed, serves nothing, and does not retry another port, address, or interface
 
+Given free loopback ports at the two allowed boundaries
+When `view serve --port 1024` and `view serve --port 65535` start separately
+Then each value passes argument validation and binds the exact requested port
+
+Given the just-outside values 1023 and 65536
+When `view serve` is invoked with each value
+Then each exits in class 2 with view_bind_invalid before any bind attempt and is not relabeled view_bind_failed
+
 Given one request and workspace-state fixture that reaches each row of §30 rule 7, including an unexpected local failure for internal_error and SQLite read contention beyond busy_timeout for workspace_busy
 When each fixture receives a completed response
 Then its `Exp2Res-View-Outcome` and HTTP status pair is exactly one of: served/200; malformed_request/400; invalid_selector/400; assessment_blocked/403; route_not_found/404; no_current_view/404; method_not_allowed/405; assessment_inconsistent/409; export_not_current/409; question_companion_invalid/409; export_residual/409; schema_incompatible/409; authority_not_bound/421; internal_error/500; workspace_busy/503
 And every row is exercised once, no fixture produces a pair outside that closed set, and no expected row falls through to internal_error
+
+Given the unexpected local failure carries the invented exception detail `Vera Example internal sentinel`, a stack token `TracebackSentinel`, a managed path, and the stored value `Vera Example stored sentinel`
+When its internal_error response and diagnostic are emitted
+Then the response body contains only renderer-owned literal text and the internal_error class, its headers contain only the fixed response metadata including that class, and standard error contains only the class and closed route
+And none of the sentinels, exception detail, stack trace, managed path, stored value, or framework-default error page appears in the body, headers, or standard error
 
 Given a compatible workspace, a free allowed loopback port, and `view serve --json`
 When the command reports its bound URLs, receives an owner interruption with no request pending, and exits after its bounded drain
