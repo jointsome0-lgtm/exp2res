@@ -37,6 +37,8 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
             break
         if BULLET_RE.match(line):
             bullets.append(line)
+        elif line.startswith("-"):
+            errors.append(f"malformed § Index bullet: {line[:60]}…")
         elif not bullets or not line.strip():
             continue
         elif line[0].isspace():
