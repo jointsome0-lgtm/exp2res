@@ -1972,6 +1972,8 @@ Given the selected snapshot carries no single narrative_summary claim matching A
 When either route is requested
 Then the outcome is the stored-state integrity refusal rather than the semantic one or a malformed-request one, even when the stored status is allowlisted
 And the duplicated-identity outcome names no generation remedy, because §13.6 does not repair multiple corrupt current rows
+And a narrative-summary failure selected by identity names generation, while the same failure selected by exact ID names only the assessment listing and never claims generation repairs that URL
+And a mismatched aggregate names the verification that updates the selected snapshot under either selector
 
 Given the selected snapshot's stored aggregate is not a fresh reduction of its current claims and its stored status also fails the §16.11 allowlist
 When either route is requested
@@ -1982,6 +1984,8 @@ Given the selected snapshot's aggregate verification status fails the §16.11 as
 When either route is requested
 Then the outcome is a completed semantic refusal that names the §14.9 verification for an unverified snapshot and the §14.9 generation for a completed negative verdict, and is distinguishable from every operational failure outcome
 And a snapshot that fails that allowlist while its managed set is also stale or invalidated still completes as exactly that refusal, because §30 rule 7 orders the gate before revalidation
+And verification is named for an unverified snapshot under either selector because it updates the selected ID
+And a completed negative selected by identity names generation, while one selected by exact ID names only the assessment listing and never claims generation repairs that URL
 
 Given HEAD requests for both routes with accepted selectors, a HEAD request for the questions route whose matching-digest companion fails its closed schema, a GET carrying one canonical positive Content-Length, and a POST carrying one canonical positive Content-Length
 When each is handled
@@ -2058,9 +2062,22 @@ And the computed outcome is not relabeled, no alternate response is attempted, a
 Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
 Then the bind fails closed in exit class 2 before any socket is served, each request is refused without reading business state, and no diagnostic line echoes request bytes
+And each wildcard, routable, or name-resolved host produces view_bind_not_loopback, while port `0` produces view_bind_invalid, before any socket operation
 And the unsupported-method response is 405 and declares exactly `Allow: GET, HEAD`
 And serving takes no writer lock, writes no business row, managed output, or telemetry row, and makes no §15 call or outbound connection
 And an otherwise accepted request carrying a cross-site or same-site fetch-metadata declaration is served, because the shell embeds the view from its own origin by URL
+
+Given one request omits Origin, one carries exactly one Origin whose value is the literal bound `http://` origin, and requests carry a repeated Origin, `Origin: null`, a space-separated value, another syntactically valid single value, or the bound value with different casing or an omitted port
+When each request is handled
+Then the absent and exact-bound forms proceed to their ordinary outcomes
+And repeated fields are malformed_request with status 400 before authority evaluation
+And every other single field-value is authority_not_bound with status 421 without splitting, decoding, case-folding, or normalizing it
+
+Given four requests carry distinct invented sentinels in an unsupported method, an unknown route, an unbound authority, and a malformed header section, including the literal marker `Vera Example`
+When each request is refused
+Then their outcomes and statuses are respectively method_not_allowed/405, route_not_found/404, authority_not_bound/421, and malformed_request/400
+And no sentinel or offending request byte appears in a response body, response header, or standard-error diagnostic
+And each surface carries only rule 6's permitted fixed outcome metadata, renderer-owned literal text, and the closed route when one was successfully parsed
 
 Given a valid literal loopback address and allowed port that another socket already occupies
 When `view serve` attempts that requested bind
@@ -2090,6 +2107,11 @@ Then the bound URLs and every progress event appear only on standard error
 And standard output is exactly one UTF-8 §14.14 envelope, optionally followed by one final newline, with envelope_version 1, command `view serve`, status cancelled, exit_code 9, result null, and every other required field present with its §14.14 cancelled value
 And the process exit status is 9
 And standard output contains no URL, banner, progress text, diagnostic outside the envelope, or additional JSON value
+
+Given a compatible workspace, a free allowed loopback port, and human-mode `view serve`
+When the command reports its bound URLs, receives an owner interruption with no request pending, and exits after its bounded drain
+Then the bound URLs and every progress or cancellation diagnostic appear only on standard error
+And standard output contains no bound URL, banner, progress text, or primary result
 
 Given a request percent-encoding a structural token, as in /m%69rror or ?%73cope=global, and a request percent-encoding a selector value once and another encoding it twice
 When each is handled
