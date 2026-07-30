@@ -555,7 +555,11 @@ def run_assessment_repair(
             raise NothingToRepairError()
         rewrites: dict[str, str] = {}
         for claim in repairable:
-            findings = list_verification_findings(connection, target_id=claim.id)
+            findings = list_verification_findings(
+                connection,
+                target_type="self_claim",
+                target_id=claim.id,
+            )
             if not findings:
                 raise RewriteUnavailableError()
             latest = max(
@@ -612,9 +616,12 @@ def run_assessment_repair(
                     counterevidence=[],
                     uncertainty=old.uncertainty,
                     metadata=(
-                        {"adopted_rewrite_of_claim_id": old.id}
+                        {
+                            **old.metadata,
+                            "adopted_rewrite_of_claim_id": old.id,
+                        }
                         if old.id in rewrites
-                        else {}
+                        else dict(old.metadata)
                     ),
                 )
                 for old in members

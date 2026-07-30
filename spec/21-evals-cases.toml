@@ -2230,6 +2230,15 @@ And the snapshot metadata carries `repaired_from_snapshot_id` and each repaired 
 And the completed run is one stage-`13.6` `processing_runs` row with NULL provider, model, and prompt_policy_hash owning zero `llm_calls` rows
 And no provider call, prompt serialization, or §15 contract is involved and no consent prompt is required
 
+Given a verified snapshot produced by an earlier repair
+When another repair copies a passing member and adopts a new rewrite for another member
+Then the passing member retains its existing metadata unchanged
+And the adopted member copies its existing metadata and sets or overwrites only `adopted_rewrite_of_claim_id` with the newly adopted source-claim ID
+
+Given a `SelfClaim` and `ResumeBullet` whose table-scoped IDs collide and whose finding histories interleave
+When claim repair selects the latest rewrite
+Then it considers only `self_claim` findings and cannot adopt bullet prose or fail on a bullet finding's null rewrite
+
 Given the repaired snapshot
 When `assess verify` runs on it
 Then every member claim receives an ordinary fresh Stage 7 verdict and only that pass reopens the §16.11 export gate

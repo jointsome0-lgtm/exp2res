@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import json
 from pathlib import Path
 
@@ -21,8 +22,9 @@ from exp2res.pipeline.stage6 import Stage6Result, run_assessment_repair
 from exp2res.storage.repository import (
     list_assessment_snapshots,
     list_self_claims_for_snapshot,
+    list_verification_findings,
 )
-from exp2res.storage.workspace import read_database
+from exp2res.storage.workspace import read_database, writer_database
 
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
@@ -223,6 +225,130 @@ def test_latest_finding_wins_when_history_holds_two_attempts(
         if "adopted_rewrite_of_claim_id" in claim.metadata
     )
     assert adopted.claim == "The later rewrite."
+
+
+def test_repair_ignores_newer_bullet_finding_with_colliding_target_id(
+    workspace: Path,
+) -> None:
+    """§13.6/§11.14: claim repair reads only self-claim finding history."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [verifier_response("rejected"), verifier_response("supported")]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    with writer_database(workspace) as connection:
+        rejected = next(
+            claim
+            for claim in list_self_claims_for_snapshot(
+                connection, generated.snapshot_id
+            )
+            if claim.verification_status == "rejected"
+        )
+        claim_finding = list_verification_findings(
+            connection,
+            target_type="self_claim",
+            target_id=rejected.id,
+        )[0]
+        # Target IDs are table-scoped. Plant the later Stage 11-shaped row
+        # directly because resume persistence is a later implementation phase.
+        connection.execute(
+            """
+            INSERT INTO verification_findings(
+                id, created_at, produced_by_run_id, target_type, target_id,
+                status, reason, unsupported_phrases_json, suggested_rewrite,
+                counterevidence_json
+            ) VALUES (?, ?, ?, 'resume_bullet', ?, 'rejected', ?, '[]', NULL, '[]')
+            """,
+            (
+                "finding_vera_bullet_collision",
+                (claim_finding.created_at + timedelta(seconds=1)).isoformat(),
+                claim_finding.produced_by_run_id,
+                rejected.id,
+                "Vera Example bullet history must not become claim history.",
+            ),
+        )
+
+    repaired = repair(workspace, ids, generated.snapshot_id)
+    adopted = next(
+        claim
+        for claim in repaired.claims
+        if claim.metadata.get("adopted_rewrite_of_claim_id") == rejected.id
+    )
+    assert adopted.claim == REWRITE
+
+
+def test_repeated_repair_preserves_and_refreshes_claim_metadata(
+    workspace: Path,
+) -> None:
+    """§13.6: copied metadata survives; a new adoption refreshes only its key."""
+
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [verifier_response("rejected"), verifier_response("supported")]
+        ),
+        ids,
+        generated.snapshot_id,
+    )
+    first = repair(workspace, ids, generated.snapshot_id)
+    first_adopted = next(
+        claim
+        for claim in first.claims
+        if "adopted_rewrite_of_claim_id" in claim.metadata
+    )
+    first_untouched = next(claim for claim in first.claims if not claim.metadata)
+
+    ordered = sorted(first.claims, key=lambda claim: claim.id.encode("utf-8"))
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [
+                verifier_response(
+                    "supported" if claim is first_adopted else "rejected"
+                )
+                for claim in ordered
+            ]
+        ),
+        ids,
+        first.snapshot_id,
+    )
+    second = repair(workspace, ids, first.snapshot_id)
+    second_by_kind = {claim.claim_kind: claim for claim in second.claims}
+    carried = second_by_kind[first_adopted.claim_kind]
+    newly_adopted = second_by_kind[first_untouched.claim_kind]
+    assert carried.metadata == first_adopted.metadata
+    assert newly_adopted.metadata == {
+        "adopted_rewrite_of_claim_id": first_untouched.id
+    }
+
+    ordered = sorted(second.claims, key=lambda claim: claim.id.encode("utf-8"))
+    run_stage7(
+        workspace,
+        FakeContractRunner(
+            [
+                verifier_response(
+                    "rejected"
+                    if claim.claim_kind == first_adopted.claim_kind
+                    else "supported"
+                )
+                for claim in ordered
+            ]
+        ),
+        ids,
+        second.snapshot_id,
+    )
+    third = repair(workspace, ids, second.snapshot_id)
+    third_by_kind = {claim.claim_kind: claim for claim in third.claims}
+    assert third_by_kind[first_adopted.claim_kind].metadata == {
+        "adopted_rewrite_of_claim_id": carried.id
+    }
+    assert third_by_kind[first_untouched.claim_kind].metadata == newly_adopted.metadata
 
 
 def test_precondition_failures_are_stable_and_change_nothing(
