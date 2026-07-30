@@ -1954,6 +1954,11 @@ When the view resolves it
 Then it fails closed in its §30 rule 7 outcome under that row's literal class, no snapshot is chosen by a default or latest-of-several rule, and no response reflects the request bytes back
 And the project-scoped ID is refused as the deferred slice rather than served through the ID form
 
+Given snapshot selectors decoded to the one-byte ID `a`, a 128-byte lowercase ID matching §13.14 rule 1, an empty value, `../x`, an uppercase ID, a separator-bearing value, and a 129-byte value
+When each selector is parsed before lookup
+Then the two boundary-valid forms reach ordinary current-row resolution and become served or no_current_view according to stored state
+And every nonmatching form is invalid_selector with status 400 before any compatibility or business-state read
+
 Given the selected snapshot's managed set is missing, stale by a §13.14 render-input change, or invalidated by a later gap answer
 When either route is requested
 Then no partial, cached, or re-rendered content is served and the fail-closed page names the §14.9 export the owner must run
@@ -2060,6 +2065,11 @@ When the emit deadline expires without an interruption
 Then the connection closes without retry and the peer may hold no response or a partial response
 And the computed outcome is not relabeled, no alternate response is attempted, and the client cannot extend a SQLite reader
 
+Given a fully received request stalls in selector resolution, a business read, or managed-filesystem revalidation during ordinary serving
+When the one absolute processing deadline measured from complete receipt expires before response composition
+Then the unfinished work is abandoned or cancelled, its read transaction is released, and the response is processing_timeout with status 503 and no stalled-operation detail
+And the fixed response receives only the ordinary emit deadline, the admission slot is released after emission or emit expiry, and no expired work continues behind that slot
+
 Given a bind request naming a wildcard, routable, or name-resolved address or an ephemeral port, a request whose HTTP authority or declared origin is not the bound one, a request using a method other than GET or HEAD, and a request outside the closed route set
 When `view serve` starts or handles each of them
 Then the bind fails closed in exit class 2 before any socket is served, each request is refused without reading business state, and no diagnostic line echoes request bytes
@@ -2094,7 +2104,7 @@ Then each exits in class 2 with view_bind_invalid before any bind attempt and is
 
 Given one request and workspace-state fixture that reaches each row of §30 rule 7, including an unexpected local failure for internal_error and SQLite read contention beyond busy_timeout for workspace_busy
 When each fixture receives a completed response
-Then its `Exp2Res-View-Outcome` and HTTP status pair is exactly one of: served/200; malformed_request/400; invalid_selector/400; assessment_blocked/403; route_not_found/404; no_current_view/404; method_not_allowed/405; assessment_inconsistent/409; export_not_current/409; question_companion_invalid/409; export_residual/409; schema_incompatible/409; authority_not_bound/421; internal_error/500; workspace_busy/503; export_changed/409
+Then its `Exp2Res-View-Outcome` and HTTP status pair is exactly one of: served/200; malformed_request/400; invalid_selector/400; assessment_blocked/403; route_not_found/404; no_current_view/404; method_not_allowed/405; assessment_inconsistent/409; export_not_current/409; question_companion_invalid/409; export_residual/409; schema_incompatible/409; authority_not_bound/421; internal_error/500; workspace_busy/503; export_changed/409; processing_timeout/503
 And every row is exercised once, no fixture produces a pair outside that closed set, and no expected row falls through to internal_error
 
 Given the unexpected local failure carries the invented exception detail `Vera Example internal sentinel`, a stack token `TracebackSentinel`, a managed path, and the stored value `Vera Example stored sentinel`
@@ -2104,7 +2114,9 @@ And none of the sentinels, exception detail, stack trace, managed path, stored v
 
 Given a compatible workspace, a free allowed loopback port, and `view serve --json`
 When the command reports its bound URLs, receives an owner interruption with no request pending, and exits after its bounded drain
-Then the bound URLs and every progress event appear only on standard error
+Then standard error reports exactly `http://127.0.0.1:<selected-port>/mirror?scope=global` and `http://127.0.0.1:<selected-port>/questions?scope=global`, once each in that order, and every progress event appears only there
+And an IPv6 bind reports the same ordered paths and selectors under `http://[::1]:<selected-port>` with its exact selected port
+And neither bind reports a selectorless base route, template, snapshot or project selector, trailing path, fragment, or additional query parameter
 And standard output is exactly one UTF-8 §14.14 envelope, optionally followed by one final newline, with envelope_version 1, command `view serve`, status cancelled, exit_code 9, result null, and every other required field present with its §14.14 cancelled value
 And the process exit status is 9
 And standard output contains no URL, banner, progress text, diagnostic outside the envelope, or additional JSON value
@@ -2113,6 +2125,7 @@ Given a compatible workspace, a free allowed loopback port, and human-mode `view
 When the command reports its bound URLs, receives an owner interruption with no request pending, and exits after its bounded drain
 Then the bound URLs and every progress or cancellation diagnostic appear only on standard error
 And standard output contains no bound URL, banner, progress text, or primary result
+And the process exit status is 9
 
 Given a request percent-encoding a structural token, as in /m%69rror or ?%73cope=global, and a request percent-encoding a selector value once and another encoding it twice
 When each is handled
