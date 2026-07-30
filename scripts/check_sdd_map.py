@@ -87,6 +87,7 @@ def main() -> int:
     errors.extend(spec_errors)
 
     index_numbers: list[int] = []
+    decision_log_bullets = 0
     for bullet in bullets:
         if len(bullet) > LINE_BUDGET:
             errors.append(
@@ -99,6 +100,14 @@ def main() -> int:
                 errors.append(f"index line has no routing text: {bullet.rstrip()}")
         elif bullet.startswith("- §"):
             errors.append(f"malformed § index anchor (canonical form is §N): {bullet[:60]}…")
+        elif bullet.startswith("- Decision Log"):
+            decision_log_bullets += 1
+        else:
+            errors.append(f"unowned § Index bullet: {bullet[:60]}…")
+    if bullets and decision_log_bullets != 1:
+        errors.append(
+            f"§ Index must contain exactly one Decision Log bullet, found {decision_log_bullets}"
+        )
 
     errors.extend(
         f"duplicate § index line: §{number}"
