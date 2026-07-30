@@ -10,6 +10,7 @@ import sqlite3
 import pytest
 from typer.testing import CliRunner
 
+import exp2res.pipeline.stage3 as stage3_module
 import exp2res.services.extraction as extraction_service
 import exp2res.services.facts as facts_service
 from exp2res.cli import app
@@ -27,6 +28,7 @@ from test_stage3_extraction import (
     SELECTION,
     add_log,
     budgets,
+    displaced_lineage,
     exact_day,
     fact_response,
 )
@@ -183,6 +185,89 @@ def test_extract_success_reports_standard_fields_and_contract_warnings(
     assert len(envelope["run_ids"]) == 1
     assert envelope["warnings"] == [warning]
     assert len(fake.calls) == 1
+
+
+def test_extract_human_mode_prints_each_warning_on_stderr(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5: warnings reach the owner without --json, one stderr line."""
+
+    root, _root_items, _correction, correction_items = displaced_lineage(workspace)
+    install_fake_execution(
+        monkeypatch,
+        FakeContractRunner([fact_response([correction_items[0].id])]),
+    )
+    result = runner.invoke(
+        app,
+        ["--yes", "--workspace", str(workspace), "extract", "--log-id", root.id],
+    )
+    assert result.exit_code == 0
+    assert (
+        f"Warning (displaced_support_unselected): Lineage {root.id}: "
+        "no replacement fact selects its displaced-record support "
+        "(1 descriptor)." in result.stderr
+    )
+    assert "Warning (" not in result.stdout
+
+
+def test_human_mode_warning_escapes_line_breaks_onto_one_line(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5: a multiline message stays one visibly escaped line."""
+
+    evidence_id = seed_lineage(workspace, "multiline")
+    warning = {
+        "type": "limited_support",
+        "message": "First line.\nSecond line.\rCarriage.",
+    }
+    install_fake_execution(
+        monkeypatch,
+        FakeContractRunner([fact_response([evidence_id], warnings=[warning])]),
+    )
+    result = runner.invoke(
+        app, ["--yes", "--workspace", str(workspace), "extract"]
+    )
+    assert result.exit_code == 0
+    assert (
+        "Warning (limited_support): First line.\\nSecond line.\\rCarriage."
+        in result.stderr
+    )
+    assert result.stderr.count("Warning (") == 1
+
+
+def test_post_commit_interrupt_keeps_the_committed_result_and_warning(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rules 5/6: cleanup interrupt after the swap drops no warning."""
+
+    root, _root_items, _correction, correction_items = displaced_lineage(workspace)
+    install_fake_execution(
+        monkeypatch,
+        FakeContractRunner([fact_response([correction_items[0].id])]),
+    )
+
+    def interrupt_cleanup(_workspace, _snapshot_ids):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        stage3_module, "remove_assessment_sets", interrupt_cleanup
+    )
+    result, envelope = invoke_json(
+        workspace, ["--yes", "extract", "--log-id", root.id]
+    )
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    # The committed replacement generation and its rule-14 warning survive
+    # into the cancelled envelope instead of vanishing with the Outcome.
+    created = envelope["affected_ids"]["created"]
+    assert created and created[0]["entity_type"] == "experience_fact"
+    assert [item["type"] for item in envelope["warnings"]] == [
+        "displaced_support_unselected"
+    ]
+    assert envelope["generation_ids"]
+    assert len(envelope["run_ids"]) == 1
+    with read_database(workspace) as connection:
+        assert len(list_experience_facts(connection)) == 1
 
 
 def test_extract_unknown_selector_has_no_run_row(

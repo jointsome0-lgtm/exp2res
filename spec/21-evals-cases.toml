@@ -2188,3 +2188,31 @@ Given a validated candidate whose contradiction structural-key set differs from 
 When the Stage 4 swap commits
 Then every current signal, claim, snapshot, resume branch, and resume bullet is superseded before those rows can be reused
 '''
+
+["21.59"]
+title = "Displaced Support Is Selected in Scope or Reported Unused"
+enforces = "§9.4, §13.3 rules 10 and 14, §14.6, §14.14, and §15.2"
+case = '''
+Given an owner-captured root record carrying a non-`manual_claim` artifact-reference evidence item
+And a retained owner correction that displaces that root and restates its content
+When Stage 3 extracts the lineage and the validated response selects both the correction's effective item and the displaced root's descriptor for one fact
+Then the fact persists with both items in `evidence_item_ids`, both raw logs in the derived `source_log_ids`, and a §9.4 route (b) `high` confidence ceiling reachable for it
+And no `displaced_support_unselected` warning is reported
+
+Given the same lineage
+When the validated response selects only effective-record items and no supplied descriptor
+Then every fact persists unchanged and the completed extract result carries exactly one deterministic service-owned warning of type `displaced_support_unselected` for that lineage, naming the lineage root and the count of its unselected descriptors in a bounded message
+And the warning appears in the §14.14 `warnings` list in JSON mode and as §14.14's one stderr warning line in human mode, gates nothing, and persists in no table
+And a repeated identical run reports the same warning again
+
+Given the same lineage
+When the validated response selects no supplied descriptor and also emits its own warning of type `displaced_support_unselected`
+Then the model-authored duplicate is discarded and the result carries exactly one service-owned warning for that lineage
+
+Given a lineage whose §15.2 call supplied an empty `displaced_support_items` array
+When extraction completes
+Then no `displaced_support_unselected` warning is reported
+
+Given the §15.2 contract instructions
+Then they state the positive required-selection rule — an in-scope supplied descriptor is selected beside the fact's effective items, and omitting every supplied descriptor is not a conservative default — and whether a live extractor follows it remains live-provider behavior outside this offline eval
+'''

@@ -95,7 +95,11 @@ from exp2res.services.detection import (
     run_detections_generate,
     show_contradiction,
 )
-from exp2res.services.extraction import run_extract, validate_extract_selection
+from exp2res.services.extraction import (
+    Stage3Result,
+    run_extract,
+    validate_extract_selection,
+)
 from exp2res.services.export import export_assessment, require_export_eligible
 from exp2res.services.facts import list_facts, show_fact
 from exp2res.services.logs import DeleteOutcome, delete_log, list_logs, show_log
@@ -464,6 +468,16 @@ def _run_command(
                 "\nCleanup is incomplete; the paths reported above are "
                 "unresolved."
             )
+
+    if not controls.json_output:
+        # §14.14 rule 5: human mode prints every envelope warning as one
+        # stderr line on the success and nonzero paths alike; without this
+        # the non-JSON surface would drop e.g. §13.3 rule 14's trace.
+        # Free-text messages may carry line breaks — rendered as visible
+        # escapes so one warning can never masquerade as a second line.
+        for warning in outcome.warnings:
+            message = warning.message.replace("\r", "\\r").replace("\n", "\\n")
+            typer.echo(f"Warning ({warning.type}): {message}", err=True)
 
     envelope = CLIEnvelope(
         command=command,
@@ -1205,76 +1219,98 @@ def extract_command(
                 err=True,
             ):
                 return Outcome(exit_code=9, diagnostic_class="cancelled")
-        extracted = run_extract(workspace, log_id=log_id)
-        created = list(extracted.created)
-        superseded = list(extracted.superseded)
-        superseded_groups: list[EntityIdGroup] = []
-        if superseded:
-            superseded_groups.append(
-                EntityIdGroup(entity_type="experience_fact", ids=superseded)
-            )
-        if extracted.superseded_gap_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="gap_question",
-                    ids=list(extracted.superseded_gap_ids),
-                )
-            )
-        if extracted.superseded_contradiction_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="contradiction",
-                    ids=list(extracted.superseded_contradiction_ids),
-                )
-            )
-        if extracted.superseded_signal_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="self_signal",
-                    ids=list(extracted.superseded_signal_ids),
-                )
-            )
-        if extracted.superseded_claim_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="self_claim",
-                    ids=list(extracted.superseded_claim_ids),
-                )
-            )
-        if extracted.superseded_snapshot_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="assessment_snapshot",
-                    ids=list(extracted.superseded_snapshot_ids),
-                )
-            )
-        invalidated_views = list(extracted.invalidated_views)
-        return Outcome(
-            affected_ids=AffectedIds(
-                created=(
-                    [EntityIdGroup(entity_type="experience_fact", ids=created)]
-                    if created
-                    else []
-                ),
-                superseded=superseded_groups,
-                deleted=[],
-            ),
-            # §14.14 rule 5: produced OR invalidated generation IDs,
-            # duplicate-free and deterministically ordered.
-            generation_ids=sorted(
-                {*extracted.generation_ids, *extracted.superseded_generation_ids},
-                key=lambda value: value.encode("utf-8"),
-            ),
-            run_ids=[extracted.run_id],
-            invalidated_views=invalidated_views,
-            residual_paths=list(extracted.residual_paths),
-            warnings=list(extracted.warnings),
-            human_result=(
-                f"Extracted {len(created)} facts ({len(superseded)} superseded)."
-            ),
-        )
+        try:
+            extracted = run_extract(workspace, log_id=log_id)
+        except Exp2ResError as error:
+            # §14.14 rules 5/6: an interrupt after the committed Stage 3
+            # swap carries the complete result on the error; fold it into
+            # the fields the cancelled/failed envelope reads, warnings
+            # included, so the direct-extract path drops nothing.
+            carried = getattr(error, "stage_result", None)
+            if isinstance(carried, Stage3Result):
+                committed = _stage3_outcome(carried)
+                error.affected_ids = committed.affected_ids
+                error.generation_ids = committed.generation_ids
+                error.invalidated_views = committed.invalidated_views
+                error.residual_paths = committed.residual_paths
+                error.warnings = committed.warnings
+            raise
+        return _stage3_outcome(extracted)
 
     _run_command(context, "extract", operation)
+
+
+def _stage3_outcome(extracted: Stage3Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted swaps."""
+
+    created = list(extracted.created)
+    superseded = list(extracted.superseded)
+    superseded_groups: list[EntityIdGroup] = []
+    if superseded:
+        superseded_groups.append(
+            EntityIdGroup(entity_type="experience_fact", ids=superseded)
+        )
+    if extracted.superseded_gap_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="gap_question",
+                ids=list(extracted.superseded_gap_ids),
+            )
+        )
+    if extracted.superseded_contradiction_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="contradiction",
+                ids=list(extracted.superseded_contradiction_ids),
+            )
+        )
+    if extracted.superseded_signal_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="self_signal",
+                ids=list(extracted.superseded_signal_ids),
+            )
+        )
+    if extracted.superseded_claim_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="self_claim",
+                ids=list(extracted.superseded_claim_ids),
+            )
+        )
+    if extracted.superseded_snapshot_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="assessment_snapshot",
+                ids=list(extracted.superseded_snapshot_ids),
+            )
+        )
+    invalidated_views = list(extracted.invalidated_views)
+    return Outcome(
+        affected_ids=AffectedIds(
+            created=(
+                [EntityIdGroup(entity_type="experience_fact", ids=created)]
+                if created
+                else []
+            ),
+            superseded=superseded_groups,
+            deleted=[],
+        ),
+        # §14.14 rule 5: produced OR invalidated generation IDs,
+        # duplicate-free and deterministically ordered.
+        generation_ids=sorted(
+            {*extracted.generation_ids, *extracted.superseded_generation_ids},
+            key=lambda value: value.encode("utf-8"),
+        ),
+        run_ids=[extracted.run_id],
+        invalidated_views=invalidated_views,
+        residual_paths=list(extracted.residual_paths),
+        warnings=list(extracted.warnings),
+        human_result=(
+            f"Extracted {len(created)} facts ({len(superseded)} superseded)."
+        ),
+    )
+
 
 
 def _fact_human_line(fact: ExperienceFact) -> str:

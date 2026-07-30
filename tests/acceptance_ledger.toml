@@ -280,14 +280,14 @@ note = "Current tests prove strict temporal construction, bounded acquisition, c
 ["24.43"]
 status = "partial"
 phases = ["1", "2"]
-evals = ["21.40"]
-issues = ["#82", "PR #125"]
+evals = ["21.40", "21.59"]
+issues = ["#82", "PR #125", "#181"]
 nodes = [
   "tests/test_stage3_extraction.py::test_displacement_projection_excludes_prose_and_manual_item",
   "tests/test_stage3_extraction.py::test_reference_and_service_authorship_invalidity_retry_once[descriptor_only]",
   "tests/test_vera_replay_extract.py::test_vera_e1_cli_replay_preserves_provenance_and_one_current_generation",
 ]
-note = "Stage 3 and Vera E1 prove deterministic correction displacement, effective-only content, descriptor-only rejection, and correction governing provenance; Stage 4 and the Stage 7/10/11 downstream descriptor projections remain"
+note = "Stage 3 and Vera E1 prove deterministic correction displacement, effective-only content, descriptor-only rejection, correction governing provenance, and the §13.3 rule 14 unselected-descriptor warning; Stage 4 and the Stage 7/10/11 downstream descriptor projections remain"
 
 ["24.44"]
 status = "partial"
