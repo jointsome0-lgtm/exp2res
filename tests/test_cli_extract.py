@@ -27,6 +27,7 @@ from test_stage3_extraction import (
     SELECTION,
     add_log,
     budgets,
+    displaced_lineage,
     exact_day,
     fact_response,
 )
@@ -183,6 +184,29 @@ def test_extract_success_reports_standard_fields_and_contract_warnings(
     assert len(envelope["run_ids"]) == 1
     assert envelope["warnings"] == [warning]
     assert len(fake.calls) == 1
+
+
+def test_extract_human_mode_prints_each_warning_on_stderr(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5: warnings reach the owner without --json, one stderr line."""
+
+    root, _root_items, _correction, correction_items = displaced_lineage(workspace)
+    install_fake_execution(
+        monkeypatch,
+        FakeContractRunner([fact_response([correction_items[0].id])]),
+    )
+    result = runner.invoke(
+        app,
+        ["--yes", "--workspace", str(workspace), "extract", "--log-id", root.id],
+    )
+    assert result.exit_code == 0
+    assert (
+        f"Warning (displaced_support_unselected): Lineage {root.id}: "
+        "no replacement fact selects its displaced-record support "
+        "(1 descriptor)." in result.stderr
+    )
+    assert "Warning (" not in result.stdout
 
 
 def test_extract_unknown_selector_has_no_run_row(

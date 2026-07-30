@@ -684,6 +684,7 @@ status = "partial"
 nodes = [
   "tests/test_stage3_extraction.py::test_wholly_unselected_displaced_support_reports_deterministic_warning",
   "tests/test_stage3_extraction.py::test_confidence_ceiling_and_independent_displaced_support",
+  "tests/test_cli_extract.py::test_extract_human_mode_prints_each_warning_on_stderr",
 ]
 phase = "2"
-note = "Offline tests prove the §13.3 rule 14 warning lifecycle — emitted per lineage when supplied descriptors go wholly unselected, absent on selection or empty supply, recurring and non-gating — and the descriptor-selected §9.4 route (b) high ceiling; whether a live extractor follows §15.2's required-selection rule remains live-provider behavior"
+note = "Offline tests prove the §13.3 rule 14 warning lifecycle — emitted per lineage as one bounded root-and-count message when supplied descriptors go wholly unselected, absent on selection or empty supply, recurring, non-gating, reserved against model-authored duplicates, and rendered as §14.14's human-mode stderr line — and the descriptor-selected §9.4 route (b) high ceiling; whether a live extractor follows §15.2's required-selection rule remains live-provider behavior"

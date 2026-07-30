@@ -2201,9 +2201,13 @@ And no `displaced_support_unselected` warning is reported
 
 Given the same lineage
 When the validated response selects only effective-record items and no supplied descriptor
-Then every fact persists unchanged and the completed extract result carries exactly one deterministic service-owned warning of type `displaced_support_unselected` for that lineage, naming the lineage root and every unselected descriptor ID
-And the warning appears in the §14.14 `warnings` list in JSON and human modes alike, gates nothing, and persists in no table
+Then every fact persists unchanged and the completed extract result carries exactly one deterministic service-owned warning of type `displaced_support_unselected` for that lineage, naming the lineage root and the count of its unselected descriptors in a bounded message
+And the warning appears in the §14.14 `warnings` list in JSON mode and as §14.14's one stderr warning line in human mode, gates nothing, and persists in no table
 And a repeated identical run reports the same warning again
+
+Given the same lineage
+When the validated response selects no supplied descriptor and also emits its own warning of type `displaced_support_unselected`
+Then the model-authored duplicate is discarded and the result carries exactly one service-owned warning for that lineage
 
 Given a lineage whose §15.2 call supplied an empty `displaced_support_items` array
 When extraction completes

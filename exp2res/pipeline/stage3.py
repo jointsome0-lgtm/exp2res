@@ -302,7 +302,10 @@ def _unselected_support_warnings(
     Presentation only — the warning gates nothing, persists nowhere, and
     recurs on every such run; legitimate off-topic omission exists, but a
     silent one would leave §9.4's descriptor-borne ceilings unreachable
-    without an owner-visible trace (§15.2).
+    without an owner-visible trace (§15.2). The message names the root and
+    the descriptor count, never the ID list: it must stay constructible
+    within §11's string bound at any legal descriptor count, because it is
+    built after the replacement generation committed.
     """
 
     warnings: list[ContractWarning] = []
@@ -317,15 +320,14 @@ def _unselected_support_warnings(
         }
         if any(descriptor.id in selected for descriptor in descriptors):
             continue
-        descriptor_ids = ", ".join(
-            sorted((descriptor.id for descriptor in descriptors), key=_id_key)
-        )
+        count = len(descriptors)
+        noun = "descriptor" if count == 1 else "descriptors"
         warnings.append(
             ContractWarning(
                 type="displaced_support_unselected",
                 message=(
                     f"Lineage {lineage.context.root_id}: no replacement fact "
-                    f"selects displaced support {descriptor_ids}."
+                    f"selects its displaced-record support ({count} {noun})."
                 ),
             )
         )
@@ -583,6 +585,10 @@ def run_fact_extraction(
                             warning
                             for item in resolved_lineages
                             for warning in item.warnings
+                            # §13.3 rule 14 reserves the type: a model-authored
+                            # duplicate is discarded so each lineage carries
+                            # the service computation exactly once.
+                            if warning.type != "displaced_support_unselected"
                         ),
                         *_unselected_support_warnings(resolved_lineages),
                     )

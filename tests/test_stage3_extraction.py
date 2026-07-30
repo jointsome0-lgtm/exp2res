@@ -972,8 +972,8 @@ def test_wholly_unselected_displaced_support_reports_deterministic_warning(
     ] == [
         (
             "displaced_support_unselected",
-            f"Lineage {root.id}: no replacement fact selects displaced "
-            f"support {root_items[1].id}.",
+            f"Lineage {root.id}: no replacement fact selects its "
+            f"displaced-record support (1 descriptor).",
         )
     ]
 
@@ -985,6 +985,36 @@ def test_wholly_unselected_displaced_support_reports_deterministic_warning(
     )
     assert [warning.type for warning in repeated.warnings] == [
         "displaced_support_unselected"
+    ]
+
+    # §13.3 rule 14 reserves the type: a model-authored duplicate in the
+    # validated response is discarded, never surfaced beside the service one.
+    duplicated = run_stage3(
+        workspace,
+        FakeContractRunner(
+            [
+                fact_response(
+                    [correction_items[0].id],
+                    warnings=[
+                        {
+                            "type": "displaced_support_unselected",
+                            "message": "Model-authored duplicate.",
+                        }
+                    ],
+                )
+            ]
+        ),
+        ids,
+        log_id=root.id,
+    )
+    assert [
+        (warning.type, warning.message) for warning in duplicated.warnings
+    ] == [
+        (
+            "displaced_support_unselected",
+            f"Lineage {root.id}: no replacement fact selects its "
+            f"displaced-record support (1 descriptor).",
+        )
     ]
 
     selected = run_stage3(

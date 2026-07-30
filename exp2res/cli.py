@@ -465,6 +465,13 @@ def _run_command(
                 "unresolved."
             )
 
+    if not controls.json_output:
+        # §14.14 rule 5: human mode prints every envelope warning as one
+        # stderr line on the success and nonzero paths alike; without this
+        # the non-JSON surface would drop e.g. §13.3 rule 14's trace.
+        for warning in outcome.warnings:
+            typer.echo(f"Warning ({warning.type}): {warning.message}", err=True)
+
     envelope = CLIEnvelope(
         command=command,
         status=cast(object, _status_for(outcome.exit_code)),
