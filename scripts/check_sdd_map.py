@@ -43,6 +43,11 @@ SETEXT_SECTION_TITLE_RE = re.compile(
 INLINE_COMMENT_RE = re.compile(r"<!--.*?-->|<!--.*$", re.DOTALL)
 
 
+def rendered_text(text: str) -> str:
+    """Drop inline HTML comments: they reach no reader of the rendered page."""
+    return INLINE_COMMENT_RE.sub("", text)
+
+
 def opening_fence(line: str) -> tuple[str, int] | None:
     """Return a CommonMark fence's character and length, if line opens one."""
     match = OPENING_FENCE_RE.fullmatch(line)
@@ -273,7 +278,7 @@ def has_section_heading(body: str, number: int) -> bool:
         if match := SECTION_HEADING_RE.match(line):
             heading_number = int(match.group(1))
             headings.append(heading_number)
-            canonical_match = CANONICAL_SECTION_HEADING_RE.match(line)
+            canonical_match = CANONICAL_SECTION_HEADING_RE.match(rendered_text(line))
             if canonical_match and heading_number == number:
                 has_canonical_heading = True
         elif (
@@ -301,12 +306,11 @@ def main() -> int:
             index_numbers.append(int(match.group(1)))
             # Routing text must survive rendering: an inline comment carries
             # nothing to the agent deciding whether to open the § file.
-            route = INLINE_COMMENT_RE.sub("", bullet[match.end():])
-            if not route.strip():
+            if not rendered_text(bullet[match.end():]).strip():
                 errors.append(f"index line has no routing text: {bullet.rstrip()}")
         elif bullet.startswith("- §"):
             errors.append(f"malformed § index anchor (canonical form is §N): {bullet[:60]}…")
-        elif DECISION_LOG_BULLET_RE.match(bullet):
+        elif DECISION_LOG_BULLET_RE.match(rendered_text(bullet)):
             decision_log_bullets += 1
         else:
             errors.append(f"unowned § Index bullet: {bullet[:60]}…")

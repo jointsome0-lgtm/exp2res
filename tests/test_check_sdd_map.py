@@ -599,3 +599,41 @@ def test_comment_beside_visible_routing_text_is_accepted(
     monkeypatch.setattr(check_sdd_map, "SPEC_DIRECTORY", spec_directory)
 
     assert check_sdd_map.main() == 0
+
+
+def test_comment_only_section_title_is_not_canonical() -> None:
+    body = """\
+## §30. <!-- hidden title -->
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_comment_beside_visible_section_title_is_canonical() -> None:
+    body = """\
+## §30. Real section <!-- editorial note -->
+"""
+
+    assert check_sdd_map.has_section_heading(body, 30)
+
+
+def test_comment_only_decision_log_route_is_rejected(tmp_path, monkeypatch) -> None:
+    spec_directory = tmp_path / "spec"
+    spec_directory.mkdir()
+    (spec_directory / "00-zero.md").write_text("## §0. Zero\n", encoding="utf-8")
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+- §0 real route
+- Decision Log — <!-- hidden route -->
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+    monkeypatch.setattr(check_sdd_map, "SPEC_DIRECTORY", spec_directory)
+
+    assert check_sdd_map.main() == 1
