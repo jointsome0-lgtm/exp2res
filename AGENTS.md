@@ -38,7 +38,9 @@ aggregate check; edit it only by re-syncing against a newer template
 version. Exp2res-specific canon above stays local and is never
 overwritten by a re-sync. Decision Log entries follow the vendored
 grammar (`scripts/check_decision_log.py`, checker 1.1.0, baseline
-2026-07-15 for pre-adoption history).
+2026-07-15 for pre-adoption history) and are one or two sentences — the
+decision, then the rejected alternative — linted at an 80-word ceiling
+with a 40-word warning.
 
 <!-- BEGIN SDD-CONVENTIONS v1.1.0 sha256:3003d86d310122af19c0c89da88f7087e682eab9f086dda9e245cfdad0833072 -->
 ## SDD conventions — shared mechanics

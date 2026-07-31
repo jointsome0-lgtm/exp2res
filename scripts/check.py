@@ -35,6 +35,10 @@ def main() -> int:
             "scripts/check_decision_log.py",
             "--baseline",
             "2026-07-15",
+            "--max-words",
+            "80",
+            "--warn-words",
+            "40",
             "DECISION-LOG.md",
         ],
     ]
