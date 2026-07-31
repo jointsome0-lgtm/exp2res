@@ -26,17 +26,21 @@ ORDERED_ITEM_WITH_INDENT_RE = re.compile(
     r"^ {0,3}[0-9]+[.)](?:[ \t]+|$)"
 )
 BULLET_RE = re.compile(r"^- \S")
+# Index bullets are `- ` + text, so a post-blank continuation must reach
+# column 2; a tab advances at least that far.
+CONTINUATION_INDENT_RE = re.compile(r"^(?: {2,}|\t)")
 SECTION_BULLET_RE = re.compile(r"^- §(0|[1-9][0-9]*) ")
 DECISION_LOG_BULLET_RE = re.compile(r"^- Decision Log — \S")
 SPEC_FILE_RE = re.compile(r"^([0-9]+)-.+\.md$")
 OPENING_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 SECTION_HEADING_RE = re.compile(
-    r"^ {0,3}##[ \t]+§([0-9]+)\.(?:[ \t]+.*)?$"
+    r"^ {0,3}##[ \t]+§([0-9]+)\.(?![0-9])"
 )
 CANONICAL_SECTION_HEADING_RE = re.compile(r"^## §(0|[1-9][0-9]*)\. \S")
 SETEXT_SECTION_TITLE_RE = re.compile(
-    r"^ {0,3}§([0-9]+)\.(?:[ \t]+.*)?$"
+    r"^ {0,3}§([0-9]+)\.(?![0-9]).*$"
 )
+INLINE_COMMENT_RE = re.compile(r"<!--.*?-->|<!--.*$", re.DOTALL)
 
 
 def opening_fence(line: str) -> tuple[str, int] | None:
@@ -174,6 +178,7 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
 
     bullets: list[str] = []
     errors: list[str] = []
+    blank_since_bullet = False
     for index, visible_line in enumerate(visible_lines[start:], start=start):
         line = visible_line or ""
         if (
@@ -184,14 +189,28 @@ def read_index_bullets() -> tuple[list[str], list[str]]:
             break
         if BULLET_RE.match(line):
             bullets.append(line)
+            blank_since_bullet = False
         elif not is_indented_code(line) and is_list_item(line):
             errors.append(f"malformed § Index bullet: {line.strip()[:60]}…")
-        elif not bullets or not line.strip():
+        elif not line.strip():
+            blank_since_bullet = bool(bullets)
+            continue
+        elif not bullets:
             continue
         elif line[0].isspace():
+            if blank_since_bullet and not CONTINUATION_INDENT_RE.match(line):
+                # After a blank line Markdown keeps only text indented to the
+                # item's content column; anything shallower is detached prose
+                # that has already ended the list.
+                errors.append(
+                    "detached text after a blank line is not a § Index bullet "
+                    f"continuation: {line.strip()[:60]}…"
+                )
+                continue
             # A wrapped bullet is still one router: continuation text counts
             # toward its budget.
             bullets[-1] += " " + line.strip()
+            blank_since_bullet = False
         else:
             errors.append(
                 f"unexpected non-bullet text inside the § Index list: {line[:60]}…"
@@ -280,7 +299,10 @@ def main() -> int:
             )
         if match := SECTION_BULLET_RE.match(bullet):
             index_numbers.append(int(match.group(1)))
-            if not bullet[match.end():].strip():
+            # Routing text must survive rendering: an inline comment carries
+            # nothing to the agent deciding whether to open the § file.
+            route = INLINE_COMMENT_RE.sub("", bullet[match.end():])
+            if not route.strip():
                 errors.append(f"index line has no routing text: {bullet.rstrip()}")
         elif bullet.startswith("- §"):
             errors.append(f"malformed § index anchor (canonical form is §N): {bullet[:60]}…")

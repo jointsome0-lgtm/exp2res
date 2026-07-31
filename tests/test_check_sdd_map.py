@@ -460,3 +460,142 @@ def test_section_heading_rejects_titleless_foreign_setext_root() -> None:
 """
 
     assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_section_heading_rejects_unspaced_foreign_atx_root() -> None:
+    body = """\
+## §30. Real section
+## §31.Foreign section
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_section_heading_rejects_unspaced_foreign_setext_root() -> None:
+    body = """\
+## §30. Real section
+§31.Foreign section
+-------------------
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_unspaced_own_root_heading_is_not_canonical() -> None:
+    body = """\
+## §30.Real section
+"""
+
+    assert not check_sdd_map.has_section_heading(body, 30)
+
+
+def test_subsection_heading_at_h2_is_not_a_foreign_root() -> None:
+    body = """\
+## §30. Real section
+## §30.1 Subsection
+## §30.10 Subsection
+"""
+
+    assert check_sdd_map.has_section_heading(body, 30)
+
+
+def test_detached_prose_after_blank_line_is_not_a_continuation(
+    tmp_path, monkeypatch
+) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+- §0 
+- Decision Log — real route
+
+ outside route
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == ["- §0 ", "- Decision Log — real route"]
+    assert errors == [
+        "detached text after a blank line is not a § Index bullet "
+        "continuation: outside route…"
+    ]
+
+
+def test_indented_continuation_after_blank_line_stays_one_router(
+    tmp_path, monkeypatch
+) -> None:
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+- §0 real route
+
+  loose continuation
+- Decision Log — real route
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+
+    bullets, errors = check_sdd_map.read_index_bullets()
+
+    assert bullets == [
+        "- §0 real route loose continuation",
+        "- Decision Log — real route",
+    ]
+    assert errors == []
+
+
+def test_comment_only_routing_text_is_rejected(tmp_path, monkeypatch) -> None:
+    spec_directory = tmp_path / "spec"
+    spec_directory.mkdir()
+    (spec_directory / "00-zero.md").write_text("## §0. Zero\n", encoding="utf-8")
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+- §0 <!-- hidden route -->
+- Decision Log — real route
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+    monkeypatch.setattr(check_sdd_map, "SPEC_DIRECTORY", spec_directory)
+
+    assert check_sdd_map.main() == 1
+
+
+def test_comment_beside_visible_routing_text_is_accepted(
+    tmp_path, monkeypatch
+) -> None:
+    spec_directory = tmp_path / "spec"
+    spec_directory.mkdir()
+    (spec_directory / "00-zero.md").write_text("## §0. Zero\n", encoding="utf-8")
+    sdd_path = tmp_path / "SDD.md"
+    sdd_path.write_text(
+        """\
+## § Index
+
+- §0 <!-- editorial note --> real route
+- Decision Log — real route
+
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_sdd_map, "SDD_PATH", sdd_path)
+    monkeypatch.setattr(check_sdd_map, "SPEC_DIRECTORY", spec_directory)
+
+    assert check_sdd_map.main() == 0
