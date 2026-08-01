@@ -11,12 +11,14 @@ import pytest
 
 from exp2res.config import load_workspace_config
 from exp2res.errors import (
+    AssessmentExportBlockedError,
     IntegrityFailureError,
     LLMInvocationError,
     SnapshotNotCurrentError,
 )
 from exp2res.llm.registry import ADAPTER_REGISTRY
 from exp2res.pipeline.stage7 import run_assessment_verification
+from exp2res.services.export import require_export_eligible
 from exp2res.services.logs import delete_log
 from exp2res.storage.repository import (
     list_self_claims_for_snapshot,
@@ -610,6 +612,16 @@ VOICE_REASON_TERMS = (
 SECOND_PERSON_TOKENS = re.compile(r"\b(you|your|yours)\b", re.IGNORECASE)
 
 
+def _export_eligible(status: str) -> bool:
+    """Report §16.11's assessment-export gate through its own service seam."""
+
+    try:
+        require_export_eligible(status)
+    except AssessmentExportBlockedError:
+        return False
+    return True
+
+
 def _snapshot_with_claim(workspace: Path, ids, facts, signals, claim: str):
     """Generate one snapshot whose single non-summary claim carries `claim`."""
 
@@ -660,17 +672,19 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
     )
     ids, facts, signals = prepare_graph(workspace)
 
-    def verify(claim: str) -> list[tuple[str, str, tuple[str, ...]]]:
+    def verify(claim: str) -> dict[str, tuple[str, str, tuple[str, ...]]]:
+        """Verify one snapshot live; return each claim's finding by its prose."""
+
         generated = _snapshot_with_claim(workspace, ids, facts, signals, claim)
         with read_database(workspace) as connection:
-            stored = [
-                row["claim"]
+            prose_by_id = {
+                row["id"]: row["claim"]
                 for row in connection.execute(
-                    "SELECT claim FROM self_claims WHERE snapshot_id = ?",
+                    "SELECT id, claim FROM self_claims WHERE snapshot_id = ?",
                     (generated.snapshot_id,),
                 )
-            ]
-        assert claim in stored, stored
+            }
+        assert claim in prose_by_id.values(), prose_by_id
         result = run_assessment_verification(
             workspace,
             snapshot_id=generated.snapshot_id,
@@ -684,10 +698,14 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
             sleeper=lambda _seconds: None,
             jitter=lambda lower, _upper: lower,
         )
-        return [
-            (item.status, item.reason, tuple(item.unsupported_phrases))
+        return {
+            prose_by_id[item.target_id]: (
+                item.status,
+                item.reason,
+                tuple(item.unsupported_phrases),
+            )
             for item in result.findings
-        ]
+        }
 
     addressed = verify(SECOND_PERSON_CLAIM)
     subject_free = verify(SUBJECT_FREE_TWIN)
@@ -695,18 +713,21 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
     # The named ground: no finding may cite the licensed form, and a quoted
     # unsupported phrase may not carry a second-person token at all, however
     # much surrounding claim text the quote includes.
-    for _status, reason, phrases in addressed:
+    for _status, reason, phrases in addressed.values():
         lowered = reason.lower()
         assert not any(term in lowered for term in VOICE_REASON_TERMS), addressed
         assert not any(SECOND_PERSON_TOKENS.search(item) for item in phrases), (
             addressed
         )
 
-    # The unnamed ground: the two wordings assert the same content over the
-    # same graph, so a rejection only the second-person run reaches is the
-    # inversion under any phrasing.
-    assert [status for status, _reason, _phrases in addressed].count(
-        "rejected"
-    ) <= [status for status, _reason, _phrases in subject_free].count(
-        "rejected"
-    ), (addressed, subject_free)
+    # The unnamed ground: the twins assert the same content over the same
+    # graph, so every evidence ground reaches both. Any status lowering the
+    # addressed wording alone receives is therefore a voice verdict under any
+    # phrasing, and §16.11's own export gate — the consequence #219 reported —
+    # is the comparison, not a hand-listed status order.
+    target = addressed[SECOND_PERSON_CLAIM]
+    twin = subject_free[SUBJECT_FREE_TWIN]
+    assert _export_eligible(target[0]) or not _export_eligible(twin[0]), (
+        target,
+        twin,
+    )

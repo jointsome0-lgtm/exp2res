@@ -1,4 +1,4 @@
-"""Offline §16.14 owner-reference scans: instruction pins and golden prose."""
+"""Offline §16.14 and §15.1 rule 11 scans: instruction pins and golden prose."""
 
 from __future__ import annotations
 
@@ -38,6 +38,73 @@ FORBIDDEN_OWNER_NOUN_PATTERNS = tuple(
 
 GOLDEN_PROSE_MEMBERS = ("report.md", "report.html", "self_claims.json")
 
+# §15.1 rule 11: every §16 rule a block encodes carries its licensed form
+# beside the violation. One row per (block, rule): the licensed fragment
+# first, then the forbidden one. Wording pins, not the rules themselves —
+# a rewrite that keeps both halves adjusts the fragments.
+TWO_HALF_PINS = (
+    (
+        "assessment-verifier",
+        "§16.2",
+        "allowed to be uncomfortable",
+        "motivational fiction",
+    ),
+    (
+        "assessment-verifier",
+        "§16.4",
+        "supports only unknown",
+        "ownership above explicit support",
+    ),
+    (
+        "assessment-verifier",
+        "§16.8",
+        "Employment framing is licensed only",
+        "as employment",
+    ),
+    (
+        "assessment-verifier",
+        "§16.9",
+        "bounded to what current evidence suggests",
+        "identity",
+    ),
+    (
+        "assessment-verifier",
+        "§16.10",
+        "is licensed mirror prose",
+        "clinical label",
+    ),
+    (
+        "self-assessment-writer",
+        "§16.9",
+        "Current evidence suggests",
+        "permanent-identity phrasing",
+    ),
+    (
+        "self-assessment-writer",
+        "§16.10",
+        "is licensed mirror prose",
+        "clinical labels",
+    ),
+    (
+        "gap-contradiction-detector",
+        "§16.9",
+        "current evidence suggests",
+        "permanent trait",
+    ),
+    (
+        "self-signal-extractor",
+        "§16.9",
+        "current evidence suggests",
+        "permanent trait",
+    ),
+    (
+        "fact-extractor",
+        "§16.4",
+        "strongest level the supplied content explicitly supports",
+        "never upgrade",
+    ),
+)
+
 
 def test_every_llm_instruction_block_pins_the_owner_reference_form() -> None:
     for name, block in INSTRUCTION_BLOCKS.items():
@@ -75,6 +142,19 @@ def test_the_verifier_licenses_the_form_it_judges_candidates_against() -> None:
     # PR #226 review: the licence covers the grammatical form only, so it
     # cannot be read as an exemption for what the same prose asserts.
     assert "This exempts the form only" in licensed
+
+
+@pytest.mark.parametrize(
+    ("block_name", "rule", "licensed", "forbidden"), TWO_HALF_PINS
+)
+def test_each_encoded_rule_carries_its_licensed_half(
+    block_name: str, rule: str, licensed: str, forbidden: str
+) -> None:
+    """§15.1 rule 11: no §16 rule is encoded by its violation alone (#219)."""
+
+    block = INSTRUCTION_BLOCKS[block_name]
+    assert forbidden in block, (block_name, rule, forbidden)
+    assert licensed in block, (block_name, rule, licensed)
 
 
 def test_generated_prose_in_goldens_carries_no_third_person_owner_nouns() -> None:
