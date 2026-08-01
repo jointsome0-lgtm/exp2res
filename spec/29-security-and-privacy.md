@@ -52,7 +52,7 @@
    [privacy]
    ignore_paths = []
    ```
-6. **Credentials are never workspace state.** Provider credential values are never stored in `config.toml` or anywhere else in the workspace.
+6. **Provider credential values are never workspace state.** Provider credential values are never stored in `config.toml` or anywhere else in the workspace.
    - The `[llm]` section carries the §15.13 adapter/model selection and §15.10 budget configuration.
    - Each adapter declares exactly one §15.10 rule 4 credential form.
 7. **Credential-reference adapters.** For a credential-reference adapter, each credential slot may use only one reference form: an environment-variable name such as `api_key_env = "OPENAI_API_KEY"`, or a keyring entry name such as `api_key_keyring = "exp2res/openai"`.
@@ -90,10 +90,10 @@
 16. **Two V1 processing-confidentiality controls.** Local-first governs storage, not model calls, and V1 implements no per-record withholding marker (§11.2). Processing confidentiality therefore has exactly two V1 controls:
     - point `openai-compat` at a self-hosted or on-device endpoint so no third party is involved;
     - or select a provider the owner trusts with every §29.3 class.
-    - Material that can satisfy neither control should not be captured.
-    - Capture is where the owner accepts this policy, never where transmission is authorized: a retained record transmits nothing until a specific foreground §14 action invokes a stage under this section's authorization rule and §14.14 rule 3's confirmation.
 
     Having exactly those two controls is the project's standing position rather than a gap awaiting a feature. Exp2Res's own default selection is the second — the `codex-cli` adapter on `gpt-5.6-sol` (§15.13), so the selected provider sees every class each invoked contract transmits.
+17. **Capture is where the owner accepts this policy.** Material that can satisfy neither control should not be captured.
+    - Capture is never where transmission is authorized: a retained record transmits nothing until a specific foreground §14 action invokes a stage under this section's authorization rule and §14.14 rule 3's confirmation.
 
 ## §29.3 Exhaustive LLM Transmission Surface
 
@@ -110,8 +110,8 @@ The following eight contracts are the complete model-call surface. The selected 
 | §15.8 gap and contradiction detector | Complete current facts and effective-lineage evidence, including factless `RawLog.raw_text`; raw memories, gap answers, imported text, and burnout-grade text may therefore transit. |
 | §15.9 job-description parser | Third-party `JobDescription.raw_text` only, including any company, contact, or other personal data the supplied vacancy contains. No local record ID transits: no job-description entity exists at call time, and Stage 8 assigns the ID only after the response validates (§15.9). |
 
-1. **Nothing beyond the declared input.** No invocation receives the full database, ambient provider conversation history, another contract's inputs, or a persistent remote assistant, file store, vector store, or cache created by Exp2Res.
-2. **Widening is a weakening.** Adding a ninth call site, adding a network-capable tool, or widening any row beyond its declared §15 input is a weakening governed by §29.7.
+1. No invocation receives the full database, ambient provider conversation history, another contract's inputs, or a persistent remote assistant, file store, vector store, or cache created by Exp2Res.
+2. Adding a ninth call site, adding a network-capable tool, or widening any row beyond its declared §15 input is a weakening governed by §29.7.
 
 ## §29.4 Secret, Ignore-Path, and Prompt Isolation
 
@@ -128,7 +128,7 @@ The following eight contracts are the complete model-call surface. The selected 
    - Canonicalization is not guaranteed to rewrite a supplied component to its on-disk spelling, so on a volume whose name lookup is case-insensitive the same comparisons are additionally applied under the locale-independent case fold: a case-variant spelling such as `.ENV` matches the mandatory `.env` entry and is denied.
    - Case-insensitive lookup can therefore only narrow acquisition relative to a case-sensitive volume, never widen it.
 6. **Managed-output alias prevention.** Managed-output alias prevention is independent of those source-path comparisons: §13.14 derives lowercase-ASCII single-component directory keys only from opaque service IDs, admits no user string into a path, and applies canonical containment plus no-follow semantics to every managed filesystem operation.
-7. **Workspace internals are outside this gate.** The service's own reads of the two §14.1 workspace internals — `.exp2res/config.toml` for configuration and the SQLite database file for storage — are internal service I/O outside this gate.
+7. **Service reads of the two workspace internals.** The service's own reads of the two §14.1 workspace internals — `.exp2res/config.toml` for configuration and the SQLite database file for storage — are internal service I/O outside this gate.
    - Neither is reachable as a `path`, `uri`, or payload locator; the deny set blocks exactly that.
    - Neither read serializes file content into a prompt.
 
@@ -178,8 +178,8 @@ The following eight contracts are the complete model-call surface. The selected 
 18. **Remote locator form.** A remote locator must be a complete syntactically valid absolute URI carrying a scheme, with no forbidden character or malformed percent escape, and must pass §11's structural-string hygiene and 16 KiB bound.
     - Every scheme other than `file:` is accepted without an allowlist.
     - An accepted remote value remains byte-for-byte unchanged: validation performs no normalization, re-encoding, or case folding.
-19. **Ownership of the surrounding rules.** Section §14 owns the count and duplicate-input diagnostics; §13.1 exclusively owns whether the accepted value is persisted in `path` or `uri` and the evidence item it creates.
-20. **Locators are never dereferenced.** Neither a local nor remote owner-supplied locator is ever dereferenced: capture and every later stage perform no locator file read, network request, probe, or scheme-handler invocation.
+19. **Ownership.** Section §14 owns the count and duplicate-input diagnostics; §13.1 exclusively owns whether the accepted value is persisted in `path` or `uri` and the evidence item it creates.
+20. **Owner-supplied locators are never dereferenced.** Neither a local nor remote owner-supplied locator is ever dereferenced: capture and every later stage perform no locator file read, network request, probe, or scheme-handler invocation.
     - Authorization and the later pre-serialization re-check inspect locator metadata only.
     - This inert owner assertion gains only §9.4's `artifact_reference` scope and no independent-source authority.
 21. **Credential preflight.** A local deterministic preflight examines the fully serialized candidate prompt for credential, token, and private-key material.
@@ -193,7 +193,7 @@ The following eight contracts are the complete model-call surface. The selected 
     - An externally-managed session (§29.2) never passes through the service, so it is outside this preflight's resolved-value set; the owning adapter's registered classifiers must still cover its session-token formats, so that material appearing in any serialized candidate prompt or configured value is detected and fails closed.
     - Any detection fails the run before a provider call and records only a non-secret diagnostic code.
     - The retained source record is neither rewritten nor silently redacted.
-22. **Responses grant no authority.** A model response cannot request a tool, callback, file read, environment value, command execution, or additional network access; no §15 output field grants such authority.
+22. **A model response grants no authority.** A model response cannot request a tool, callback, file read, environment value, command execution, or additional network access; no §15 output field grants such authority.
 
 ## §29.5 Untrusted Data and Prompt Injection
 
