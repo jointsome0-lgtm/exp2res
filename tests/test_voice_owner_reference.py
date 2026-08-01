@@ -59,7 +59,7 @@ TWO_HALF_PINS = (
         "assessment-verifier",
         "§16.7",
         "no narrower and no more exact than the strongest precision",
-        "exactness upgrade beyond that support is the violation",
+        "an interval the evidence does not place",
     ),
     (
         "assessment-verifier",

@@ -615,6 +615,10 @@ SUBJECT_FREE_TWIN = "The recorded work shows a provenance-aware working pattern.
 # voice complaint is caught by the twin comparison below, not here.
 BARE_SECOND_PERSON = frozenset({"you", "your", "yours"})
 
+# Trials per wording. Two is the smallest count that separates a property of
+# the wording from a one-off sample, and every trial is a live invocation.
+VOICE_TRIALS = 2
+
 # §16.11 gives each status a meaning but no total order; this is a test-local
 # severity scale over those meanings, weakest verdict last, used only to ask
 # whether the addressed wording was lowered relative to its twin.
@@ -680,11 +684,12 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
     export and §17 render refused.
 
     The same claim is verified over one evidence graph in each of §16.14's
-    two licensed forms, with the second-person form repeated as its own
-    paired control. Evidence grounds apply to both wordings, so a status the
-    second-person form reaches on every run and its subject-free twin does
-    not is a voice verdict however it is phrased — which no
-    reason-vocabulary denylist alone could establish.
+    two licensed forms, each form sampled the same number of times so
+    provider variance cannot masquerade as a voice verdict. Evidence grounds
+    apply to both wordings, so a status the second-person form reaches on
+    every trial and its subject-free twin does not is a voice verdict however
+    it is phrased — which no reason-vocabulary denylist alone could
+    establish.
     """
 
     config_path = workspace / ".exp2res" / "config.toml"
@@ -739,14 +744,14 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
         }
 
     # PR #226 review: each verification is its own provider invocation, so a
-    # single addressed result cannot be told from ordinary run-to-run
-    # variance. The addressed wording is therefore verified twice as its own
-    # paired control and judged on its best result: a §16.14 penalty is a
-    # property of the wording and so lands on every addressed run, while
-    # variance lands on one. The repeat costs one invocation and is what makes
-    # the comparison causal rather than anecdotal.
-    addressed_runs = (verify(SECOND_PERSON_CLAIM), verify(SECOND_PERSON_CLAIM))
-    subject_free = verify(SUBJECT_FREE_TWIN)
+    # single result on either side cannot be told from ordinary run-to-run
+    # variance. Both wordings therefore get the same number of trials and are
+    # judged on their best result: a §16.14 penalty is a property of the
+    # wording and so lands on every addressed trial, while variance lands on
+    # one. Sampling the two sides differently would bias the comparison, so
+    # the trial count is shared.
+    addressed_runs = tuple(verify(SECOND_PERSON_CLAIM) for _ in range(VOICE_TRIALS))
+    twin_runs = tuple(verify(SUBJECT_FREE_TWIN) for _ in range(VOICE_TRIALS))
 
     # No quoted unsupported phrase may be the bare pronoun: that names the
     # form itself, and nothing else in a candidate can be quoted as just
@@ -759,19 +764,27 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
                 for item in phrases
             ), run
 
+    def _best(runs, prose: str):
+        return min(
+            (run[prose] for run in runs),
+            key=lambda finding: STATUS_SEVERITY.index(finding[0]),
+        )
+
+    target = _best(addressed_runs, SECOND_PERSON_CLAIM)
+    twin = _best(twin_runs, SUBJECT_FREE_TWIN)
+    # The control comes first: only a twin the pipeline actually accepts
+    # establishes that this graph grounds the assertion, and without that the
+    # addressed side has nothing to be compared against. A blocked control is
+    # a fixture regression, not a §16.14 verdict, so it fails in its own
+    # terms rather than passing the voice check vacuously.
+    assert _export_eligible(twin[0]), twin
+    # #219's own consequence, stated in its own terms rather than by rank.
+    assert _export_eligible(target[0]), (target, twin)
     # The unnamed ground: the twins assert the same content over the same
     # graph and differ only in the owner-referential subject, so every
     # evidence ground reaches both. A lowering the addressed wording receives
-    # on both runs is therefore a voice verdict however it is phrased — the
+    # on every trial is therefore a voice verdict however it is phrased — the
     # check the reason vocabulary cannot make.
-    targets = tuple(run[SECOND_PERSON_CLAIM] for run in addressed_runs)
-    twin = subject_free[SUBJECT_FREE_TWIN]
-    best = min(targets, key=lambda finding: STATUS_SEVERITY.index(finding[0]))
-    assert STATUS_SEVERITY.index(best[0]) <= STATUS_SEVERITY.index(
+    assert STATUS_SEVERITY.index(target[0]) <= STATUS_SEVERITY.index(
         twin[0]
-    ), (targets, twin)
-    # #219's own consequence, stated in its own terms rather than by rank.
-    assert _export_eligible(best[0]) or not _export_eligible(twin[0]), (
-        targets,
-        twin,
-    )
+    ), (target, twin)
