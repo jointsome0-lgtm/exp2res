@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import sqlite3
 
 import pytest
 
+from exp2res.config import load_workspace_config
 from exp2res.errors import (
+    AssessmentExportBlockedError,
     IntegrityFailureError,
     LLMInvocationError,
     SnapshotNotCurrentError,
 )
+from exp2res.llm.registry import ADAPTER_REGISTRY
 from exp2res.pipeline.stage7 import run_assessment_verification
+from exp2res.services.export import require_export_eligible
 from exp2res.services.logs import delete_log
 from exp2res.storage.repository import (
     list_self_claims_for_snapshot,
@@ -21,12 +26,13 @@ from exp2res.storage.repository import (
 )
 from exp2res.storage.workspace import read_database, writer_database
 
-from conftest import FIXED_NOW
+from conftest import FIXED_NOW, REPOSITORY_ROOT
 from fakes import FakeContractRunner
 from test_stage3_extraction import SELECTION, budgets
 from test_stage4_detection import detector_response, run_stage4
 from test_stage5_signals import (
     SignalIds,
+    prepare_facts,
     prepare_high_facts,
     run_stage5,
     signal_response,
@@ -582,3 +588,191 @@ def test_raw_log_reset_purges_verification_findings(workspace: Path) -> None:
         assert connection.execute(
             "SELECT COUNT(*) FROM verification_findings"
         ).fetchone()[0] == 0
+
+
+# One assertion in each of §16.14's two licensed forms, over a graph that
+# grounds it: two facts across two distinct raw logs, so "pattern" is a
+# §9.4-supported recurrence rather than a single-source generalization, and
+# no continuation word invites a §16.7 objection. A stable, well-grounded
+# verdict is what makes the twin comparison mean anything.
+#
+# PR #226 review: the pair differs in the owner-referential subject and in
+# nothing else — same predicate, same assertive force, same hedging — so a
+# status gap between them can only be the grammatical person. An earlier pair
+# ("You show …" against "A pattern appears …") also varied assertiveness,
+# which §16.9 lets a provider judge differently on its own.
+SECOND_PERSON_CLAIM = "Your recorded work shows a provenance-aware working pattern."
+SUBJECT_FREE_TWIN = "The recorded work shows a provenance-aware working pattern."
+# A reason-vocabulary scan was tried and removed. It cannot tell a complaint
+# from an endorsement: live runs produced "the second person and owner
+# reference form are valid, but …" and "the dimension and mirror voice are
+# valid, but …", which any such list flags, while a voice rejection phrased
+# without the listed words slips past it. The twin comparison below is the
+# phrasing-independent check, so the vocabulary adds only false verdicts.
+# §15.5 permits a verbatim diagnostic quotation of candidate wording, and a
+# quote of the whole sentence necessarily carries its pronoun, so only a
+# phrase that is nothing but the pronoun names the form itself. Every other
+# voice complaint is caught by the twin comparison below, not here.
+BARE_SECOND_PERSON = frozenset({"you", "your", "yours"})
+
+# Trials per wording. Two is the smallest count that separates a property of
+# the wording from a one-off sample, and every trial is a live invocation.
+VOICE_TRIALS = 2
+
+
+def _export_eligible(status: str) -> bool:
+    """Report §16.11's assessment-export gate through its own service seam."""
+
+    try:
+        require_export_eligible(status)
+    except AssessmentExportBlockedError:
+        return False
+    return True
+
+
+def _two_source_graph(workspace: Path, ids):
+    """Two independent owner records, so a pattern claim has real support."""
+
+    facts = prepare_facts(workspace, ids, count=2)
+    signals = run_stage5(
+        workspace,
+        FakeContractRunner([signal_response(list(facts))]),
+        ids,
+    ).current_signals
+    return facts, tuple(item.id for item in signals)
+
+
+def _snapshot_with_claim(workspace: Path, ids, facts, signals, claim: str):
+    """Generate one snapshot whose single non-summary claim carries `claim`."""
+
+    payload = json.loads(
+        assessment_response(fact_ids=list(facts), signal_ids=list(signals))
+    )
+    payload["self_claims"][0]["claim"] = claim
+    generated = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [json.dumps(payload, separators=(",", ":")).encode("utf-8")]
+        ),
+        ids,
+    )
+    assert generated.snapshot_id is not None
+    return generated
+
+
+@pytest.mark.live
+def test_live_verifier_accepts_the_second_person_owner_reference(
+    workspace: Path,
+) -> None:
+    """§16.14: the form the mirror requires is never a Stage 7 rejection ground.
+
+    Issue #219 reproduction: with §16.14 encoded as a prohibition only, four
+    live Stage 7 runs rejected ordinary second-person claim prose, so every
+    export and §17 render refused.
+
+    The same claim is verified over one evidence graph in each of §16.14's
+    two licensed forms, each form sampled the same number of times so
+    provider variance cannot masquerade as a voice verdict. Evidence grounds
+    apply to both wordings, so a status the second-person form reaches on
+    every trial and its subject-free twin does not is a voice verdict however
+    it is phrased — which no reason-vocabulary denylist alone could
+    establish.
+    """
+
+    config_path = workspace / ".exp2res" / "config.toml"
+    config_path.write_text(
+        '[workspace]\ntimezone = "Etc/UTC"\n\n'
+        '[llm]\nadapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n\n'
+        "[privacy]\nignore_paths = []\n",
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+    config = load_workspace_config(workspace).llm
+    selection = config.selection
+    runner = ADAPTER_REGISTRY[selection.adapter].build_runner(
+        config, REPOSITORY_ROOT
+    )
+    ids = SignalIds()
+    facts, signals = _two_source_graph(workspace, ids)
+
+    def verify(claim: str) -> dict[str, tuple[str, str, tuple[str, ...]]]:
+        """Verify one snapshot live; return each claim's finding by its prose."""
+
+        generated = _snapshot_with_claim(workspace, ids, facts, signals, claim)
+        with read_database(workspace) as connection:
+            prose_by_id = {
+                row["id"]: row["claim"]
+                for row in connection.execute(
+                    "SELECT id, claim FROM self_claims WHERE snapshot_id = ?",
+                    (generated.snapshot_id,),
+                )
+            }
+        assert claim in prose_by_id.values(), prose_by_id
+        result = run_assessment_verification(
+            workspace,
+            snapshot_id=generated.snapshot_id,
+            selection=selection,
+            budgets=budgets(
+                transport_attempt_cap=1, invocation_deadline_seconds=300.0
+            ),
+            runner=runner,
+            id_factory=ids,
+            clock=lambda: FIXED_NOW,
+            sleeper=lambda _seconds: None,
+            jitter=lambda lower, _upper: lower,
+        )
+        return {
+            prose_by_id[item.target_id]: (
+                item.status,
+                item.reason,
+                tuple(item.unsupported_phrases),
+            )
+            for item in result.findings
+        }
+
+    # PR #226 review: each verification is its own provider invocation, so a
+    # single result on either side cannot be told from ordinary run-to-run
+    # variance. Both wordings therefore get the same number of trials and are
+    # read the same way: a §16.14 penalty is a property of the wording and so
+    # lands on every addressed trial, while variance lands on one. Sampling
+    # the two sides differently would bias the comparison, so the trial count
+    # is shared.
+    addressed_runs = tuple(verify(SECOND_PERSON_CLAIM) for _ in range(VOICE_TRIALS))
+    twin_runs = tuple(verify(SUBJECT_FREE_TWIN) for _ in range(VOICE_TRIALS))
+
+    # No quoted unsupported phrase may be the bare pronoun: that names the
+    # form itself, and nothing else in a candidate can be quoted as just
+    # "you". This one is per-run — quoting the pronoun is a voice verdict
+    # outright, so no control is needed to read it.
+    for run in addressed_runs:
+        for _status, _reason, phrases in run.values():
+            assert not any(
+                item.strip().strip(".,\"'").lower() in BARE_SECOND_PERSON
+                for item in phrases
+            ), run
+
+    # §16.11 gives each status a meaning, not a rank: partially_supported and
+    # inferred_but_acceptable are different readings, neither one worse. The
+    # only ordered outcome the spec itself defines over those statuses is its
+    # export gate, so that gate — not a test-local severity scale — is what
+    # the two forms are compared on. PR #226 review: ordering incomparable
+    # categories both fails on a legitimate reading and passes on a changed
+    # verdict.
+    target = tuple(run[SECOND_PERSON_CLAIM] for run in addressed_runs)
+    twin = tuple(run[SUBJECT_FREE_TWIN] for run in twin_runs)
+    passing = {
+        "addressed": [item for item in target if _export_eligible(item[0])],
+        "subject-free": [item for item in twin if _export_eligible(item[0])],
+    }
+    # The control comes first: only a twin the pipeline actually accepts
+    # establishes that this graph grounds the assertion, and without that the
+    # addressed side has nothing to be compared against. A blocked control is
+    # a fixture regression, not a §16.14 verdict, so it fails in its own terms
+    # rather than letting the voice check pass vacuously.
+    assert passing["subject-free"], (target, twin)
+    # #219's own consequence: with §16.14 encoded as a prohibition only, the
+    # second person never reached an exportable verdict at all. Reaching one
+    # on at least one trial is the property of the wording; requiring it on
+    # every trial would read ordinary provider variance as a voice penalty,
+    # which the subject-free control is equally subject to.
+    assert passing["addressed"], (target, twin)

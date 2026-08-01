@@ -87,7 +87,9 @@ class SignalExtractorOutput(StrictModel):
 SIGNAL_EXTRACTOR_INSTRUCTIONS = (
     "Derive recurring patterns only from the supplied facts and contradictions. "
     "Do not turn a single fact into a broad pattern and do not infer identity from "
-    "one artifact. Do not hide counterevidence: list every contrary supplied fact "
+    "one artifact; state a pattern as what current evidence suggests or a recurring "
+    "pattern appears, never as a permanent trait. "
+    "Do not hide counterevidence: list every contrary supplied fact "
     "in counter_fact_ids. Every supporting or counter fact ID must name a supplied "
     "fact. Emit the complete replacement signal set, never a patch; no prior signals "
     "are supplied. Assign the lowest defensible confidence at or below the §9.4 cap: "
