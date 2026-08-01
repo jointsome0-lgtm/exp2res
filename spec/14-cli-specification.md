@@ -246,87 +246,176 @@ exp2res runs show --run-id run_001
 
 This contract binds every command-specific form above and every later §14 addition.
 
-1. **Workspace discovery.** Every non-`init` command resolves its workspace before loading workspace configuration or performing compatibility or business I/O. Starting at the current directory's canonical real path, with symlinks resolved, it examines that directory and each physical parent through the filesystem root; the first ancestor containing a `.exp2res/` directory is the workspace root. The nearest marker wins, including when that marker is partial or its database is unrecognized: compatibility then fails under §12.14 rather than skipping the marker and binding an enclosing workspace. The global `--workspace <path>` option replaces this walk; a relative value resolves from the current directory, its canonical real path alone is examined, and it must name a directory containing `.exp2res/`. An invalid override never falls back to discovery. Failure to establish a workspace uses a stable diagnostic class in exit class 3. `init` neither walks ancestry nor redirects through `--workspace`: it always targets the canonical current directory, and supplying the override is invalid usage. Creating `.exp2res/` there while an enclosing workspace exists is legal; later discovery from that tree selects the new nested workspace by the nearest-wins rule.
-2. **Configuration precedence.** Workspace resolution precedes configuration loading. For each setting that declares more than one representation, the value is selected in this order: an explicitly supplied CLI flag, its documented `EXP2RES_*` environment variable, the corresponding key in the selected workspace's `.exp2res/config.toml`, then a built-in default when that setting declares one. A representation, including a default, need not exist at every level; a required setting still unresolved after this chain fails closed. An undocumented environment variable or ambient user, repository, provider, shell, or platform setting has no effect. `--workspace`, `--json`, `--yes`, `--no-input`, and the command-local `--owner-authored` affirmation are invocation controls rather than configuration values and are accepted only as explicit flags. Provider credentials are outside this precedence chain and remain transport-only adapter values resolved at the §29.2/§29.4 boundary.
-3. **Non-interactive behavior, consent, and owner affirmation.** Every command accepts the global `--json`, `--yes`, `--no-input`, `--workspace`, `--verbose`, and `--quiet` controls subject to the `init` exception above. `--no-input` forces non-interactive behavior regardless of the terminal; non-TTY stdin is non-interactive even without that flag. In either case, a command that would prompt must receive every required value through its declared flags or fail closed with exit class 2 before blocking or performing the prompt-dependent operation. This applies to §14.3 capture, destructive confirmations, migration, and every foreground action that may invoke a cost-bearing LLM call.
+1. **Workspace discovery.** Every non-`init` command resolves its workspace before loading workspace configuration or performing compatibility or business I/O.
+   - Starting at the current directory's canonical real path, with symlinks resolved, the command examines that directory and each physical parent through the filesystem root; the first ancestor containing a `.exp2res/` directory is the workspace root.
+   - The nearest marker wins, including when that marker is partial or its database is unrecognized: compatibility then fails under §12.14 rather than skipping the marker and binding an enclosing workspace.
+   - The global `--workspace <path>` option replaces this walk; a relative value resolves from the current directory, its canonical real path alone is examined, and it must name a directory containing `.exp2res/`.
+   - An invalid override never falls back to discovery.
+   - Failure to establish a workspace uses a stable diagnostic class in exit class 3.
+   - `init` neither walks ancestry nor redirects through `--workspace`: it always targets the canonical current directory, and supplying the override is invalid usage.
+   - Creating `.exp2res/` in that current directory while an enclosing workspace exists is legal; later discovery from that tree selects the new nested workspace by the nearest-wins rule.
+2. **Configuration precedence.** Workspace resolution precedes configuration loading.
+   - For each setting that declares more than one representation, the value is selected in this order:
+     - an explicitly supplied CLI flag;
+     - then its documented `EXP2RES_*` environment variable;
+     - then the corresponding key in the selected workspace's `.exp2res/config.toml`;
+     - then a built-in default when that setting declares one.
+   - A representation, including a default, need not exist at every level; a required setting still unresolved after this chain fails closed.
+   - An undocumented environment variable or ambient user, repository, provider, shell, or platform setting has no effect.
+   - `--workspace`, `--json`, `--yes`, `--no-input`, and the command-local `--owner-authored` affirmation are invocation controls rather than configuration values and are accepted only as explicit flags.
+   - Provider credentials are outside this precedence chain and remain transport-only adapter values resolved at the §29.2/§29.4 boundary.
+3. **Non-interactive behavior, consent, and owner affirmation.** Every command accepts the global `--json`, `--yes`, `--no-input`, `--workspace`, `--verbose`, and `--quiet` controls subject to the `init` exception above.
+   - `--no-input` forces non-interactive behavior regardless of the terminal; non-TTY stdin is non-interactive even without that flag.
+   - In either non-interactive case, a command that would prompt must receive every required value through its declared flags or fail closed with exit class 2 before blocking or performing the prompt-dependent operation. This applies to §14.3 capture, destructive confirmations, migration, and every foreground action that may invoke a cost-bearing LLM call.
+   - Record content supplied through `--file PATH` or `--file -` is a non-prompt owner capture and requires the command-local explicit `--owner-authored` flag.
+   - Missing affirmation fails before the source is opened and before any row is written, with exit class 2 and stable diagnostic `owner_authorship_required`.
+   - Neither configuration nor an environment variable can supply or imply affirmation.
+   - The `--owner-authored` flag affirms that the record content was authored by the owner; it does not supply consent, and `--yes` never supplies or implies affirmation.
+   - Every non-prompt capture source reads at most §11's `raw_text` limit plus one byte, fails closed above that bound, decodes only valid UTF-8, and then applies §11's free-text hygiene without normalization, trimming, or line joining; accepted multiline content therefore round-trips byte-identically.
+   - `--file -` reads standard input, records no `RawLog.external_ref`, and is not §29.4 acquisition because no filesystem object was selected.
+   - `--file PATH` remains fully subject to §29.4 before it is opened.
+   - No capture command accepts record content in an option value: local process arguments are readable by other host processes and commonly retained in shell history, so argv is not a private record-content channel.
+   - A destructive or cost-bearing action additionally requires explicit `--yes` in non-interactive mode; on TTY stdin it requires either `--yes` or an interactive confirmation before the destructive step or provider call. The confirmation set is:
+     - `logs delete`;
+     - `jd delete` (§14.15);
+     - `workspace purge` (§14.16);
+     - `db migrate`;
+     - every command that can make a cost-bearing §15 call, including verification, parsing, extraction, detection, lifecycle, and generation commands.
+   - `--yes` supplies consent only; it never supplies missing capture or selector input.
+   - Verbosity controls affect secret-safe diagnostics and progress only, never the result, exit class, or JSON shape.
+4. **Exit-code taxonomy.** The process exit status and the envelope's `exit_code` are the same stable small integer, and `CLIResultStatus` (§10) is a deterministic projection of it.
+   - Each code, its `CLIResultStatus`, and its required meaning:
+     - **0 — `ok`.** Success, including a retained generation, another no-op result, or idempotent `init`.
+     - **1 — `failed`.** Unexpected internal failure. This is the only class for an otherwise unclassified error, and its diagnostic is secret-safe.
+     - **2 — `failed`.** Invalid command, usage, selector, or input, including:
+       - an unresolved naive datetime;
+       - a nonexistent or ambiguous local time;
+       - an artifact-locator rejection under §29.4;
+       - another boundary-validation rejection.
+     - **3 — `failed`.** Missing, invalid, or undiscoverable required workspace.
+     - **4 — `failed`.** Incompatible or unrecognized schema under §12.14, including a partial initialization or `init` version mismatch.
+     - **5 — `failed`.** Concurrency conflict in the §8.1 `workspace_busy` class.
+     - **6 — `failed`.** Provider or transport failure under §15.10, including capability mismatch or budget/context-overflow preflight refusal.
+     - **7 — `failed`.** Validation or integrity failure, including §15.1 invalid-after-retry, §12 rule 10, hydration, migration validation failure, or §29.4's `locator_reauthorization_failed` pre-serialization refusal.
+     - **8 — `failed`.** Incomplete managed-output cleanup or privacy deletion at non-cancelled completion, including `deletion_incomplete` and any reported residual path.
+     - **9 — `cancelled`.** User interruption under §15.10/§13.13.
+     - **10 — `blocked`.** A completed semantic result whose verifier or consumer gate does not pass: non-passing `assess verify` or `bullets verify` findings, or export refused by a §16.11 allowlist.
+   - Code 10 is a successful semantic computation, not an operational-failure class: its complete findings are retained and its completed verifier `processing_runs` row is not marked failed.
+   - A handled user interrupt takes code 9 precedence over every simultaneously observed class, including incomplete cleanup after an already committed deletion; committed effects and every known `residual_path` remain reported in the cancelled envelope.
+   - Code 8 applies when the command reaches a non-cancelled completion with required cleanup incomplete.
+   - Exit codes are configuration-independent; a recognized class never collapses into code 1.
+   - Existing codes never change meaning or number, and a new class appends a new code.
+5. **Machine-readable result envelope and output channels.** With `--json`, stdout contains the UTF-8 serialization of exactly one versioned result-envelope object, optionally followed by one final newline, and no banner, progress line, diagnostic, prompt, or other byte.
+   - The outer object and every nested object apply §11's strict validation, string-hygiene, and `extra = forbid` policy.
+   - Every field below is present; inapplicable scalar values are `null` and inapplicable collections are empty.
+   - Version 1 is closed: adding, removing, retyping, or changing the meaning of a field requires a new `envelope_version`, and an implementation fails closed on an unsupported version.
+   - Each envelope field, with its version-1 type and meaning:
+     - `envelope_version` — integer `1`.
+     - `command` — canonical §14 command path without arguments, or `null` when parsing did not resolve a command.
+     - `status` — canonical `CLIResultStatus`, constrained by rule 4's exit-code taxonomy.
+     - `exit_code` — integer process exit status from rule 4's taxonomy.
+     - `diagnostic_class` — stable non-empty machine code, or `null` if and only if `exit_code = 0`; code 10 uses a gate-specific blocking class.
+       - These codes are open for append-only extension like §12.13 `failure_code`, not a §10 enum.
+     - `workspace` — canonical real discovered or overridden workspace-root path, the canonical `init` target, or `null` when no root was established.
+     - `affected_ids` — closed object with exactly `created`, `superseded`, and `deleted`.
+       - Each of the three is a list of closed `{entity_type: str, ids: list[str]}` groups, so per-table IDs remain typed by class.
+     - `generation_ids` — duplicate-free produced or invalidated §12 rule 13 generation IDs.
+     - `run_ids` — duplicate-free §12.13 processing-run IDs created or directly inspected by the command.
+     - `invalidated_views` — complete list of closed `{scope: AssessmentScope, scope_target: str | null, snapshot_id: str, regeneration_command: str}` §13.13 rule 9 reports.
+       - The `regeneration_command` value is executable and POSIX-shell-quoted.
+     - `invalidated_branches` — complete list of closed `{name: str, job_description_id: str, former_view: {scope: AssessmentScope, scope_target: str | null, snapshot_id: str}, regeneration_command_shape: str}` §13.13 rule 9 reports.
+     - `findings` — complete §11.14 `VerificationFinding` values produced or directly inspected by the command; otherwise empty.
+     - `residual_paths` — complete canonical managed paths whose required cleanup or deletion did not complete.
+     - `warnings` — values using §15.1's closed `ContractWarning` shape.
+       - Each message is a secret-safe owner-facing explanation surfaced by the command and contains no source quotation.
+     - `retry` — closed `{command: str}` containing the documented, POSIX-shell-quoted executable retry command from §13.13/§14.12 when one exists; otherwise `null`.
+     - `result` — closed primary-result object discriminated by `command` under the schema list below, or `null` when the standard envelope fields carry the complete result.
+       - A free-form object is invalid.
+   - The `command` value selects exactly one result schema; each entry below states that command's exact `result` payload, and every object and projection in it is closed and uses the referenced §10/§11/§12 field types:
+     - `init`, `db status`, `db migrate` — `{schema: {stored_version: int | null, supported_version: int, recognized: bool, compatible: bool, migration_path_available: bool | null, managed_backup_path: str | null}}`.
+     - `import ephemeris`, `import atlas`, `import github` — `{counts: {accepted: int, duplicate: int, conflict: int, rejected: int}, records: {accepted: list[ImportRecordResult], duplicate: list[ImportRecordResult], conflict: list[ImportRecordResult], rejected: list[ImportRecordResult]}}`.
+       - `ImportRecordResult` is the closed `{record_number: int, source_record_id: str | null, raw_log_id: str | null}` §19.4 projection.
+       - `raw_log_id` is non-null exactly for a record created by the committed import.
+     - `logs list` — `{logs: list[{id, recorded_at, entry_type, source_type, occurred, project, corrects_log_id}]}`, the `raw_text`-free §11.2 inspection projection.
+       - `raw_text`, `metadata`, and `external_ref` are absent.
+     - `logs show` — `{log: {id, recorded_at, entry_type, source_type, occurred, project, external_ref, corrects_log_id}, evidence_items: list[{id, created_at, raw_log_id, title, summary, uri, path, strength}]}`, the `logs delete` selected-record projection of one retained current or displaced record plus its complete linked §11.3 evidence-item projections.
+       - `raw_text` and `metadata` are absent from the log and from every evidence item.
+     - `logs delete` — `{selected_log: {id, recorded_at, entry_type, source_type, occurred, project, external_ref, corrects_log_id}}`, the captured pre-deletion §11.2 report required by §14.11.
+       - `raw_text` and `metadata` are absent.
+     - `facts list`, `facts show` — `{facts: list[ExperienceFact]}` using complete §11.4 values; a successful `show` result contains exactly one.
+     - `detections generate` — `{gaps: list[GapQuestion], contradictions: list[Contradiction]}` containing both complete retained or replacement §14.7 result sets.
+     - `gaps list` — `{gaps: list[GapQuestion]}` using complete §11.10 values.
+     - `contradictions list`, `contradictions show` — `{contradictions: list[Contradiction]}` using complete §11.9 values; a successful `show` result contains exactly one.
+     - `signals list` — `{signals: list[SelfSignal]}` using complete §11.5 values.
+     - `assess list` — `{snapshots: list[{id, scope, scope_target, verification_status, created_at}]}`, exactly the §14.9 discovery projection.
+     - `assess show` — `{snapshot: AssessmentSnapshot, claims: list[SelfClaim], gaps: list[GapQuestion], contradictions: list[Contradiction]}` using the complete §11 values reached through the snapshot's claim membership (`SelfClaim.snapshot_id`, claim-ID order) and its typed gap/contradiction references.
+     - `jd list` (§14.15) — `{job_descriptions: list[{id, created_at, title, company}]}`.
+     - `jd show` (§14.15) — `{job_description: {id, created_at, title, company, parsed}}`, the §11.11 `raw_text`-free inspection projection; `raw_text` is absent and `parsed` is the complete §11.13 value.
+     - `jd delete` (§14.15) — `{selected_job_description: {id, created_at, title, company}, purged_branches: list[{id, name}], removed_managed_paths: list[str]}`.
+       - `purged_branches` contains every current and historical dependent branch captured before deletion.
+       - Residual paths use the envelope's top-level `residual_paths`.
+     - `runs list` — `{runs: list[{id, stage, parent_run_id, started_at, finished_at, status}]}`, exactly the §14.13 list projection from §12.13.
+     - `runs show` — `{run: <complete §12.13 row with metadata_json carried as its stored JSON TEXT string>, calls: list[<complete §12.15 row>]}`.
+       - Every field of that result is a closed scalar — the string-typed `metadata_json` keeps the projection `extra = forbid`-validatable while §12.13's content prohibition governs what the stored text may contain.
+       - The run's §11.14 rows use the top-level `findings` field.
+     - `assess repair` — `null`; its complete primary result is carried by the standard `affected_ids`, `generation_ids`, and `run_ids` fields.
+     - `bullets generate`, `bullets verify` — `null`; their complete primary result is carried by the standard `affected_ids`, `generation_ids`, `run_ids`, and `findings` fields as applicable.
+     - `export assessment`, `bullets export` — `{manifest_path: str, managed_paths: list[str]}`.
+       - `manifest_path` is the final ID-keyed `manifest.json`.
+       - `managed_paths` is the complete deterministic list containing that manifest and every fixed §13.12 member path.
+       - The result is emitted only after §13.14 revalidates the matching manifest, exact member set, current render-input hash, source graph, and member hashes; a missing, invalid, stale, or mismatched manifest yields no partial result.
+     - `view serve` (§14.17) — `null`. Each served request completes in its own §30 rule 7 outcome, so the command reaches no completed primary result of its own; its envelope reports the termination of serving.
+   - Subject to rule 4's cancellation precedence, a complete §19.4 import result with `counts.conflict > 0` uses existing exit class 7; otherwise `counts.rejected > 0` uses existing exit class 2; and an accepted/duplicate-only result uses exit class 0. Conflict takes precedence over acquisition rejection when one classified batch contains both, without adding an exit class.
+   - Except for a schema entry that explicitly declares `null` as its complete success schema, a command with an object result uses `result = null` only when it fails or is cancelled before a complete primary result exists; it never emits a partial result object.
+   - A nonzero completed report such as incompatible `db status` or a fully classified atomic import rejection still carries its complete typed result.
+   - Every unlisted V1 command uses `result = null`: its primary result is already complete in `affected_ids`, `generation_ids`, `run_ids`, invalidation reports, `findings`, `residual_paths`, `warnings`, and `retry`.
+   - Adding or renaming a command requires a schema entry declaring its closed object or `null` success schema; widening an object projection requires declaring the change in §14 and incrementing `envelope_version` when version 1 is already implemented.
+   - IDs, entity groups, paths, findings, views, branches, and result records are duplicate-free and deterministically ordered by their stable class and identity; §19.4 import records use their input `record_number` as that identity, so repeated source identities remain distinct report entries.
+   - The `logs show` evidence projection for an owner-authored capture follows §13.1's creation/report order: `manual_claim` first, then artifact locators in their canonical stored-value order.
+   - Completeness-required result lists — verifier `findings` for every current claim or bullet, §13.13 invalidation reports, §19.4 import classification lists, `affected_ids`, and residual paths — are never truncated:
+     - envelope serialization to local stdout is not one of §11's bounded provider, acquisition, response, or hydration boundaries, so neither §11's general per-list cap nor its narrower findings/warnings cap applies to it;
+     - a view or branch with more than 100 current claims or bullets, or an import with more than 100 established records, still receives its complete result;
+     - each individual §15 response and every other §11 boundary keeps its caps unchanged.
+   - The envelope never contains a secret, credential, prompt, `raw_text`, or undeclared source content.
+   - Content-bearing values are IDs and machine codes except for the closed command result projections, warnings, verifier findings, managed paths, and view/branch regeneration reports already surfaced by their owning §13/§14 contracts.
+   - Human mode may format the primary result as text on stdout.
+   - Human mode additionally prints every `invalidated_views` entry as one line naming the invalidated view — scope, scope target when present, and snapshot ID — together with its executable §13.13 rule 9 regeneration command, and it does so on the success path and the nonzero path alike.
+     - That line is result content rather than a diagnostic: a lifecycle flow whose later stage fails still committed the supersession that made a published view stale, and the owner of a single-operator instance has no second consumer to notice it.
+   - Human mode also prints every envelope `warnings` entry as one stderr line naming its type and message, on the success and nonzero paths alike, so a warning-carrying result — for example §13.3 rule 14's `displaced_support_unselected` trace — stays legible without `--json`.
+   - One narrow human-mode carve-out exists: on the explicit single-record request `logs show --log-id`, human mode additionally prints the selected retained record's own complete stored `raw_text` after the projection fields — never any other record's content, and never in `--json` mode, whose envelope this rule's prohibition governs unchanged.
+   - In both modes every diagnostic and progress event goes to stderr; `--quiet` may suppress progress but not the result or a diagnostic required to explain a nonzero exit.
+   - The §8.1 public-diagnostic rule applies, and internal logs and exception reports are secret-safe and contain no private source text.
+   - Writing the envelope to local stdout is not egress under §29.
+6. **Interruption and confirmation semantics.** On a user interrupt every command exits with code 9 and `status = cancelled`.
+   - §15.10 owns in-flight LLM-call cancellation, §13.13 owns lifecycle atomicity, and §8.1 owns lock and transaction release.
+   - The in-flight transaction rolls back and no partial current generation becomes visible.
+   - A correction, deletion, cleanup result, or other lifecycle boundary already committed under §13.13 remains committed and is reported rather than restored.
+   - The confirmation requirements are exactly those in rule 3; neither configuration nor an environment variable can imply consent.
+7. **Inspection-surface completeness.** The operable V1 lifecycle-inspection surface is:
+   - `db status`;
+   - `logs list` and `logs show`;
+   - `facts list` and `facts show`;
+   - `gaps list`;
+   - `contradictions list` and `contradictions show`;
+   - `signals list`;
+   - `assess list` and `assess show`;
+   - `jd list` and `jd show` (§14.15);
+   - `runs list` and `runs show`.
 
-   Record content supplied through `--file PATH` or `--file -` is a non-prompt owner capture and requires the command-local explicit `--owner-authored` flag. Missing affirmation fails before the source is opened and before any row is written with exit class 2 and stable diagnostic `owner_authorship_required`. Neither configuration nor an environment variable can supply or imply affirmation. The flag affirms that the record content was authored by the owner; it does not supply consent, and `--yes` never supplies or implies affirmation.
+   Explicitly deferred read-only additions, which add no V1 mutation or decision surface:
 
-   Every non-prompt capture source reads at most §11's `raw_text` limit plus one byte, fails closed above that bound, decodes only valid UTF-8, and then applies §11's free-text hygiene without normalization, trimming, or line joining; accepted multiline content therefore round-trips byte-identically. `--file -` reads standard input, records no `RawLog.external_ref`, and is not §29.4 acquisition because no filesystem object was selected. `--file PATH` remains fully subject to §29.4 before it is opened. No capture command accepts record content in an option value: local process arguments are readable by other host processes and commonly retained in shell history, so argv is not a private record-content channel.
-
-   A destructive or cost-bearing action additionally requires explicit `--yes` in non-interactive mode; on TTY stdin it requires either `--yes` or an interactive confirmation before the destructive step or provider call. The confirmation set is `logs delete`, `jd delete` (§14.15), `workspace purge` (§14.16), `db migrate`, and every command that can make a cost-bearing §15 call, including verification, parsing, extraction, detection, lifecycle, and generation commands. `--yes` supplies consent only; it never supplies missing capture or selector input. Verbosity controls affect secret-safe diagnostics and progress only, never the result, exit class, or JSON shape.
-4. **Exit-code taxonomy.** The process exit status and the envelope's `exit_code` are the same stable small integer, and `CLIResultStatus` (§10) is a deterministic projection of it:
-
-   | Code | `CLIResultStatus` | Required meaning |
-   |---:|---|---|
-   | 0 | `ok` | Success, including a retained generation, another no-op result, or idempotent `init`. |
-   | 1 | `failed` | Unexpected internal failure. This is the only class for an otherwise unclassified error and its diagnostic is secret-safe. |
-   | 2 | `failed` | Invalid command, usage, selector, or input, including an unresolved naive datetime, a nonexistent or ambiguous local time, an artifact-locator rejection under §29.4, or another boundary-validation rejection. |
-   | 3 | `failed` | Missing, invalid, or undiscoverable required workspace. |
-   | 4 | `failed` | Incompatible or unrecognized schema under §12.14, including a partial initialization or `init` version mismatch. |
-   | 5 | `failed` | Concurrency conflict in the §8.1 `workspace_busy` class. |
-   | 6 | `failed` | Provider or transport failure under §15.10, including capability mismatch or budget/context-overflow preflight refusal. |
-   | 7 | `failed` | Validation or integrity failure, including §15.1 invalid-after-retry, §12 rule 10, hydration, migration validation failure, or §29.4's `locator_reauthorization_failed` pre-serialization refusal. |
-   | 8 | `failed` | Incomplete managed-output cleanup or privacy deletion at non-cancelled completion, including `deletion_incomplete` and any reported residual path. |
-   | 9 | `cancelled` | User interruption under §15.10/§13.13. |
-   | 10 | `blocked` | A completed semantic result whose verifier or consumer gate does not pass: non-passing `assess verify` or `bullets verify` findings, or export refused by a §16.11 allowlist. |
-
-   Code 10 is a successful semantic computation, not an operational-failure class: its complete findings are retained and its completed verifier `processing_runs` row is not marked failed. A handled user interrupt takes code 9 precedence over every simultaneously observed class, including incomplete cleanup after an already committed deletion; committed effects and every known `residual_path` remain reported in the cancelled envelope. Code 8 applies when the command reaches a non-cancelled completion with required cleanup incomplete. Exit codes are configuration-independent; a recognized class never collapses into code 1. Existing codes never change meaning or number, and a new class appends a new code.
-5. **Machine-readable result envelope and output channels.** With `--json`, stdout contains the UTF-8 serialization of exactly one versioned result-envelope object, optionally followed by one final newline, and no banner, progress line, diagnostic, prompt, or other byte. The outer object and every nested object apply §11's strict validation, string-hygiene, and `extra = forbid` policy. Every field below is present; inapplicable scalar values are `null` and inapplicable collections are empty. Version 1 is closed: adding, removing, retyping, or changing the meaning of a field requires a new `envelope_version`, and an implementation fails closed on an unsupported version.
-
-   | Field | Version-1 type and meaning |
-   |---|---|
-   | `envelope_version` | Integer `1`. |
-   | `command` | Canonical §14 command path without arguments, or `null` when parsing did not resolve a command. |
-   | `status` | Canonical `CLIResultStatus`, constrained by the exit-code table above. |
-   | `exit_code` | Integer process exit status from the table above. |
-   | `diagnostic_class` | Stable non-empty machine code, or `null` if and only if `exit_code = 0`; code 10 uses a gate-specific blocking class. These codes are open for append-only extension like §12.13 `failure_code`, not a §10 enum. |
-   | `workspace` | Canonical real discovered or overridden workspace-root path, the canonical `init` target, or `null` when no root was established. |
-   | `affected_ids` | Closed object with exactly `created`, `superseded`, and `deleted`; each is a list of closed `{entity_type: str, ids: list[str]}` groups so per-table IDs remain typed by class. |
-   | `generation_ids` | Duplicate-free produced or invalidated §12 rule 13 generation IDs. |
-   | `run_ids` | Duplicate-free §12.13 processing-run IDs created or directly inspected by the command. |
-   | `invalidated_views` | Complete list of closed `{scope: AssessmentScope, scope_target: str | null, snapshot_id: str, regeneration_command: str}` §13.13 rule 9 reports; the command is executable and POSIX-shell-quoted. |
-   | `invalidated_branches` | Complete list of closed `{name: str, job_description_id: str, former_view: {scope: AssessmentScope, scope_target: str | null, snapshot_id: str}, regeneration_command_shape: str}` §13.13 rule 9 reports. |
-   | `findings` | Complete §11.14 `VerificationFinding` values produced or directly inspected by the command; otherwise empty. |
-   | `residual_paths` | Complete canonical managed paths whose required cleanup or deletion did not complete. |
-   | `warnings` | Values using §15.1's closed `ContractWarning` shape; each message is a secret-safe owner-facing explanation surfaced by the command and contains no source quotation. |
-   | `retry` | Closed `{command: str}` containing the documented, POSIX-shell-quoted executable retry command from §13.13/§14.12 when one exists; otherwise `null`. |
-   | `result` | Closed primary-result object discriminated by `command` under the table below, or `null` when the standard envelope fields carry the complete result. A free-form object is invalid. |
-
-   The `command` value selects exactly one result schema; every object and projection below is closed and uses the referenced §10/§11/§12 field types:
-
-   | Command | Exact `result` payload |
-   |---|---|
-   | `init`, `db status`, `db migrate` | `{schema: {stored_version: int | null, supported_version: int, recognized: bool, compatible: bool, migration_path_available: bool | null, managed_backup_path: str | null}}`. |
-   | `import ephemeris`, `import atlas`, `import github` | `{counts: {accepted: int, duplicate: int, conflict: int, rejected: int}, records: {accepted: list[ImportRecordResult], duplicate: list[ImportRecordResult], conflict: list[ImportRecordResult], rejected: list[ImportRecordResult]}}`, where `ImportRecordResult` is the closed `{record_number: int, source_record_id: str | null, raw_log_id: str | null}` §19.4 projection; `raw_log_id` is non-null exactly for a record created by the committed import. |
-   | `logs list` | `{logs: list[{id, recorded_at, entry_type, source_type, occurred, project, corrects_log_id}]}`, the `raw_text`-free §11.2 inspection projection; `raw_text`, `metadata`, and `external_ref` are absent. |
-   | `logs show` | `{log: {id, recorded_at, entry_type, source_type, occurred, project, external_ref, corrects_log_id}, evidence_items: list[{id, created_at, raw_log_id, title, summary, uri, path, strength}]}`, the `logs delete` selected-record projection of one retained current or displaced record plus its complete linked §11.3 evidence-item projections; `raw_text` and `metadata` are absent from the log and from every evidence item. |
-   | `logs delete` | `{selected_log: {id, recorded_at, entry_type, source_type, occurred, project, external_ref, corrects_log_id}}`, the captured pre-deletion §11.2 report required by §14.11; `raw_text` and `metadata` are absent. |
-   | `facts list`, `facts show` | `{facts: list[ExperienceFact]}` using complete §11.4 values; a successful `show` result contains exactly one. |
-   | `detections generate` | `{gaps: list[GapQuestion], contradictions: list[Contradiction]}` containing both complete retained or replacement §14.7 result sets. |
-   | `gaps list` | `{gaps: list[GapQuestion]}` using complete §11.10 values. |
-   | `contradictions list`, `contradictions show` | `{contradictions: list[Contradiction]}` using complete §11.9 values; a successful `show` result contains exactly one. |
-   | `signals list` | `{signals: list[SelfSignal]}` using complete §11.5 values. |
-   | `assess list` | `{snapshots: list[{id, scope, scope_target, verification_status, created_at}]}`, exactly the §14.9 discovery projection. |
-   | `assess show` | `{snapshot: AssessmentSnapshot, claims: list[SelfClaim], gaps: list[GapQuestion], contradictions: list[Contradiction]}` using the complete §11 values reached through the snapshot's claim membership (`SelfClaim.snapshot_id`, claim-ID order) and its typed gap/contradiction references. |
-   | `jd list` (§14.15) | `{job_descriptions: list[{id, created_at, title, company}]}`. |
-   | `jd show` (§14.15) | `{job_description: {id, created_at, title, company, parsed}}`, the §11.11 `raw_text`-free inspection projection; `raw_text` is absent and `parsed` is the complete §11.13 value. |
-   | `jd delete` (§14.15) | `{selected_job_description: {id, created_at, title, company}, purged_branches: list[{id, name}], removed_managed_paths: list[str]}`; `purged_branches` contains every current and historical dependent branch captured before deletion, while residual paths use the envelope's top-level `residual_paths`. |
-   | `runs list` | `{runs: list[{id, stage, parent_run_id, started_at, finished_at, status}]}`, exactly the §14.13 list projection from §12.13. |
-   | `runs show` | `{run: <complete §12.13 row with metadata_json carried as its stored JSON TEXT string>, calls: list[<complete §12.15 row>]}`; every field is a closed scalar — the string-typed `metadata_json` keeps the projection `extra = forbid`-validatable while §12.13's content prohibition governs what the stored text may contain — and its §11.14 rows use the top-level `findings` field. |
-   | `assess repair` | `null`; its complete primary result is carried by the standard `affected_ids`, `generation_ids`, and `run_ids` fields. |
-   | `bullets generate`, `bullets verify` | `null`; their complete primary result is carried by the standard `affected_ids`, `generation_ids`, `run_ids`, and `findings` fields as applicable. |
-   | `export assessment`, `bullets export` | `{manifest_path: str, managed_paths: list[str]}`. `manifest_path` is the final ID-keyed `manifest.json`; `managed_paths` is the complete deterministic list containing that manifest and every fixed §13.12 member path. The result is emitted only after §13.14 revalidates the matching manifest, exact member set, current render-input hash, source graph, and member hashes; a missing, invalid, stale, or mismatched manifest yields no partial result. |
-   | `view serve` (§14.17) | `null`. Each served request completes in its own §30 rule 7 outcome, so the command reaches no completed primary result of its own; its envelope reports the termination of serving. |
-
-   Subject to rule 4's cancellation precedence, a complete §19.4 import result with `counts.conflict > 0` uses existing exit class 7; otherwise `counts.rejected > 0` uses existing exit class 2; and an accepted/duplicate-only result uses exit class 0. Conflict therefore takes precedence over acquisition rejection when one classified batch contains both, without adding an exit class.
-
-   Except for a row that explicitly declares `null` as its complete success schema, a command with an object result uses `result = null` only when it fails or is cancelled before a complete primary result exists; it never emits a partial result object. A nonzero completed report such as incompatible `db status` or a fully classified atomic import rejection still carries its complete typed result. Every unlisted V1 command uses `result = null`: its primary result is already complete in `affected_ids`, `generation_ids`, `run_ids`, invalidation reports, `findings`, `residual_paths`, `warnings`, and `retry`. Adding or renaming a command requires a row declaring its closed object or `null` success schema; widening an object projection requires declaring the change in §14 and incrementing `envelope_version` when version 1 is already implemented.
-
-   IDs, entity groups, paths, findings, views, branches, and result records are duplicate-free and deterministically ordered by their stable class and identity; §19.4 import records use their input `record_number` as that identity, so repeated source identities remain distinct report entries. The `logs show` evidence projection for an owner-authored capture follows §13.1's creation/report order: `manual_claim` first, then artifact locators in their canonical stored-value order. Completeness-required result lists — verifier `findings` for every current claim or bullet, §13.13 invalidation reports, §19.4 import classification lists, `affected_ids`, and residual paths — are never truncated: envelope serialization to local stdout is not one of §11's bounded provider, acquisition, response, or hydration boundaries, so neither §11's general per-list cap nor its narrower findings/warnings cap applies to it, and a view or branch with more than 100 current claims or bullets or an import with more than 100 established records still receives its complete result. Each individual §15 response and every other §11 boundary keeps its caps unchanged. The envelope never contains a secret, credential, prompt, `raw_text`, or undeclared source content. Content-bearing values are IDs and machine codes except for the closed command result projections, warnings, verifier findings, managed paths, and view/branch regeneration reports already surfaced by their owning §13/§14 contracts. Human mode may format the primary result as text on stdout. Human mode additionally prints every `invalidated_views` entry as one line naming the invalidated view — scope, scope target when present, and snapshot ID — together with its executable §13.13 rule 9 regeneration command, and it does so on the success path and the nonzero path alike. This is result content rather than a diagnostic: a lifecycle flow whose later stage fails still committed the supersession that made a published view stale, and the owner of a single-operator instance has no second consumer to notice it. Human mode also prints every envelope `warnings` entry as one stderr line naming its type and message, on the success and nonzero paths alike, so a warning-carrying result — for example §13.3 rule 14's `displaced_support_unselected` trace — stays legible without `--json`. One narrow human-mode carve-out exists: on the explicit single-record request `logs show --log-id`, human mode additionally prints the selected retained record's own complete stored `raw_text` after the projection fields — never any other record's content, and never in `--json` mode, whose envelope this rule's prohibition governs unchanged. In both modes every diagnostic and progress event goes to stderr; `--quiet` may suppress progress but not the result or a diagnostic required to explain a nonzero exit. The §8.1 public-diagnostic rule applies, and internal logs and exception reports are secret-safe and contain no private source text. Writing the envelope to local stdout is not egress under §29.
-6. **Interruption and confirmation semantics.** On a user interrupt every command exits with code 9 and `status = cancelled`. §15.10 owns in-flight LLM-call cancellation, §13.13 owns lifecycle atomicity, and §8.1 owns lock and transaction release: the in-flight transaction rolls back and no partial current generation becomes visible, while a correction, deletion, cleanup result, or other lifecycle boundary already committed under §13.13 remains committed and is reported rather than restored. The confirmation requirements are exactly those in rule 3; neither configuration nor an environment variable can imply consent.
-7. **Inspection-surface completeness.** The operable V1 lifecycle-inspection surface is `db status`; `logs list` and `logs show`; `facts list` and `facts show`; `gaps list`; `contradictions list` and `contradictions show`; `signals list`; `assess list` and `assess show`; `jd list` and `jd show` (§14.15); and `runs list` and `runs show`. Evidence-item listing beyond `logs show`'s per-record linked items, resume-branch or bullet listing, historical-generation browsing beyond `runs show`, and parsed-requirement dumps beyond `jd show` are explicitly deferred read-only additions. They add no V1 mutation or decision surface.
-8. **Time input resolution.** The selected workspace's `[workspace].timezone` IANA name in `.exp2res/config.toml` (§29.2) is the sole authority for interpreting local time. This setting has no CLI flag, `EXP2RES_*` environment variable, or built-in default representation, and no command reads the ambient OS timezone or locale when producing a persisted value. A configured value is required at the first use of a local-time feature; a missing, empty, or unrecognized value fails that operation closed without a silent default. `log today` and retrospective capture resolve `today` and named period anchors in the workspace timezone, and persisted `OccurredAt` bounds carry the resulting offset. An open-ended range resolves only its `start`; its absent end resolves nothing and is never filled from the clock, the workspace timezone, or `recorded_at`. A naive datetime received by the CLI is resolved in the workspace timezone before §11 model construction; the §11 model boundary still rejects every naive value that reaches it. A naive local time in a daylight-saving gap or fold fails closed with guidance to supply an explicit offset, and Exp2Res never silently chooses a fold. The tzdata version is not pinned: resolution uses the rules available to the build at resolution time, while the persisted offset makes the stored instant independent of later tzdata changes.
+   - evidence-item listing beyond `logs show`'s per-record linked items;
+   - resume-branch or bullet listing;
+   - historical-generation browsing beyond `runs show`;
+   - parsed-requirement dumps beyond `jd show`.
+8. **Time input resolution.** The selected workspace's `[workspace].timezone` IANA name in `.exp2res/config.toml` (§29.2) is the sole authority for interpreting local time.
+   - This setting has no CLI flag, `EXP2RES_*` environment variable, or built-in default representation, and no command reads the ambient OS timezone or locale when producing a persisted value.
+   - A configured value is required at the first use of a local-time feature; a missing, empty, or unrecognized value fails that operation closed without a silent default.
+   - `log today` and retrospective capture resolve `today` and named period anchors in the workspace timezone, and persisted `OccurredAt` bounds carry the resulting offset.
+   - An open-ended range resolves only its `start`; its absent end resolves nothing and is never filled from the clock, the workspace timezone, or `recorded_at`.
+   - A naive datetime received by the CLI is resolved in the workspace timezone before §11 model construction; the §11 model boundary still rejects every naive value that reaches it.
+   - A naive local time in a daylight-saving gap or fold fails closed with guidance to supply an explicit offset, and Exp2Res never silently chooses a fold.
+   - The tzdata version is not pinned: resolution uses the rules available to the build at resolution time, while the persisted offset makes the stored instant independent of later tzdata changes.
 
 ## §14.15 Manage Job Descriptions
 
