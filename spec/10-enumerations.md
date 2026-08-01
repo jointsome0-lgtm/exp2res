@@ -1,18 +1,25 @@
 ## §10. Enumerations
 
-§10 is the canonical home for every named `Literal` value list used by the SDD's typed contracts. Each enum-like list must have a stable alias name and be written as a plain Python `Literal[...]` assignment so a future post-MVP docs/schema/lint generator can mechanically extract it.
+1. §10 is the canonical home for every named `Literal` value list used by the SDD's typed contracts.
+2. Each enum-like list must have a stable alias name.
+3. Each enum-like list must be written as a plain Python `Literal[...]` assignment, so a future post-MVP docs/schema/lint generator can mechanically extract it.
+4. Other sections must reference the alias name and the field that carries it.
+5. Other sections must not restate the value list as a second source of truth.
+6. Prose mirrors must not become second normative homes.
+7. A change to a §10 value list requires updating all direct references and examples in the same commit, without creating another normative list.
+8. No generator, linter, generated documentation, separate machine-readable registry, or runtime schema tooling is required for MVP.
+9. Such tooling introduced after MVP must derive from §10 rather than creating a second enum source.
 
-Other sections must reference the alias name and the field that carries it; they must not restate the value list as a second source of truth. Prose mirrors must not become second normative homes. A change to a §10 value list requires updating all direct references and examples in the same commit, without creating another normative list.
-
-No generator, linter, generated documentation, separate machine-readable registry, or runtime schema tooling is required for MVP. If introduced after MVP, it must derive from §10 rather than creating a second enum source.
-
-`TemporalConfidence` types only confidence in an `OccurredAt` placement; `Confidence` types general confidence in derived facts, signals, and claims. The aliases intentionally remain separate even while their member sets are identical. For temporal-provenance comparison, `TemporalConfidence` has the normative weak-to-strong order `unknown < low < medium < high`; for calibration comparison under §9.4, `Confidence` has the same normative weak-to-strong order `unknown < low < medium < high`. These two explicit orders are normative for their aliases; the assignment order below is not itself a ranking.
-
-`OwnershipLevel` is a normative total order. Members in its assignment are listed from weakest to strongest; `unknown` is the weakest value.
-
-`DetectionRefType` types Stage 4 detection targets; `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry; `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. The aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target. `OwnerAttribution` types the §19.3 GitHub payload field asserted by the upstream adapter or owner; §19.3 owns its conservative default and importer strength mapping. `CLIResultStatus` types the §14.14 result envelope independently of processing-run status or semantic verification status. `ManagedOutputKind` types the §13.14 managed-output manifest discriminator independently of pipeline stages and CLI command names.
-
-`knowledge_state_snapshot` is produced only by the §14.5 `atlas` importer under §19.2; no other V1 flow may assign that strength.
+- `TemporalConfidence` types only confidence in an `OccurredAt` placement. `Confidence` types general confidence in derived facts, signals, and claims. The aliases intentionally remain separate even while their member sets are identical.
+- For temporal-provenance comparison, `TemporalConfidence` has the normative weak-to-strong order `unknown < low < medium < high`. For calibration comparison under §9.4, `Confidence` has the same normative weak-to-strong order `unknown < low < medium < high`. These two explicit orders are normative for their aliases; the assignment order below is not itself a ranking.
+- `OwnershipLevel` is a normative total order. Members in its assignment are listed from weakest to strongest; `unknown` is the weakest value.
+- `DetectionRefType` types Stage 4 detection targets.
+- `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry.
+- `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. These three aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target.
+- `OwnerAttribution` types the §19.3 GitHub payload field asserted by the upstream adapter or owner; §19.3 owns its conservative default and importer strength mapping.
+- `CLIResultStatus` types the §14.14 result envelope independently of processing-run status or semantic verification status.
+- `ManagedOutputKind` types the §13.14 managed-output manifest discriminator independently of pipeline stages and CLI command names.
+- `knowledge_state_snapshot` is produced only by the §14.5 `atlas` importer under §19.2; no other V1 flow may assign that strength.
 
 ```python
 from typing import Literal
@@ -205,6 +212,8 @@ JDRequirementKind = Literal[
 ]
 ```
 
-`VerificationStatus` members are canonical here; their operational meanings, aggregation, and consumer allowlists live only in §16.11. `CLIResultStatus` members are canonical here; their exit-code mapping and envelope semantics live only in §14.14. `ManagedOutputKind` members are canonical here; their path, manifest, and publication semantics live only in §13.14.
+- `VerificationStatus` members are canonical here; their operational meanings, aggregation, and consumer allowlists live only in §16.11.
+- `CLIResultStatus` members are canonical here; their exit-code mapping and envelope semantics live only in §14.14.
+- `ManagedOutputKind` members are canonical here; their path, manifest, and publication semantics live only in §13.14.
 
 ---
