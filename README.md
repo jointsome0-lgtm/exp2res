@@ -8,9 +8,9 @@ It turns owner-controlled experience evidence that automation cannot rewrite int
 
 ## Project stage: implementation-ready with controlled amendments
 
-SDD v0.3 is implementation-ready and remains the binding product contract. The manual-capture and private-workspace foundation is implemented, together with isolated Codex and Claude agent-backed runner substrates and Stage 3 fact extraction through the §14.6 CLI; current work proceeds phase by phase along the approved dependency frontier summarized in [`AGENTS.md`](AGENTS.md). This is not yet a complete Mirror, verified bullet-pack, or resume product. After [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implements and verifies the global Mirror, the first browser target is [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98): that Mirror plus unanswered Gap Questions on loopback. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
+SDD v0.3 is implementation-ready and remains the binding product contract. The manual-capture and private-workspace foundation is implemented, together with isolated Codex and Claude agent-backed runner substrates and the model-backed pipeline from fact extraction through gap/contradiction detection, self-signals, assessment, and verification; current work proceeds phase by phase along the approved dependency frontier summarized in [`AGENTS.md`](AGENTS.md). [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implemented and verified the global Mirror as a CLI-generated assessment export, so this is not yet a browser-served Mirror, a verified bullet-pack, or a resume product. The first browser target is [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98): that Mirror plus unanswered Gap Questions on loopback. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
 
-§22 phase status: Phase 0 complete; Phase 1 complete through the fact-extraction CLI; Phases 2–5 not yet implemented.
+§22 phase status: Phases 0–2 complete; Phase 3 complete except its §14.17 view-serving slice; Phases 4–5 not yet implemented.
 
 Exp2Res remains a public engine. Real owner data lives in a private workspace outside this repository, never in the public checkout.
 
@@ -19,7 +19,7 @@ Exp2Res remains a public engine. Real owner data lives in a private workspace ou
 - [`SDD.md`](SDD.md) — the map: a stable-numbered § index. Each section lives in its own file under [`spec/`](spec/) (`spec/NN-slug.md`).
 - [`spec/`](spec/) — the specification body: domain model, typed contracts, SQLite schema, pipeline stages, CLI, LLM contracts, verification rules, evals, and acceptance criteria.
 - [`DECISION-LOG.md`](DECISION-LOG.md) — dated one-line design decisions with rejected alternatives.
-- [`exp2res/`](exp2res/) — the implemented Python package, currently covering workspace management, manual capture, owner deletion, the isolated Codex and Claude runner substrates, Stage 3 fact extraction, and raw-log/fact inspection.
+- [`exp2res/`](exp2res/) — the implemented Python package, currently covering workspace management, manual capture, owner deletion and purge, the isolated Codex and Claude runner substrates, Stages 3–7 from fact extraction through verification with the correction/recompute flow, assessment export, and raw-log/fact/gap/contradiction inspection.
 - [`tests/`](tests/) — offline tests for the implemented behavior.
 - [`scripts/`](scripts/) — repository-owned offline checks: public hygiene, the SDD-conventions and Decision Log linters vendored from selfos-skills with recorded versions, and the aggregate `scripts/check.py`; all validate in a fresh offline checkout.
 
@@ -39,7 +39,7 @@ Exp2Res is the experience layer of [selfos](https://github.com/jointsome0-lgtm/s
 
 ## Security
 
-The repository contains runnable implementation slices, including local workspace/capture behavior and isolated runner infrastructure. The [ecosystem-wide security policy](https://github.com/jointsome0-lgtm/selfos/blob/main/SECURITY.md) governs vulnerability reporting, while [spec §29](spec/29-security-and-privacy.md) remains the canonical Exp2Res security, privacy, and managed-data boundary.
+The repository contains runnable implementation slices, including local workspace/capture behavior, the pipeline through assessment verification and export, and isolated runner infrastructure. The [ecosystem-wide security policy](https://github.com/jointsome0-lgtm/selfos/blob/main/SECURITY.md) governs vulnerability reporting, while [spec §29](spec/29-security-and-privacy.md) remains the canonical Exp2Res security, privacy, and managed-data boundary.
 
 ## LLM adapter selection
 
