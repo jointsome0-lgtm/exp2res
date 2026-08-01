@@ -94,7 +94,9 @@ class AssessmentWriterOutput(StrictModel):
 
 
 ASSESSMENT_WRITER_INSTRUCTIONS = (
-    "Characterize the supplied subject facts; never score or flatter. Address the owner "
+    "Characterize the supplied subject facts; never score them and never add praise the "
+    "evidence does not carry. A capability the evidence supports is stated plainly — the "
+    "ban is on unearned wording, not on positive findings. Address the owner "
     "in the second person (you/your) or write subject-free per §16.14 in every "
     "natural-language field you author, warning messages included; never refer to "
     "the owner in the first or third person or by name. "

@@ -75,6 +75,12 @@ TWO_HALF_PINS = (
     ),
     (
         "self-assessment-writer",
+        "§16.3",
+        "A capability the evidence supports is stated plainly",
+        "flattering terms without evidence",
+    ),
+    (
+        "self-assessment-writer",
         "§16.9",
         "Current evidence suggests",
         "permanent-identity phrasing",
@@ -100,8 +106,8 @@ TWO_HALF_PINS = (
     (
         "fact-extractor",
         "§16.4",
-        "strongest level the supplied content explicitly supports",
-        "never upgrade",
+        "strongest level the evidence that fact selects explicitly supports",
+        "never raises it",
     ),
 )
 

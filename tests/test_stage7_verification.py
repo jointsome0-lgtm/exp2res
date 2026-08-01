@@ -32,6 +32,7 @@ from test_stage3_extraction import SELECTION, budgets
 from test_stage4_detection import detector_response, run_stage4
 from test_stage5_signals import (
     SignalIds,
+    prepare_facts,
     prepare_high_facts,
     run_stage5,
     signal_response,
@@ -589,27 +590,39 @@ def test_raw_log_reset_purges_verification_findings(workspace: Path) -> None:
         ).fetchone()[0] == 0
 
 
-SECOND_PERSON_CLAIM = "You currently show a provenance-aware working pattern."
+# One assertion in each of §16.14's two licensed forms, over a graph that
+# grounds it: two facts across two distinct raw logs, so "pattern" is a
+# §9.4-supported recurrence rather than a single-source generalization, and
+# no continuation word invites a §16.7 objection. A stable, well-grounded
+# verdict is what makes the twin comparison mean anything.
+SECOND_PERSON_CLAIM = "You show a provenance-aware working pattern across the recorded work."
 SUBJECT_FREE_TWIN = (
-    "Recorded work currently shows a provenance-aware working pattern."
+    "A provenance-aware working pattern appears across the recorded work."
 )
-# Voice vocabulary a §16.14 rejection reaches for, including the paraphrases
-# a model may use instead of the § number.
-VOICE_REASON_TERMS = (
-    "16.14",
-    "second person",
-    "second-person",
-    "grammatical person",
-    "pronoun",
-    "mirror voice",
-    "owner reference",
-    "owner-reference",
-    "refers to the owner",
-    "referring to the owner",
-    "addresses the owner",
-    "addressing the owner",
+# A reason-vocabulary scan was tried and removed. It cannot tell a complaint
+# from an endorsement: live runs produced "the second person and owner
+# reference form are valid, but …" and "the dimension and mirror voice are
+# valid, but …", which any such list flags, while a voice rejection phrased
+# without the listed words slips past it. The twin comparison below is the
+# phrasing-independent check, so the vocabulary adds only false verdicts.
+# §15.5 permits a verbatim diagnostic quotation of candidate wording, and a
+# quote of the whole sentence necessarily carries its pronoun, so only a
+# phrase that is nothing but the pronoun names the form itself. Every other
+# voice complaint is caught by the twin comparison below, not here.
+BARE_SECOND_PERSON = frozenset({"you", "your", "yours"})
+
+# §16.11 gives each status a meaning but no total order; this is a test-local
+# severity scale over those meanings, weakest verdict last, used only to ask
+# whether the addressed wording was lowered relative to its twin.
+STATUS_SEVERITY = (
+    "supported",
+    "inferred_but_acceptable",
+    "partially_supported",
+    "needs_clarification",
+    "contradicted",
+    "unsupported",
+    "rejected",
 )
-SECOND_PERSON_TOKENS = re.compile(r"\b(you|your|yours)\b", re.IGNORECASE)
 
 
 def _export_eligible(status: str) -> bool:
@@ -620,6 +633,18 @@ def _export_eligible(status: str) -> bool:
     except AssessmentExportBlockedError:
         return False
     return True
+
+
+def _two_source_graph(workspace: Path, ids):
+    """Two independent owner records, so a pattern claim has real support."""
+
+    facts = prepare_facts(workspace, ids, count=2)
+    signals = run_stage5(
+        workspace,
+        FakeContractRunner([signal_response(list(facts))]),
+        ids,
+    ).current_signals
+    return facts, tuple(item.id for item in signals)
 
 
 def _snapshot_with_claim(workspace: Path, ids, facts, signals, claim: str):
@@ -670,7 +695,8 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
     runner = ADAPTER_REGISTRY[selection.adapter].build_runner(
         config, REPOSITORY_ROOT
     )
-    ids, facts, signals = prepare_graph(workspace)
+    ids = SignalIds()
+    facts, signals = _two_source_graph(workspace, ids)
 
     def verify(claim: str) -> dict[str, tuple[str, str, tuple[str, ...]]]:
         """Verify one snapshot live; return each claim's finding by its prose."""
@@ -710,23 +736,25 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
     addressed = verify(SECOND_PERSON_CLAIM)
     subject_free = verify(SUBJECT_FREE_TWIN)
 
-    # The named ground: no finding may cite the licensed form, and a quoted
-    # unsupported phrase may not carry a second-person token at all, however
-    # much surrounding claim text the quote includes.
-    for _status, reason, phrases in addressed.values():
-        lowered = reason.lower()
-        assert not any(term in lowered for term in VOICE_REASON_TERMS), addressed
-        assert not any(SECOND_PERSON_TOKENS.search(item) for item in phrases), (
-            addressed
-        )
+    # No quoted unsupported phrase may be the bare pronoun: that names the
+    # form itself, and nothing else in a candidate can be quoted as just
+    # "you".
+    for _status, _reason, phrases in addressed.values():
+        assert not any(
+            item.strip().strip(".,\"'").lower() in BARE_SECOND_PERSON
+            for item in phrases
+        ), addressed
 
     # The unnamed ground: the twins assert the same content over the same
-    # graph, so every evidence ground reaches both. Any status lowering the
-    # addressed wording alone receives is therefore a voice verdict under any
-    # phrasing, and §16.11's own export gate — the consequence #219 reported —
-    # is the comparison, not a hand-listed status order.
+    # graph, so every evidence ground reaches both. Any lowering the addressed
+    # wording alone receives is therefore a voice verdict however it is
+    # phrased — the check the reason vocabulary cannot make.
     target = addressed[SECOND_PERSON_CLAIM]
     twin = subject_free[SUBJECT_FREE_TWIN]
+    assert STATUS_SEVERITY.index(target[0]) <= STATUS_SEVERITY.index(
+        twin[0]
+    ), (target, twin)
+    # #219's own consequence, stated in its own terms rather than by rank.
     assert _export_eligible(target[0]) or not _export_eligible(twin[0]), (
         target,
         twin,
