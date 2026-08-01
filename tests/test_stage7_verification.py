@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import sqlite3
 
 import pytest
@@ -586,6 +587,47 @@ def test_raw_log_reset_purges_verification_findings(workspace: Path) -> None:
         ).fetchone()[0] == 0
 
 
+SECOND_PERSON_CLAIM = "You currently show a provenance-aware working pattern."
+SUBJECT_FREE_TWIN = (
+    "Recorded work currently shows a provenance-aware working pattern."
+)
+# Voice vocabulary a §16.14 rejection reaches for, including the paraphrases
+# a model may use instead of the § number.
+VOICE_REASON_TERMS = (
+    "16.14",
+    "second person",
+    "second-person",
+    "grammatical person",
+    "pronoun",
+    "mirror voice",
+    "owner reference",
+    "owner-reference",
+    "refers to the owner",
+    "referring to the owner",
+    "addresses the owner",
+    "addressing the owner",
+)
+SECOND_PERSON_TOKENS = re.compile(r"\b(you|your|yours)\b", re.IGNORECASE)
+
+
+def _snapshot_with_claim(workspace: Path, ids, facts, signals, claim: str):
+    """Generate one snapshot whose single non-summary claim carries `claim`."""
+
+    payload = json.loads(
+        assessment_response(fact_ids=list(facts), signal_ids=list(signals))
+    )
+    payload["self_claims"][0]["claim"] = claim
+    generated = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [json.dumps(payload, separators=(",", ":")).encode("utf-8")]
+        ),
+        ids,
+    )
+    assert generated.snapshot_id is not None
+    return generated
+
+
 @pytest.mark.live
 def test_live_verifier_accepts_the_second_person_owner_reference(
     workspace: Path,
@@ -594,9 +636,13 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
 
     Issue #219 reproduction: with §16.14 encoded as a prohibition only, four
     live Stage 7 runs rejected ordinary second-person claim prose, so every
-    export and §17 render refused. The Stage 6 fixture below carries exactly
-    the two licensed forms — a second-person claim and a subject-free
-    narrative summary — so a §16.14 rejection here is the inversion itself.
+    export and §17 render refused.
+
+    The same claim is verified twice over one evidence graph, once in the
+    second person and once in §16.14's other licensed form. Evidence grounds
+    apply to both wordings, so a status the second-person run reaches and its
+    subject-free twin does not is a voice verdict however it is phrased —
+    which no reason-vocabulary denylist alone could establish.
     """
 
     config_path = workspace / ".exp2res" / "config.toml"
@@ -612,50 +658,55 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
     runner = ADAPTER_REGISTRY[selection.adapter].build_runner(
         config, REPOSITORY_ROOT
     )
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
-    with read_database(workspace) as connection:
-        prose = [
-            row["claim"]
-            for row in connection.execute(
-                "SELECT claim FROM self_claims WHERE snapshot_id = ? ORDER BY id",
-                (generated.snapshot_id,),
-            )
+    ids, facts, signals = prepare_graph(workspace)
+
+    def verify(claim: str) -> list[tuple[str, str, tuple[str, ...]]]:
+        generated = _snapshot_with_claim(workspace, ids, facts, signals, claim)
+        with read_database(workspace) as connection:
+            stored = [
+                row["claim"]
+                for row in connection.execute(
+                    "SELECT claim FROM self_claims WHERE snapshot_id = ?",
+                    (generated.snapshot_id,),
+                )
+            ]
+        assert claim in stored, stored
+        result = run_assessment_verification(
+            workspace,
+            snapshot_id=generated.snapshot_id,
+            selection=selection,
+            budgets=budgets(
+                transport_attempt_cap=1, invocation_deadline_seconds=300.0
+            ),
+            runner=runner,
+            id_factory=ids,
+            clock=lambda: FIXED_NOW,
+            sleeper=lambda _seconds: None,
+            jitter=lambda lower, _upper: lower,
+        )
+        return [
+            (item.status, item.reason, tuple(item.unsupported_phrases))
+            for item in result.findings
         ]
-    assert any(item.startswith("You ") for item in prose), prose
-    result = run_assessment_verification(
-        workspace,
-        snapshot_id=generated.snapshot_id,
-        selection=selection,
-        budgets=budgets(
-            transport_attempt_cap=1, invocation_deadline_seconds=300.0
-        ),
-        runner=runner,
-        id_factory=ids,
-        clock=lambda: FIXED_NOW,
-        sleeper=lambda _seconds: None,
-        jitter=lambda lower, _upper: lower,
-    )
-    reported = [
-        (item.status, item.reason, tuple(item.unsupported_phrases))
-        for item in result.findings
-    ]
-    # The synthetic fixture's thin evidence can legitimately ground a
-    # non-passing status, so the status itself is not asserted; what this
-    # pins is that the owner reference is never the ground.
-    for _status, reason, phrases in reported:
+
+    addressed = verify(SECOND_PERSON_CLAIM)
+    subject_free = verify(SUBJECT_FREE_TWIN)
+
+    # The named ground: no finding may cite the licensed form, and a quoted
+    # unsupported phrase may not carry a second-person token at all, however
+    # much surrounding claim text the quote includes.
+    for _status, reason, phrases in addressed:
         lowered = reason.lower()
-        assert not any(
-            term in lowered
-            for term in (
-                "16.14",
-                "second person",
-                "second-person",
-                "owner reference",
-                "refers to the owner",
-                "addresses the owner",
-            )
-        ), reported
-        assert not any(
-            phrase.strip().strip(".,").lower() in {"you", "your", "yours"}
-            for phrase in phrases
-        ), reported
+        assert not any(term in lowered for term in VOICE_REASON_TERMS), addressed
+        assert not any(SECOND_PERSON_TOKENS.search(item) for item in phrases), (
+            addressed
+        )
+
+    # The unnamed ground: the two wordings assert the same content over the
+    # same graph, so a rejection only the second-person run reaches is the
+    # inversion under any phrasing.
+    assert [status for status, _reason, _phrases in addressed].count(
+        "rejected"
+    ) <= [status for status, _reason, _phrases in subject_free].count(
+        "rejected"
+    ), (addressed, subject_free)

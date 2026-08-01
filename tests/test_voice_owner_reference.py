@@ -65,13 +65,16 @@ def test_the_verifier_licenses_the_form_it_judges_candidates_against() -> None:
     # so no reading reaches the prohibition without it.
     assert "licenses exactly two owner-referential forms" in licensed
     assert "subject-free" in licensed
-    assert "Candidate prose that addresses the owner as you" in licensed
+    assert "Addressing the owner as you" in licensed
     for consequence in (
-        "never quote it as an unsupported phrase",
-        "never ground counterevidence on it",
-        "never lower a status for it",
+        "never an unsupported phrase",
+        "never a counterevidence ground",
+        "never a reason to lower a status",
     ):
         assert consequence in licensed, consequence
+    # PR #226 review: the licence covers the grammatical form only, so it
+    # cannot be read as an exemption for what the same prose asserts.
+    assert "This exempts the form only" in licensed
 
 
 def test_generated_prose_in_goldens_carries_no_third_person_owner_nouns() -> None:
