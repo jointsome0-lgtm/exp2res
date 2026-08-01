@@ -40,21 +40,44 @@ Do not claim impact/production/customer/scale/revenue/reliability unless evidenc
 
 ## §16.7 Temporal Rule
 
-A verifier must normalize every source and candidate time expression to `OccurredAt` before comparing precision. A candidate with no temporal expression does not introduce a precision claim.
+1. A verifier must normalize every source and candidate time expression to `OccurredAt` before comparing precision.
+2. A candidate with no temporal expression does not introduce a precision claim.
+3. Temporal comparisons in this rule use the UTC instant under §12 rule 3.
+4. For non-range values, the normative order from weakest to strongest is `unknown < year < quarter < month < week < exact_day < exact_datetime`.
+5. For comparison with ranges, normalize those non-range values to maximum uncertainty widths:
+   - `unknown` is unbounded.
+   - `year` is 366 days.
+   - `quarter` is 92 days.
+   - `month` is 31 days.
+   - `week` is 7 days.
+   - `exact_day` is 1 day.
+   - `exact_datetime` is zero.
+6. For containment and widening checks, normalize an `OccurredAt` to an anchored uncertainty interval:
+   - `unknown` is the unbounded timeline.
+   - `exact_datetime` is the singleton at `start`.
+   - Every other non-range value is the half-open interval from `start` to `start +` its maximum uncertainty width under rule 5.
+   - A closed `date_range` / `approximate_range` uses the half-open interval `[start, end)`.
+   - An open-ended range (§11.1) uses `[start, ∞)`, anchored below and unbounded above.
+7. An extractor candidate is contained only when its normalized interval is a subset of its governing record's interval (§13.3 rule 10).
+8. The extractor must not re-align the source anchor to manufacture containment.
+9. Where an open-ended placement is the governing interval of a containment check (§13.3 rule 2, §15.2), a bounded candidate is tested against the placement's **attested window** `[start, R.recorded_at)`, in which `R` is the `RawLog` carrying the placement — for a derived row, its governing record under §13.3 rule 10.
 
-Temporal comparisons in this rule use the UTC instant under §12 rule 3.
+   An open-ended placement is unbounded as a statement about the future but bounded as evidence, because the record carrying it could attest only what had already happened when it was recorded.
+10. An open-ended candidate is instead tested against the unclipped `[start, ∞)` and is contained exactly when its `start` is at or after the governing `start`, which keeps §13.3 rule 2's default copy legal at any attested width.
+11. The clip in rule 9 applies to open-ended placements only: a closed range keeps its stated `[start, end)` even when `end` falls after `recorded_at`, because the owner stated that bound.
+12. An attested window that is empty or inverted — a `start` at or after `recorded_at` — contains nothing, so a record of activity that has not yet begun licenses no bounded narrowing at all.
+13. An open-ended candidate is never contained in a closed governing interval, because replacing a stated end with no end is widening.
+14. In the entailment direction, a selected open-ended support keeps `[start, ∞)` and is a subset of no bounded candidate: an ongoing record never by itself entails a bounded placement, so both directions fail toward the weaker claim.
+15. For a closed `date_range` or `approximate_range`, width is `end - start`; inverted or zero-width bounds are invalid (§11.1) and verification fails closed.
+16. An open-ended range's width is unbounded, so it is the weakest range form: every closed candidate width is narrower than it, and bounding an ongoing period is an upgrade requiring additional linked evidence that states the bound.
+17. A narrower width is more precise.
+18. At equal width, `approximate_range` is weaker than `date_range` or a non-range value; changing from approximate to exact bounds at the same width is therefore an upgrade.
+19. A candidate upgrades temporal precision when its normalized width is narrower than the strongest precision supported by its linked evidence, or when it strengthens exactness at equal width.
+20. The verifier must reject that candidate unless additional linked evidence supports the stronger precision.
+21. An open-ended placement supports exactly one temporal statement — activity from `start` with no recorded end as of `R.recorded_at` — and says nothing about the reading present.
+22. Generated content that supplies an end date, or that asserts continuation past `R.recorded_at` in phrasing such as "to date", "currently", or "still ongoing today", claims temporal information no evidence carries and fails this rule within §16.12's generated-voice scope; a source excerpt keeps its own words unchanged.
 
-For non-range values, the normative order from weakest to strongest is `unknown < year < quarter < month < week < exact_day < exact_datetime`. For comparison with ranges, normalize these values to maximum uncertainty widths: `unknown` is unbounded, `year` is 366 days, `quarter` is 92 days, `month` is 31 days, `week` is 7 days, `exact_day` is 1 day, and `exact_datetime` is zero.
-
-For containment and widening checks, normalize an `OccurredAt` to an anchored uncertainty interval. `unknown` is the unbounded timeline; `exact_datetime` is the singleton at `start`; every other non-range value is the half-open interval from `start` to `start +` its maximum uncertainty width above; a closed `date_range` / `approximate_range` uses the half-open interval `[start, end)`; and an open-ended range (§11.1) uses `[start, ∞)`, anchored below and unbounded above. An extractor candidate is contained only when its normalized interval is a subset of its governing record's interval (§13.3 rule 10). The extractor must not re-align the source anchor to manufacture containment.
-
-An open-ended placement is unbounded as a statement about the future but bounded as evidence, because the record carrying it could attest only what had already happened when it was recorded. Where an open-ended placement is the governing interval of a containment check (§13.3 rule 2, §15.2), a bounded candidate is therefore tested against the placement's **attested window** `[start, R.recorded_at)`, in which `R` is the `RawLog` carrying the placement — for a derived row, its governing record under §13.3 rule 10 — while an open-ended candidate is tested against the unclipped `[start, ∞)` and is contained exactly when its `start` is at or after the governing `start`, which keeps rule 2's default copy legal at any attested width. The clip applies to open-ended placements only: a closed range keeps its stated `[start, end)` even when `end` falls after `recorded_at`, because the owner stated that bound. An attested window that is empty or inverted — a `start` at or after `recorded_at` — contains nothing, so a record of activity that has not yet begun licenses no bounded narrowing at all. An open-ended candidate is never contained in a closed governing interval, because replacing a stated end with no end is widening. In the entailment direction, a selected open-ended support keeps `[start, ∞)` and is a subset of no bounded candidate: an ongoing record never by itself entails a bounded placement, so both directions fail toward the weaker claim.
-
-For a closed `date_range` or `approximate_range`, width is `end - start`; inverted or zero-width bounds are invalid (§11.1) and verification fails closed. An open-ended range's width is unbounded, so it is the weakest range form: every closed candidate width is narrower than it, and bounding an ongoing period is an upgrade requiring additional linked evidence that states the bound. A narrower width is more precise. At equal width, `approximate_range` is weaker than `date_range` or a non-range value; changing from approximate to exact bounds at the same width is therefore an upgrade.
-
-A candidate upgrades temporal precision when its normalized width is narrower than the strongest precision supported by its linked evidence, or when it strengthens exactness at equal width. The verifier must reject that candidate unless additional linked evidence supports the stronger precision.
-
-An open-ended placement supports exactly one temporal statement — activity from `start` with no recorded end as of `R.recorded_at` — and says nothing about the reading present. Generated content that supplies an end date, or that asserts continuation past `R.recorded_at` in phrasing such as "to date", "currently", or "still ongoing today", claims temporal information no evidence carries and fails this rule within §16.12's generated-voice scope; a source excerpt keeps its own words unchanged. §17 owns the deterministic rendering that keeps the distinction visible in the mirror.
+§17 owns the deterministic rendering that keeps the distinction visible in the mirror.
 
 ## §16.8 Employment Rule
 
@@ -98,22 +121,46 @@ You have depression / ADHD / anxiety disorder.
 
 ## §16.11 Verification-Status Semantics and Consumer Gates
 
-`VerificationStatus` has one operational meaning per member and is enforced through role-aware allowlists. The Stage 10 column distinguishes a snapshot anchor from a self-claim input; verified-bullet-pack export considers its snapshot anchor, source self-claims, and `ResumeBullet`; assessment export considers its `AssessmentSnapshot` and claim presentation.
+`VerificationStatus` has one operational meaning per member and is enforced through role-aware allowlists. The Stage 10 gate distinguishes a snapshot anchor from a self-claim input; verified-bullet-pack export considers its snapshot anchor, source self-claims, and `ResumeBullet`; assessment export considers its `AssessmentSnapshot` and claim presentation.
 
-| Status | Meaning | May feed Stage 10 | May pass verified-bullet-pack export | May pass assessment export |
-|---|---|---|---|---|
-| `unverified` | No successful semantic verifier verdict exists for the current row. | No | No | No |
-| `supported` | Every material assertion is adequately grounded in current evidence. | Snapshot anchor and self-claim | Snapshot anchor, source self-claim, and bullet | Snapshot and claim presentation |
-| `partially_supported` | A grounded core remains, but some phrasing or inference is not fully supported. | Snapshot anchor only | Snapshot anchor only | Snapshot and claim presentation, visibly labeled |
-| `inferred_but_acceptable` | A bounded inference is acceptable inside the mirror but not as an external claim. | Snapshot anchor only | Snapshot anchor only | Snapshot and claim presentation, visibly labeled |
-| `needs_clarification` | Current evidence is too incomplete or ambiguous for a safe conclusion. | No | No | Snapshot and claim presentation as uncertainty or a question |
-| `contradicted` | Current evidence materially conflicts with the assertion. | No | No | Snapshot and claim presentation with inline counterevidence and any coexisting detection row visible |
-| `unsupported` | Current evidence does not adequately support the assertion. | No | No | No |
-| `rejected` | The candidate violates a verification rule and requires replacement rather than qualification. | No | No | No |
+Each member, its required meaning, and the roles it may enter at each of the three gates — Stage 10, verified-bullet-pack export, and assessment export:
 
-Thus the Stage 10 snapshot-anchor allowlist is exactly `supported`, `partially_supported`, and `inferred_but_acceptable`; only a `supported` self-claim may guide bullet generation, and only a `supported` bullet may enter the verified bullet pack. Assessment export permits `supported`, `partially_supported`, `inferred_but_acceptable`, `needs_clarification`, and `contradicted` snapshots because the mirror must preserve visibly labeled weakness and conflict. `unverified` blocks all three gated consumer classes in the table: validation or generation alone is not verification.
+- **`unverified`.** No successful semantic verifier verdict exists for the current row.
+  - May feed Stage 10: no.
+  - May pass verified-bullet-pack export: no.
+  - May pass assessment export: no.
+- **`supported`.** Every material assertion is adequately grounded in current evidence.
+  - May feed Stage 10: snapshot anchor and self-claim.
+  - May pass verified-bullet-pack export: snapshot anchor, source self-claim, and bullet.
+  - May pass assessment export: snapshot and claim presentation.
+- **`partially_supported`.** A grounded core remains, but some phrasing or inference is not fully supported.
+  - May feed Stage 10: snapshot anchor only.
+  - May pass verified-bullet-pack export: snapshot anchor only.
+  - May pass assessment export: snapshot and claim presentation, visibly labeled.
+- **`inferred_but_acceptable`.** A bounded inference is acceptable inside the mirror but not as an external claim.
+  - May feed Stage 10: snapshot anchor only.
+  - May pass verified-bullet-pack export: snapshot anchor only.
+  - May pass assessment export: snapshot and claim presentation, visibly labeled.
+- **`needs_clarification`.** Current evidence is too incomplete or ambiguous for a safe conclusion.
+  - May feed Stage 10: no.
+  - May pass verified-bullet-pack export: no.
+  - May pass assessment export: snapshot and claim presentation as uncertainty or a question.
+- **`contradicted`.** Current evidence materially conflicts with the assertion.
+  - May feed Stage 10: no.
+  - May pass verified-bullet-pack export: no.
+  - May pass assessment export: snapshot and claim presentation with inline counterevidence and any coexisting detection row visible.
+- **`unsupported`.** Current evidence does not adequately support the assertion.
+  - May feed Stage 10: no.
+  - May pass verified-bullet-pack export: no.
+  - May pass assessment export: no.
+- **`rejected`.** The candidate violates a verification rule and requires replacement rather than qualification.
+  - May feed Stage 10: no.
+  - May pass verified-bullet-pack export: no.
+  - May pass assessment export: no.
 
-Stage 6 initializes every new claim and snapshot to `unverified`. Stage 7 verifies every claim, then computes the snapshot status atomically from the complete claim-status set. Any `unverified` claim leaves the snapshot `unverified`; an empty claim set is invalid under §11.7/§12 and cannot be aggregated; otherwise the first status present in this most-restrictive-first precedence is the aggregate:
+Thus the Stage 10 snapshot-anchor allowlist is exactly `supported`, `partially_supported`, and `inferred_but_acceptable`. Only a `supported` self-claim may guide bullet generation, and only a `supported` bullet may enter the verified bullet pack. Assessment export permits `supported`, `partially_supported`, `inferred_but_acceptable`, `needs_clarification`, and `contradicted` snapshots because the mirror must preserve visibly labeled weakness and conflict. `unverified` blocks all three gated consumer classes above: validation or generation alone is not verification.
+
+Stage 6 initializes every new claim and snapshot to `unverified`. Stage 7 verifies every claim, then computes the snapshot status atomically from the complete claim-status set. Any `unverified` claim leaves the snapshot `unverified`. An empty claim set is invalid under §11.7/§12 and cannot be aggregated. Otherwise the first status present in this most-restrictive-first precedence is the aggregate:
 
 ```text
 rejected
@@ -125,7 +172,7 @@ inferred_but_acceptable
 supported
 ```
 
-Stage 7 is the only operation that may write this aggregate while the snapshot is current. Claim verification fields, the aggregate, and dependent branch/bullet supersession commit in one database transaction. Stage 7 and assessment export must reject a snapshot unless exactly one member claim is a `narrative_summary` whose claim text equals `AssessmentSnapshot.summary`; every gated consumer must also reject a stored aggregate that does not equal a fresh reduction of the current claims. Manifest-backed managed-set removal follows §13's stale-export invalidation rule and cannot roll back that database state. Stage 10 initializes bullets to `unverified`, and Stage 11 alone assigns their semantic verdicts.
+Stage 7 is the only operation that may write this aggregate while the snapshot is current. Claim verification fields, the aggregate, and dependent branch/bullet supersession commit in one database transaction. Stage 7 and assessment export must reject a snapshot unless exactly one member claim is a `narrative_summary` whose claim text equals `AssessmentSnapshot.summary`. Every gated consumer must also reject a stored aggregate that does not equal a fresh reduction of the current claims. Manifest-backed managed-set removal follows §13's stale-export invalidation rule and cannot roll back that database state. Stage 10 initializes bullets to `unverified`, and Stage 11 alone assigns their semantic verdicts.
 
 ## §16.12 Generated-Voice Boundary
 
@@ -134,15 +181,40 @@ Verification has two orthogonal scopes:
 1. Structural validation applies to every payload: required keys, field types, closed-enum values, typed-reference resolution, current/superseded constraints, §16.1 provenance chains, and §16.11 status semantics and allowlists. Natural-language origin never exempts malformed structure.
 2. The natural-language rules in §16.2–§16.10 bind only Exp2Res-authored voice. By default this includes generated fact, signal, claim, gap, contradiction, verifier, and bullet language from §15; system-authored report prose in §17; and generated bullet-pack prose in §18. §16.3, §16.9, and §16.10 use this boundary explicitly. For §16.4–§16.8, source text may be an evidence operand, but only the generated candidate phrase can violate the rule.
 
-The §16.2–§16.10 prohibitions are owner-referential: they constrain generated language that characterizes the owner — skill, experience, identity, health, impact — wherever it appears. A generated description of an external demand, such as §15.9 `ParsedJD` requirement, signal, keyword, or red-flag text, remains generated voice for structural validation and §15.9's parse-fidelity rules, but faithfully preserved demand wording ("expert Python", "production operations") characterizes the vacancy, not the owner; §16.3–§16.10 neither reject it nor force its rewriting. The moment any Exp2Res-authored text asserts that the owner meets a demand — in a bullet, claim, or report line — that assertion is owner-referential generated voice and every applicable rule binds in full.
+**Owner-referential scope of §16.2–§16.10.**
 
-Source voice is owner or system-of-record material, not an Exp2Res claim. `RawLog.raw_text`, owner-authored gap-answer text, `JobDescription.raw_text`, imported artifact content, and natural-language values in §19 payloads receive structure-only validation at ingestion. Voice rules may consult them as evidence but must never reject, rewrite, redact, normalize, or block their persistence because of their wording. A retained source may therefore contain flattery terms, permanent-identity wording, diagnostic language, metrics, production claims, or employment language without itself violating §16.
+- The §16.2–§16.10 prohibitions are owner-referential: they constrain generated language that characterizes the owner — skill, experience, identity, health, impact — wherever it appears.
+- A generated description of an external demand, such as §15.9 `ParsedJD` requirement, signal, keyword, or red-flag text, remains generated voice for structural validation and §15.9's parse-fidelity rules.
+- Faithfully preserved demand wording ("expert Python", "production operations") characterizes the vacancy, not the owner; §16.3–§16.10 neither reject it nor force its rewriting.
+- The moment any Exp2Res-authored text asserts that the owner meets a demand — in a bullet, claim, or report line — that assertion is owner-referential generated voice and every applicable rule binds in full.
 
-Every natural-language field emitted by an LLM is generated voice by default, including parser text, detector questions/descriptions, verifier counterevidence/reasons, warnings, and text that merely resembles a quotation. A rendered segment retains source voice only when its contract carries a typed source reference and the renderer verifies the segment byte-for-byte against the referenced persisted source value or a contiguous substring of it. Untagged, unresolved, normalized, or paraphrased text is generated voice. Validators scan every generated segment and only the structure around a validated source segment; they must not concatenate mixed-origin text and run a full-blob voice scan.
+**Source voice.**
 
-`GapQuestion.question` is generated voice and must pass §16 before Stage 4 persistence. At `gaps answer` capture, the service verifies that `RawLog.metadata.question_text` is an exact copy of that already validated question. Once copied into the owner-controlled raw record, the field is immutable source context for later extraction and is not rewritten or blocked by a later voice scan; this one-way handoff cannot admit unvalidated question text. In every case, a voice finding must never force a rewrite of owner memory or system-of-record material.
+- Source voice is owner or system-of-record material, not an Exp2Res claim.
+- `RawLog.raw_text`, owner-authored gap-answer text, `JobDescription.raw_text`, imported artifact content, and natural-language values in §19 payloads receive structure-only validation at ingestion.
+- Voice rules may consult them as evidence.
+- Voice rules must never reject, rewrite, redact, normalize, or block their persistence because of their wording.
+- A retained source may therefore contain flattery terms, permanent-identity wording, diagnostic language, metrics, production claims, or employment language without itself violating §16.
 
-This subsection does not change §16.1 or any §16.11 status meaning, aggregation rule, or consumer allowlist. Voice compliance is a phrase/content check on generated candidates; status gates remain the independent permission layer for assessment and verified-bullet-pack consumers.
+**Which segments are generated voice.**
+
+- Every natural-language field emitted by an LLM is generated voice by default, including parser text, detector questions/descriptions, verifier counterevidence/reasons, warnings, and text that merely resembles a quotation.
+- A rendered segment retains source voice only when its contract carries a typed source reference and the renderer verifies the segment byte-for-byte against the referenced persisted source value or a contiguous substring of it.
+- Untagged, unresolved, normalized, or paraphrased text is generated voice.
+- Validators scan every generated segment and only the structure around a validated source segment.
+- Validators must not concatenate mixed-origin text and run a full-blob voice scan.
+
+**Gap questions crossing into source context.**
+
+- `GapQuestion.question` is generated voice and must pass §16 before Stage 4 persistence.
+- At `gaps answer` capture, the service verifies that `RawLog.metadata.question_text` is an exact copy of that already validated question.
+- Once copied into the owner-controlled raw record, the field is immutable source context for later extraction and is not rewritten or blocked by a later voice scan; this one-way handoff cannot admit unvalidated question text.
+- In every case, a voice finding must never force a rewrite of owner memory or system-of-record material.
+
+**Relation to the other subsections.**
+
+- This subsection does not change §16.1 or any §16.11 status meaning, aggregation rule, or consumer allowlist.
+- Voice compliance is a phrase/content check on generated candidates; status gates remain the independent permission layer for assessment and verified-bullet-pack consumers.
 
 ## §16.13 Language Scope
 
