@@ -15,7 +15,7 @@ The core idea became: honest model of self from owner-controlled evidence protec
 I emphasized truth over comfort, provenance, verifier gates, and no automatic semantic promotion from activity to skill.
 ```
 
-The retrospective capture operation persists this text as a `RawLog` with `occurred = {start: 2026-06-01T00:00:00+02:00, end: 2026-08-01T00:00:00+02:00, precision: approximate_range, confidence: medium}` — bounds are offset-aware `datetime` values at every precision (§11.1), and `precision`, not the representational midnight time-of-day, carries the temporal meaning — and creates its linked `EvidenceItem(strength=manual_claim)` before fact extraction starts (§13.1). The demo contains no narrower temporal evidence, so both facts inherit that placement unchanged.
+The retrospective capture operation persists this text as a `RawLog` with `occurred = {start: 2026-06-01T00:00:00+02:00, end: 2026-08-01T00:00:00+02:00, precision: approximate_range, confidence: medium}`. Those bounds are offset-aware `datetime` values at every precision (§11.1), and `precision`, not the representational midnight time-of-day, carries the temporal meaning. The same operation creates the log's linked `EvidenceItem(strength=manual_claim)` before fact extraction starts (§13.1). The demo contains no narrower temporal evidence, so both facts inherit that placement unchanged.
 
 ## §23.2 Extracted Facts
 
@@ -119,8 +119,8 @@ The complete `bullet_pack.md` for this small branch is:
 ## Education
 ```
 
-Both nonduplicate bullets have `supported` §16.11 findings; neither claims production use, metrics, employment, or unsupported scale. Their persisted `ResumeBullet` rows render in §13.10's deterministic order, and every rendered sentence resolves through the closed §13.12 evidence map to its typed claim/signal/fact/evidence closure.
+Both nonduplicate bullets have `supported` §16.11 findings. Neither claims production use, metrics, employment, or unsupported scale. Their persisted `ResumeBullet` rows render in §13.10's deterministic order. Every rendered sentence resolves through the closed §13.12 evidence map to its typed claim/signal/fact/evidence closure.
 
-The complete manifest-backed `out/branch/<branch-id>/` set contains and hashes `bullet_pack.md`, `evidence_map.json`, `verification_report.json`, `gaps.json`, and `contradictions.json`, plus `manifest.json`. For this snapshot, the two latter companions contain their required closed version-1 documents with empty `gaps` and `contradictions` lists; no filler text is generated for either empty set.
+The complete manifest-backed `out/branch/<branch-id>/` set contains and hashes `bullet_pack.md`, `evidence_map.json`, `verification_report.json`, `gaps.json`, and `contradictions.json`, plus `manifest.json`. For this snapshot, the `gaps.json` and `contradictions.json` companions contain their required closed version-1 documents with empty `gaps` and `contradictions` lists. No filler text is generated for either empty set.
 
 ---
