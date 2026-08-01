@@ -52,7 +52,7 @@ TWO_HALF_PINS = (
     (
         "assessment-verifier",
         "§16.4",
-        "supports only unknown",
+        "at or below the strongest level the linked evidence explicitly supports",
         "ownership above explicit support",
     ),
     (
@@ -106,8 +106,8 @@ TWO_HALF_PINS = (
     (
         "fact-extractor",
         "§16.4",
-        "strongest level the evidence that fact selects explicitly supports",
-        "never raises it",
+        "at or below the strongest level the evidence that fact selects",
+        "never raises the ceiling",
     ),
 )
 

@@ -595,10 +595,14 @@ def test_raw_log_reset_purges_verification_findings(workspace: Path) -> None:
 # §9.4-supported recurrence rather than a single-source generalization, and
 # no continuation word invites a §16.7 objection. A stable, well-grounded
 # verdict is what makes the twin comparison mean anything.
-SECOND_PERSON_CLAIM = "You show a provenance-aware working pattern across the recorded work."
-SUBJECT_FREE_TWIN = (
-    "A provenance-aware working pattern appears across the recorded work."
-)
+#
+# PR #226 review: the pair differs in the owner-referential subject and in
+# nothing else — same predicate, same assertive force, same hedging — so a
+# status gap between them can only be the grammatical person. An earlier pair
+# ("You show …" against "A pattern appears …") also varied assertiveness,
+# which §16.9 lets a provider judge differently on its own.
+SECOND_PERSON_CLAIM = "Your recorded work shows a provenance-aware working pattern."
+SUBJECT_FREE_TWIN = "The recorded work shows a provenance-aware working pattern."
 # A reason-vocabulary scan was tried and removed. It cannot tell a complaint
 # from an endorsement: live runs produced "the second person and owner
 # reference form are valid, but …" and "the dimension and mirror voice are
