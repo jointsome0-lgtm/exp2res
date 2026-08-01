@@ -14,6 +14,7 @@ All LLM calls must:
 8. Apply §11's Model validation policy, including its `extra = forbid` rule for every output shape.
 9. Before any provider call, deterministically preflight the fully serialized payload against §11's boundary limits alongside §29.4's credential preflight; a failure is local and fail-closed and reports only a non-secret diagnostic.
 10. Emit every generated natural-language output under the V1 language scope in §16.13 and, where it refers to the owner, in the §16.14 owner-reference form.
+11. Carry both halves of every §16 rule the call's fixed instruction encodes, wherever the rule states both: the form it licenses as well as the form it forbids. A prohibition alone leaves the licensed form unnamed, so a model that must produce or judge that form resolves the gap by treating the rule's whole subject matter as suspect — and where another § requires the unnamed form, the two instructions disagree outright. Encoding a rule by its violation alone is a fidelity defect against that §, independent of any model's behavior. A rule that licenses nothing, such as §16.10's diagnostic ban, has only the one half to carry.
 
 §15.10 owns transport attempts, provider capability checks, runtime budgets, context-overflow refusal, and cancellation. Its transport retry does not widen the response-validation retry below, which remains limited to schema and reference invalidity. §15.12 owns the versioned isolated agent-runner protocol — the per-invocation contract workspace whose §15.1 retry adds only content-free `validation_errors.json`, wrapper-provided read confinement, the native schema-constrained final-message result channel (fenced JSON parsed from agent prose is forbidden), and the two-half fail-closed capability preflight with §21.50's provider-free canary; an agent-backed adapter executes every §15 call under it.
 
@@ -324,6 +325,8 @@ Output:
 Every `status` uses the canonical meaning in §16.11. Stage 7 validates one finding for every claim in the snapshot and derives the snapshot's own status from those claim results; the writer or verifier may not assign a more permissive snapshot label independently.
 
 `suggested_rewrite` is owner-facing advisory output presented through §14.9 and follows §11.14's inspect-only lifecycle; revised wording requires a Stage 6 replacement generation (§13.7).
+
+Hard instructions: judge each §16 rule this contract enforces in both halves under §15.1 rule 11 — the licensed form as well as the violation. §16.14 in particular is stated to the verifier positively: second-person and subject-free owner reference is the form §16.14 requires of candidate prose, so it is never an `unsupported_phrases` entry, a counterevidence ground, or a reason to lower a status. Only owner reference in the first person, in the third person, or by name is the violation, and it makes the claim `rejected` under §13.7 check 12. A prohibition-only encoding would invert this check against the §15.4 writer contract, which mandates the same form.
 
 ## §15.6 Resume Writer Contract
 

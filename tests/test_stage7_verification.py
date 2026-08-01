@@ -8,11 +8,13 @@ import sqlite3
 
 import pytest
 
+from exp2res.config import load_workspace_config
 from exp2res.errors import (
     IntegrityFailureError,
     LLMInvocationError,
     SnapshotNotCurrentError,
 )
+from exp2res.llm.registry import ADAPTER_REGISTRY
 from exp2res.pipeline.stage7 import run_assessment_verification
 from exp2res.services.logs import delete_log
 from exp2res.storage.repository import (
@@ -21,7 +23,7 @@ from exp2res.storage.repository import (
 )
 from exp2res.storage.workspace import read_database, writer_database
 
-from conftest import FIXED_NOW
+from conftest import FIXED_NOW, REPOSITORY_ROOT
 from fakes import FakeContractRunner
 from test_stage3_extraction import SELECTION, budgets
 from test_stage4_detection import detector_response, run_stage4
@@ -582,3 +584,78 @@ def test_raw_log_reset_purges_verification_findings(workspace: Path) -> None:
         assert connection.execute(
             "SELECT COUNT(*) FROM verification_findings"
         ).fetchone()[0] == 0
+
+
+@pytest.mark.live
+def test_live_verifier_accepts_the_second_person_owner_reference(
+    workspace: Path,
+) -> None:
+    """§16.14: the form the mirror requires is never a Stage 7 rejection ground.
+
+    Issue #219 reproduction: with §16.14 encoded as a prohibition only, four
+    live Stage 7 runs rejected ordinary second-person claim prose, so every
+    export and §17 render refused. The Stage 6 fixture below carries exactly
+    the two licensed forms — a second-person claim and a subject-free
+    narrative summary — so a §16.14 rejection here is the inversion itself.
+    """
+
+    config_path = workspace / ".exp2res" / "config.toml"
+    config_path.write_text(
+        '[workspace]\ntimezone = "Etc/UTC"\n\n'
+        '[llm]\nadapter = "codex-cli"\nmodel = "gpt-5.6-sol"\n\n'
+        "[privacy]\nignore_paths = []\n",
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+    config = load_workspace_config(workspace).llm
+    selection = config.selection
+    runner = ADAPTER_REGISTRY[selection.adapter].build_runner(
+        config, REPOSITORY_ROOT
+    )
+    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    with read_database(workspace) as connection:
+        prose = [
+            row["claim"]
+            for row in connection.execute(
+                "SELECT claim FROM self_claims WHERE snapshot_id = ? ORDER BY id",
+                (generated.snapshot_id,),
+            )
+        ]
+    assert any(item.startswith("You ") for item in prose), prose
+    result = run_assessment_verification(
+        workspace,
+        snapshot_id=generated.snapshot_id,
+        selection=selection,
+        budgets=budgets(
+            transport_attempt_cap=1, invocation_deadline_seconds=300.0
+        ),
+        runner=runner,
+        id_factory=ids,
+        clock=lambda: FIXED_NOW,
+        sleeper=lambda _seconds: None,
+        jitter=lambda lower, _upper: lower,
+    )
+    reported = [
+        (item.status, item.reason, tuple(item.unsupported_phrases))
+        for item in result.findings
+    ]
+    # The synthetic fixture's thin evidence can legitimately ground a
+    # non-passing status, so the status itself is not asserted; what this
+    # pins is that the owner reference is never the ground.
+    for _status, reason, phrases in reported:
+        lowered = reason.lower()
+        assert not any(
+            term in lowered
+            for term in (
+                "16.14",
+                "second person",
+                "second-person",
+                "owner reference",
+                "refers to the owner",
+                "addresses the owner",
+            )
+        ), reported
+        assert not any(
+            phrase.strip().strip(".,").lower() in {"you", "your", "yours"}
+            for phrase in phrases
+        ), reported

@@ -43,8 +43,35 @@ def test_every_llm_instruction_block_pins_the_owner_reference_form() -> None:
     for name, block in INSTRUCTION_BLOCKS.items():
         assert "§16.14" in block, name
         assert "second person" in block, name
-        assert "first or third person" in block, name
-        assert "by name" in block, name
+        assert "third person" in block, name
+        assert "first person" in block or "first or third person" in block, name
+        assert "by name" in block or "by personal name" in block, name
+
+
+def test_the_verifier_licenses_the_form_it_judges_candidates_against() -> None:
+    """§15.1 rule 11: the verifier states §16.14's licensed half, not the ban alone.
+
+    Issue #219: stating §16.14 to the verifier only as a violation inverted
+    §13.7 check 12 against the §15.4 writer contract, and four live Stage 7
+    runs rejected the second-person prose §16.14 mandates. The pins below
+    are on the current licensing wording, not on §16.14 itself — a rewrite
+    that keeps both halves adjusts them.
+    """
+
+    block = ASSESSMENT_VERIFIER_INSTRUCTIONS
+    licensed, _, forbidden = block.partition("The violation is")
+    assert forbidden, "the verifier no longer names the §16.14 violation"
+    # The licensed half comes first and covers the candidate's own prose,
+    # so no reading reaches the prohibition without it.
+    assert "licenses exactly two owner-referential forms" in licensed
+    assert "subject-free" in licensed
+    assert "Candidate prose that addresses the owner as you" in licensed
+    for consequence in (
+        "never quote it as an unsupported phrase",
+        "never ground counterevidence on it",
+        "never lower a status for it",
+    ):
+        assert consequence in licensed, consequence
 
 
 def test_generated_prose_in_goldens_carries_no_third_person_owner_nouns() -> None:
