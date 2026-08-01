@@ -59,7 +59,7 @@ TWO_HALF_PINS = (
         "assessment-verifier",
         "§16.7",
         "no narrower and no more exact than the strongest precision",
-        "an interval the evidence does not place",
+        "an interval that does not contain the evidence's own",
     ),
     (
         "assessment-verifier",
@@ -118,7 +118,7 @@ TWO_HALF_PINS = (
     (
         "fact-extractor",
         "§16.8",
-        "only as a supplied record states it",
+        "only as a record among that same fact's selected evidence states it",
         "never render an independent project, a competition, or learning",
     ),
 )

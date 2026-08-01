@@ -619,19 +619,6 @@ BARE_SECOND_PERSON = frozenset({"you", "your", "yours"})
 # the wording from a one-off sample, and every trial is a live invocation.
 VOICE_TRIALS = 2
 
-# §16.11 gives each status a meaning but no total order; this is a test-local
-# severity scale over those meanings, weakest verdict last, used only to ask
-# whether the addressed wording was lowered relative to its twin.
-STATUS_SEVERITY = (
-    "supported",
-    "inferred_but_acceptable",
-    "partially_supported",
-    "needs_clarification",
-    "contradicted",
-    "unsupported",
-    "rejected",
-)
-
 
 def _export_eligible(status: str) -> bool:
     """Report §16.11's assessment-export gate through its own service seam."""
@@ -746,10 +733,10 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
     # PR #226 review: each verification is its own provider invocation, so a
     # single result on either side cannot be told from ordinary run-to-run
     # variance. Both wordings therefore get the same number of trials and are
-    # judged on their best result: a §16.14 penalty is a property of the
-    # wording and so lands on every addressed trial, while variance lands on
-    # one. Sampling the two sides differently would bias the comparison, so
-    # the trial count is shared.
+    # read the same way: a §16.14 penalty is a property of the wording and so
+    # lands on every addressed trial, while variance lands on one. Sampling
+    # the two sides differently would bias the comparison, so the trial count
+    # is shared.
     addressed_runs = tuple(verify(SECOND_PERSON_CLAIM) for _ in range(VOICE_TRIALS))
     twin_runs = tuple(verify(SUBJECT_FREE_TWIN) for _ in range(VOICE_TRIALS))
 
@@ -764,27 +751,28 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
                 for item in phrases
             ), run
 
-    def _best(runs, prose: str):
-        return min(
-            (run[prose] for run in runs),
-            key=lambda finding: STATUS_SEVERITY.index(finding[0]),
-        )
-
-    target = _best(addressed_runs, SECOND_PERSON_CLAIM)
-    twin = _best(twin_runs, SUBJECT_FREE_TWIN)
+    # §16.11 gives each status a meaning, not a rank: partially_supported and
+    # inferred_but_acceptable are different readings, neither one worse. The
+    # only ordered outcome the spec itself defines over those statuses is its
+    # export gate, so that gate — not a test-local severity scale — is what
+    # the two forms are compared on. PR #226 review: ordering incomparable
+    # categories both fails on a legitimate reading and passes on a changed
+    # verdict.
+    target = tuple(run[SECOND_PERSON_CLAIM] for run in addressed_runs)
+    twin = tuple(run[SUBJECT_FREE_TWIN] for run in twin_runs)
+    passing = {
+        "addressed": [item for item in target if _export_eligible(item[0])],
+        "subject-free": [item for item in twin if _export_eligible(item[0])],
+    }
     # The control comes first: only a twin the pipeline actually accepts
     # establishes that this graph grounds the assertion, and without that the
     # addressed side has nothing to be compared against. A blocked control is
-    # a fixture regression, not a §16.14 verdict, so it fails in its own
-    # terms rather than passing the voice check vacuously.
-    assert _export_eligible(twin[0]), twin
-    # #219's own consequence, stated in its own terms rather than by rank.
-    assert _export_eligible(target[0]), (target, twin)
-    # The unnamed ground: the twins assert the same content over the same
-    # graph and differ only in the owner-referential subject, so every
-    # evidence ground reaches both. A lowering the addressed wording receives
-    # on every trial is therefore a voice verdict however it is phrased — the
-    # check the reason vocabulary cannot make.
-    assert STATUS_SEVERITY.index(target[0]) <= STATUS_SEVERITY.index(
-        twin[0]
-    ), (target, twin)
+    # a fixture regression, not a §16.14 verdict, so it fails in its own terms
+    # rather than letting the voice check pass vacuously.
+    assert passing["subject-free"], (target, twin)
+    # #219's own consequence: with §16.14 encoded as a prohibition only, the
+    # second person never reached an exportable verdict at all. Reaching one
+    # on at least one trial is the property of the wording; requiring it on
+    # every trial would read ordinary provider variance as a voice penalty,
+    # which the subject-free control is equally subject to.
+    assert passing["addressed"], (target, twin)
