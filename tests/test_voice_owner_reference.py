@@ -57,6 +57,12 @@ TWO_HALF_PINS = (
     ),
     (
         "assessment-verifier",
+        "§16.7",
+        "no narrower and no more exact than the strongest precision",
+        "exactness upgrade beyond that support is the violation",
+    ),
+    (
+        "assessment-verifier",
         "§16.8",
         "Employment framing is licensed only",
         "as employment",
@@ -108,6 +114,12 @@ TWO_HALF_PINS = (
         "§16.4",
         "at or below the strongest level the evidence that fact selects",
         "never raises the ceiling",
+    ),
+    (
+        "fact-extractor",
+        "§16.8",
+        "only as a supplied record states it",
+        "never render an independent project, a competition, or learning",
     ),
 )
 
