@@ -75,6 +75,15 @@ DEFAULT_DECLARATION = CodexCapabilityDeclaration(
             maximum_exclusive=(0, 146, 0),
             supported_flags=REQUIRED_FLAGS,
         ),
+        # Every required flag re-verified against `codex exec --help` on
+        # codex-cli 0.146.0 (2026-08-02), each still documented with the
+        # semantics the runner depends on, before this range was declared:
+        # the declaration stays offline-authored, never a runtime probe.
+        CLITestRange(
+            minimum=(0, 146, 0),
+            maximum_exclusive=(0, 147, 0),
+            supported_flags=REQUIRED_FLAGS,
+        ),
     ),
     token_patterns=CODEX_TOKEN_PATTERNS,
     reasoning_efforts=frozenset({"minimal", "low", "medium", "high", "xhigh"}),

@@ -80,14 +80,15 @@ def test_cli_version_table_fails_closed_when_a_required_flag_is_undeclared() -> 
 
 
 def test_shipped_declaration_accepts_every_tested_codex_runtime_band() -> None:
-    """Both declared bands validate; an untested neighbour still fails closed."""
+    """Every declared band validates; an untested neighbour still fails closed."""
 
     from exp2res.llm.codex import DEFAULT_DECLARATION
 
     assert validate_cli_declaration("codex-cli 0.144.4") == "0.144.4"
     assert validate_cli_declaration("codex-cli 0.145.0") == "0.145.0"
+    assert validate_cli_declaration("codex-cli 0.146.0") == "0.146.0"
     with pytest.raises(LLMInvocationError) as caught:
-        validate_cli_declaration("codex-cli 0.146.0", DEFAULT_DECLARATION)
+        validate_cli_declaration("codex-cli 0.147.0", DEFAULT_DECLARATION)
     assert caught.value.failure_code == "capability_mismatch"
 
 
