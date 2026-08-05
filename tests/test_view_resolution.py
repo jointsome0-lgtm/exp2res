@@ -463,6 +463,36 @@ def test_a_final_entry_replaced_mid_read_is_export_changed(
     assert mirror(workspace, b"scope=global").outcome == "served"
 
 
+def test_an_entry_replaced_before_its_first_check_is_export_changed(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot_id = exported_workspace(workspace)
+    directory = final_set(workspace, snapshot_id)
+    real_is_dir = managed._is_real_dir
+    swapped: list[bool] = []
+
+    def swapping_is_dir(path: Path) -> bool:
+        if path == directory and not swapped:
+            # The entry moves between being identified and the very first
+            # observation made of it, and what takes its place is not even a
+            # directory — the shape rule 6 skips.
+            swapped.append(True)
+            replacement = directory.parent / ".replacement"
+            shutil.copytree(directory, replacement)
+            shutil.rmtree(directory)
+            directory.symlink_to(replacement, target_is_directory=True)
+        return real_is_dir(path)
+
+    monkeypatch.setattr(managed, "_is_real_dir", swapping_is_dir)
+    page = mirror(workspace, b"scope=global")
+
+    assert swapped
+    # Every observation after the entry is identified is guarded: a path that
+    # merely changed under the reader is never manual-repair state.
+    assert page.outcome == "export_changed"
+    assert b"Remove or repair" not in page.body
+
+
 def test_the_integrity_half_runs_before_the_status_half(workspace: Path) -> None:
     snapshot_id = exported_workspace(workspace)
     # A stored aggregate that no longer reduces from its own claims, whose
@@ -747,8 +777,17 @@ def test_an_expired_processing_budget_opens_no_read_transaction(
     assert page.status == 503
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        # The served projection…
+        b"scope=global",
+        # …and a refusal, which is a composed row exactly like it.
+        b"scope=nonsense",
+    ],
+)
 def test_a_budget_that_expires_during_composition_is_the_timeout(
-    workspace: Path, monkeypatch: pytest.MonkeyPatch
+    workspace: Path, monkeypatch: pytest.MonkeyPatch, query: bytes
 ) -> None:
     exported_workspace(workspace)
     expiry = time.monotonic() + 1.0
@@ -764,10 +803,10 @@ def test_a_budget_that_expires_during_composition_is_the_timeout(
 
     monkeypatch.setattr(views, "render_html", slow_render)
     page = resolve(
-        workspace, QUESTIONS_ROUTE, b"scope=global", deadline=expiry, busy_timeout_ms=50
+        workspace, QUESTIONS_ROUTE, query, deadline=expiry, busy_timeout_ms=50
     )
 
-    assert composed, "the question projection must actually have been composed"
+    assert composed, "the outcome must actually have been composed"
     # §30 rule 7: a row is this request's outcome only once it is fully
     # determined *and* composed, so an expired budget wins over the document.
     assert page.outcome == "processing_timeout"

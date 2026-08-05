@@ -820,8 +820,6 @@ def read_current_assessment_members(
     identity = _entry_identity(final_path)
     if identity is None:
         return _CURRENT_NOT
-    if not _is_real_dir(final_path):
-        return _CURRENT_RESIDUAL
 
     def _stable(verdict: CurrentAssessmentRead) -> CurrentAssessmentRead:
         # Rule 6's narrow §30 reporting exception: a failure whose validated
@@ -830,6 +828,12 @@ def read_current_assessment_members(
         if _entry_identity(final_path) != identity:
             return _CURRENT_CHANGED
         return verdict
+
+    # Every observation from here on is guarded: once the entry has been
+    # identified, a failure the reader sees because that entry was replaced
+    # under it is the concurrent publication, never manual-repair state.
+    if not _is_real_dir(final_path):
+        return _stable(_CURRENT_RESIDUAL)
 
     manifest = _inspect_set(final_path, parent, out_root)
     if manifest is None:

@@ -638,6 +638,20 @@ def _remaining(deadline: float) -> float:
     return deadline - time.monotonic()
 
 
+def _composed(page: ViewPage, deadline: float) -> ViewPage:
+    """Return one composed page, or the timeout that outlived composing it.
+
+    §14.17's ordinary deadline is an outer boundary over determining *and*
+    composing a row: a row that is not fully composed when the budget expires
+    is not this request's outcome, whatever it would have said. Only the fixed
+    timeout page itself is exempt, because it is what that expiry composes.
+    """
+
+    if page.outcome == "processing_timeout" or _remaining(deadline) > 0:
+        return page
+    return processing_timeout_page()
+
+
 def resolve(
     workspace: Path,
     route: bytes,
@@ -665,7 +679,7 @@ def resolve(
     """
 
     if route not in ROUTES:
-        return route_not_found_page()
+        return _composed(route_not_found_page(), deadline)
     try:
         selector = _parse_selector(query)
 
@@ -729,25 +743,23 @@ def resolve(
         if route == MIRROR_ROUTE:
             # §30 rule 3: exactly the revalidated member bytes, never a second
             # rendering of the same projection.
-            return ViewPage(
+            page = ViewPage(
                 outcome="served",
                 status=_STATUS["served"],
                 body=members["report.html"],
                 published_member=True,
             )
-        document = _questions_document(
-            members, export_command=_export_command(snapshot.id)
-        )
-        body = render_html(document)
-        if _remaining(deadline) <= 0:
-            # The processing deadline covers composition too: a row is only
-            # this request's outcome once it is fully determined *and*
-            # composed, so a projection that outran the budget is the timeout.
-            raise _Refusal("processing_timeout", _PROCESSING_TIMEOUT)
+        else:
+            document = _questions_document(
+                members, export_command=_export_command(snapshot.id)
+            )
+            page = ViewPage(
+                outcome="served", status=_STATUS["served"], body=render_html(document)
+            )
     except _Refusal as refusal:
-        return _refusal_page(refusal)
+        return _composed(_refusal_page(refusal), deadline)
     except (Exp2ResError, sqlite3.Error, OSError, ValueError):
         # Fail closed and say nothing more: an unexpected local failure names
         # no path, row, or exception detail (§30 rule 7).
-        return internal_error_page()
-    return ViewPage(outcome="served", status=_STATUS["served"], body=body)
+        return _composed(internal_error_page(), deadline)
+    return _composed(page, deadline)
