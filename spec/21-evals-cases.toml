@@ -713,7 +713,7 @@ Given an N-1 fixture with retained raw records, provenance links, current and su
 When exp2res db migrate succeeds
 Then the verified pre-migration backup includes the committed WAL content
 And each raw_text remains byte-for-byte identical and every other hydrated RawLog content value is preserved
-And provenance links and both current and superseded state are preserved
+And provenance links and both current and superseded state are preserved, except a layer whose deletion the registered migration explicitly defines under §12.14 — the #76 signal-layer removal deletes the derived assessment layer and everything downstream while raw records, facts, and detections are untouched
 And every one-current-generation invariant holds
 And schema_meta appends the migration row with N as its authoritative maximum
 

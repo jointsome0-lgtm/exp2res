@@ -85,7 +85,7 @@ V1 is acceptable when:
 30. The owner-controlled local workspace is the only canonical persistence domain:
     - SQLite is authoritative for raw and derived records, and managed `out/` files remain local projections.
     - Private-by-default operation performs no outbound telemetry, background sync, auto-push, implicit cloud persistence, or deferred model call.
-    - Only a foreground user-initiated pipeline run may send the exact typed inputs of §15.2–§15.9 to the explicitly selected provider under its disclosed retention terms; no other LLM or network path exists.
+    - Only a foreground user-initiated pipeline run may send the exact typed inputs of the seven active §15 contracts (§15.2, §15.4–§15.9; §15.3 is retired) to the explicitly selected provider under its disclosed retention terms; no other LLM or network path exists.
     - Prompt composition excludes credentials, tokens, ignored or non-selected material, and ambient command, environment, and filesystem content.
     - Instruction-like source text cannot alter contract behavior, output shape, or requirement matching.
     - §13.13 remains the managed-data deletion guarantee.
