@@ -517,6 +517,10 @@ Given a candidate claim cites a pattern whose counter_fact_ids are non-empty
 When the claim emits confidence high
 Then §9.4 caps the claim at medium and structured-output validation fails
 
+Given a claim cites a pattern whose supporting facts are all low while a high counter fact joins its source_fact_ids under §15.4's inclusion rule
+When the claim emits confidence medium
+Then §9.4 pattern-generalization validation fails because the cited patterns' supporting-fact maximum is low and a counter fact never raises it
+
 Given one narrow fact is the only support for a broader claim whose confidence does not exceed that fact's confidence
 When Stage 7 judges coverage under §9.4 and §13.7 rule 2
 Then insufficient breadth receives a non-passing §16.11 status
@@ -1862,7 +1866,7 @@ case = '''
 Given a current assessment snapshot that passes the §16.11 export gate
 When the assessment set is published twice from unchanged state
 Then the published set contains exactly report.md, report.html, self_claims.json, evidence_map.json, and manifest.json
-And manifest.json declares manifest_version 4 and lists report.html with its exact member hash
+And manifest.json declares manifest_version 5 and lists report.html with its exact member hash
 And report.html matches its pinned golden bytes on both runs, is UTF-8 with LF line endings and exactly one final LF, and contains no export wall-clock value, nonce, workspace path, or host name
 
 Given the same published snapshot

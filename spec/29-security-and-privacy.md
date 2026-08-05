@@ -13,10 +13,10 @@
 ## §29.2 Authorized Outward Transit and Provider Trust
 
 1. **Authorized outward transit.** Only a foreground, user-initiated §14 action that invokes a pipeline stage may authorize outward transit, and only for the synchronous §15 contract calls belonging to that run.
-   - Correction, owner-deletion, and recompute actions in §14.4, §14.11, and §14.12 carry that authorization only into the Stage 3–5 calls they synchronously orchestrate through §13.13.
+   - Correction, owner-deletion, and recompute actions in §14.4, §14.11, and §14.12 carry that authorization only into the Stage 3–4 calls they synchronously orchestrate through §13.13.
    - Stage 6–7 calls require their own §14.9 actions, and the lifecycle service gains no independent call authority.
    - The §15.1 and §15.10 retries remain inside the same foreground action (§15.10 rules 2–3).
-   - Outside one of the eight invoked §15 contracts, no component, importer, renderer, export path, or lifecycle service may call an LLM or any network endpoint.
+   - Outside one of the seven invoked §15 contracts, no component, importer, renderer, export path, or lifecycle service may call an LLM or any network endpoint.
    - §19 importers consume user-supplied local payloads under §14.5; source acquisition is outside Exp2Res.
 2. **Agent-backed adapters.** An agent-backed adapter (§15.12) executes its provider calls through the isolated agent-runner protocol.
    - The spawned agent runtime is part of the same foreground action and gains no independent call authority.
@@ -97,7 +97,7 @@
 
 ## §29.3 Exhaustive LLM Transmission Surface
 
-The following eight contracts are the complete model-call surface. The selected provider receives the fixed contract instructions and the exact declared typed input for that invocation; a data class listed here is transmitted only when the owning stage selects it under the contract and §13.
+The following seven contracts are the complete model-call surface. The selected provider receives the fixed contract instructions and the exact declared typed input for that invocation; a data class listed here is transmitted only when the owning stage selects it under the contract and §13.
 
 | Contract | Personal or third-party data visible to the selected provider |
 |---|---|

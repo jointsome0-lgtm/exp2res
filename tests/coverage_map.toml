@@ -225,21 +225,22 @@ phase = "3"
 note = "Stage 3 fact ceilings and Stage 6 claim source-maximum caps are enforced at structured output and commit; the §9.4 pattern-generalization caps await the §15.4 pattern implementation (#76 follow-up), and Stage 7 semantic breadth remains pending"
 
 ["21.32"]
-status = "covered"
+status = "partial"
 nodes = [
   "tests/test_stage7_verification.py::test_exact_closure_is_ordered_and_projects_displaced_support",
   "tests/test_stage7_verification.py::test_verifier_input_supplies_the_current_contradiction_set",
 ]
+phase = "3"
+note = "The registered closure tests prove the retired signal-bearing §15.5 bundle; the fact-only bundle with §15.4's inclusion rule lands with the #76 follow-up"
 
 ["21.33"]
 status = "partial"
 nodes = [
-  "tests/test_stage6_assessment.py::test_project_input_uses_stored_key_and_supplies_cross_project_context",
   "tests/test_stage6_assessment.py::test_folded_project_view_replacement_preserves_other_views",
   "tests/test_cli_correction.py::test_correction_copy_and_explicit_temporal_project_replacement",
 ]
 phase = "3"
-note = "Stage 6 proves stored-key subject selection, cross-project context facts, and folded view replacement identity; correction add now proves exact project and temporal copy plus explicit replacement before selected-lineage re-extraction, while broader multi-view coverage remains"
+note = "Stage 6 proves stored-key subject selection and folded view replacement identity; correction add now proves exact project and temporal copy plus explicit replacement before selected-lineage re-extraction; the context-free subject supply of the signal-free §13.6 lands with the #76 follow-up, and broader multi-view coverage remains"
 
 ["21.34"]
 status = "partial"
@@ -250,7 +251,7 @@ nodes = [
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
 phase = "4"
-note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and Stage 3-6 supersession, same-view isolation, and lifecycle-sensitive re-export are covered; resume ID-keyed paths, branch-name cases, and shell consumption remain"
+note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, same-view isolation, and lifecycle-sensitive re-export are covered; resume ID-keyed paths, branch-name cases, and shell consumption remain"
 
 ["21.35"]
 status = "partial"
@@ -628,7 +629,7 @@ nodes = [
 phase = "3"
 note = "Offline scans pin the §16.14 instruction binding in both halves — including the verifier's licensed second-person form (#219) — and keep golden generated prose free of third-person owner nouns; semantic referent judgment remains live-only, where tests/test_stage7_verification.py::test_live_verifier_accepts_the_second_person_owner_reference reproduces the licensed form under a real provider"
 ["21.55"]
-status = "covered"
+status = "partial"
 nodes = [
   "tests/test_export_html.py::test_html_member_is_deterministic_and_carries_no_render_time_value",
   "tests/test_export_html.py::test_both_report_members_render_the_same_content_in_the_same_order",

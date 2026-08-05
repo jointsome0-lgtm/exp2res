@@ -161,7 +161,7 @@ Import behavior:
 ```text
 create raw_log(entry_type=atlas_snapshot, source_type=imported_artifact, occurred=body.occurred, raw_text=body.text)
 create one evidence_item(strength=knowledge_state_snapshot, summary=body.summary, path=body.path, metadata.content_digest when non-null)
-derive facts and claims only through Stages 3–6; import promotes none directly
+derive facts and claims only through Stages 3, 4, and 6; import promotes none directly
 ```
 
 ## §19.3 GitHub Commit Contract

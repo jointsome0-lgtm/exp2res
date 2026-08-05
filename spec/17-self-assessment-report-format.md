@@ -66,7 +66,7 @@ The report carries its provenance at the claim level, inline:
 - That sources line contains typed IDs and fixed renderer-owned labels only, never explanatory factual prose.
 - That sources line is never empty for a rendered claim, because §16.1 bars a chainless claim from export.
 - The record-level closure — facts to evidence items to retained raw logs — is not repeated in the report: the §13.12 `evidence_map.json` companion is the complete machine-checkable typed link closure, while the report renders the claim-level trail for verification by reading.
-- No section dumps the four link classes as standalone ID lists.
+- No section dumps the three link classes as standalone ID lists.
 
 The tone should be:
 

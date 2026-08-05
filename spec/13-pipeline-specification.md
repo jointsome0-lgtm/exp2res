@@ -736,7 +736,7 @@ Rules:
     - The invoking command reports every invalidated view with its executable §14.9 regeneration command, and every invalidated branch with that captured context plus the §14.10 command shape — a branch command cannot be executable as printed, because §14.10 requires a current `--snapshot` that exists only after its view is regenerated.
     - Every printed command quotes each argument value with POSIX single-quote shell quoting (an embedded single quote becomes `'\''`), so a target or branch name containing whitespace or shell metacharacters stays copy-paste-safe and selects the exact stored value.
     - After raw-log owner deletion this report is command output only, never persisted derived state.
-    - A bare `recompute` retried after a crash rebuilds Stages 3–5 and reports that no current assessment view exists, pointing at §14.9; it never infers a desired view set from historical or purged rows.
+    - A bare `recompute` retried after a crash rebuilds Stages 3–4 and reports that no current assessment view exists, pointing at §14.9; it never infers a desired view set from historical or purged rows.
 10. Job-description deletion is a privacy-first dependent purge, never an FK-blocked request.
     - Before its database transaction, the service captures the selected `JobDescription` inspection projection and every current or historical `ResumeBranch` whose `job_description_id` names it, including each branch ID and name.
     - It deduplicates and attempts removal of every managed §12.14 migration backup and each exact `out/branch/<branch-id>/` set derived from those captured opaque IDs, because either may retain the deleted vacancy or generated prose.
