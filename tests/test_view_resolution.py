@@ -27,6 +27,7 @@ import exp2res.exports.managed as managed
 from exp2res.services.capture import capture_gap_answer
 from exp2res.services.export import export_assessment
 from exp2res.services.views import MIRROR_ROUTE, QUESTIONS_ROUTE, resolve
+import exp2res.services.views as views
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     read_database,
@@ -496,6 +497,55 @@ def test_a_missing_narrative_summary_names_a_selector_specific_remedy(
     assert b"assess list" in by_id.body
 
 
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        # A claim the §13.6 swap left behind in another generation.
+        ("generation_id", "01JAAAAAAAAAAAAAAAAAAAAAAA"),
+        # A member claim that is no longer current at all.
+        ("superseded_at", "2026-02-02T09:00:00+00:00"),
+        # A stored row this build can no longer hydrate.
+        ("metadata_json", "{"),
+    ],
+)
+def test_a_broken_claim_graph_is_a_named_refusal_not_an_internal_error(
+    workspace: Path, column: str, value: str
+) -> None:
+    snapshot_id = exported_workspace(workspace)
+    update_one_claim(workspace, snapshot_id, column, value)
+
+    by_identity = mirror(workspace, b"scope=global")
+    by_id = mirror(workspace, f"snapshot={snapshot_id}".encode("ascii"))
+
+    for page in (by_identity, by_id):
+        # Broken stored state no corrected request repairs is rule 7's own
+        # 409 row, never the unexpected-failure one.
+        assert page.outcome == "assessment_inconsistent"
+        assert page.status == 409
+        # The refusal names the class and its remedy, never stored detail.
+        assert column.encode("ascii") not in page.body
+        assert str(workspace).encode("utf-8") not in page.body
+    # Claim membership belongs to generation, which creates a new ID.
+    assert b"assess generate" in by_identity.body
+    assert b"assess generate" not in by_id.body
+    assert b"assess list" in by_id.body
+
+
+def test_an_unrelated_broken_snapshot_cannot_block_the_global_view(
+    workspace: Path,
+) -> None:
+    snapshot_id = exported_workspace(workspace)
+    project = project_snapshot(workspace)
+    # A current project-scoped row this build cannot hydrate at all. V1 never
+    # serves it, so it must not decide the outcome of the view that is served.
+    update_snapshot(workspace, project, "metadata_json", "{")
+
+    page = mirror(workspace, b"scope=global")
+
+    assert page.outcome == "served"
+    assert page.body == member(workspace, snapshot_id, "report.html")
+
+
 def test_a_duplicated_current_identity_names_no_remedy(workspace: Path) -> None:
     exported_workspace(workspace)
     with writer_database(workspace, owner_delete=True) as connection:
@@ -695,6 +745,34 @@ def test_an_expired_processing_budget_opens_no_read_transaction(
 
     assert page.outcome == "processing_timeout"
     assert page.status == 503
+
+
+def test_a_budget_that_expires_during_composition_is_the_timeout(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exported_workspace(workspace)
+    expiry = time.monotonic() + 1.0
+    real_render = views.render_html
+    composed: list[bool] = []
+
+    def slow_render(document):
+        body = real_render(document)
+        composed.append(True)
+        # The projection itself outlives the budget it was composed under.
+        time.sleep(max(0.0, expiry - time.monotonic()) + 0.05)
+        return body
+
+    monkeypatch.setattr(views, "render_html", slow_render)
+    page = resolve(
+        workspace, QUESTIONS_ROUTE, b"scope=global", deadline=expiry, busy_timeout_ms=50
+    )
+
+    assert composed, "the question projection must actually have been composed"
+    # §30 rule 7: a row is this request's outcome only once it is fully
+    # determined *and* composed, so an expired budget wins over the document.
+    assert page.outcome == "processing_timeout"
+    assert page.status == 503
+    assert page.published_member is False
 
 
 def test_sqlite_contention_beyond_the_bounded_wait_is_workspace_busy(

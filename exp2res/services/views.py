@@ -30,6 +30,7 @@ from typing import Callable, ContextManager, Iterator, Literal
 from exp2res.errors import (
     AssessmentExportBlockedError,
     Exp2ResError,
+    IntegrityFailureError,
     SchemaCompatibilityError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
@@ -46,7 +47,6 @@ from exp2res.exports.graph import (
 from exp2res.exports.html import render_html
 from exp2res.exports.managed import ENTITY_ID, read_current_assessment_members
 from exp2res.services.export import require_export_eligible
-from exp2res.storage.repository import list_assessment_snapshots
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     inspect_workspace,
@@ -452,12 +452,14 @@ def _resolve_snapshot(connection: sqlite3.Connection, selector: _Selector):
         return snapshot_row, snapshot
 
     # §30 rule 3: the identity form resolves only to the unique current
-    # snapshot of exactly that view — never the newest of several.
-    current = [
-        snapshot
-        for snapshot in list_assessment_snapshots(connection, current_only=True)
-        if snapshot.scope == "global" and snapshot.scope_target is None
-    ]
+    # snapshot of exactly that view — never the newest of several. The
+    # identity is matched in SQL so that no unrelated row, including a
+    # deferred project-scoped one, is hydrated on the way to this view:
+    # state outside the selected view never decides its outcome.
+    current = connection.execute(
+        "SELECT id FROM assessment_snapshots WHERE superseded_at IS NULL "
+        "AND scope = 'global' AND scope_target IS NULL"
+    ).fetchall()
     if not current:
         raise _Refusal(
             "no_current_view",
@@ -475,7 +477,7 @@ def _resolve_snapshot(connection: sqlite3.Connection, selector: _Selector):
             "view, so no single view can be served. Stop serving and recover "
             "the workspace invariant before reading this view again.",
         )
-    return load_current_snapshot(connection, current[0].id)
+    return load_current_snapshot(connection, current[0]["id"])
 
 
 def _require_integrity(selector: _Selector, snapshot, claims) -> None:
@@ -503,6 +505,32 @@ def _require_integrity(selector: _Selector, snapshot, claims) -> None:
         "rather than a mirror.",
         _ASSESS_GENERATE_GLOBAL if selector.by_identity else _ASSESS_LIST,
     )
+
+
+@contextmanager
+def _stored_state(selector: _Selector) -> Iterator[None]:
+    """Report a broken stored assessment graph as §30's own 409, not a 500.
+
+    Every check inside the read transaction that raises `IntegrityFailureError`
+    — an empty or superseded claim set, a claim from another generation, a row
+    that no longer hydrates, a source or answer-log reference the graph
+    requires — reports stored state that breaks an invariant serving depends
+    on and that no corrected request can repair. That is rule 7's
+    `assessment_inconsistent`, and only an unexpected failure is
+    `internal_error`. Claim membership belongs to generation, so the remedy is
+    the one rule 7 gives the other claim-set invariant.
+    """
+
+    try:
+        yield
+    except IntegrityFailureError as error:
+        raise _Refusal(
+            "assessment_inconsistent",
+            "This snapshot's stored claim graph breaks an invariant serving "
+            "depends on, so there is no coherent assessment to read a view "
+            "against.",
+            _ASSESS_GENERATE_GLOBAL if selector.by_identity else _ASSESS_LIST,
+        ) from error
 
 
 def _require_export_gate(selector: _Selector, snapshot) -> None:
@@ -651,7 +679,7 @@ def resolve(
         try:
             with read_database(
                 workspace, timeout_ms=busy_timeout_ms
-            ) as connection, register_connection(connection):
+            ) as connection, register_connection(connection), _stored_state(selector):
                 snapshot_row, snapshot = _resolve_snapshot(connection, selector)
                 _record, claims = load_snapshot_claims(
                     connection, snapshot_row=snapshot_row, snapshot=snapshot
@@ -710,12 +738,16 @@ def resolve(
         document = _questions_document(
             members, export_command=_export_command(snapshot.id)
         )
+        body = render_html(document)
+        if _remaining(deadline) <= 0:
+            # The processing deadline covers composition too: a row is only
+            # this request's outcome once it is fully determined *and*
+            # composed, so a projection that outran the budget is the timeout.
+            raise _Refusal("processing_timeout", _PROCESSING_TIMEOUT)
     except _Refusal as refusal:
         return _refusal_page(refusal)
     except (Exp2ResError, sqlite3.Error, OSError, ValueError):
         # Fail closed and say nothing more: an unexpected local failure names
         # no path, row, or exception detail (§30 rule 7).
         return internal_error_page()
-    return ViewPage(
-        outcome="served", status=_STATUS["served"], body=render_html(document)
-    )
+    return ViewPage(outcome="served", status=_STATUS["served"], body=body)
