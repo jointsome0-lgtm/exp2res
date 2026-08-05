@@ -131,8 +131,8 @@ Rules:
 11. Extraction computes the complete current fact generation for each selected lineage.
     - A validated replacement and the `superseded_at` transition of the lineage's previous current facts commit atomically; it never appends a second current copy.
     - Repeating extraction may add processing history or a superseded generation, but after success there is exactly one current fact generation for that lineage.
-12. If a replacement changes current facts, every current gap, contradiction, signal, claim, snapshot, resume branch, and bullet is invalidated before it can be reused.
-    - §14.12 regenerates Stages 4–5; assessment views and resume branches are explicitly parameterized projections regenerated only through §14.9/§14.10 against the new current state, with every invalidated view reported under §13.13.
+12. If a replacement changes current facts, every current gap, contradiction, claim, snapshot, resume branch, and bullet is invalidated before it can be reused.
+    - §14.12 regenerates Stage 4; assessment views and resume branches are explicitly parameterized projections regenerated only through §14.9/§14.10 against the new current state, with every invalidated view reported under §13.13.
 13. `ExperienceFact.project` is copied provenance, exactly like the default `occurred` placement.
     - Stage 3 sets it to its governing record's `project` value under rule 10 — including `None` — after the §15.2 response validates, and copies the governing record's stored `project_key` in the same assignment (§12 rule 14).
     - The extractor does not emit either field (§15.11).
@@ -218,14 +218,14 @@ Stage 7 verdicts never retire, supersede, resolve, or annotate a Stage 4 detecti
 
 Downstream invalidation follows the dependency graph of the replaced set, not the run.
 
-- A replaced contradiction set atomically supersedes every current signal, claim, snapshot, resume branch, and resume bullet before those rows can be reused, because the current contradiction set is §13.5/§15.3 input.
-- A replacement confined to the gap set supersedes every current claim, snapshot, resume branch, and resume bullet — the unanswered gap set is §13.6/§15.4 input and every snapshot references it — but never the current signal generation: gaps are no Stage 5 input, so superseding signals over a gap-only change would price a provider-backed Stage 5 regeneration whose inputs are byte-identical.
-- Regenerating the invalidated layers requires their §14 triggers; the shared §14.12 flow regenerates Stage 5, while assessment views and resume branches require §14.9/§14.10 (§13.13).
+- A replacement of either set atomically supersedes every current claim, snapshot, resume branch, and resume bullet before those rows can be reused: the unanswered gap set and the complete contradiction set are both §13.6/§15.4 input and every snapshot references both.
+- Per-set retention is what keeps a paraphrase-only rerun from invalidating those layers at all; a retained set supersedes nothing.
+- Regenerating the invalidated layers requires their §14 triggers: assessment views and resume branches are regenerated only through §14.9/§14.10 (§13.13).
 
 The V1 Stage 4 producer may persist only gaps and contradictions whose polymorphic targets are effective-lineage Stage 1 evidence present in this input or current Stage 3 facts.
 
 - Effective evidence that produced no fact remains visible and may receive a gap target; a displaced record or any item linked to it can be neither input nor target.
-- Stage 4 rejects targets owned by Stage 5 or later; `DetectionRefType` (§10) closes the target domain to Stage 1 evidence and Stage 3 facts.
+- Stage 4 rejects targets owned by any later stage; `DetectionRefType` (§10) closes the target domain to Stage 1 evidence and Stage 3 facts.
 
 The validated §15.8 result is the complete candidate set for both outputs, never a patch over prior detections.
 
@@ -243,56 +243,14 @@ Fact A: one experience fact says production-grade.
 Fact B: another source-backed fact supports only a local prototype.
 ```
 
-## §13.5 Stage 5 — Self-Signal Extraction
-
-Triggers: self-signal generation in §14.8; lifecycle recomputation in §14.12.
-
-Input:
-
-```text
-experience_facts
-their linked evidence_items
-contradictions
-```
-
-Persisted output:
-
-```text
-self_signals
-```
-
-Signal categories are the `SignalType` values (§10), carried by `SelfSignal.signal_type` (§11.5). §13 must not restate them.
-
-Signal extraction consumes the complete current fact and contradiction sets plus exactly the evidence items linked from those facts, and atomically replaces the complete current signal generation.
-
-- It must not mix generations.
-- It receives neither prior `existing_signals` nor raw gap-answer text: a self-contained `gap_answer` `RawLog` and its `EvidenceItem` first reach Stage 3 through §15.2, and only any re-extracted current facts and their linked evidence reach Stage 5.
-- A gap answer that produces no current fact cannot influence a signal directly.
-
-A candidate `SelfSignal.confidence` must satisfy §9.4's propagation caps; a candidate above its computed cap is invalid structured output.
-
-A changed signal generation atomically supersedes every current claim, snapshot, resume branch, and resume bullet before those rows can be reused.
-
-Example signal:
-
-```json
-{
-  "signal_type": "direction_signal",
-  "statement": "You repeatedly return to local-first provenance-heavy systems.",
-  "supporting_fact_ids": ["fact_storyworm_001", "fact_exp2res_004", "fact_atlas_002"],
-  "confidence": "medium"
-}
-```
-
 ## §13.6 Stage 6 — Self-Assessment Synthesis
 
-Trigger: self-assessment generation in §14.9. Lifecycle recomputation ends at Stage 5 (§13.13); it invalidates views but never regenerates them.
+Trigger: self-assessment generation in §14.9. Lifecycle recomputation ends at Stage 4 (§13.13); it invalidates views but never regenerates them.
 
 Input:
 
 ```text
 self-assessment scope and scope target from §14.9
-self_signals
 experience_facts
 contradictions
 gap questions
@@ -300,12 +258,13 @@ gap questions
 
 Input selection is structural and service-owned; the writer can neither broaden nor narrow it.
 
-- `global` selects every current fact as subject and every current signal.
+- `global` selects every current fact as subject.
 - `project` selects as subject exactly the current facts whose stored `project_key` (§12 rule 14) equals the case-folded canonical `scope_target` — §14.9's NFC + trim, with the same locale-independent case fold applied to the selector at comparison; a fact with `project = None` is never a subject fact.
-- `project` then selects every current signal whose `supporting_fact_ids` or `counter_fact_ids` reference at least one subject fact, and supplies the out-of-subject facts those signals reference as §15.4 `context_facts`, so cross-target support and counterevidence stay visible without widening the subject.
 - A project view whose subject set is empty fails the Stage 6 run before any provider call; there is no empty mirror.
-- The complete current unanswered gap set and the complete current contradiction set are never scope-filtered.
-- Every claim's `source_fact_ids` and `source_signal_ids` must name only objects supplied to this §15.4 call; out-of-context provenance is invalid structured output.
+- The complete current unanswered gap set and the complete current contradiction set are never scope-filtered, so cross-target conflicts stay visible to every view; V1 supplies no other out-of-subject fact context.
+- Every claim's `source_fact_ids` must name only facts supplied to this §15.4 call, and every claim's `source_pattern_labels` must name only patterns of the same response; out-of-context provenance is invalid structured output.
+
+**Pattern extraction happens inside this call, never in a persisted layer.** The §15.4 response carries a required `patterns` list — recurring-pattern working output validated against the supplied facts under §15.4's shape and recurrence rules. Patterns are transport-only: the deterministic §9.4 pattern-cap computation at this stage's boundary consumes them, and then they are discarded — never persisted, hydrated, rendered, exported, or supplied to any later call. Their only durable trace is the ordinary §12.15 call telemetry.
 
 The Stage 6 gap input is the complete current unanswered (`answered = false`) set. Answered current rows remain valid §14.7 state until regeneration but are not unknowns and are not writer inputs.
 
@@ -423,14 +382,14 @@ Verifier checks:
 
 For each claim, Stage 7 assembles exactly the §15.5 input closure from current rows, plus the view context:
 
-- `scope_signals` and `scope_facts` — the snapshot view's complete deterministic §13.6 selection re-derived from current rows;
+- `scope_facts` — the snapshot view's complete deterministic §13.6 subject selection re-derived from current rows;
 - `contradictions` — the snapshot's complete current Stage 4 contradiction set already integrity-checked against `contradiction_ids`.
 
-So writer omission of a contrary signal or fact stays visible to check 3 and a restated detection stays visible to check 14, while only the closure deepens into evidence context.
+So writer omission of a contrary fact stays visible to check 3 and a restated detection stays visible to check 14, while only the closure deepens into evidence context.
 
 - The service serializes that closure through §13.3 rule 10's displaced-record support descriptor projection.
 - A required post-projection bundle member that is missing, wrong-type, superseded, duplicated, or otherwise unresolvable fails the Stage 7 run closed before any provider call, and the prior complete verifier state is retained.
-- The exactness and no-narrowing/no-widening rule applies to this displacement-aware bundle: omitting a descriptor, cited signal's counter fact, or other required member would obtain a more permissive verdict from a narrower graph; serializing a complete displaced item, a displaced `RawLog` object, or any row outside the bundle would widen the declared §29.3 transmission surface.
+- The exactness and no-narrowing/no-widening rule applies to this displacement-aware bundle: omitting a descriptor or other required member would obtain a more permissive verdict from a narrower graph; serializing a complete displaced item, a displaced `RawLog` object, or any row outside the bundle would widen the declared §29.3 transmission surface.
 - The projection-required absence of a displaced `RawLog` object is not a missing member.
 
 Stage 7 obtains a validated §15.5 verdict for every claim in the current snapshot.
@@ -623,14 +582,13 @@ out/branch/<branch-id>/manifest.json
 
 `<branch-id>` is the exported `ResumeBranch.id` in §13.14's service-owned path-key form. Within the managed-output filesystem shape, `ResumeBranch.name` and every other user-controlled string appear only as manifest data, never in a path component; the dedicated `out/branch/` parent is disjoint from `out/assessment/` without a reserved branch display name.
 
-Every JSON companion above other than `manifest.json` is one closed document: its top-level and nested objects reject undeclared fields, its required `schema_version` is the integer `1`, and any missing field, extra field, wrong type, unsupported version, duplicate typed ID, or unresolved typed reference fails export before §13.14 publication. `manifest.json` is independently closed and versioned under §13.14. Field types come from their named §10/§11 owners; these export projections do not create new enum domains or persisted models. The reusable nested projections are defined once here:
+Every JSON companion above other than `manifest.json` is one closed document: its top-level and nested objects reject undeclared fields, its required `schema_version` is the integer `2` (version 1 carried the removed persisted-signal projections — `source_signal_ids`, `signal_links`, and `SignalLink`), and any missing field, extra field, wrong type, unsupported version, duplicate typed ID, or unresolved typed reference fails export before §13.14 publication. `manifest.json` is independently closed and versioned under §13.14. Field types come from their named §10/§11 owners; these export projections do not create new enum domains or persisted models. The reusable nested projections are defined once here:
 
 ```text
 CounterevidenceExport = {statement, source_ref_type, source_ref_id}
 GapExport = {id, target_type, target_id, question, reason, priority, answered}
 ContradictionExport = {id, title, description, left_ref_type, left_ref_id, right_ref_type, right_ref_id}
-ClaimLink = {claim_id, source_signal_ids, source_fact_ids}
-SignalLink = {signal_id, supporting_fact_ids, counter_fact_ids}
+ClaimLink = {claim_id, source_fact_ids}
 FactLink = {fact_id, evidence_item_ids, source_log_ids}
 EvidenceLink = {evidence_item_id, raw_log_id}
 ```
@@ -642,7 +600,7 @@ self_claims.json = {
   schema_version,
   snapshot: {id, created_at, scope, scope_target, title, verification_status},
   claims: list[{id, claim, claim_kind, dimension, confidence, verification_status,
-                uncertainty, source_signal_ids, source_fact_ids,
+                uncertainty, source_fact_ids,
                 counterevidence: list[CounterevidenceExport]}],
   unknowns: list[GapExport],
   contradictions: list[ContradictionExport]
@@ -650,7 +608,7 @@ self_claims.json = {
 
 assessment evidence_map.json = {
   schema_version, output_kind, entity_id, rendered_claim_ids,
-  claim_links: list[ClaimLink], signal_links: list[SignalLink],
+  claim_links: list[ClaimLink],
   fact_links: list[FactLink], evidence_links: list[EvidenceLink]
 }
 
@@ -658,7 +616,7 @@ bullet-pack evidence_map.json = {
   schema_version, output_kind, entity_id,
   rendered_bullets: list[{bullet_id, text, target_section, matched_jd_requirements,
                           source_self_claim_ids, source_fact_ids, source_log_ids}],
-  claim_links: list[ClaimLink], signal_links: list[SignalLink],
+  claim_links: list[ClaimLink],
   fact_links: list[FactLink], evidence_links: list[EvidenceLink]
 }
 
@@ -696,7 +654,7 @@ For a bullet-pack export:
 
 Each evidence map is a complete typed link closure, not free-form explanatory prose.
 
-- `claim_links` resolves every rendered/source claim to its direct signals and facts; `signal_links` resolves those signals to supporting and counter facts; `fact_links` resolves every direct or signal-reached fact to evidence-item and raw-log IDs; and `evidence_links` resolves each reached item to its raw-log ID.
+- `claim_links` resolves every rendered/source claim to its facts; `fact_links` resolves every reached fact to evidence-item and raw-log IDs; and `evidence_links` resolves each reached item to its raw-log ID.
 - A facts-only bullet legally has no claim edge and starts at its exact `source_fact_ids`; no unresolved placeholder is allowed.
 - Every rendered bullet sentence must therefore round-trip from its exact `rendered_bullets` entry through these typed links to the current domain rows.
 - A missing closure member, an unused extra member, or disagreement with the persisted §11 relations fails export.
@@ -742,27 +700,27 @@ This subsection orchestrates existing stages and is not a pipeline stage. Each c
 
 Rules:
 
-1. Selected-lineage recomputation under §14.12 replaces Stage 3 facts for that correction lineage, then regenerates the complete current Stage 4–5 graph from all current facts.
-    - Full recomputation under §14.12 replaces facts for every lineage before the same global Stage 4–5 rebuild.
-    - Stage 4 inside this flow follows its §13.4 retain-or-replace rule; a retained detection generation does not halt the flow's Stage 5 regeneration.
-    - Lifecycle recomputation ends at Stage 5: Stages 3–5 are parameterless shared derivations, while Stage 6–7 assessment views and Stage 10–11 resume branches are explicitly parameterized projections that only their §14.9/§14.10 commands regenerate.
+1. Selected-lineage recomputation under §14.12 replaces Stage 3 facts for that correction lineage, then regenerates the complete current Stage 4 graph from all current facts.
+    - Full recomputation under §14.12 replaces facts for every lineage before the same global Stage 4 rebuild.
+    - Stage 4 inside this flow follows its §13.4 retain-or-replace rule.
+    - Lifecycle recomputation ends at Stage 4: Stages 3–4 are parameterless shared derivations, while Stage 6–7 assessment views and Stage 10–11 resume branches are explicitly parameterized projections that only their §14.9/§14.10 commands regenerate.
 2. A recompute validates every stage's complete candidate output, including §12 rule 10, before the business-state swap.
     - A successful swap leaves at most one current generation per lineage, assessment view, or named branch and marks the replaced generation `superseded_at`; payloads are never updated in place.
-3. Where an active stage explicitly requires replacement, that stage rule controls — including Stage 4's retain-or-replace equivalence rule and complete replacements in Stages 5–6 and replacement of an existing named branch in Stage 10.
+3. Where an active stage explicitly requires replacement, that stage rule controls — including Stage 4's retain-or-replace equivalence rule and the complete replacement in Stage 6 and replacement of an existing named branch in Stage 10.
     - For other standalone reruns whose inputs have not changed, the stage may retain the prior current generation or replace it.
-    - No rerun may expose duplicate current facts, signals, claims, snapshots, gaps, or contradictions.
+    - No rerun may expose duplicate current facts, claims, snapshots, gaps, or contradictions.
     - If validation fails before a source change, the prior current generation remains current and no partial candidate output is inserted.
-4. Correction capture and invalidation are one atomic database visibility boundary before rebuilding starts: the transaction inserts the new raw/evidence records, supersedes current facts for that correction lineage, and supersedes every current gap, contradiction, signal, claim, snapshot, resume branch, and resume bullet.
+4. Correction capture and invalidation are one atomic database visibility boundary before rebuilding starts: the transaction inserts the new raw/evidence records, supersedes current facts for that correction lineage, and supersedes every current gap, contradiction, claim, snapshot, resume branch, and resume bullet.
     - Managed exports are enumerated and removal is attempted as part of the same operation; residual paths are reported as an unsuccessful invalidation rather than silently retained.
     - A crash or recompute failure can therefore leave the correction plus no replacement current graph, but can never leave the pre-correction graph current against the changed source set.
     - The correction remains stored and §14.12 is the retry surface.
 5. Raw-log owner deletion is a privacy-first global reset.
     - The service first enumerates and attempts to remove every managed `out/` artifact and every managed §12.14 backup, with any residual backup path governed by rule 6 exactly like a residual export path.
-    - It then atomically purges every current and historical fact, fact source, gap, contradiction, signal, claim, snapshot, resume branch, resume bullet, and verification finding while hard-deleting the selected `RawLog` and cascading its evidence items.
+    - It then atomically purges every current and historical fact, fact source, gap, contradiction, claim, snapshot, resume branch, resume bullet, and verification finding while hard-deleting the selected `RawLog` and cascading its evidence items.
     - Findings belong to the derived purge because their reasons, quoted unsupported phrases, advisory rewrites, and counterevidence statements are generated prose.
     - Job descriptions and `processing_runs`/`llm_calls` telemetry remain subject to content-hash redaction: the same purge transaction sets `input_hash` and `output_hash` to `NULL` on every retained `llm_calls` row, not only rows provably tied to the deleted record. A deterministic hash of guessable purged content would otherwise remain an oracle that confirms deleted text by hashing candidates, and a selective closure that misses one content path fails open.
     - Retained telemetry keeps identifiers, timing, statuses, token counts, accounting values, retry counts, stable failure codes, and `prompt_policy_hash`, none derived from owner content bytes; `prompt_policy_hash` hashes fixed contract instructions plus the structured-output schema revision only. Opaque IDs may stop resolving.
-    - The service then attempts a full Stage 3–5 recompute from every surviving lineage through fresh runs whose call rows record fresh hashes over surviving content only; redaction applies to every call row committed before the purge transaction.
+    - The service then attempts a full Stage 3–4 recompute from every surviving lineage through fresh runs whose call rows record fresh hashes over surviving content only; redaction applies to every call row committed before the purge transaction.
     - Surviving `gap_answer` raw logs stay interpretable through their §14.7 self-containment; the rebuild never re-links them to regenerated questions.
 6. Database deletion commits even if managed-path removal or rebuilding fails.
     - Every managed-output enumeration and removal uses §13.14's canonical-root containment and no-follow contract; migration-backup removal applies equivalent POSIX canonicalization and workspace containment without treating a path as source input.
@@ -774,7 +732,7 @@ Rules:
 7. The raw-log reset is deliberately global in V1. Selective graph deletion and warn-and-skip are rejected because JSON and implicit dependencies cannot prove that all private derived text was found, and a partial truth model could be mistaken for a complete one.
 8. Raw-log deletion covers only Exp2Res-managed database records, `out/`, and managed §12.14 migration backups.
     - Supplied source files and copies of prior exports outside the managed workspace remain user-controlled; §14.11 reports their known paths but does not delete them.
-9. Invalidated-view reporting: except for rule 10 job-description deletion, whose §14.15 purge report has no regeneration command against the deleted JD, every transaction that supersedes or purges current snapshots and branches — inside this flow or in a direct §14.6/§14.7/§14.8 generation — captures each affected assessment view — scope, scope target, snapshot ID — and, for each affected branch, its name, retained job-description ID, and anchoring view.
+9. Invalidated-view reporting: except for rule 10 job-description deletion, whose §14.15 purge report has no regeneration command against the deleted JD, every transaction that supersedes or purges current snapshots and branches — inside this flow or in a direct §14.6/§14.7 generation — captures each affected assessment view — scope, scope target, snapshot ID — and, for each affected branch, its name, retained job-description ID, and anchoring view.
     - The invoking command reports every invalidated view with its executable §14.9 regeneration command, and every invalidated branch with that captured context plus the §14.10 command shape — a branch command cannot be executable as printed, because §14.10 requires a current `--snapshot` that exists only after its view is regenerated.
     - Every printed command quotes each argument value with POSIX single-quote shell quoting (an embedded single quote becomes `'\''`), so a target or branch name containing whitespace or shell metacharacters stays copy-paste-safe and selects the exact stored value.
     - After raw-log owner deletion this report is command output only, never persisted derived state.
@@ -799,10 +757,10 @@ This subsection is the sole managed-output path, manifest, publication, and file
     - Lowercase ASCII single components plus collision-free, never-reused IDs eliminate traversal, dot-segment, reserved-name, confusable-normalization, and case-fold alias classes structurally.
     - Within the managed-output filesystem shape, snapshot title and view identity, and branch name and job-description identity, are manifest data only.
 2. **Closed versioned manifest.** `manifest.json` is strict UTF-8 JSON using §11's validation, datetime, string-hygiene, and `extra = forbid` policy.
-    - Its common fields are exactly `manifest_version` (integer `4`), `output_kind` (`ManagedOutputKind`, §10), `entity_id`, `generation_id`, `produced_by_run_id`, `created_at`, `identity`, `source_ids`, `render_input_sha256`, and `members`.
+    - Its common fields are exactly `manifest_version` (integer `5`), `output_kind` (`ManagedOutputKind`, §10), `entity_id`, `generation_id`, `produced_by_run_id`, `created_at`, `identity`, `source_ids`, `render_input_sha256`, and `members`.
     - `entity_id`, `generation_id`, and `produced_by_run_id` exactly match the exported snapshot or branch and its non-null §12 rule 13 production provenance; `created_at` is the offset-aware manifest creation time.
-    - For the assessment kind, `identity` is exactly `{snapshot_title, scope, scope_target}` and `source_ids` is exactly `{self_claim_ids, self_signal_ids, experience_fact_ids, evidence_item_ids, raw_log_ids, gap_question_ids, contradiction_ids}`.
-    - For the resume kind, `identity` is exactly `{branch_name, job_description_id, assessment_snapshot_id}` and `source_ids` is exactly `{resume_bullet_ids, assessment_snapshot_ids, job_description_ids, self_claim_ids, self_signal_ids, experience_fact_ids, evidence_item_ids, raw_log_ids, gap_question_ids, contradiction_ids, jd_requirement_ids}`.
+    - For the assessment kind, `identity` is exactly `{snapshot_title, scope, scope_target}` and `source_ids` is exactly `{self_claim_ids, experience_fact_ids, evidence_item_ids, raw_log_ids, gap_question_ids, contradiction_ids}`.
+    - For the resume kind, `identity` is exactly `{branch_name, job_description_id, assessment_snapshot_id}` and `source_ids` is exactly `{resume_bullet_ids, assessment_snapshot_ids, job_description_ids, self_claim_ids, experience_fact_ids, evidence_item_ids, raw_log_ids, gap_question_ids, contradiction_ids, jd_requirement_ids}`.
     - Each of the resume kind's `assessment_snapshot_ids` and `job_description_ids` contains exactly the one ID also named by `identity`, and the complete consumed snapshot and job-description projections, including parsed requirement order, participate in `render_input_sha256` below.
     - Every source list is the complete duplicate-free, ID-byte-ordered set actually read to render any member; no source ID is omitted, inferred from prose, or included without being read.
     - These completeness lists are local managed metadata, not a §11 provider, source-acquisition, model-response, or SQLite-hydration boundary, and neither §11's per-list cap nor its total-object cap truncates or rejects an otherwise valid complete manifest; each individual string retains its §11 bound and hygiene.
@@ -810,7 +768,7 @@ This subsection is the sole managed-output path, manifest, publication, and file
     - `render_input_sha256` uses §11's canonical-serialization and lowercase SHA-256 rules over the exact closed, type-tagged render-input bundle read from the export transaction's coherent database snapshot: the selected entity; every source projection consumed by §13.12 and §17 or §18; their storage-level generation and production provenance where applicable; every lifecycle-owned field read by rendering or the §16.11 gate; `manifest_version`; and `output_kind`.
     - Entries are partitioned by canonical entity type and ID-byte-ordered within type.
     - No database value read to render, validate, or gate a member may be excluded, and no filesystem value enters this hash. Thus a gap answer or Stage 7/11 status transition invalidates an old set even when every entity ID and generation ID is unchanged.
-    - The §13.12 members and schemas define the current `manifest_version = 4` rendering contract. Version 1 was the emitted assessment set before `report.html` joined its fixed members; version 2 keyed §17's section rule 5 on `claim_kind` and titled section 3 "Recurring Signals"; version 3 rendered counterevidence as a standalone tenth section without per-claim ID lines or the contradiction origin label.
+    - The §13.12 members and schemas define the current `manifest_version = 5` rendering contract. Version 1 was the emitted assessment set before `report.html` joined its fixed members; version 2 keyed §17's section rule 5 on `claim_kind` and titled section 3 "Recurring Signals"; version 3 rendered counterevidence as a standalone tenth section without per-claim ID lines or the contradiction origin label; version 4 carried the persisted-signal layer — `self_signal_ids` source lists, `signal_links` companions, and signal fan-outs in §17's sources lines.
     - Because `manifest_version` is itself part of the bundle hashed above, each bump alone makes every prior-version set non-current. Any later change to a fixed member set, or any rendering-contract change that would change member bytes for an unchanged bundle, requires the next version.
     - A manifest declaring any other version is invalid, so a superseded-version set is never matching, never current, and never overwritten in place; rule 5 aborts publication over it and reports its path as a residual the owner removes.
     - `members` is a filename-byte-ordered list of closed `{name, sha256}` objects. Its names equal the applicable §13.12 fixed member filenames exactly, contain no separator, and exclude `manifest.json`; the final directory contains exactly those regular files plus `manifest.json`, with no extra entry.

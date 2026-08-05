@@ -65,7 +65,7 @@ import creates no fact; Stage 3 may extract only narrow source-supported facts
 
 ## §19.2 Knowledge-State Snapshot Contract
 
-This source contract requires `source_system = "atlas"`, supports `contract_version = 1`, and declares the JSON object below as its closed §19.4 `body`. It accepts one knowledge-state snapshot on Atlas's own scales, with its trail segments and source-owned evidence references; it does not accept a ready-made Exp2Res fact, signal, claim, confidence, or ownership level.
+This source contract requires `source_system = "atlas"`, supports `contract_version = 1`, and declares the JSON object below as its closed §19.4 `body`. It accepts one knowledge-state snapshot on Atlas's own scales, with its trail segments and source-owned evidence references; it does not accept a ready-made Exp2Res fact, claim, confidence, or ownership level.
 
 ```json
 {
@@ -161,7 +161,7 @@ Import behavior:
 ```text
 create raw_log(entry_type=atlas_snapshot, source_type=imported_artifact, occurred=body.occurred, raw_text=body.text)
 create one evidence_item(strength=knowledge_state_snapshot, summary=body.summary, path=body.path, metadata.content_digest when non-null)
-derive facts, signals, and claims only through Stages 3–6; import promotes none directly
+derive facts and claims only through Stages 3–6; import promotes none directly
 ```
 
 ## §19.3 GitHub Commit Contract

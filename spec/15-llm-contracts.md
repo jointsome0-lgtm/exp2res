@@ -45,8 +45,8 @@ The one retry above applies only to an invalid model response. Failure in determ
 
 Example notation:
 
-- An entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.3 (signal), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-owned fields §15.11's ownership matrix assigns to the producing stage — IDs, lifecycle and answer-state fields, `metadata`, and the deterministic post-response copies and derivations named there.
-- Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`SelfSignal`, `GapQuestion`), §15.6's input (a verified `SelfClaim`).
+- An entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-owned fields §15.11's ownership matrix assigns to the producing stage — IDs, lifecycle and answer-state fields, `metadata`, and the deterministic post-response copies and derivations named there.
+- Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`GapQuestion`), §15.6's input (a verified `SelfClaim`).
 - Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string pointing at the named example.
 - The literal `{}` candidates in §15.5 and §15.7 are schema-envelope notation for the complete typed candidate, never empty transport objects; those examples demonstrate response shape rather than a reproducible verdict from hidden candidate content.
 - A behavior-bearing object whose concrete content the same example's output depends on is never elided: §15.8 shows its fact and raw log in full.
@@ -156,45 +156,6 @@ The extractor does not emit `project`: Stage 3 copies it from each fact's govern
 
 For `ExperienceFact.claim_kind`, `observed_fact` means the linked sources directly state or demonstrate the narrow claim; `inferred_fact` means the claim is a conservative derivation whose source links and `confidence` assigned under §9.4 remain explicit. Other `ClaimKind` values are invalid fact-extractor outputs.
 
-## §15.3 Self-Signal Extractor Contract
-
-Input:
-
-```json
-{
-  "facts": [],
-  "evidence_items": [],
-  "contradictions": []
-}
-```
-
-Output:
-
-```json
-{
-  "signals": [
-    {
-      "signal_type": "direction_signal",
-      "statement": "You repeatedly return to provenance-heavy local-first systems.",
-      "supporting_fact_ids": ["fact_001", "fact_002"],
-      "counter_fact_ids": [],
-      "confidence": "medium"
-    }
-  ],
-  "warnings": []
-}
-```
-
-Rules:
-
-```text
-Do not turn a single fact into a broad pattern.
-Do not infer identity from one artifact.
-Do not hide counterevidence.
-```
-
-`evidence_items` is exactly the duplicate-free set reached through the supplied current facts, serialized under §13.3 rule 10's universal displaced-record projection, and is context for §9.4 confidence calibration; signal provenance remains the fact IDs in §11.5. Candidate `SelfSignal.confidence` obeys §9.4's propagation caps. Prior signals are never inputs because Stage 5 produces a complete replacement generation. Raw gap answers are not inputs either: §13.5 requires them to pass through Stage 3 first, so only re-extracted current facts and their linked evidence can influence this contract.
-
 ## §15.4 Self-Assessment Writer Contract
 
 Input:
@@ -203,23 +164,9 @@ Input:
 {
   "scope": "project",
   "scope_target": "Exp2Res",
-  "signals": [
-    {
-      "id": "signal_001",
-      "created_at": "2026-07-11T10:02:00+02:00",
-      "superseded_at": null,
-      "signal_type": "direction_signal",
-      "statement": "You repeatedly return to provenance-heavy local-first systems.",
-      "supporting_fact_ids": ["fact_001", "fact_002"],
-      "counter_fact_ids": [],
-      "confidence": "medium",
-      "metadata": {}
-    }
-  ],
   "facts": [
     "<fact_001, fact_002: complete §11.4 ExperienceFact objects — canonical example in §15.2>"
   ],
-  "context_facts": [],
   "gaps": [
     {
       "id": "gap_001",
@@ -242,12 +189,19 @@ Output:
 
 ```json
 {
+  "patterns": [
+    {
+      "label": "provenance_recurrence",
+      "supporting_fact_ids": ["fact_001", "fact_002"],
+      "counter_fact_ids": []
+    }
+  ],
   "self_claims": [
     {
       "claim": "You show a recurring attraction to systems that preserve provenance and prevent unsupported claims.",
       "dimension": "domain_interest",
       "claim_kind": "pattern_signal",
-      "source_signal_ids": ["signal_001"],
+      "source_pattern_labels": ["provenance_recurrence"],
       "source_fact_ids": ["fact_001", "fact_002"],
       "confidence": "medium",
       "uncertainty": "Evidence comes mostly from personal projects and design documents, not production work."
@@ -256,7 +210,7 @@ Output:
       "claim": "Current evidence suggests a recurring interest in provenance-heavy systems, while implementation depth remains uncertain.",
       "dimension": "domain_interest",
       "claim_kind": "narrative_summary",
-      "source_signal_ids": ["signal_001"],
+      "source_pattern_labels": ["provenance_recurrence"],
       "source_fact_ids": ["fact_001", "fact_002"],
       "confidence": "medium",
       "uncertainty": "The evidence supports direction of interest more strongly than implementation depth."
@@ -266,17 +220,19 @@ Output:
 }
 ```
 
-For `SelfClaim.claim_kind`, `pattern_signal` summarizes a recurring supported pattern, `hypothesis` marks a tentative interpretation, and `narrative_summary` synthesizes already supported claims without adding a new fact. Other `ClaimKind` values are invalid self-assessment-writer outputs.
+`patterns` is required model output and is never persisted. Each `ScratchPattern` carries exactly a `label` unique within the response, `supporting_fact_ids`, and `counter_fact_ids`; every listed ID names a supplied fact and the two lists are disjoint. A pattern generalizes only recurrence the supplied facts actually show: the licensed form is a pattern whose `supporting_fact_ids` span the facts exhibiting it, with every contrary supplied fact listed in `counter_fact_ids` so counterevidence stays visible; a single fact turned into a broad pattern, an identity inferred from one artifact, or an omitted known contrary fact is the forbidden form. Each claim's `source_pattern_labels` names only labels from this response's `patterns` list, and a claim that cites a pattern must include every fact that pattern lists — supporting and counter alike — in its own `source_fact_ids`, so the persisted provenance closure carries the pattern's whole evidential basis. A duplicate label, an unknown or out-of-context reference, or a violated inclusion rule is invalid structured output. After validation, Stage 6 consumes the patterns deterministically for §9.4's pattern-generalization caps at its boundary and then discards them; the durable trace is §12.15 telemetry, and no pattern object, ID, or reference survives into persisted state (§13.6).
 
-`SelfClaim.dimension` is a per-claim content decision, never a default: it names what the claim characterizes — `technical_skill` or `execution_capacity` for a capability the evidence demonstrates, `domain_interest`, `working_style`, `trajectory`, or `identity_hypothesis` for a recurring orientation, and `constraint`, `risk`, or `gap` for a limit, failure mode, or missing evidence. §17 keys report-section placement on the dimension and the §16.11 status, never on `claim_kind`, so a capability claim carrying an orientation dimension (or the reverse) renders in the wrong section even when its prose and sources are sound. `claim_kind` records synthesis form — how the claim was derived, not what it characterizes — and a claim derived from recurring signals still carries a capability dimension when what it asserts is a capability. Stage 7 enforces the assignment as §13.7 check 13 on every non-summary claim: a claim whose `dimension` mis-categorizes what it asserts is `rejected` under §16.11. The unique `narrative_summary` synthesizes across categories and §17 routes it by kind alone, so its dimension is not judged.
+For `SelfClaim.claim_kind`, `pattern_signal` summarizes a recurring supported pattern and must cite at least one pattern through `source_pattern_labels`, `hypothesis` marks a tentative interpretation, and `narrative_summary` synthesizes already supported claims without adding a new fact. Other `ClaimKind` values are invalid self-assessment-writer outputs.
+
+`SelfClaim.dimension` is a per-claim content decision, never a default: it names what the claim characterizes — `technical_skill` or `execution_capacity` for a capability the evidence demonstrates, `domain_interest`, `working_style`, `trajectory`, or `identity_hypothesis` for a recurring orientation, and `constraint`, `risk`, or `gap` for a limit, failure mode, or missing evidence. §17 keys report-section placement on the dimension and the §16.11 status, never on `claim_kind`, so a capability claim carrying an orientation dimension (or the reverse) renders in the wrong section even when its prose and sources are sound. `claim_kind` records synthesis form — how the claim was derived, not what it characterizes — and a claim derived from recurring patterns still carries a capability dimension when what it asserts is a capability. Stage 7 enforces the assignment as §13.7 check 13 on every non-summary claim: a claim whose `dimension` mis-categorizes what it asserts is `rejected` under §16.11. The unique `narrative_summary` synthesizes across categories and §17 routes it by kind alone, so its dimension is not judged.
 
 The writer does not adjudicate or restate the supplied `contradictions`: a claim that merely restates a supplied contradiction duplicates the §17 contradiction row as an independent prose channel and must not be emitted, while the supplied set still informs uncertainty and counter-aware phrasing. This restriction covers contradictions only — gap-dimension claims remain required §13.6 content. Stage 7 receives the same supplied set as §15.5 view context and enforces the ban as §13.7 check 14: a restating claim is `rejected`.
 
-Candidate `SelfClaim.confidence` obeys §9.4's source-maximum cap at the Stage 6 boundary; Stage 7 judges whether the listed sources actually cover the claim's breadth.
+Candidate `SelfClaim.confidence` obeys §9.4's source-maximum cap and, for a pattern-citing claim, §9.4's pattern-generalization caps, both computed deterministically at the Stage 6 boundary; Stage 7 judges whether the listed sources actually cover the claim's breadth.
 
 The writer emits exactly one `narrative_summary` self-claim; snapshot inclusion and the service-copied `summary` follow §13.6 and §15.11.
 
-`scope` is a canonical `AssessmentScope` and `scope_target` is service-supplied structural context from §14.9. The writer must return neither field and cannot rewrite the target. `facts` is the scope's subject set selected under §13.6 and `context_facts` is exactly the duplicate-free out-of-subject fact set referenced by the supplied signals; both carry complete §11.4 objects, and for `global` the context set is empty. Claims are authored about the subject; a context fact grounds cross-target support or counterevidence and may be cited only where actually used. Every `source_fact_ids` / `source_signal_ids` value must name a supplied object; out-of-context provenance is invalid structured output. `gaps` is the complete current unanswered set (§13.6). The writer returns no unknowns echo (§13.6, §15.11). Known-gap assertions belong in status-bearing `SelfClaim(dimension="gap")` output. An unknown reference can render only the referenced question/uncertainty under §17; it is not an independent claim or a §16.11 bypass.
+`scope` is a canonical `AssessmentScope` and `scope_target` is service-supplied structural context from §14.9. The writer must return neither field and cannot rewrite the target. `facts` is the scope's subject set selected under §13.6, carrying complete §11.4 objects; claims are authored about that subject. Every `source_fact_ids` value and every pattern-listed fact ID must name a supplied fact; out-of-context provenance is invalid structured output. `gaps` is the complete current unanswered set and `contradictions` the complete current contradiction set, both never scope-filtered (§13.6). The writer returns no unknowns echo (§13.6, §15.11). Known-gap assertions belong in status-bearing `SelfClaim(dimension="gap")` output. An unknown reference can render only the referenced question/uncertainty under §17; it is not an independent claim or a §16.11 bypass.
 
 Hard instructions: apply §16.2 (mirror, no motivational rewriting), §16.3 (anti-flattery), §16.9 (identity), §16.10 (diagnostic), §16.14 (owner reference: second person or subject-free); preserve uncertainty and mention weak evidence where relevant.
 
@@ -289,10 +245,6 @@ Input:
   "self_claim": {},
   "scope": "project",
   "scope_target": "Exp2Res",
-  "source_signals": [],
-  "scope_signals": [
-    "<signal_001: complete §11.5 SelfSignal — canonical example in §15.4>"
-  ],
   "scope_facts": [
     "<fact_007 and every other supplied view fact: complete §11.4 ExperienceFact objects — canonical example in §15.2>"
   ],
@@ -329,9 +281,9 @@ Output:
 }
 ```
 
-`scope` and `scope_target` are the snapshot's §11.7 values, supplied as structural context so the verifier can judge scope fit under §13.7 check 11; the verifier returns neither field. `source_signals` is exactly the claim's duplicate-free `source_signal_ids` set. `scope_signals` and `scope_facts` are the complete deterministic §13.6 selection for the snapshot's view, re-derived from current rows: every signal, and the union of the view's §15.4 `facts` and `context_facts`, including the cited members. They exist so check 3 can see a contrary signal or fact the writer's account omits; the closure alone deepens into evidence context, so uncited view facts arrive as fact rows without extra raw text. An omitted contrary bundle member grounds a non-passing status and may persist as a typed counterevidence reference to that `scope_facts` or `scope_signals` member, keeping a navigable contrary source in the exported mirror. `contradictions` is the snapshot's complete current Stage 4 contradiction set — the same §13.6 supply the writer received, already integrity-checked against the snapshot's `contradiction_ids` — present so §13.7 check 14 can see when a candidate merely restates a detection; it deepens into no evidence context and is not a counterevidence grounding target. `source_facts` is the duplicate-free provenance closure of the claim: its `source_fact_ids` plus every listed source signal's `supporting_fact_ids` and `counter_fact_ids`. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows, serialized under §13.3 rule 10: an item linked to a non-displaced record arrives as its complete object, while an item linked to a displaced record arrives as the displaced-record support descriptor. `source_logs` is exactly the duplicate-free retained `RawLog` object set referenced by the non-displaced members; a displaced log is supplied only through the descriptor's `raw_log_id` reference, never as an object. Every input array is ID-ordered (ascending byte order), so conforming implementations assemble one identical displacement-aware bundle. This remains complete context for the §9.4 strength/scope judgment required by §13.7 rule 2: descriptors carry `strength` and `raw_log_id`, so a signal-only claim still supplies its underlying evidence, scoped strength and the same-log independence rule remain visible, and the verifier never judges calibration from hidden state. The bundle is exact after projection — §13.7 forbids any other narrowing and §29.3 forbids widening it.
+`scope` and `scope_target` are the snapshot's §11.7 values, supplied as structural context so the verifier can judge scope fit under §13.7 check 11; the verifier returns neither field. `scope_facts` is the complete deterministic §13.6 subject selection for the snapshot's view, re-derived from current rows and including the cited members. It exists so check 3 can see a contrary fact the writer's account omits; the closure alone deepens into evidence context, so uncited view facts arrive as fact rows without extra raw text. An omitted contrary bundle member grounds a non-passing status and may persist as a typed counterevidence reference to that `scope_facts` member, keeping a navigable contrary source in the exported mirror. `contradictions` is the snapshot's complete current Stage 4 contradiction set — the same §13.6 supply the writer received, already integrity-checked against the snapshot's `contradiction_ids` — present so §13.7 check 14 can see when a candidate merely restates a detection; it deepens into no evidence context and is not a counterevidence grounding target. `source_facts` is exactly the claim's duplicate-free `source_fact_ids` set; under §15.4's inclusion rule that closure already carries every cited pattern's supporting and counter facts, so the discarded patterns leave no hidden evidential basis. `source_evidence_items` is exactly the duplicate-free `EvidenceItem` set reached through those facts' §12.4 rows, serialized under §13.3 rule 10: an item linked to a non-displaced record arrives as its complete object, while an item linked to a displaced record arrives as the displaced-record support descriptor. `source_logs` is exactly the duplicate-free retained `RawLog` object set referenced by the non-displaced members; a displaced log is supplied only through the descriptor's `raw_log_id` reference, never as an object. Every input array is ID-ordered (ascending byte order), so conforming implementations assemble one identical displacement-aware bundle. This remains complete context for the §9.4 strength/scope judgment required by §13.7 rule 2: descriptors carry `strength` and `raw_log_id`, so scoped strength and the same-log independence rule remain visible, and the verifier never judges calibration from hidden state. The bundle is exact after projection — §13.7 forbids any other narrowing and §29.3 forbids widening it.
 
-`counterevidence` is a list of typed `CounterevidenceItem` entries (§11.6), empty when none: each carries a contrary-evidence `statement` and a (`source_ref_type`, `source_ref_id`) grounding reference that must resolve to a member of this call's supplied bundle — a fact in `source_facts` or `scope_facts`, an item in `source_evidence_items` (including a displaced-record support descriptor member), a log in `source_logs`, or a signal in `scope_signals`. A descriptor member remains a legal `evidence_item` grounding reference because it is a supplied bundle member. A reference outside that bundle, a wrong-type or missing target, or a duplicate (`source_ref_type`, `source_ref_id`) pair is invalid structured output under §15.1 and §12 rule 10. Stage 7 persists the validated list to `SelfClaim.counterevidence` and inside the complete §11.14 `VerificationFinding` for that claim (§11.6, §13.7).
+`counterevidence` is a list of typed `CounterevidenceItem` entries (§11.6), empty when none: each carries a contrary-evidence `statement` and a (`source_ref_type`, `source_ref_id`) grounding reference that must resolve to a member of this call's supplied bundle — a fact in `source_facts` or `scope_facts`, an item in `source_evidence_items` (including a displaced-record support descriptor member), or a log in `source_logs`. A descriptor member remains a legal `evidence_item` grounding reference because it is a supplied bundle member. A reference outside that bundle, a wrong-type or missing target, or a duplicate (`source_ref_type`, `source_ref_id`) pair is invalid structured output under §15.1 and §12 rule 10. Stage 7 persists the validated list to `SelfClaim.counterevidence` and inside the complete §11.14 `VerificationFinding` for that claim (§11.6, §13.7).
 
 Every `status` uses the canonical meaning in §16.11. Stage 7 validates one finding for every claim in the snapshot and derives the snapshot's own status from those claim results; the writer or verifier may not assign a more permissive snapshot label independently.
 
@@ -378,7 +330,6 @@ Input:
       "claim": "Current evidence supports recurring work on provenance-heavy systems.",
       "claim_kind": "pattern_signal",
       "dimension": "domain_interest",
-      "source_signal_ids": ["signal_001"],
       "source_fact_ids": ["fact_001"],
       "confidence": "medium",
       "verification_status": "supported",
@@ -630,8 +581,7 @@ Every §15.2–§15.9 transport field has exactly one authorship class under §1
 | Contract | Model-authored output | Service-owned: input context and post-response enrichment |
 |---|---|---|
 | §15.2 fact extractor | per fact: `claim`, `claim_kind`, `role`, `company`, `context`, `ownership_level`, `action`, `object`, `outcome`, `skills`, `technologies`, `themes`, `evidence_item_ids`, `confidence`, the nullable `occurred` override channel — `null` and a non-null narrowing are both valid authored transport values under §15.2; `warnings` | all input arrays; per fact: `id`, `created_at`, `superseded_at`, `metadata`, copied `project`, derived `source_log_ids`, and the persisted `occurred` value, service-resolved deterministically from the authored transport value — the governing placement on `null`, the validated narrowing otherwise |
-| §15.3 signal extractor | per signal: `signal_type`, `statement`, `supporting_fact_ids`, `counter_fact_ids`, `confidence`; `warnings` | all input arrays; per signal: `id`, `created_at`, `superseded_at`, `metadata` |
-| §15.4 assessment writer | per claim: `claim`, `claim_kind`, `dimension`, `source_signal_ids`, `source_fact_ids`, `confidence`, `uncertainty`; `warnings` | `scope`, `scope_target`, `gaps`, `contradictions`, and every other input; per claim: `id`, `created_at`, `superseded_at`, `snapshot_id` (the owning snapshot, §11.6), initial `verification_status`, `metadata`; the complete snapshot: `id`, `created_at`, `superseded_at`, `scope`, `scope_target`, `title` (derived per §13.6), initial `verification_status`, `metadata`, `summary` (copied from the `narrative_summary` claim), `gap_question_ids`, `contradiction_ids` |
+| §15.4 assessment writer | per pattern (transport-only, discarded after the Stage 6 boundary): `label`, `supporting_fact_ids`, `counter_fact_ids`; per claim: `claim`, `claim_kind`, `dimension`, `source_pattern_labels` (transport-only, consumed with the patterns), `source_fact_ids`, `confidence`, `uncertainty`; `warnings` | `scope`, `scope_target`, `gaps`, `contradictions`, and every other input; per claim: `id`, `created_at`, `superseded_at`, `snapshot_id` (the owning snapshot, §11.6), initial `verification_status`, `metadata`; the complete snapshot: `id`, `created_at`, `superseded_at`, `scope`, `scope_target`, `title` (derived per §13.6), initial `verification_status`, `metadata`, `summary` (copied from the `narrative_summary` claim), `gap_question_ids`, `contradiction_ids` |
 | §15.5 assessment verifier | transition result: `status`, `unsupported_phrases`, `counterevidence`, `suggested_rewrite`, `reason` | the complete input bundle; Stage 7 alone validates and applies the result and writes the §11.14 finding |
 | §15.6 resume writer | per bullet: `text`, `target_section`, `target_role_relevance`, `matched_jd_requirements`, `source_fact_ids`; `warnings` | all inputs; per bullet: `id`, `created_at`, `superseded_at`, `branch_id`, derived `source_log_ids`, exact-input `source_self_claim_ids`, initial `verification_status` with the §11.8 verifier-field defaults until Stage 11 |
 | §15.7 resume verifier | transition result: `status`, `unsupported_phrases`, `suggested_rewrite`, `reason` | the complete input bundle; Stage 11 alone validates and applies the result and writes the §11.14 finding |

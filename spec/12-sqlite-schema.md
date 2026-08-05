@@ -6,7 +6,6 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
     - RawLog → raw_logs
     - EvidenceItem → evidence_items
     - ExperienceFact → experience_facts
-    - SelfSignal → self_signals
     - SelfClaim → self_claims
     - Contradiction → contradictions
     - GapQuestion → gap_questions
@@ -81,7 +80,7 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 
     Assessment-view identity depends on the locale-independent case-folded canonical `scope_target` (§11.7), which SQLite cannot fold deterministically in an index. One-current-per-view enforcement therefore remains the Stage 6 transaction check under the workspace writer lock. Branch replacement identity is likewise canonical — the NFC case-folded `name` (§14.10), which this raw-name index cannot express — so folded one-current-per-branch enforcement is the Stage 10 transaction check under the same lock. The index remains the coarser exact-spelling backstop.
 
-13. Every row in the eight recomputable tables — `experience_facts`, `self_signals`, `self_claims`, `assessment_snapshots`, `resume_bullets`, `contradictions`, `gap_questions`, and `resume_branches` — additionally derives these service-set storage columns:
+13. Every row in the seven recomputable tables — `experience_facts`, `self_claims`, `assessment_snapshots`, `resume_bullets`, `contradictions`, `gap_questions`, and `resume_branches` — additionally derives these service-set storage columns:
 
     ```sql
     produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
@@ -92,7 +91,6 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 
     - Stage 3 allocates one per correction lineage, so a full extraction over N lineages allocates N generation IDs.
     - Stage 4 uses one shared ID for the output set or sets it replaces in one swap, while a §13.4-retained set keeps its rows and provenance columns.
-    - Stage 5 uses one for the signal generation.
     - Stage 6 uses one for the jointly swapped claims and snapshot of one assessment view.
     - Stage 10 uses one for the jointly swapped branch and bullets.
 
@@ -117,8 +115,6 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 
 | Typed reference fields | Required current target |
 |---|---|
-| `SelfSignal.supporting_fact_ids`, `counter_fact_ids` | `experience_facts` |
-| `SelfClaim.source_signal_ids` | `self_signals` |
 | `SelfClaim.source_fact_ids` | `experience_facts` |
 | `SelfClaim.counterevidence[].source_ref_type` / `source_ref_id` | the table selected by `CounterevidenceRefType`; the target must belong to that claim's supplied §15.5 bundle |
 | `VerificationFinding.produced_by_run_id` | `processing_runs` |

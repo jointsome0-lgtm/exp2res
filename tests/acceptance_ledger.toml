@@ -81,7 +81,7 @@ status = "partial"
 phases = ["3", "4"]
 evals = ["21.15", "21.48"]
 issues = []
-note = "Assessment evidence_map.json now carries the complete closed claim-signal-fact-evidence link projection; the resume evidence map remains"
+note = "Assessment evidence_map.json carries a complete closed link projection at the superseded version-1 signal-bearing shape; the §13.12 version-2 claim-fact-evidence shape lands with the #76 follow-up, and the resume evidence map remains"
 
 ["24.14"]
 status = "pending"
@@ -166,7 +166,7 @@ status = "partial"
 phases = ["2"]
 evals = ["21.23", "21.58"]
 issues = ["#70", "#99", "#182"]
-note = "Stage 4, the public detections command, gap-answer round trip, and Vera E2 prove the detector lifecycle and envelope, now with per-set retention, dependency-graph invalidation of signals/claims/snapshots, and the free short-circuited rerun; the generated-voice gate and resume branch/bullet invalidation remain for later phases"
+note = "Stage 4, the public detections command, gap-answer round trip, and Vera E2 prove the detector lifecycle and envelope, now with per-set retention, dependency-graph invalidation of claims/snapshots, and the free short-circuited rerun; the generated-voice gate and resume branch/bullet invalidation remain for later phases"
 
 ["24.27"]
 status = "pending"
@@ -219,7 +219,7 @@ status = "partial"
 phases = ["1", "3", "4", "5"]
 evals = ["21.31"]
 issues = ["#131"]
-note = "Stage 3 fact ceilings, Stage 5 signal caps, and Stage 6 claim-side §9.4 caps are covered; Stage 7 semantic breadth remains"
+note = "Stage 3 fact ceilings and Stage 6 claim-side §9.4 source-maximum caps are covered; the pattern-generalization caps await the #76 follow-up, and Stage 7 semantic breadth remains"
 
 ["24.35"]
 status = "met"
@@ -294,7 +294,7 @@ status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.41"]
 issues = ["#81", "PR #95", "#69", "PR #101", "#82", "PR #125", "#96", "#156", "#157", "#164"]
-note = "Discovery, schema gating, non-interactive controls, stable exit classes, closed envelopes, extraction consent/cancellation, standard Stage 3 affected/generation/run/warning fields, complete read-only facts list/show projections, logs show current/displaced inspection with linked evidence and its single-record human raw-text carve-out, and human-mode rendering of the fact field set, the produced signal set, and §13.13 rule 9 view reports on success and failure alike are proven; later command families remain"
+note = "Discovery, schema gating, non-interactive controls, stable exit classes, closed envelopes, extraction consent/cancellation, standard Stage 3 affected/generation/run/warning fields, complete read-only facts list/show projections, logs show current/displaced inspection with linked evidence and its single-record human raw-text carve-out, and human-mode rendering of the fact field set and §13.13 rule 9 view reports on success and failure alike are proven; later command families remain"
 
 ["24.45"]
 status = "partial"

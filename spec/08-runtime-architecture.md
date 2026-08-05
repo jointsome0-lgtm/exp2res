@@ -30,7 +30,7 @@ LLM use is allowed, but all LLM outputs must be structured, validated, and verif
 3. Authority is the held OS lock, never the file's existence: process death releases it automatically, and a leftover file is inert.
 4. V1 has no PID or existence lock, stale-lock heuristic, manual lock repair, or `fsck` pass.
 5. SQLite transactions remain required, but they cannot serialize the managed `out/` filesystem work that §13 couples to database state transitions.
-6. Every command that can persist business data or managed outputs is a writer: the §14.2–§14.5 capture, import, and correction forms; `jd add`; `jd delete`; `workspace purge`; `gaps answer`; `logs delete`; `extract`; `detections generate`; `signals generate`; the §14.9 assessment generation, repair, verification, and export forms; the §14.10 bullet-pack generation, verification, and export forms; `recompute`; and `db migrate`.
+6. Every command that can persist business data or managed outputs is a writer: the §14.2–§14.5 capture, import, and correction forms; `jd add`; `jd delete`; `workspace purge`; `gaps answer`; `logs delete`; `extract`; `detections generate`; the §14.9 assessment generation, repair, verification, and export forms; the §14.10 bullet-pack generation, verification, and export forms; `recompute`; and `db migrate`.
 7. Every `list` or `show` form, `db status`, and the §14.17 `view serve` form is read-only and takes no writer lock.
 8. On an existing workspace, a writer first applies the §12.14 compatibility gate.
 9. The writer then acquires the workspace writer lock and re-establishes compatibility while holding it, before beginning its business operation, opening any write transaction, or enumerating or removing any managed output.

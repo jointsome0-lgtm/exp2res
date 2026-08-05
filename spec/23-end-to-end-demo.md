@@ -70,19 +70,6 @@ The retrospective capture operation persists this text as a `RawLog` with `occur
 ]
 ```
 
-## §23.3 Self-Signals
-
-```json
-[
-  {
-    "signal_type": "direction_signal",
-    "statement": "In the Exp2Res redesign, you moved the system toward preserving truth through provenance and verification.",
-    "supporting_fact_ids": ["fact_001", "fact_002"],
-    "confidence": "medium"
-  }
-]
-```
-
 ## §23.4 Self-Assessment Claim
 
 ```json
@@ -119,8 +106,8 @@ The complete `bullet_pack.md` for this small branch is:
 ## Education
 ```
 
-Both nonduplicate bullets have `supported` §16.11 findings. Neither claims production use, metrics, employment, or unsupported scale. Their persisted `ResumeBullet` rows render in §13.10's deterministic order. Every rendered sentence resolves through the closed §13.12 evidence map to its typed claim/signal/fact/evidence closure.
+Both nonduplicate bullets have `supported` §16.11 findings. Neither claims production use, metrics, employment, or unsupported scale. Their persisted `ResumeBullet` rows render in §13.10's deterministic order. Every rendered sentence resolves through the closed §13.12 evidence map to its typed claim/fact/evidence closure.
 
-The complete manifest-backed `out/branch/<branch-id>/` set contains and hashes `bullet_pack.md`, `evidence_map.json`, `verification_report.json`, `gaps.json`, and `contradictions.json`, plus `manifest.json`. For this snapshot, the `gaps.json` and `contradictions.json` companions contain their required closed version-1 documents with empty `gaps` and `contradictions` lists. No filler text is generated for either empty set.
+The complete manifest-backed `out/branch/<branch-id>/` set contains and hashes `bullet_pack.md`, `evidence_map.json`, `verification_report.json`, `gaps.json`, and `contradictions.json`, plus `manifest.json`. For this snapshot, the `gaps.json` and `contradictions.json` companions contain their required closed version-2 documents with empty `gaps` and `contradictions` lists. No filler text is generated for either empty set.
 
 ---

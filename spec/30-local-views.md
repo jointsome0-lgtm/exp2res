@@ -55,7 +55,7 @@
    - That HTML is exactly §17's `report.html` member: the view performs §13.14's complete current-output revalidation for the selected snapshot — rule 5's standard, not merely matching-manifest validation — and serves those published bytes.
    - It never renders a second version of the same projection, never re-renders around a failed revalidation, and never renders a partial claim set to work around a gate.
    - A missing, stale, or invalidated set is a fail-closed outcome that names the §14.9 export the owner must run.
-   - Interactive provenance drill-down from claim to signal to fact to evidence is a named later iteration and is not part of the first mirror view.
+   - Interactive provenance drill-down from claim to fact to evidence is a named later iteration and is not part of the first mirror view.
 4. **JD-to-bullet-pack view.**
 
    - The view accepts owner-pasted vacancy text, writes the exact validated bytes to one owner-only operation-owned temporary file inside the workspace, requires that file to pass §29.4, supplies its path to the existing §14.10 JD-add operation, and removes it on completion under §29.6.

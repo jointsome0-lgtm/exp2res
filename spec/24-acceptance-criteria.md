@@ -7,7 +7,7 @@ V1 is acceptable when:
 3. Raw logs are append-only to automation, while the owner can hard-delete any raw log without an FK or rebuild failure blocking deletion.
 4. Corrections are stored as self-contained new events linked to their targets; targets are not mutated.
 5. Experience facts require at least one direct, non-null EvidenceItem-backed source row and derive their source-log IDs through those items.
-6. Self-claims require source facts/signals.
+6. Self-claims require source facts.
 7. Assessment snapshots preserve uncertainty and contradictions.
 8. Assessment verifier blocks flattery, unsupported identity claims, and diagnostic claims.
 9. Resume bullets require source facts and source logs.
@@ -19,7 +19,7 @@ V1 is acceptable when:
 15. Re-extraction never leaves more than one current fact generation for a correction lineage:
     - Downstream stages never mix current and superseded generations.
     - Every invalidation removes dependent managed exports or reports their residual paths as failure.
-16. A correction automatically recomputes its lineage and the complete current gaps, contradictions, and signals:
+16. A correction automatically recomputes its lineage and the complete current gaps and contradictions:
     - Every current claim, snapshot, branch, and bullet is superseded.
     - Each invalidated assessment view is reported with its executable §14.9 regeneration command.
     - Each branch is reported with its name, retained job-description ID, and former view.
@@ -29,7 +29,7 @@ V1 is acceptable when:
     - It attempts verified removal of managed exports.
     - It commits even if output removal or rebuilding fails.
     - It reports any residual managed path instead of claiming success.
-    - It can rebuild only from retained raw records, and the automatic rebuild ends at Stage 5.
+    - It can rebuild only from retained raw records, and the automatic rebuild ends at Stage 4.
     - Purged assessment views are reported for explicit regeneration as command output only.
 18. Every typed JSON/polymorphic reference and Stage 6 claim-to-snapshot cardinality is validated transactionally at write time:
     - Every fact source is a non-null evidence-item link.
@@ -59,7 +59,7 @@ V1 is acceptable when:
     - Free-form, missing, duplicate, or wrong-job values fail the batch.
 26. Stage 4 is LLM-backed through §15.8 and runs only through the single §14.7 detection-generation command or the §14.12 lifecycle flow:
     - Either flow decides retention per output set under §13.4: a set with an equal structural-key comparison (for gaps, additionally all-unanswered) keeps its existing rows, IDs, and prose, while exactly a failing set is replaced.
-    - Either flow reports every invalidated artifact class under §13.4's dependency-graph supersession, where a replaced contradiction set supersedes signals and above while a gap-only replacement supersedes views and branches but never the current signal generation.
+    - Either flow reports every invalidated artifact class under §13.4's dependency-graph supersession, where a replacement of either set supersedes every current claim, snapshot, branch, and bullet while per-set retention leaves those layers current.
     - A rerun whose §11 canonical input hash, provider, model, and prompt-policy identity equal the most recent completed §13.4 run's recorded first-call telemetry completes as a full retention with no provider call and no `llm_calls` row.
     - Stage 4 restricts targets to supplied Stage 1 evidence and current Stage 3 facts.
     - The persisted §11 model, §12 rule 10 validator, and §15.8 producer expose exactly the same closed `DetectionRefType` target domain.
@@ -96,14 +96,14 @@ V1 is acceptable when:
     - Candidates above a cap fail as invalid structured output, without silent rewriting.
     - No evidence strength authorizes ownership, metric, production, temporal, or employment content.
 35. For any current self-claim, Stage 7 assembles exactly the displacement-aware §15.5 provenance closure:
-    - The closure holds the claim's source signals, closure facts, their linked evidence items projected under §13.3 rule 10, and only the non-displaced retained `RawLog` objects reached through them.
-    - The bundle adds the view's complete `scope_signals` and `scope_facts` context.
+    - The closure holds the claim's closure facts, their linked evidence items projected under §13.3 rule 10, and only the non-displaced retained `RawLog` objects reached through them.
+    - The bundle adds the view's complete `scope_facts` context.
     - Members are duplicate-free and ID-ordered, with raw-log objects reached only through the closure.
     - A missing, superseded, duplicate, or extra post-projection member fails verification closed before any provider call.
     - §29.3's §15.5 row names that bundle.
 36. Assessment scope selection is deterministic and service-owned:
-    - `global` supplies every current fact and signal.
-    - `project` supplies subject facts by case-folded canonical target match, every signal referencing at least one subject fact, and their out-of-subject referenced facts as context.
+    - `global` supplies every current fact.
+    - `project` supplies subject facts by case-folded canonical target match, with no other out-of-subject fact context.
     - Complete gap and contradiction sets are never scope-filtered.
     - Writer citations outside the supplied objects fail as invalid structured output.
     - Subject facts carry their governing record's copied project provenance (§13.3 rule 13).
@@ -133,9 +133,9 @@ V1 is acceptable when:
     - Contention fails after the same bounded wait with the stable one-line `workspace_busy` diagnostic rather than a stack trace.
     - Process death releases the lock, and WAL recovery restores database consistency without manual repair.
     - Process races cannot violate current/superseded, privacy, provenance, or managed-output invariants.
-41. Every row in the eight recomputable tables resolves to exactly one producing `processing_runs` row and one per-swap `generation_id`:
+41. Every row in the seven recomputable tables resolves to exactly one producing `processing_runs` row and one per-swap `generation_id`:
     - A multi-lineage extract uses a different generation per lineage.
-    - The Stage 4 set or sets replaced in one swap, each Stage 5 signal set, Stage 6 view, and Stage 10 branch use one shared generation.
+    - The Stage 4 set or sets replaced in one swap, each Stage 6 view, and Stage 10 branch use one shared generation.
     - A §13.4-retained set keeps its prior generation, and a Stage 4 run that retains both prior sets allocates none.
     - Each correction, deletion, or recompute flow groups its invoked stage runs under one non-stage `13.13` orchestration run through `parent_run_id`.
     - Run-level provider/model/prompt-policy identity and stable failure codes remain in `processing_runs`.
@@ -178,7 +178,7 @@ V1 is acceptable when:
     - List/show, detection, deletion, and export results use only the §14.14 projections and never include `RawLog.raw_text`, `JobDescription.raw_text`, or a free-form object.
     - Primary human results alone may otherwise use stdout, diagnostics/progress use stderr in both modes, and no public or retained diagnostic exposes secrets, prompt text, raw source text, or undeclared source content.
     - Interruption rolls back the in-flight unit, releases locks, and exposes no partial current generation without reversing a §13.13 boundary already committed.
-    - The operable inspection surface is exactly `db status`, `logs list`, `facts list/show`, `gaps list`, `contradictions list/show`, `signals list`, `assess list/show`, `jd list/show`, and `runs list/show`; evidence-item, branch/bullet, deeper historical-generation, and parsed-requirement-dump inspection remains explicitly deferred.
+    - The operable inspection surface is exactly `db status`, `logs list`, `facts list/show`, `gaps list`, `contradictions list/show`, `assess list/show`, `jd list/show`, and `runs list/show`; evidence-item, branch/bullet, deeper historical-generation, and parsed-requirement-dump inspection remains explicitly deferred.
 45. Temporal, language, Unicode, and local-path behavior has one deterministic V1 interpretation:
     - Every datetime accepted at a §11, §15, §19, hydration, or construction boundary is offset-aware, and a naive value fails there; §14.14 alone may resolve naive owner CLI input before model validation from the explicit IANA workspace timezone, never ambient timezone or locale; and §12 storage preserves the supplied or resolved offset.
     - Distinct stored offsets for one instant survive unchanged, every equality, ordering, duration, and sort key uses the UTC instant, and §11 canonical hashing remains identical for equal instants.
@@ -231,7 +231,7 @@ V1 is acceptable when:
     - A supplied referenced-artifact `content_digest` is recorded as inert EvidenceItem provenance; a later authorized dereference reports a missing file or digest mismatch, fails a required read closed, and never substitutes, fetches, refreshes, or silently omits content.
 49. Domain-routed imports and deferred local views preserve their boundaries:
     - The closed §19.1 ephemeris body accepts only source-tagged activity evidence with its required `occurred`, `project`, and `text` values; a directly routed learning knowledge-state, trail, or evidence-reference payload is rejected, while learning mentioned in admitted activity text retains only the §10 `imported_activity_event` scope and cannot establish Atlas-scale knowledge state.
-    - A valid §19.2 Atlas snapshot persists only its atomic `RawLog`/`EvidenceItem` pair with the §10 `atlas_snapshot` entry type and `knowledge_state_snapshot` strength, creates no `ExperienceFact`, `SelfSignal`, or `SelfClaim` at import, and any later Stage 3 fact remains within §9.4's knowledge-attribution scope and confidence ceiling without implying implementation, built or production use, outcome, ownership, mastery, or automatic `Confidence = "high"`.
+    - A valid §19.2 Atlas snapshot persists only its atomic `RawLog`/`EvidenceItem` pair with the §10 `atlas_snapshot` entry type and `knowledge_state_snapshot` strength, creates no `ExperienceFact` or `SelfClaim` at import, and any later Stage 3 fact remains within §9.4's knowledge-attribution scope and confidence ceiling without implying implementation, built or production use, outcome, ownership, mastery, or automatic `Confidence = "high"`.
     - V1 remains CLI-first: the §30 mirror and gap-question views are served only by the explicit §14.17 command, and the JD-to-bullet-pack view stays deferred.
     - Every §30 view renders read-only over an explicitly selected current derived state, is served and embedded only by a loopback local URL configured outside Exp2Res, and delegates every action only to an existing §14 flow with no additional consumer coupling, LLM, egress, background, or consent authority.
     - The deferred JD-to-bullet-pack view renders a refusal required by §18 or §16.11 as a first-class completed §14.14 `blocked` outcome with its reason and findings, never as an error page or operational failure.
@@ -248,8 +248,8 @@ V1 is acceptable when:
     - Failed publication leaves database state unchanged, and every abandoned candidate or rollback sibling is deterministically reconciled or reported before a later publication.
 51. Stage 12 assessment and verified-bullet-pack exports satisfy one closed deterministic contract:
     - Repeated export of the same coherent snapshot or branch reproduces golden-file-identical fixed-member bytes and identical manifest member hashes for `report.md`, `self_claims.json`, assessment `evidence_map.json`, `bullet_pack.md`, bullet-pack `evidence_map.json`, `verification_report.json`, `gaps.json`, and `contradictions.json`.
-    - Every JSON companion validates as the exact extra-forbid version-1 §13.12 document, and any missing, extra, mistyped, unsupported-version, duplicate-ID, unresolved-reference, inexact verification row, or incomplete or unused evidence-link closure fails before publication.
-    - Every factual bullet sentence or logical line in `bullet_pack.md` resolves from its exact same-order `rendered_bullets` row through that row's complete claim links, including every declared signal edge and direct-fact edge, and then through the corresponding fact and evidence links — or, for a facts-only bullet, through its exact direct-fact path — to current §11 rows, while the renderer adds only §18 structural syntax and no factual bridge, summary, transition, filler, or inferred coherence prose.
+    - Every JSON companion validates as the exact extra-forbid version-2 §13.12 document, and any missing, extra, mistyped, unsupported-version, duplicate-ID, unresolved-reference, inexact verification row, or incomplete or unused evidence-link closure fails before publication.
+    - Every factual bullet sentence or logical line in `bullet_pack.md` resolves from its exact same-order `rendered_bullets` row through that row's complete claim links and then through the corresponding fact and evidence links — or, for a facts-only bullet, through its exact direct-fact path — to current §11 rows, while the renderer adds only §18 structural syntax and no factual bridge, summary, transition, filler, or inferred coherence prose.
     - §17–§18 deterministically render fixed headings, partial or empty sections without filler, temporal uncertainty without precision inflation under §5.5, §11.1, §16.7, and §17, hostile Markdown metacharacters without structural injection, NFC/LF generated output with the byte-exact source-voice exception, and exactly one final LF.
     - §13.10 keeps the first exact duplicate by its canonical order and drops later byte-equal candidates, while semantic near-duplicate detection remains post-V1 and suppression uses neither a second LLM coherence pass nor sibling-bullet context.
     - Under `--json`, `bullets generate`, `bullets verify`, and `bullets export` report only through their canonical closed §14.14 envelope projections: generation and verification use `result = null`, export uses the complete manifest-path result, and a completed non-passing verification or export-gate outcome remains class-10 `blocked` with complete findings when applicable.
