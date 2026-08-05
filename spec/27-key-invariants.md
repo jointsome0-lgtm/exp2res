@@ -6,7 +6,7 @@
 Raw logs are append-only to automation and deletable by their owner (§5.3).
 Corrections are linked new evidence, never silent edits; they invoke recomputation (§5.3, §13.13).
 Every current fact has retained source logs.
-Every current self-claim has current source facts.
+Every current self-claim cites only current source facts; a sourceless claim caps at `unknown` and fails verification (§9.4, §13.7 rule 1).
 Every current self-claim belongs to exactly one current assessment snapshot (§12 rule 10, §13.6).
 Every current resume bullet has current source facts and retained source logs.
 Every current resume branch names one exact current assessment snapshot, and each bullet lists exactly the supported member claims it used (§12 rule 10, §13.10, §18).
