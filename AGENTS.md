@@ -90,4 +90,11 @@ lanes, and review policy stay local to each repository.
   no real personal data, credentials, or local agent/tool state.
 <!-- END SDD-CONVENTIONS -->
 
+Unloading gate (local, temporary): execution of the unloading-by-maturity
+rule above is sequenced by the Great unloading tracker
+[#231](https://github.com/jointsome0-lgtm/exp2res/issues/231) and starts
+only after the great cleansing master #191 closes. The altitude rule for
+new decisions is effective immediately. Remove this paragraph when #231
+unblocks.
+
 Git worktrees: create them only in `.worktrees/<name>` inside the repo (globally gitignored via `~/.config/git/ignore`), never as sibling directories. Any work that will open a PR branches and builds in such a worktree, never in the primary checkout — the primary checkout stays on a clean `main` so parallel sessions don't fight for its index. Trivial read-only work and single-file doc edits on a clean main need no worktree. Remove the worktree and delete its local branch once its PR merges.
