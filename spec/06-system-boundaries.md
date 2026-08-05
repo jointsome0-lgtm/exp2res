@@ -45,7 +45,7 @@ knowledge-state context
 frontier context
 ```
 
-The V1 Exp2Res importer accepts the §19.2 knowledge-state snapshot. The selfos-side adapter owns the exact Atlas-to-snapshot mapping; Exp2Res neither embeds Atlas's internal schema nor interprets an Atlas scale as an Exp2Res confidence, ownership level, signal, or claim.
+The V1 Exp2Res importer accepts the §19.2 knowledge-state snapshot. The selfos-side adapter owns the exact Atlas-to-snapshot mapping; Exp2Res neither embeds Atlas's internal schema nor interprets an Atlas scale as an Exp2Res confidence, ownership level, or claim.
 
 But Atlas does not decide career/self claims.
 

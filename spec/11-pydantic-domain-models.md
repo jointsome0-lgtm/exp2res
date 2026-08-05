@@ -6,9 +6,9 @@ Every top-level entity `id` follows §12 rule 11's identity contract: service-as
 
 Every persisted entity model below other than `RawLog` carries a system-assigned `created_at: datetime`, set when the entity is first persisted. `RawLog.recorded_at` retains its §5.4 meaning as the time the raw record entered Exp2Res. A creation timestamp does not substitute for the production provenance defined below.
 
-Every recomputable entity — `ExperienceFact`, `SelfSignal`, `SelfClaim`, `AssessmentSnapshot`, `ResumeBullet`, `Contradiction`, `GapQuestion`, and `ResumeBranch` — also carries `superseded_at: Optional[datetime] = None`. `None` means the row belongs to the one current generation for its replacement identity — the correction lineage for facts, the global Stage 4 generation for gaps and contradictions, the global Stage 5 generation for signals, the assessment view (§11.7) for claims and snapshots, and the case-folded branch name (§14.10) for branches and bullets; a timestamp makes it historical. A normal rerun or correction sets this field once instead of rewriting payload or provenance. New stages, verification, generation, and export use only current rows. `JobDescription` is retained context, not a recomputed interpretation. Owner deletion is the privacy exception: §13.13 purges current and historical recomputable rows rather than retaining superseded copies.
+Every recomputable entity — `ExperienceFact`, `SelfClaim`, `AssessmentSnapshot`, `ResumeBullet`, `Contradiction`, `GapQuestion`, and `ResumeBranch` — also carries `superseded_at: Optional[datetime] = None`. `None` means the row belongs to the one current generation for its replacement identity — the correction lineage for facts, the global Stage 4 generation for gaps and contradictions, the assessment view (§11.7) for claims and snapshots, and the case-folded branch name (§14.10) for branches and bullets; a timestamp makes it historical. A normal rerun or correction sets this field once instead of rewriting payload or provenance. New stages, verification, generation, and export use only current rows. `JobDescription` is retained context, not a recomputed interpretation. Owner deletion is the privacy exception: §13.13 purges current and historical recomputable rows rather than retaining superseded copies.
 
-Production provenance for those eight recomputable entities — `produced_by_run_id` and `generation_id` — is storage-level under §12 rule 13. Every §15 LLM-contract input is drawn from §11 shapes exactly as the receiving contract declares it — a complete persisted shape, or a declared narrower projection such as the §15.6/§15.7 parsed job-description view (never `JobDescription.raw_text`) or a §13.3 rule 10 displaced-record support descriptor. A declared projection may not be widened toward the complete entity, and because every transmitted shape is a §11 shape or a projection of one, no §15 contract ever sees or sets either storage-only value.
+Production provenance for those seven recomputable entities — `produced_by_run_id` and `generation_id` — is storage-level under §12 rule 13. Every §15 LLM-contract input is drawn from §11 shapes exactly as the receiving contract declares it — a complete persisted shape, or a declared narrower projection such as the §15.6/§15.7 parsed job-description view (never `JobDescription.raw_text`) or a §13.3 rule 10 displaced-record support descriptor. A declared projection may not be widened toward the complete entity, and because every transmitted shape is a §11 shape or a projection of one, no §15 contract ever sees or sets either storage-only value.
 
 An `AssessmentSnapshot`'s assessment payload and provenance are immutable after creation. Stage 7 alone may update `verification_status` while the snapshot is current, and `superseded_at` may make its one-way lifecycle transition; neither field may rewrite the document or its source lists. A superseded snapshot remains inspectable history after correction but cannot feed verification, resume generation, or export. Owner deletion may purge it under the stronger privacy rule. Operational verification state and finding-history semantics are defined in §11.14 and §16.11.
 
@@ -208,21 +208,6 @@ class ExperienceFact(BaseModel):
 
 `source_log_ids` and `evidence_item_ids` are hydrated views under §12 rule 8, agreeing exactly with §12.4's `fact_sources → evidence_items` relation.
 
-## §11.5 SelfSignal
-
-```python
-class SelfSignal(BaseModel):
-    id: str
-    created_at: datetime
-    superseded_at: Optional[datetime] = None
-    signal_type: SignalType
-    statement: str
-    supporting_fact_ids: list[str]
-    counter_fact_ids: list[str] = Field(default_factory=list)
-    confidence: Confidence
-    metadata: dict = Field(default_factory=dict)
-```
-
 ## §11.6 SelfClaim
 
 ```python
@@ -239,8 +224,8 @@ class SelfClaim(BaseModel):
     claim: str
     claim_kind: ClaimKind
     dimension: SelfClaimDimension
-    source_signal_ids: list[str]
     source_fact_ids: list[str]
+    counter_fact_ids: list[str] = Field(default_factory=list)
     confidence: Confidence
     verification_status: VerificationStatus
     counterevidence: list[CounterevidenceItem] = Field(default_factory=list)
@@ -250,7 +235,9 @@ class SelfClaim(BaseModel):
 
 `snapshot_id` is the claim's owning `AssessmentSnapshot` (§11.7): a required service-owned reference Stage 6 assigns when it creates the claim generation, immutable for the row's lifetime. Ownership is one-to-many by construction — a claim row is created for exactly one snapshot and is never shared or re-parented, so current snapshots cannot share claim rows and no claim can be unowned. Deterministic claim ordering needs no separate position field: every ordering consumer — §13.12 export documents, §14.14 inspection results, §17 rendering — orders a snapshot's claims by `SelfClaim.id` ascending in UTF-8 byte order, and the service-assigned entity ID is that stable ordering field.
 
-`CounterevidenceItem` is an embedded typed annotation, not an ontology entity. `statement` is the verifier-authored contrary-evidence prose and remains generated voice under §16.12; (`source_ref_type`, `source_ref_id`) is its polymorphic grounding reference. Stage 7 persists the validated §15.5 list: each reference must resolve under §12 rule 10 to the table its type selects and must be a member of that claim's supplied §15.5 bundle — closure, `scope_facts`, or `scope_signals` — so the verifier cannot ground contrary evidence outside what it received, while an omitted contrary view member stays navigably citable. Entries are duplicate-free by (`source_ref_type`, `source_ref_id`); one grounding source carries one consolidated statement.
+`counter_fact_ids` is service-derived at the Stage 6 boundary, never model-authored: the duplicate-free union of the claim's cited §15.4 patterns' `counter_fact_ids`, empty for a claim citing no patterns — under §15.4 only a `pattern_signal` claim cites any — and immutable for the row's lifetime. It is always a subset of `source_fact_ids` — §15.4's equality rule makes a pattern-citing claim's closure exactly its cited patterns' fact union — and it durably marks which closure members entered as contrary evidence, so §9.4's pattern-generalization caps stay re-checkable after the patterns are discarded and no §15.5, §17, or §13.12 consumer mistakes a contrary member for support.
+
+`CounterevidenceItem` is an embedded typed annotation, not an ontology entity. `statement` is the verifier-authored contrary-evidence prose and remains generated voice under §16.12; (`source_ref_type`, `source_ref_id`) is its polymorphic grounding reference. Stage 7 persists the validated §15.5 list: each reference must resolve under §12 rule 10 to the table its type selects and must be a member of that claim's supplied §15.5 bundle — closure or `scope_facts` — so the verifier cannot ground contrary evidence outside what it received, while an omitted contrary view member stays navigably citable. Entries are duplicate-free by (`source_ref_type`, `source_ref_id`); one grounding source carries one consolidated statement.
 
 ## §11.7 AssessmentSnapshot
 
@@ -420,7 +407,7 @@ class VerificationFinding(BaseModel):
 
 Verification findings are append-only history with no `superseded_at`; their payload is immutable after persistence until the §13.13 owner-deletion purge. Each completed Stage 7 or Stage 11 verifier attempt writes exactly one finding per verified target in the same transaction as that target's denormalized status update. Stage 7 findings target `SelfClaim`, Stage 11 findings target `ResumeBullet`, and the derived §16.11 snapshot aggregate receives no finding row. A failed attempt writes no finding (§13.7, §13.11).
 
-`produced_by_run_id` is an explicit model field here, unlike production provenance on the eight recomputable entities: the persisted finding shape never crosses the LLM boundary, and the owning verifier run is part of the finding's semantics. The verifier contract returns only its declared payload; the service assigns the finding ID, creation time, owning run, and typed target.
+`produced_by_run_id` is an explicit model field here, unlike production provenance on the seven recomputable entities: the persisted finding shape never crosses the LLM boundary, and the owning verifier run is part of the finding's semantics. The verifier contract returns only its declared payload; the service assigns the finding ID, creation time, owning run, and typed target.
 
 The denormalized fields on `SelfClaim`, `ResumeBullet`, and `AssessmentSnapshot` remain the sole operational state consumed by §16.11 gates. Findings are inspect-only except for §13.6's narrow deterministic repair consumer: they are never an LLM writer input, never a §15.4 or §15.6 input, never any prompt input, and never §17 or §18 export content. `suggested_rewrite` is persisted only in this history and remains advisory, with that one narrow deterministic consumer: §13.6's explicit repair form may adopt a claim's latest persisted rewrite as the text of a new `unverified` replacement claim, which then earns status only through ordinary Stage 7 re-verification. No other operation applies it, and it is still never a prompt input or export content.
 

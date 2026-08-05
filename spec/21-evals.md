@@ -170,7 +170,7 @@ Enforces §13.7, §15.4, and §17.
 
 Enforces §8.1, §12.14, §13.14 rules 2–3 and 5–6, §14.14, §14.17, §16.11, §17, §29.1–§29.2, and §30.
 
-## §21.58 Identical-Input Detection Reruns Are Free and Gap Churn Never Re-Rolls Signals
+## §21.58 Identical-Input Detection Reruns Are Free and Retention Supersedes Nothing
 
 Enforces §12 rule 13, §12.15, §13.4, and §14.7.
 

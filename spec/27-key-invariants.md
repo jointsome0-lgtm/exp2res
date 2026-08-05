@@ -6,7 +6,7 @@
 Raw logs are append-only to automation and deletable by their owner (§5.3).
 Corrections are linked new evidence, never silent edits; they invoke recomputation (§5.3, §13.13).
 Every current fact has retained source logs.
-Every current self-claim has current source facts or signals.
+Every current self-claim has current source facts: an empty `source_fact_ids` list is invalid Stage 6 output (§15.4, §16.1), and §13.7 rule 1 backstops verification.
 Every current self-claim belongs to exactly one current assessment snapshot (§12 rule 10, §13.6).
 Every current resume bullet has current source facts and retained source logs.
 Every current resume branch names one exact current assessment snapshot, and each bullet lists exactly the supported member claims it used (§12 rule 10, §13.10, §18).
@@ -24,7 +24,7 @@ Status-bearing rows enter generation and export only through the §16.11 allowli
 V1 review is verifier gating of assessment and resume projections, not an owner verdict on regenerated derived rows (§5.10).
 Verification is one semantic pass; findings never invoke writers or mutate derived prose, and revisions require a replacement generation (§13.7, §13.11, §15.1).
 Voice rules bind Exp2Res-authored language, never owner or system-of-record text; structural validation applies to both (§16.12).
-The owner-controlled local workspace is the only canonical persistence domain; only a foreground user-initiated run may transmit exact §15.2–§15.9 typed inputs to the explicitly chosen provider, and no other LLM/network path exists (§29).
+The owner-controlled local workspace is the only canonical persistence domain; only a foreground user-initiated run may transmit the exact typed inputs of the seven active §15 contracts (§15.2, §15.4–§15.9) to the explicitly chosen provider, and no other LLM/network path exists (§29).
 Secrets, ignored or non-selected files, ambient command/environment/filesystem content, and instruction-like source text never expand a prompt or authorize behavior (§29.4–§29.5).
 ```
 

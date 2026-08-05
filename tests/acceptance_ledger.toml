@@ -16,7 +16,7 @@ status = "partial"
 phases = ["0", "1", "2", "3", "4"]
 evals = ["21.11", "21.14"]
 issues = ["#81", "PR #95", "#97"]
-note = "Current tests prove automation cannot mutate raw rows, owner deletion is not FK-blocked, every current and historical derived row is globally purged, retained call hashes are redacted, and surviving lineages rebuild through Stage 5; later branch/JD cleanup remains"
+note = "Current tests prove automation cannot mutate raw rows, owner deletion is not FK-blocked, every current and historical derived row is globally purged, retained call hashes are redacted, and surviving lineages rebuild through the retired Stage 5 layer the code still carries; the signal-free Stages 3-4 rebuild boundary lands with the #76 follow-up, and later branch/JD cleanup remains"
 
 ["24.4"]
 status = "pending"
@@ -32,11 +32,11 @@ issues = ["#81", "PR #95", "#82", "PR #125"]
 note = "Stage 1 proves atomic EvidenceItem capture and Stage 3 now proves direct fact_sources rows plus source_log_ids derived through selected evidence; the broader wrong-type, superseded, duplicate, and Stage 6 clauses in the linked eval remain"
 
 ["24.6"]
-status = "met"
+status = "partial"
 phases = ["3"]
 evals = ["21.10"]
 issues = []
-note = "Stage 7 deterministically rejects a passing verdict for a self-claim without a direct source chain, while covered eval 21.10 executes the failed supported attempt and the valid rejected closure in required CI"
+note = "Stage 7 deterministically rejects a passing verdict for a self-claim without a direct source chain, and covered eval 21.10 executes the failed supported attempt and the valid rejected closure in required CI; §24.6 now also requires Stage 6 to reject an empty source_fact_ids list as invalid structured output (§15.4), and no registered node proves that write-time path — it lands with the #76 follow-up"
 
 ["24.7"]
 status = "pending"
@@ -81,7 +81,7 @@ status = "partial"
 phases = ["3", "4"]
 evals = ["21.15", "21.48"]
 issues = []
-note = "Assessment evidence_map.json now carries the complete closed claim-signal-fact-evidence link projection; the resume evidence map remains"
+note = "Assessment evidence_map.json carries a complete closed link projection at the superseded version-1 signal-bearing shape; the §13.12 version-2 claim-fact-evidence shape lands with the #76 follow-up, and the resume evidence map remains"
 
 ["24.14"]
 status = "pending"
@@ -94,7 +94,7 @@ status = "partial"
 phases = ["1", "2", "3", "4"]
 evals = ["21.12"]
 issues = ["#82", "PR #125"]
-note = "Stage 3 service and Vera CLI reruns replace each lineage coherently, and Stage 3-6 supersession now removes each affected assessment set or reports residual failure; downstream branch/bullet generation mixing and export invalidation remain"
+note = "Stage 3 service and Vera CLI reruns replace each lineage coherently and supersede downstream claims/snapshots; managed-export invalidation after fact replacement and downstream branch/bullet generation mixing remain unproven until their owning phases"
 
 ["24.16"]
 status = "pending"
@@ -107,7 +107,7 @@ status = "partial"
 phases = ["0", "1", "2", "3", "4"]
 evals = ["21.14"]
 issues = ["#81", "PR #95", "#97"]
-note = "Owner deletion now proves committed raw/evidence and current/historical derived purge, call-hash redaction, managed-output removal, invalidated-view reporting, automatic Stage 3-5 rebuild, failure isolation, and offline zero-survivor completion with no provider call; later branch/JD lifecycle halves remain"
+note = "Owner deletion now proves committed raw/evidence and current/historical derived purge, call-hash redaction, managed-output removal, invalidated-view reporting, automatic Stage 3-4 rebuild, failure isolation, and offline zero-survivor completion with no provider call; later branch/JD lifecycle halves remain"
 
 ["24.18"]
 status = "partial"
@@ -166,7 +166,7 @@ status = "partial"
 phases = ["2"]
 evals = ["21.23", "21.58"]
 issues = ["#70", "#99", "#182"]
-note = "Stage 4, the public detections command, gap-answer round trip, and Vera E2 prove the detector lifecycle and envelope, now with per-set retention, dependency-graph invalidation of signals/claims/snapshots, and the free short-circuited rerun; the generated-voice gate and resume branch/bullet invalidation remain for later phases"
+note = "Stage 4, the public detections command, gap-answer round trip, and Vera E2 prove the detector lifecycle and envelope, with per-set retention and the free short-circuited rerun; §13.4's either-set dependency-graph supersession of claims/snapshots in its signal-free form lands with the #76 follow-up, and the generated-voice gate and resume branch/bullet invalidation remain for later phases"
 
 ["24.27"]
 status = "pending"
@@ -219,21 +219,21 @@ status = "partial"
 phases = ["1", "3", "4", "5"]
 evals = ["21.31"]
 issues = ["#131"]
-note = "Stage 3 fact ceilings, Stage 5 signal caps, and Stage 6 claim-side §9.4 caps are covered; Stage 7 semantic breadth remains"
+note = "Stage 3 fact ceilings are covered; the Stage 6 claim source-maximum cap in its signal-free §9.4 form, the pattern-generalization caps, and the §15.4 equality rule await the #76 follow-up, and Stage 7 semantic breadth remains"
 
 ["24.35"]
-status = "met"
+status = "partial"
 phases = ["1", "3"]
 evals = ["21.32"]
 issues = []
-note = "Covered eval 21.32 executes the exact duplicate-free ID-ordered §15.5 closure, including view context, displaced-evidence descriptor projection, and non-displaced raw-log reachability"
+note = "The registered closure tests execute the exact duplicate-free ID-ordered bundle in its retired signal-bearing shape; the fact-only §15.5 closure lands with the #76 follow-up"
 
 ["24.36"]
 status = "partial"
 phases = ["1", "2", "3"]
 evals = ["21.33"]
 issues = ["#132", "#97"]
-note = "Stage 6 covers view identity, stored-key subject selection, and context facts; correction add now proves exact project/temporal copy, explicit replacement, and selected-lineage re-extraction"
+note = "Stage 6 covers view identity and stored-key subject selection; correction add now proves exact project/temporal copy, explicit replacement, and selected-lineage re-extraction; the context-free subject supply of the signal-free §13.6 lands with the #76 follow-up"
 
 ["24.37"]
 status = "partial"
@@ -294,7 +294,7 @@ status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.41"]
 issues = ["#81", "PR #95", "#69", "PR #101", "#82", "PR #125", "#96", "#156", "#157", "#164"]
-note = "Discovery, schema gating, non-interactive controls, stable exit classes, closed envelopes, extraction consent/cancellation, standard Stage 3 affected/generation/run/warning fields, complete read-only facts list/show projections, logs show current/displaced inspection with linked evidence and its single-record human raw-text carve-out, and human-mode rendering of the fact field set, the produced signal set, and §13.13 rule 9 view reports on success and failure alike are proven; later command families remain"
+note = "Discovery, schema gating, non-interactive controls, stable exit classes, closed envelopes, extraction consent/cancellation, standard Stage 3 affected/generation/run/warning fields, complete read-only facts list/show projections, logs show current/displaced inspection with linked evidence and its single-record human raw-text carve-out, and human-mode rendering of the fact field set and §13.13 rule 9 view reports on success and failure alike are proven; later command families remain"
 
 ["24.45"]
 status = "partial"
@@ -344,7 +344,7 @@ issues = ["#79"]
 nodes = [
   "tests/test_demo.py::test_vera_first_mirror_demo_is_closed_current_blocking_and_deterministic",
 ]
-note = "Assessment report.md, self_claims.json, evidence_map.json, closed export envelope, §17's closed positional escape rule with its CommonMark round trip, pinned Vera E6 goldens, and the Vera first-mirror demo's clean-workspace closure, blocked-overclaim refusal, checked asciinema stream, and repeated transcript/member bytes are covered; every bullet-pack member and its CLI envelope half remain"
+note = "Assessment report.md, self_claims.json, evidence_map.json, closed export envelope, §17's closed positional escape rule with its CommonMark round trip, pinned Vera E6 goldens, and the Vera first-mirror demo's clean-workspace closure, blocked-overclaim refusal, checked asciinema stream, and repeated transcript/member bytes are covered against the superseded version-1 companion shape — the version-2 signal-free companions land with the #76 follow-up; every bullet-pack member and its CLI envelope half remain"
 
 ["24.52"]
 status = "pending"
@@ -423,7 +423,7 @@ nodes = [
   "tests/test_managed_output.py::test_superseded_manifest_version_is_never_matching_or_overwritten",
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
-note = "The managed set publishes report.html beside report.md with golden-pinned deterministic bytes, one document behind both members, an inert self-contained page under a hash-pinned policy, and residual reporting for a superseded manifest version; §24.59 tracks the §30 mirror view that serves those revalidated bytes, and only the project-scoped and JD-to-bullet-pack views stay deferred"
+note = "The managed set publishes report.html beside report.md with golden-pinned deterministic bytes, one document behind both members, an inert self-contained page under a hash-pinned policy, and residual reporting for a superseded manifest version — all at the superseded manifest_version 4; the version-5 signal-free goldens land with the #76 follow-up, and §24.59 tracks the §30 mirror view that serves those revalidated bytes, with only the project-scoped and JD-to-bullet-pack views deferred"
 
 ["24.59"]
 status = "pending"

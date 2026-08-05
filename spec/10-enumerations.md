@@ -10,12 +10,12 @@
 8. No generator, linter, generated documentation, separate machine-readable registry, or runtime schema tooling is required for MVP.
 9. Such tooling introduced after MVP must derive from §10 rather than creating a second enum source.
 
-- `TemporalConfidence` types only confidence in an `OccurredAt` placement. `Confidence` types general confidence in derived facts, signals, and claims. The aliases intentionally remain separate even while their member sets are identical.
+- `TemporalConfidence` types only confidence in an `OccurredAt` placement. `Confidence` types general confidence in derived facts and claims. The aliases intentionally remain separate even while their member sets are identical.
 - For temporal-provenance comparison, `TemporalConfidence` has the normative weak-to-strong order `unknown < low < medium < high`. For calibration comparison under §9.4, `Confidence` has the same normative weak-to-strong order `unknown < low < medium < high`. These two explicit orders are normative for their aliases; the assignment order below is not itself a ranking.
 - `OwnershipLevel` is a normative total order. Members in its assignment are listed from weakest to strongest; `unknown` is the weakest value.
 - `DetectionRefType` types Stage 4 detection targets.
 - `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry.
-- `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. These three aliases are separate because they belong to different producers, and their domains have already diverged: `self_signal` grounds counterevidence but is no Stage 4 target.
+- `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. These three aliases remain separate because they belong to different producers, exactly like the two confidence aliases, even where member sets coincide.
 - `OwnerAttribution` types the §19.3 GitHub payload field asserted by the upstream adapter or owner; §19.3 owns its conservative default and importer strength mapping.
 - `CLIResultStatus` types the §14.14 result envelope independently of processing-run status or semantic verification status.
 - `ManagedOutputKind` types the §13.14 managed-output manifest discriminator independently of pipeline stages and CLI command names.
@@ -131,17 +131,6 @@ VerificationTargetRefType = Literal[
     "resume_bullet",
 ]
 
-SignalType = Literal[
-    "skill_signal",
-    "interest_signal",
-    "direction_signal",
-    "execution_pattern",
-    "avoidance_pattern",
-    "constraint_signal",
-    "capacity_signal",
-    "contradiction_signal",
-]
-
 SelfClaimDimension = Literal[
     "technical_skill",
     "domain_interest",
@@ -190,7 +179,6 @@ CounterevidenceRefType = Literal[
     "raw_log",
     "evidence_item",
     "experience_fact",
-    "self_signal",
 ]
 
 GapTrigger = Literal[

@@ -6,7 +6,6 @@
 RawLog              = source record immutable to automation and deletable by its owner
 EvidenceItem        = source-linked evidence unit persisted during capture/import
 ExperienceFact      = atomic statement about what happened
-SelfSignal          = pattern signal derived from facts/evidence
 SelfClaim           = assessment claim about the user, with confidence and sources
 Contradiction       = detected conflict between effective source records and current facts (§13.4)
 GapQuestion         = question needed to improve weak/uncertain model
@@ -17,7 +16,7 @@ ResumeBullet        = generated resume phrase with evidence links
 VerificationFinding = persisted append-only verifier-attempt result over a self-claim or resume bullet
 ```
 
-Facts, gaps, contradictions, signals, claims, snapshots, branches, and bullets form replaceable derived generations under §11's supersession lifecycle:
+Facts, gaps, contradictions, claims, snapshots, branches, and bullets form replaceable derived generations under §11's supersession lifecycle:
 
 - One current generation exists per replacement identity.
 - Superseded rows are inspect-only history that §12 rule 9 keeps out of processing, verification, generation, and export inputs.
@@ -30,7 +29,7 @@ Facts, gaps, contradictions, signals, claims, snapshots, branches, and bullets f
 
 `ClaimKind` (§10) classifies persisted internal claims. `ExperienceFact.claim_kind` is produced by the fact extractor (§15.2), and `SelfClaim.claim_kind` by the self-assessment writer (§15.4). A `ResumeBullet` is an export projection governed by its source links and verification fields (§11.8), not a `ClaimKind` carrier.
 
-General claim confidence uses `Confidence` (§10), carried by `ExperienceFact.confidence` (§11.4), `SelfSignal.confidence` (§11.5), and `SelfClaim.confidence` (§11.6). Temporal placement confidence is a separate axis: only `OccurredAt.confidence` uses `TemporalConfidence` (§10–§11.1).
+General claim confidence uses `Confidence` (§10), carried by `ExperienceFact.confidence` (§11.4) and `SelfClaim.confidence` (§11.6). Temporal placement confidence is a separate axis: only `OccurredAt.confidence` uses `TemporalConfidence` (§10–§11.1).
 
 ## §9.3 Evidence Strength
 
@@ -50,7 +49,7 @@ Calibration is capability-based. `EvidenceStrength` membership remains canonical
 |---|---|
 | `manual_claim` | Owner self-report captured at entry. Establishes what the owner directly states, as self-report. |
 | `imported_activity_event` | Imported activity-domain evidence. Supports only activity the source explicitly reports as having occurred at the supplied `OccurredAt` placement; a diary note, verbal note, plan, or aggregate does not by itself establish completion, outcome, ownership depth, or quality beyond that source statement. |
-| `knowledge_state_snapshot` | Source-attributed Atlas knowledge state on the source's own scales. Establishes narrow studied/learning-grade support within the declared subjects, trail, and references; not implementation, built or production use, outcome, ownership depth, mastery, or a direct signal or claim. |
+| `knowledge_state_snapshot` | Source-attributed Atlas knowledge state on the source's own scales. Establishes narrow studied/learning-grade support within the declared subjects, trail, and references; not implementation, built or production use, outcome, ownership depth, mastery, or a direct claim. |
 | `artifact_reference` | Reference to an external artifact. Establishes the artifact's existence and topical content; not authorship depth, outcome, or use. |
 | `commit_or_pr` | Imported VCS commit explicitly attributed to the owner by its source contract. Establishes the recorded change and that source-asserted owner attribution; not independently verified identity, ownership depth, outcome, production use, or mastery. |
 | `design_doc` | Local design document. Establishes that the design content exists and what it contains; design-level work, not implementation or outcome. |
@@ -69,11 +68,11 @@ Under §13.3's single-lineage extraction, a fact's linked items span multiple ra
 
 A ceiling is a cap, never an entitlement. The extractor assigns the lowest defensible `Confidence` at or below it. When the selected extraction context contains materially conflicting statements bearing on the fact, the extractor must assign at most `low`. The conflict itself remains Stage 4 output and is not a calibration artifact.
 
-**Propagation caps.** `SelfSignal.confidence` must not exceed the maximum confidence of its supporting facts. `high` additionally requires at least two supporting facts reached through at least two distinct raw logs. Any non-empty `counter_fact_ids` caps the signal at `medium`.
+**Propagation caps.** `SelfClaim.confidence` must not exceed the maximum confidence of its listed source facts. Whether those sources actually cover the breadth of a broad statement is the semantic half, judged by Stage 7 under §13.7 rule 2. A narrow strong fact never entitles a broad claim to its confidence.
 
-`SelfClaim.confidence` must not exceed the maximum confidence of its listed source signals and facts. Whether those sources actually cover the breadth of a broad statement is the semantic half, judged by Stage 7 under §13.7 rule 2. A narrow strong fact never entitles a broad claim to its confidence.
+A `pattern_signal` claim — under §15.4 the only kind that cites patterns through `source_pattern_labels`, so the persisted `claim_kind` durably marks exactly where these caps applied — additionally carries the pattern-generalization caps, computed deterministically at the Stage 6 boundary from the response's own patterns before they are discarded and re-checkable afterward from the persisted split: the boundary persists the cited patterns' counter facts as the claim's `counter_fact_ids` (§11.6), and §15.4's equality rule makes a pattern-citing claim's closure exactly its cited patterns' fact union, so the claim's supporting facts are `source_fact_ids` minus `counter_fact_ids` and no unrelated direct source fact can enter the claim to bypass the recurrence requirement. The claim's confidence must not exceed the maximum confidence of those supporting facts — a counter fact never raises the source maximum a generalization rests on — `high` requires that the supporting facts include at least two facts reached through at least two distinct raw logs, and a non-empty `counter_fact_ids` caps the claim at `medium`. A `pattern_signal` claim cites at least one pattern (§15.4), so a pattern generalization can never outrank the recurrence and counterevidence recorded against it.
 
-The maximum over an empty source list is `unknown`: a signal with no supporting facts or a claim with no listed sources is capped at `unknown`. The cap is therefore total and structural validation never diverges on empty lists. §13.7 rule 1 still fails a sourceless claim at verification.
+The maximum over an empty source list is `unknown`: a claim with no listed sources is capped at `unknown`. The cap is therefore total and structural validation never diverges on empty lists. §15.4 rejects an empty `source_fact_ids` list as invalid structured output and §13.7 rule 1 fails any sourceless row that reaches verification, so the empty case is a defensive bound, never a licensed persisted state (§16.1).
 
 **Authorization boundary.** Calibration bounds only confidence and only within the linked items' evidential scopes. No strength or ceiling authorizes ownership, metric, production, temporal, or employment content. Sections §16.4–§16.8 evaluate their explicit-support requirements independently of confidence and fail closed even when every linked item supports the highest confidence permitted within its scope.
 

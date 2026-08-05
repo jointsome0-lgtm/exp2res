@@ -50,23 +50,23 @@ The section projection is deterministic. The unique `narrative_summary` claim re
 - Section selection keys on what a claim characterizes — its `dimension` — and how well the evidence supports it — its §16.11 status.
 - Section selection never keys on `claim_kind`, which records synthesis form under §15.4; the unique `narrative_summary` placement above is the only kind-driven rule.
 
-  A kind-keyed row would route claims by how the writer derived them: because the §13.6 writer legitimately derives most claims from recurring signals, such a row drains the strength sections into one bucket regardless of what each claim asserts.
+  A kind-keyed row would route claims by how the writer derived them: because the §13.6 writer legitimately derives most claims from recurring patterns, such a row drains the strength sections into one bucket regardless of what each claim asserts.
 - Over the statuses the §16.11 assessment-export allowlist admits, the mapping is total:
   - Rules 1 and 2 place the `gap`, `risk`, and `constraint` dimensions at any status.
   - Rule 5 places the four orientation dimensions at any status rules 3 and 4 leave.
   - The two capability dimensions — `technical_skill` and `execution_capacity` — fall through to rules 3, 4, 6, and 7, which together cover every admitted status.
   - The invalid-report rule remains the defense against out-of-contract state.
-- Strongly Supported Facts is not a second claim-placement channel: it renders the current `ExperienceFact.claim` values that are reached directly or through a signal from at least one rendered `supported` claim and whose `Confidence` is the maximum member under §10, with the fact ID, supporting claim IDs, and the fact's `source_log_ids` visible.
+- Strongly Supported Facts is not a second claim-placement channel: it renders the current `ExperienceFact.claim` values that are reached directly through a supporting membership — `source_fact_ids` minus `counter_fact_ids` — of at least one rendered `supported` claim and whose `Confidence` is the maximum member under §10, with the fact ID, supporting claim IDs, and the fact's `source_log_ids` visible.
 - Counterevidence renders inline in its claim's block, never as a section of its own.
 
 The report carries its provenance at the claim level, inline:
 
 - Every rendered claim block opens its fields with the claim's own ID — the identity a counterevidence reader, a §13.12 companion consumer, and Strongly Supported Facts' supporting-claim lists all join on.
-- Every rendered claim block ends with one renderer-owned sources line built from the claim's stored `source_signal_ids` and `source_fact_ids`: each cited signal with its `supporting_fact_ids` and, when non-empty, its `counter_fact_ids` fan-out, then the claim's direct fact IDs, every ID list ascending by UTF-8 bytes.
+- Every rendered claim block ends with one renderer-owned sources line built from the claim's stored `source_fact_ids`, the ID list ascending by UTF-8 bytes, with each member that appears in the claim's `counter_fact_ids` suffixed by the fixed literal ` (counter)`.
 - That sources line contains typed IDs and fixed renderer-owned labels only, never explanatory factual prose.
 - That sources line is never empty for a rendered claim, because §16.1 bars a chainless claim from export.
 - The record-level closure — facts to evidence items to retained raw logs — is not repeated in the report: the §13.12 `evidence_map.json` companion is the complete machine-checkable typed link closure, while the report renders the claim-level trail for verification by reading.
-- No section dumps the four link classes as standalone ID lists.
+- No section dumps the three link classes as standalone ID lists.
 
 The tone should be:
 
@@ -184,7 +184,7 @@ Every rendered `SelfClaim` keeps its §16.11 status visible. The Summary renders
 - Missing, duplicate, or superseded IDs fail before rendering under §12 rule 10; a post-synthesis answer is visible state, never a rendering or export failure.
 - These references present uncertainty under §13.6's unknown-reference boundary; question prose renders only through the referenced row.
 
-Recurring Patterns and Interests carries the claims whose dimension names an orientation rather than a capability or a limit — `domain_interest`, `working_style`, `trajectory`, or `identity_hypothesis` — when rules 1–4 have not placed the claim first. It may render signal-derived language only through a current `SelfClaim` referenced by the snapshot, with that claim's status and source mapping intact. The report must not dump `SelfSignal` rows as independently reviewed conclusions.
+Recurring Patterns and Interests carries the claims whose dimension names an orientation rather than a capability or a limit — `domain_interest`, `working_style`, `trajectory`, or `identity_hypothesis` — when rules 1–4 have not placed the claim first. It may render pattern-derived language only through a current `SelfClaim` referenced by the snapshot, with that claim's status and source mapping intact.
 
 **Contradictions.**
 

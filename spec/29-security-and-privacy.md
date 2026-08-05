@@ -13,10 +13,10 @@
 ## §29.2 Authorized Outward Transit and Provider Trust
 
 1. **Authorized outward transit.** Only a foreground, user-initiated §14 action that invokes a pipeline stage may authorize outward transit, and only for the synchronous §15 contract calls belonging to that run.
-   - Correction, owner-deletion, and recompute actions in §14.4, §14.11, and §14.12 carry that authorization only into the Stage 3–5 calls they synchronously orchestrate through §13.13.
+   - Correction, owner-deletion, and recompute actions in §14.4, §14.11, and §14.12 carry that authorization only into the Stage 3–4 calls they synchronously orchestrate through §13.13.
    - Stage 6–7 calls require their own §14.9 actions, and the lifecycle service gains no independent call authority.
    - The §15.1 and §15.10 retries remain inside the same foreground action (§15.10 rules 2–3).
-   - Outside one of the eight invoked §15 contracts, no component, importer, renderer, export path, or lifecycle service may call an LLM or any network endpoint.
+   - Outside one of the seven invoked §15 contracts, no component, importer, renderer, export path, or lifecycle service may call an LLM or any network endpoint.
    - §19 importers consume user-supplied local payloads under §14.5; source acquisition is outside Exp2Res.
 2. **Agent-backed adapters.** An agent-backed adapter (§15.12) executes its provider calls through the isolated agent-runner protocol.
    - The spawned agent runtime is part of the same foreground action and gains no independent call authority.
@@ -24,7 +24,7 @@
    - It holds network access only for the duration of that authorized transit window, which version 1 does not endpoint-filter.
 
    The residual named in this section's closing inventory is therefore two-part: the invocation's own declared input, which the action was already authorized to transmit, and the adapter's declared authentication material, which §15.12 rule 2 necessarily binds into the sandbox for provider transit. §15.12 rules 1–6 leave nothing else readable, and suspected credential exposure is recovered by owner-initiated rotation or revocation through the platform or provider — the credential-lifecycle responsibility §29.6's inventory places outside Exp2Res.
-3. **Local view serving.** Serving a §30 view only on the local host's loopback interface and returning it to a local browser is local presentation, not egress or a ninth model-call site.
+3. **Local view serving.** Serving a §30 view only on the local host's loopback interface and returning it to a local browser is local presentation, not egress or an eighth model-call site.
    - Every view-triggered workflow that reaches §15 remains an explicit foreground user-initiated §14 action under the same authority and confirmation rules.
    - The serving process makes no outbound connection of any kind and accepts only requests carrying its own bound loopback authority.
    - Its reads are exactly the ones selection and complete revalidation require:
@@ -97,21 +97,20 @@
 
 ## §29.3 Exhaustive LLM Transmission Surface
 
-The following eight contracts are the complete model-call surface. The selected provider receives the fixed contract instructions and the exact declared typed input for that invocation; a data class listed here is transmitted only when the owning stage selects it under the contract and §13.
+The following seven contracts are the complete model-call surface. The selected provider receives the fixed contract instructions and the exact declared typed input for that invocation; a data class listed here is transmitted only when the owning stage selects it under the contract and §13.
 
 | Contract | Personal or third-party data visible to the selected provider |
 |---|---|
 | §15.2 fact extractor | Effective correction-lineage `RawLog` objects and their linked complete `EvidenceItem` objects: raw memories, gap answers, imported text, burnout-grade or other sensitive `raw_text`, dates, projects, source metadata, external references, evidence summaries, and permitted path/URI values. `displaced_support_items` additionally expose the §13.3 rule 10 prose-free descriptor projection of displaced-record non-`manual_claim` items: item and raw-log IDs, `strength`, and permitted locator `uri`/`path` values; displaced raw text, `title`, `summary`, `created_at`, and `metadata` do not transit. |
-| §15.3 signal extractor | Derived experience facts, displacement-aware linked evidence items, and contradictions, including projects, roles, companies, dates, skills, confidence, evidence values, and provenance IDs. Items linked to displaced records transit only as §13.3 rule 10 prose-free descriptors; complete non-displaced items may expose summaries, metadata, and path/URI values. It receives no raw logs. |
-| §15.4 assessment writer | Assessment scope and target plus derived facts, signals, gaps/questions, and contradictions: the personal patterns, uncertainties, conflicts, and evidence from which a self-assessment is authored. |
-| §15.5 assessment verifier | A candidate self-claim with its snapshot's scope and target, the view's complete current signal and fact sets, the snapshot's complete current contradiction set (the same derived rows §15.4 already transits), and its exact §15.5 provenance closure: source signals, closure facts, their displacement-aware evidence context, and only the non-displaced retained raw logs reached through them. Displaced-record items transit only as §13.3 rule 10 prose-free descriptors, and displaced `RawLog` objects never transit; non-displaced logs may still expose raw personal or burnout-grade text. |
+| §15.4 assessment writer | Assessment scope and target plus derived facts, gaps/questions, and contradictions: the personal patterns, uncertainties, conflicts, and evidence from which a self-assessment is authored. |
+| §15.5 assessment verifier | A candidate self-claim with its snapshot's scope and target, the view's complete current fact set, the snapshot's complete current contradiction set (the same derived rows §15.4 already transits), and its exact §15.5 provenance closure: closure facts, their displacement-aware evidence context, and only the non-displaced retained raw logs reached through them. Displaced-record items transit only as §13.3 rule 10 prose-free descriptors, and displaced `RawLog` objects never transit; non-displaced logs may still expose raw personal or burnout-grade text. |
 | §15.6 resume writer | Branch/scope context; job-description ID, title, company, and complete `ParsedJD`; selected facts with displacement-aware linked evidence and only non-displaced raw logs; and supported self-assessment claims. Displaced-record items transit only as §13.3 rule 10 prose-free descriptors, and displaced `RawLog` objects never transit. This may include raw source text from non-displaced logs, derived self-assessment, and third-party demand data. |
 | §15.7 resume verifier | A candidate resume bullet, its complete source facts with their displacement-aware evidence/raw-log provenance IDs, only non-displaced source-log objects, its self-claims, and the branch job-description ID and complete `ParsedJD`. Under §13.3 rule 10, displaced-record items can transit only as prose-free descriptors; §15.7 transmits no `EvidenceItem` object at all, and displaced `RawLog` objects never transit, so displaced item/log identities remain opaque fact provenance references. This may include raw source text from non-displaced logs, derived self-assessment, and third-party demand data. |
 | §15.8 gap and contradiction detector | Complete current facts and effective-lineage evidence, including factless `RawLog.raw_text`; raw memories, gap answers, imported text, and burnout-grade text may therefore transit. |
 | §15.9 job-description parser | Third-party `JobDescription.raw_text` only, including any company, contact, or other personal data the supplied vacancy contains. No local record ID transits: no job-description entity exists at call time, and Stage 8 assigns the ID only after the response validates (§15.9). |
 
 1. No invocation receives the full database, ambient provider conversation history, another contract's inputs, or a persistent remote assistant, file store, vector store, or cache created by Exp2Res.
-2. Adding a ninth call site, adding a network-capable tool, or widening any row beyond its declared §15 input is a weakening governed by §29.7.
+2. Adding an eighth call site, adding a network-capable tool, or widening any row beyond its declared §15 input is a weakening governed by §29.7.
 
 ## §29.4 Secret, Ignore-Path, and Prompt Isolation
 

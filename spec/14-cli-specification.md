@@ -141,26 +141,15 @@ exp2res contradictions list
 exp2res contradictions show --contradiction-id contradiction_001
 ```
 
-`detections generate` is the sole direct detection-generation command; Stage 4 also runs inside the §14.12 lifecycle flow (§13.4). Either path follows §13.4's per-set retain-or-replace lifecycle, including its idempotent-rerun short-circuit. Its help and command output must make the replacement side effects unmistakable and report both complete result sets, every invalidated artifact class — a replacement confined to the gap set leaves the signal generation current (§13.4) — and the §13.13 rule 9 view/branch regeneration guidance, or state which sets were retained unchanged; a short-circuited rerun reports full retention without a provider call.
+`detections generate` is the sole direct detection-generation command; Stage 4 also runs inside the §14.12 lifecycle flow (§13.4). Either path follows §13.4's per-set retain-or-replace lifecycle, including its idempotent-rerun short-circuit. Its help and command output must make the replacement side effects unmistakable and report both complete result sets, every invalidated artifact class under §13.4's dependency-graph supersession, and the §13.13 rule 9 view/branch regeneration guidance, or state which sets were retained unchanged; a short-circuited rerun reports full retention without a provider call.
 
-`gaps answer` persists `RawLog(entry_type=gap_answer, source_type=manual_entry)` plus a linked `EvidenceItem(strength=manual_claim)`, then assigns the new raw-log ID to `GapQuestion.answer_log_id` and sets `GapQuestion.answered = true` in the same transaction; `answered` is true iff `answer_log_id` is set. That transaction supersedes no current `AssessmentSnapshot`, branch, or bullet referencing the question: the answer is new raw evidence that reaches derived state only through extraction and regeneration (§13.5 via Stage 3, §13.6), while §17 renders the question's answered state on the still-current snapshot and §13.12 keeps that snapshot exportable. It is the gap-answer trigger of §13's stale-export invalidation rule: while any current snapshot references the answered question, the affected sets are that snapshot's `out/assessment/<snapshot-id>/` set and every `out/branch/<branch-id>/` set whose branch anchors it — with complete unfiltered gap sets, that is every current assessment view. The snapshot and branches stay immediately re-exportable with the answered-since-synthesis rendering.
+`gaps answer` persists `RawLog(entry_type=gap_answer, source_type=manual_entry)` plus a linked `EvidenceItem(strength=manual_claim)`, then assigns the new raw-log ID to `GapQuestion.answer_log_id` and sets `GapQuestion.answered = true` in the same transaction; `answered` is true iff `answer_log_id` is set. That transaction supersedes no current `AssessmentSnapshot`, branch, or bullet referencing the question: the answer is new raw evidence that reaches derived state only through extraction and regeneration (Stage 3, then the §14.12/Stage 4 rebuild so assessment synthesizes against current detector rows, then §13.6), while §17 renders the question's answered state on the still-current snapshot and §13.12 keeps that snapshot exportable. It is the gap-answer trigger of §13's stale-export invalidation rule: while any current snapshot references the answered question, the affected sets are that snapshot's `out/assessment/<snapshot-id>/` set and every `out/branch/<branch-id>/` set whose branch anchors it — with complete unfiltered gap sets, that is every current assessment view. The snapshot and branches stay immediately re-exportable with the answered-since-synthesis rendering.
 
 The `gaps answer --file` form is non-prompt capture and requires §14.14 rule 3's explicit `--owner-authored` affirmation. Its path and `--file -` standard-input behavior is the same as §14.2, including `external_ref = null` for standard input.
 
 Gap answers are self-contained at capture, like corrections: the command copies the answered question's text and `GapQuestion.reason` into the answer's `RawLog.metadata` (`question_text`, `question_reason`). The answer therefore remains interpretable evidence if its question row is later superseded by a Stage 4 regeneration or purged by the §13.13 reset. Question-to-answer links are never re-created after regeneration: an uncertainty a stored answer resolves simply no longer fires its gap trigger against the current facts, and a gap that regenerates anyway is genuinely still open. The copied question text becomes part of the owner's raw record — owner-deletable on its own, never system-edited.
 
 V1 gap and contradiction subcommands only inspect immutable Stage 4 detections or answer gaps; no `gaps` or `contradictions` form generates, and detection generation happens only through `detections generate` or the §14.12 lifecycle flow. There is no resolve, dismiss, or resolution-note command. Outside the §13.13 raw-log owner-deletion privacy reset, a conflict disappears from the current set only when the current Stage 4 inputs no longer conflict and a successful replacement generation omits it.
-
-## §14.8 Generate Self-Signals
-
-```bash
-exp2res signals generate
-exp2res signals list
-```
-
-A changed signal generation supersedes every current claim, snapshot, branch, and bullet (§13.5); `signals generate` reports the invalidated classes and the §13.13 rule 9 view/branch regeneration guidance.
-
-Because Stage 5 always replaces its complete generation (§13.5), the set it produced is the complete current set. `signals generate` human mode prints that set — each signal's ID, type, confidence, statement, and supporting and counter fact IDs — in the same `signals list` order, so a successful generation is legible without a second command. Envelope version 1 keeps `result = null` for this command under §14.14 rule 5: the produced and superseded IDs remain its typed machine report, and declaring a closed result payload here is deferred to the next `envelope_version`.
 
 ## §14.9 Generate Self-Assessment
 
@@ -220,7 +209,7 @@ exp2res logs delete --log-id log_001 --yes
 
 `logs show` is read-only per-record inspection: it selects exactly one retained raw record — current or displaced — by explicit `--log-id` and reports it together with its complete linked evidence items; an unknown ID fails closed like every other §14 unknown selector. Its `--json` result is §14.14 rule 5's `raw_text`-free projection, while its human mode prints the projection fields followed by the selected record's own complete stored `raw_text` under rule 5's single-record carve-out. The command never invokes a provider and never serializes record content into a prompt.
 
-`logs delete` is the owner's per-raw-record destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 5; the purged assessment views and branches are reported with the regeneration guidance of §13.13 rule 9 as command output only. Its deletion boundary, commit-despite-cleanup-failure, and residual-path semantics follow §13.13 rules 6 and 8. Job-description deletion and whole-workspace purge are the distinct §14.15 and §14.16 privacy operations.
+`logs delete` is the owner's per-raw-record destructive privacy operation. It reports the selected record and known external source path, requires interactive confirmation unless `--yes` is supplied, and performs the global purge/delete/rebuild flow in §13.13, whose automatic rebuild ends at Stage 4; the purged assessment views and branches are reported with the regeneration guidance of §13.13 rule 9 as command output only. Its deletion boundary, commit-despite-cleanup-failure, and residual-path semantics follow §13.13 rules 6 and 8. Job-description deletion and whole-workspace purge are the distinct §14.15 and §14.16 privacy operations.
 
 ## §14.12 Recompute Derived State
 
@@ -229,9 +218,9 @@ exp2res recompute
 exp2res recompute --log-id log_001
 ```
 
-The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global Stage 4–5 regeneration. Recompute orchestration and its `13.13` telemetry row are defined in §13.13; it remains not a pipeline stage.
+The no-selector form rebuilds from every retained correction lineage. `--log-id` is a named stored-record selector and rebuilds that record's lineage before the global Stage 4 regeneration. Recompute orchestration and its `13.13` telemetry row are defined in §13.13; it remains not a pipeline stage.
 
-Recompute completion at the Stage 5 endpoint and every invalidation report follow §13.13 rules 1 and 9 for this command and for the correction and deletion commands that invoke the same flow.
+Recompute completion at the Stage 4 endpoint and every invalidation report follow §13.13 rules 1 and 9 for this command and for the correction and deletion commands that invoke the same flow.
 
 ## §14.13 Inspect Processing Runs and Verification History
 
@@ -346,7 +335,6 @@ This contract binds every command-specific form above and every later §14 addit
      - `detections generate` — `{gaps: list[GapQuestion], contradictions: list[Contradiction]}` containing both complete retained or replacement §14.7 result sets.
      - `gaps list` — `{gaps: list[GapQuestion]}` using complete §11.10 values.
      - `contradictions list`, `contradictions show` — `{contradictions: list[Contradiction]}` using complete §11.9 values; a successful `show` result contains exactly one.
-     - `signals list` — `{signals: list[SelfSignal]}` using complete §11.5 values.
      - `assess list` — `{snapshots: list[{id, scope, scope_target, verification_status, created_at}]}`, exactly the §14.9 discovery projection.
      - `assess show` — `{snapshot: AssessmentSnapshot, claims: list[SelfClaim], gaps: list[GapQuestion], contradictions: list[Contradiction]}` using the complete §11 values reached through the snapshot's claim membership (`SelfClaim.snapshot_id`, claim-ID order) and its typed gap/contradiction references.
      - `jd list` (§14.15) — `{job_descriptions: list[{id, created_at, title, company}]}`.
@@ -397,7 +385,6 @@ This contract binds every command-specific form above and every later §14 addit
    - `facts list` and `facts show`;
    - `gaps list`;
    - `contradictions list` and `contradictions show`;
-   - `signals list`;
    - `assess list` and `assess show`;
    - `jd list` and `jd show` (§14.15);
    - `runs list` and `runs show`.
@@ -440,7 +427,7 @@ exp2res workspace purge --yes
 
 The flow first enumerates and attempts the managed-path removals under §13.13 rule 6 and §13.14's no-follow containment contract, then clears all business and telemetry rows in one referentially ordered transaction and replaces the prior `schema_meta` history with exactly one fresh row for the running build's current schema version and application version. This is the sole whole-workspace lifecycle exception to §12.14's append-only history: purge establishes a fresh empty database history rather than migrating or editing retained history. The command itself leaves no `processing_runs` or `llm_calls` row. Purge resets no entity-ID counter and never authorizes intentional ID reuse: later allocation remains collision-resistant and independent of surviving row counts under §12 rule 11. On success, the `.exp2res/` directory, its empty current-version database, its retained `config.toml`, and empty managed directory roots remain initialized; the owner may remove the workspace directory manually when even configuration and infrastructure should disappear.
 
-After the database transaction commits, the flow applies §8.1's checkpoint, `VACUUM`, and final-checkpoint erasure sequence. Database erasure remains committed if managed-path removal or an erasure step fails; every residual path, including a managed symlink that was not followed, is reported as `deletion_incomplete`, never success. No rebuild follows because no source state remains. This differs from `logs delete`, which deletes one raw record, globally resets derived state, and rebuilds Stages 3–5, and from `jd delete`, which purges only one vacancy's dependent resume state. Manual recursive directory removal performs no application-controlled secure-delete, checkpoint, or `VACUUM` pass before unlinking; although path entries may disappear, bytes formerly held in database free pages or SQLite WAL/SHM sidecars may remain recoverable in filesystem or storage remnants. §29.6 defines the limits of either operation.
+After the database transaction commits, the flow applies §8.1's checkpoint, `VACUUM`, and final-checkpoint erasure sequence. Database erasure remains committed if managed-path removal or an erasure step fails; every residual path, including a managed symlink that was not followed, is reported as `deletion_incomplete`, never success. No rebuild follows because no source state remains. This differs from `logs delete`, which deletes one raw record, globally resets derived state, and rebuilds Stages 3–4, and from `jd delete`, which purges only one vacancy's dependent resume state. Manual recursive directory removal performs no application-controlled secure-delete, checkpoint, or `VACUUM` pass before unlinking; although path entries may disappear, bytes formerly held in database free pages or SQLite WAL/SHM sidecars may remain recoverable in filesystem or storage remnants. §29.6 defines the limits of either operation.
 
 ## §14.17 Serve Local Views
 

@@ -107,8 +107,8 @@ In V1 a contradiction is an immutable Stage 4 detection, not a user-resolvable w
 Example:
 
 ```text
-Signal A: user repeatedly designs ambitious architectures.
-Signal B: user reports burnout when trying to execute even minimal plans.
+Evidence A: user repeatedly designs ambitious architectures.
+Evidence B: user reports burnout when trying to execute even minimal plans.
 Assessment: high architecture drive, limited sustainable execution capacity under pressure.
 ```
 
@@ -128,6 +128,6 @@ Atlas artifact reference ≠ Exp2Res skill claim
 Tick-like event ≠ self-assessment conclusion
 ```
 
-Every promotion must be explicit and traceable. In V1, review means verification at the externally consumable projections under §16.11's consumer gates. Intermediate facts and signals do not carry an owner confirmation, dispute, or override state, and V1 has no owner-verdict workflow on regenerated claims or bullets.
+Every promotion must be explicit and traceable. In V1, review means verification at the externally consumable projections under §16.11's consumer gates. Intermediate facts do not carry an owner confirmation, dispute, or override state, and V1 has no owner-verdict workflow on regenerated claims or bullets.
 
 ---

@@ -6,7 +6,6 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
     - RawLog → raw_logs
     - EvidenceItem → evidence_items
     - ExperienceFact → experience_facts
-    - SelfSignal → self_signals
     - SelfClaim → self_claims
     - Contradiction → contradictions
     - GapQuestion → gap_questions
@@ -81,7 +80,7 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 
     Assessment-view identity depends on the locale-independent case-folded canonical `scope_target` (§11.7), which SQLite cannot fold deterministically in an index. One-current-per-view enforcement therefore remains the Stage 6 transaction check under the workspace writer lock. Branch replacement identity is likewise canonical — the NFC case-folded `name` (§14.10), which this raw-name index cannot express — so folded one-current-per-branch enforcement is the Stage 10 transaction check under the same lock. The index remains the coarser exact-spelling backstop.
 
-13. Every row in the eight recomputable tables — `experience_facts`, `self_signals`, `self_claims`, `assessment_snapshots`, `resume_bullets`, `contradictions`, `gap_questions`, and `resume_branches` — additionally derives these service-set storage columns:
+13. Every row in the seven recomputable tables — `experience_facts`, `self_claims`, `assessment_snapshots`, `resume_bullets`, `contradictions`, `gap_questions`, and `resume_branches` — additionally derives these service-set storage columns:
 
     ```sql
     produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
@@ -92,7 +91,6 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 
     - Stage 3 allocates one per correction lineage, so a full extraction over N lineages allocates N generation IDs.
     - Stage 4 uses one shared ID for the output set or sets it replaces in one swap, while a §13.4-retained set keeps its rows and provenance columns.
-    - Stage 5 uses one for the signal generation.
     - Stage 6 uses one for the jointly swapped claims and snapshot of one assessment view.
     - Stage 10 uses one for the jointly swapped branch and bullets.
 
@@ -117,9 +115,8 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
 
 | Typed reference fields | Required current target |
 |---|---|
-| `SelfSignal.supporting_fact_ids`, `counter_fact_ids` | `experience_facts` |
-| `SelfClaim.source_signal_ids` | `self_signals` |
 | `SelfClaim.source_fact_ids` | `experience_facts` |
+| `SelfClaim.counter_fact_ids` | `experience_facts`; each ID must also be a member of the same claim's `source_fact_ids` (§11.6) |
 | `SelfClaim.counterevidence[].source_ref_type` / `source_ref_id` | the table selected by `CounterevidenceRefType`; the target must belong to that claim's supplied §15.5 bundle |
 | `VerificationFinding.produced_by_run_id` | `processing_runs` |
 | `VerificationFinding.target_type` / `target_id` | the current `self_claims` or `resume_bullets` row selected by `VerificationTargetRefType` at finding commit |
@@ -218,7 +215,9 @@ Migration is explicit and runs only through the §14.1 migration command. No oth
 
 One migration-command invocation applies every pending registered migration, appends every corresponding `schema_meta` row, and performs final validation inside one transaction. After the last migration and still inside that transaction, it validates every retained model-backed row against the target §11 models and §10 enum aliases, runs `PRAGMA foreign_key_check`, and re-verifies every one-current-generation invariant defined by §11, this section, and the producing-stage and lifecycle rules in §13. Any migration or final-validation failure rolls back the whole transaction, so no partial business schema or version history becomes visible.
 
-Every migration must transform retained rows so that they validate under the target §11 models and the canonical §10 enum aliases. A row that cannot be transformed deterministically fails the migration; it is never dropped or silently defaulted. An enum rename is a deterministic value rewrite; an enum member may be removed only when no retained row carries it or a deterministic rewrite is defined. A new required field is legal only with a deterministic backfill. A migration may change storage representation but must never change the owner-visible content of a raw record: `raw_text` remains byte-for-byte identical, and metadata, timestamps, and every other hydrated `RawLog` value are value-preserved. §5.3's automation-immutability rule applies to migrations. Migrations preserve all provenance links, current and superseded state, and the one-current-generation invariants.
+Every migration must transform retained rows so that they validate under the target §11 models and the canonical §10 enum aliases. A row that cannot be transformed deterministically fails the migration; it is never dropped or silently defaulted. An enum rename is a deterministic value rewrite; an enum member may be removed only when no retained row carries it or a deterministic rewrite is defined. A new required field is legal only with a deterministic backfill. A migration may change storage representation but must never change the owner-visible content of a raw record: `raw_text` remains byte-for-byte identical, and metadata, timestamps, and every other hydrated `RawLog` value are value-preserved. §5.3's automation-immutability rule applies to migrations. Migrations preserve all provenance links, current and superseded state, and the one-current-generation invariants, except where a registered migration explicitly defines a whole-layer deletion as its deterministic transform, as the next paragraph does.
+
+The signal-layer removal (2026-08-05, issue #76) names its deterministic path explicitly rather than leaving retained `self_signal` references without a legal transform: that migration deletes, inside its transaction, every retained `self_signals` row together with the whole derived assessment layer and everything downstream of it — every self-claim generation, assessment snapshot, resume branch, resume bullet, and verification finding, current and superseded — because every retained row of those layers was produced under the retired signal-consuming contracts, including any counterevidence entry whose reference type was the retired `self_signal` member. Raw logs, evidence items, experience facts, detection sets, job descriptions, and run telemetry are untouched; the mandatory pre-migration backup preserves the deleted rows, and the owner rebuilds the removed layers with the ordinary generation commands — §14.9 assessment generation and the §14.10 verified bullet-pack flow; the untouched fact and detection layers need no §13.13 recomputation first. This section owns the matching managed-output cleanup directly — §13's closed three-class stale-export trigger list is unchanged: the migration captures the affected snapshot and branch IDs and attempts removal of each corresponding `out/assessment/<snapshot-id>/` and `out/branch/<branch-id>/` managed set through §13.14 with the same removal-and-report mechanics before its transaction commits, so a crash in either order leaves a recoverable state — a pre-migration workspace missing only regenerable exports, or a migrated workspace already clean. Any residual path is reported as an unsuccessful invalidation, and a surviving set whose manifest names an entity absent from the database can never satisfy §13.14's current-output conditions, so it stays identifiable for deterministic stale-view cleanup rather than passing as current output. This whole-layer deletion is that migration's defined deterministic transform, not a silent drop or default.
 
 On failure, `schema_meta` and the database remain at the original version, the original database remains usable through the compatibility and recovery surfaces, and the verified backup is retained. The diagnostic names the failing migration or final validation and the backup path. Business reads and writes remain blocked until a later migration succeeds. Recovery is an explicit retry after upgrading the application or a manual restore of the reported backup.
 
@@ -245,7 +244,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 );
 ```
 
-Each LLM-backed `processing_runs` row owns one `llm_calls` row per planned provider invocation of the run's single §15 contract, with `call_index` a contiguous ordinal starting at 1 in invocation order. Granularity follows the owning stage's definition: Stage 3 owns one call per correction lineage, Stage 7 one per current claim, Stage 10 one per planned bullet, and Stage 11 one per current bullet; each single-invocation LLM stage — Stages 4, 5, 6, and 8 — owns exactly one row, except that a §13.4 idempotent-rerun short-circuit completes its run with none. Non-LLM runs — including a stage-`13.6` deterministic repair run — and `13.13` orchestration rows own none.
+Each LLM-backed `processing_runs` row owns one `llm_calls` row per planned provider invocation of the run's single §15 contract, with `call_index` a contiguous ordinal starting at 1 in invocation order. Granularity follows the owning stage's definition: Stage 3 owns one call per correction lineage, Stage 7 one per current claim, Stage 10 one per planned bullet, and Stage 11 one per current bullet; each single-invocation LLM stage — Stages 4, 6, and 8 — owns exactly one row, except that a §13.4 idempotent-rerun short-circuit completes its run with none. Non-LLM runs — including a stage-`13.6` deterministic repair run — and `13.13` orchestration rows own none.
 
 Transport and schema retries of the same planned invocation update that call row's retry counters and never create another row; one call row is one logical invocation, not one HTTP attempt. Every call in a run executes under the run's single `provider`, `model`, and `prompt_policy_hash`; changing any of that configuration mid-run is non-conforming and requires a new run.
 

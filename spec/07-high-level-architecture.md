@@ -26,13 +26,10 @@
                   |                                         |
                   v                                         v
        +------------------------+              +------------------------+
-       | Gap / Contradiction    |              | Self-Signal Extraction |
-       | Detection              |              +-----------+------------+
-       +-----------+------------+                          |
-                   |                                       v
-                   |                          +------------------------+
-                   |                          | Self-Assessment Model  |
-                   |                          +-----------+------------+
+       | Gap / Contradiction    |              | Self-Assessment Model  |
+       | Detection              |              | (patterns inside the   |
+       +-----------+------------+              |  assess call)          |
+                   |                           +-----------+------------+
                    |                                      |
                    v                                      v
        +------------------------+              +------------------------+
