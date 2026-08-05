@@ -212,10 +212,17 @@ def test_socket_creation_failure_fails_closed_as_bind_failed(tmp_path, monkeypat
 
 def test_served_response_carries_the_closed_header_set_and_reports(tmp_path):
     lines: list[tuple[str, str | None]] = []
-    with running_server(
-        tmp_path, report=lambda outcome, route: lines.append((outcome, route))
-    ) as rig:
+    reported = threading.Event()
+
+    def reporter(outcome: str, route: str | None) -> None:
+        lines.append((outcome, route))
+        reported.set()
+
+    with running_server(tmp_path, report=reporter) as rig:
         response = rig.exchange(rig.request_bytes())
+        # Reporting is asynchronous behind the bounded queue; wait for the
+        # dedicated reporter thread to run the line.
+        assert reported.wait(10.0)
     assert response.startswith(b"HTTP/1.1 200 OK\r\n")
     assert b"Exp2Res-View-Outcome: served\r\n" in response
     assert b"Cache-Control: no-store\r\n" in response
@@ -758,6 +765,36 @@ def test_stalled_reporter_does_not_consume_the_drain(tmp_path):
             rig.thread.join(10.0)
             assert not rig.thread.is_alive()
             assert rig.result == "drained"
+    finally:
+        gate.set()
+
+
+def test_blocked_reporter_never_accumulates_threads(tmp_path):
+    """One dedicated reporter thread serves the bounded queue: completed
+    requests keep succeeding behind a wedged reporter without leaving one
+    blocked thread each."""
+
+    gate = threading.Event()
+    entered = threading.Event()
+
+    def reporter(outcome, route):
+        entered.set()
+        gate.wait(30.0)
+
+    def reporter_thread_count() -> int:
+        return sum(
+            thread.name == "view-report" for thread in threading.enumerate()
+        )
+
+    before = reporter_thread_count()
+    try:
+        with running_server(tmp_path, report=reporter) as rig:
+            for _ in range(8):
+                assert status_of(rig.exchange(rig.request_bytes())) == 200
+            assert entered.wait(10.0)
+            # Eight completed requests behind a wedged reporter added exactly
+            # the one dedicated thread, never one blocked thread each.
+            assert reporter_thread_count() == before + 1
     finally:
         gate.set()
 

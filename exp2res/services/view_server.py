@@ -27,6 +27,7 @@ from __future__ import annotations
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+import queue
 import socket
 import sqlite3
 import threading
@@ -69,6 +70,9 @@ MAX_PORT = 65535
 # configuration representation.
 MAX_CONNECTIONS = 32
 LISTEN_BACKLOG = 32
+# Progress lines held for a slow reporter before excess lines are dropped;
+# diagnostics never get to block or accumulate request-side threads.
+REPORT_QUEUE_LIMIT = 64
 
 _SAFE_METHODS = (b"GET", b"HEAD")
 
@@ -283,6 +287,13 @@ class ViewServer:
         self._immediate = threading.Event()
         self._drain_deadline: float | None = None
         self._listener: socket.socket | None = None
+        # One dedicated reporter thread behind a bounded queue: a blocked
+        # stderr can then stall only this one thread and drop excess progress
+        # lines, never accumulate a blocked thread per completed connection.
+        self._report_queue: queue.Queue[tuple[str, str | None]] = queue.Queue(
+            maxsize=REPORT_QUEUE_LIMIT
+        )
+        self._report_thread: threading.Thread | None = None
 
     def open(self) -> None:
         """Bind exactly the validated address, or fail without another try."""
@@ -346,6 +357,11 @@ class ViewServer:
             self.open()
         listener = self._listener
         assert listener is not None
+        if self._report is not None and self._report_thread is None:
+            self._report_thread = threading.Thread(
+                target=self._report_loop, name="view-report", daemon=True
+            )
+            self._report_thread.start()
         try:
             while not self._draining.is_set():
                 try:
@@ -354,16 +370,31 @@ class ViewServer:
                     if self._draining.is_set():
                         break
                     raise
+                # The receive anchor is read before the slot attempt: §14.17
+                # starts the deadline when the slot is acquired, and anchoring
+                # a bytecode earlier means a scheduling stall around the
+                # acquisition spends the budget rather than extending it.
+                admitted_at = self._clock()
                 if not self._slots.acquire(blocking=False):
                     # §30 rule 10: closed unread — no buffer, no thread, no
                     # HTTP response — so it is not a complete request and
                     # reaches no state.
                     connection.close()
                     continue
-                admitted_at = self._clock()
                 with self._state_lock:
-                    self._sockets.add(connection)
-                    self._active += 1
+                    # Atomic with the forced-close sweep: either this socket
+                    # registers before the sweep's snapshot and gets swept, or
+                    # the immediate flag — set before any sweep — is already
+                    # visible here and the connection is refused unserved.
+                    admitted = not self._immediate.is_set()
+                    if admitted:
+                        self._sockets.add(connection)
+                        self._active += 1
+                if not admitted:
+                    self._slots.release()
+                    with suppress(OSError):
+                        connection.close()
+                    continue
                 threading.Thread(
                     target=self._serve_connection,
                     args=(connection, admitted_at),
@@ -473,11 +504,21 @@ class ViewServer:
                 self._active -= 1
                 self._idle.notify_all()
         # Reporting runs only after the terminal close, the slot release, and
-        # the drain count-down, so a stalled reporter stalls nothing but its
-        # own finished thread — not even the drain.
+        # the drain count-down, and only by enqueueing: the dedicated
+        # reporter thread is the sole caller of the callback, so a blocked
+        # reporter stalls one thread and drops excess lines instead of
+        # accumulating a blocked thread per completed connection.
         if line is not None and self._report is not None:
+            with suppress(queue.Full):
+                self._report_queue.put_nowait(line)
+
+    def _report_loop(self) -> None:
+        while True:
+            line = self._report_queue.get()
             with suppress(Exception):
-                self._report(*line)
+                report = self._report
+                if report is not None:
+                    report(*line)
 
     def _receive(
         self, connection: socket.socket, admitted_at: float
