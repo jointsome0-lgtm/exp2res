@@ -2,17 +2,75 @@
 
 The SQLite schema is derived from the Pydantic models in §11; §11 is the normative source for all mirrored entities and fields. Every database connection must execute `PRAGMA foreign_keys = ON` and verify that it took effect before reading or writing lifecycle-managed data. The §12.14 migration connection is the sole exception: it may disable enforcement before its transaction for a registered table-rebuild migration, but it must pass `PRAGMA foreign_key_check` before commit. Derivation rules:
 
-1. Tables mirror the Pydantic models 1:1: RawLog → raw_logs, EvidenceItem → evidence_items, ExperienceFact → experience_facts, SelfSignal → self_signals, SelfClaim → self_claims, Contradiction → contradictions, GapQuestion → gap_questions, AssessmentSnapshot → assessment_snapshots, JobDescription → job_descriptions, ResumeBranch → resume_branches, ResumeBullet → resume_bullets, VerificationFinding → verification_findings. Column names match field names; required fields are NOT NULL.
-2. List/dict fields are stored as JSON TEXT columns named `<field>_json`, NOT NULL with DEFAULT '[]' / '{}'. Embedded Pydantic fields use the same convention: `JobDescription.parsed` derives to a required `parsed_json` JSON TEXT column whose decoded value must validate as `ParsedJD` (§11.13). JSON storage does not waive typed-model or typed-reference validation in rule 10; hydration enforces the same §11 model policy and boundary limits, and stored JSON is not grandfathered around validation or limits.
-3. Every datetime field is stored as the validated offset-aware value's ISO 8601 TEXT with its original UTC offset, encoded as `Z` or numeric `±hh:mm`; the stored text preserves both the UTC instant and the offset supplied by the owner, source, or service. Hydration re-validates offset-awareness under §11. Every datetime equality, ordering, duration, or comparison uses the UTC instant, never the stored TEXT bytes — including §13.3 correction-lineage and governing-record order, §16.7 interval arithmetic, and any non-null `superseded_at` cutoff comparison. Two texts with different offsets may denote one equal instant, and byte order is not instant order. §11's canonical serialization remains the sole hash-byte rule.
-4. bool fields are stored as INTEGER 0/1, NOT NULL; a model default becomes the column DEFAULT (GapQuestion.answered → answered INTEGER NOT NULL DEFAULT 0).
-5. An embedded OccurredAt is flattened into occurred_start, occurred_end, temporal_precision, temporal_confidence columns; `temporal_precision` is the sole shape discriminator under §11.1. At a range precision a NULL `occurred_end` stores §11.1's open-ended shape rather than a missing value, so no extra column, boolean flag, or sentinel instant represents openness; hydration re-validates the stored shape under §11.1 like every other value, and the same NULL under a non-range precision keeps its existing meaning.
-6. Scalar references to other entities become FOREIGN KEY columns. `evidence_items.raw_log_id` references `raw_logs.id ON DELETE CASCADE`; `raw_logs.corrects_log_id` is a self-reference with `ON DELETE SET NULL`; and `gap_questions.answer_log_id` references `raw_logs.id ON DELETE SET NULL`. The required `SelfClaim.snapshot_id` derives as `TEXT NOT NULL REFERENCES assessment_snapshots(id)`: one row has one owning snapshot, so claim sharing between snapshots and unowned claims are unrepresentable (§11.6), and the Stage 6 checks below replace any reverse-list validation. The required `ResumeBranch.assessment_snapshot_id` derives as `TEXT NOT NULL REFERENCES assessment_snapshots(id)`; its stronger current-anchor check is rule 10. The required `ResumeBranch.job_description_id` derives as `TEXT NOT NULL REFERENCES job_descriptions(id)`; its stronger exact-selection check is rule 10. `VerificationFinding.produced_by_run_id` derives as `TEXT NOT NULL REFERENCES processing_runs(id)`. Raw-log owner deletion retains job descriptions. `jd delete` (§14.15) removes every dependent finding, bullet, and branch in its §13.13 transaction before deleting the selected job description, so this foreign key blocks neither privacy operation. Other scalar references use the default restrictive action. No foreign key may block an owner-deletion operation in §13.13.
+1. Tables mirror the Pydantic models 1:1:
+    - RawLog → raw_logs
+    - EvidenceItem → evidence_items
+    - ExperienceFact → experience_facts
+    - SelfSignal → self_signals
+    - SelfClaim → self_claims
+    - Contradiction → contradictions
+    - GapQuestion → gap_questions
+    - AssessmentSnapshot → assessment_snapshots
+    - JobDescription → job_descriptions
+    - ResumeBranch → resume_branches
+    - ResumeBullet → resume_bullets
+    - VerificationFinding → verification_findings
+
+    Column names match field names. Required fields are NOT NULL.
+2. List/dict fields are stored as JSON TEXT columns named `<field>_json`, NOT NULL with DEFAULT '[]' / '{}'.
+    - Embedded Pydantic fields use the same convention: `JobDescription.parsed` derives to a required `parsed_json` JSON TEXT column whose decoded value must validate as `ParsedJD` (§11.13).
+    - JSON storage does not waive typed-model or typed-reference validation in rule 10.
+    - Hydration enforces the same §11 model policy and boundary limits.
+    - Stored JSON is not grandfathered around validation or limits.
+3. Every datetime field is stored as the validated offset-aware value's ISO 8601 TEXT with its original UTC offset, encoded as `Z` or numeric `±hh:mm`.
+    - The stored text preserves both the UTC instant and the offset supplied by the owner, source, or service.
+    - Hydration re-validates offset-awareness under §11.
+    - Every datetime equality, ordering, duration, or comparison uses the UTC instant, never the stored TEXT bytes — including §13.3 correction-lineage and governing-record order, §16.7 interval arithmetic, and any non-null `superseded_at` cutoff comparison.
+    - Two texts with different offsets may denote one equal instant, and byte order is not instant order.
+    - §11's canonical serialization remains the sole hash-byte rule.
+4. bool fields are stored as INTEGER 0/1, NOT NULL. A model default becomes the column DEFAULT (GapQuestion.answered → answered INTEGER NOT NULL DEFAULT 0).
+5. An embedded OccurredAt is flattened into occurred_start, occurred_end, temporal_precision, temporal_confidence columns.
+    - `temporal_precision` is the sole shape discriminator under §11.1.
+    - At a range precision a NULL `occurred_end` stores §11.1's open-ended shape rather than a missing value, so no extra column, boolean flag, or sentinel instant represents openness.
+    - Hydration re-validates the stored shape under §11.1 like every other value.
+    - The same NULL under a non-range precision keeps its existing meaning.
+6. Scalar references to other entities become FOREIGN KEY columns.
+    - `evidence_items.raw_log_id` references `raw_logs.id ON DELETE CASCADE`.
+    - `raw_logs.corrects_log_id` is a self-reference with `ON DELETE SET NULL`.
+    - `gap_questions.answer_log_id` references `raw_logs.id ON DELETE SET NULL`.
+    - The required `SelfClaim.snapshot_id` derives as `TEXT NOT NULL REFERENCES assessment_snapshots(id)`: one row has one owning snapshot, so claim sharing between snapshots and unowned claims are unrepresentable (§11.6). The Stage 6 checks below replace any reverse-list validation.
+    - The required `ResumeBranch.assessment_snapshot_id` derives as `TEXT NOT NULL REFERENCES assessment_snapshots(id)`. Its stronger current-anchor check is rule 10.
+    - The required `ResumeBranch.job_description_id` derives as `TEXT NOT NULL REFERENCES job_descriptions(id)`. Its stronger exact-selection check is rule 10.
+    - `VerificationFinding.produced_by_run_id` derives as `TEXT NOT NULL REFERENCES processing_runs(id)`.
+    - Raw-log owner deletion retains job descriptions.
+    - `jd delete` (§14.15) removes every dependent finding, bullet, and branch in its §13.13 transaction before deleting the selected job description, so this foreign key blocks neither privacy operation.
+    - Other scalar references use the default restrictive action.
+    - No foreign key may block an owner-deletion operation in §13.13.
 7. A polymorphic reference — an (`*_type`, `*_id`) field pair typed by `DetectionRefType` or `VerificationTargetRefType`, such as `Contradiction.left_ref_*` / `right_ref_*`, `GapQuestion.target_*`, or `VerificationFinding.target_*` — becomes two plain TEXT NOT NULL columns with no FOREIGN KEY because the target table varies per row; rule 10 supplies its write-time integrity check.
 8. Exception: `ExperienceFact.source_log_ids` and `evidence_item_ids` are not stored as columns. They are non-empty, duplicate-free views hydrated from the `fact_sources → evidence_items` relation in §12.4.
 9. Queries that feed processing, verification, generation, or export must filter every recomputable table to `superseded_at IS NULL`. Historical inspection is the only normal read path that may include superseded rows.
-10. Before a domain-entity batch commits, every typed ID below must resolve to the required target, either in current pre-existing state or among rows inserted earlier in the same transaction. For a Stage 3 candidate, the same pre-commit check also enforces §13.3 rule 6's evidence-selectability predicate; reference resolution alone is insufficient. A missing ID, wrong target type, superseded target, duplicate ID, or unselectable Stage 3 evidence item fails the producing operation atomically. The same rule validates `Contradiction.left_ref_*` / `right_ref_*` and `GapQuestion.target_*` against the table selected by their `DetectionRefType`, `VerificationFinding.target_*` against the table selected by its `VerificationTargetRefType`, and each `SelfClaim.counterevidence` or `VerificationFinding.counterevidence` entry against the table selected by its `CounterevidenceRefType` — additionally requiring verifier counterevidence membership in the supplied bundle that produced it and rejecting duplicate (`source_ref_type`, `source_ref_id`) pairs. On `JobDescription` persistence it also rejects an empty `JDRequirement.id` or an ID duplicated within the candidate or any retained `JobDescription`; on Stage 10 persistence it requires the candidate branch's `job_description_id` to equal the exact §14.10 selection and resolves every matched requirement through that persisted job description's `ParsedJD`, not merely against any job description.
-11. Every top-level §11 entity `id` derives to `TEXT PRIMARY KEY`, the unique parent key used by rule 6 foreign keys and rule 10 resolution; `fact_sources` keeps its composite primary key, `processing_runs` its §12.13 primary key, and `llm_calls` its §12.15 composite primary key. The service assigns each non-empty, opaque value — after a valid model response for an LLM-backed producer — and the value is immutable for the workspace lifetime, unique forever within its entity table (including current, superseded, and historical rows), and never reassigned in that table after supersession or a §13.13 purge. Cross-table uniqueness is not required because each scalar foreign key is table-scoped and each polymorphic reference's closed `DetectionRefType`, `CounterevidenceRefType`, or `VerificationTargetRefType` selects exactly one table for rule 10; §12.13 `input_ids_json`/`output_ids_json` remain opaque telemetry rather than references, and `JDRequirement.id` retains its stronger §11.13/rule 10 global-uniqueness rule. A collision with any retained row in that entity table follows §15.1 deterministic enrichment: retry locally with a fresh ID when safe or fail the producing run atomically, never with another LLM call; because retained processing telemetry outlives §13.13 point-deletion purges and reuse would make an opaque historical ID silently appear to name an unrelated entity, allocation must be collision-resistant, include a random component, and prevent reuse of purged IDs, while row-count, `MAX + 1`, or other surviving-row-derived IDs are non-conforming. Natural replacement-key uniqueness is separate from entity identity and remains governed by the Stage 6 and Stage 10 transaction checks below; locking is governed by §8.1, and this rule defines no natural-key index.
+10. Before a domain-entity batch commits, every typed ID below must resolve to the required target, either in current pre-existing state or among rows inserted earlier in the same transaction.
+    - For a Stage 3 candidate, the same pre-commit check also enforces §13.3 rule 6's evidence-selectability predicate; reference resolution alone is insufficient.
+    - A missing ID, wrong target type, superseded target, duplicate ID, or unselectable Stage 3 evidence item fails the producing operation atomically.
+    - The same rule validates `Contradiction.left_ref_*` / `right_ref_*` and `GapQuestion.target_*` against the table selected by their `DetectionRefType`.
+    - It validates `VerificationFinding.target_*` against the table selected by its `VerificationTargetRefType`.
+    - It validates each `SelfClaim.counterevidence` or `VerificationFinding.counterevidence` entry against the table selected by its `CounterevidenceRefType` — additionally requiring verifier counterevidence membership in the supplied bundle that produced it and rejecting duplicate (`source_ref_type`, `source_ref_id`) pairs.
+    - On `JobDescription` persistence it also rejects an empty `JDRequirement.id` or an ID duplicated within the candidate or any retained `JobDescription`.
+    - On Stage 10 persistence it requires the candidate branch's `job_description_id` to equal the exact §14.10 selection and resolves every matched requirement through that persisted job description's `ParsedJD`, not merely against any job description.
+11. Every top-level §11 entity `id` derives to `TEXT PRIMARY KEY`, the unique parent key used by rule 6 foreign keys and rule 10 resolution.
+    - `fact_sources` keeps its composite primary key, `processing_runs` keeps its §12.13 primary key, and `llm_calls` keeps its §12.15 composite primary key.
+    - The service assigns each non-empty, opaque value — after a valid model response for an LLM-backed producer.
+    - The value is immutable for the workspace lifetime.
+    - The value is unique forever within its entity table (including current, superseded, and historical rows).
+    - The value is never reassigned in that table after supersession or a §13.13 purge.
+    - Cross-table uniqueness is not required because each scalar foreign key is table-scoped and each polymorphic reference's closed `DetectionRefType`, `CounterevidenceRefType`, or `VerificationTargetRefType` selects exactly one table for rule 10.
+    - §12.13 `input_ids_json`/`output_ids_json` remain opaque telemetry rather than references.
+    - `JDRequirement.id` retains its stronger §11.13/rule 10 global-uniqueness rule.
+    - A collision with any retained row in that entity table follows §15.1 deterministic enrichment: retry locally with a fresh ID when safe or fail the producing run atomically, never with another LLM call.
+    - Because retained processing telemetry outlives §13.13 point-deletion purges and reuse would make an opaque historical ID silently appear to name an unrelated entity, allocation must be collision-resistant, include a random component, and prevent reuse of purged IDs.
+    - Row-count, `MAX + 1`, or other surviving-row-derived IDs are non-conforming.
+    - Natural replacement-key uniqueness is separate from entity identity and remains governed by the Stage 6 and Stage 10 transaction checks below.
+    - Locking is governed by §8.1, and this rule defines no natural-key index.
 12. With all writers serialized under §8.1, rule 10 and the Stage 6 and Stage 10 transaction checks are race-free and remain the enforcement for one-current-per-identity invariants. Because `ResumeBranch.name` is stored directly, the schema also derives this database-enforced exact-name backstop for current named branches:
 
     ```sql
@@ -21,7 +79,7 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
     WHERE superseded_at IS NULL;
     ```
 
-    Assessment-view identity depends on the locale-independent case-folded canonical `scope_target` (§11.7), which SQLite cannot fold deterministically in an index; one-current-per-view enforcement therefore remains the Stage 6 transaction check under the workspace writer lock. Branch replacement identity is likewise canonical — the NFC case-folded `name` (§14.10), which this raw-name index cannot express — so folded one-current-per-branch enforcement is the Stage 10 transaction check under the same lock, and the index remains the coarser exact-spelling backstop.
+    Assessment-view identity depends on the locale-independent case-folded canonical `scope_target` (§11.7), which SQLite cannot fold deterministically in an index. One-current-per-view enforcement therefore remains the Stage 6 transaction check under the workspace writer lock. Branch replacement identity is likewise canonical — the NFC case-folded `name` (§14.10), which this raw-name index cannot express — so folded one-current-per-branch enforcement is the Stage 10 transaction check under the same lock. The index remains the coarser exact-spelling backstop.
 
 13. Every row in the eight recomputable tables — `experience_facts`, `self_signals`, `self_claims`, `assessment_snapshots`, `resume_bullets`, `contradictions`, `gap_questions`, and `resume_branches` — additionally derives these service-set storage columns:
 
@@ -30,9 +88,17 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
     generation_id TEXT NOT NULL
     ```
 
-    `produced_by_run_id` names the §13-stage run whose validated output the row belongs to. One fresh opaque `generation_id` is allocated per atomic business replacement batch and shared by every row committed in that swap: Stage 3 allocates one per correction lineage, so a full extraction over N lineages allocates N generation IDs; Stage 4 uses one shared ID for the output set or sets it replaces in one swap, while a §13.4-retained set keeps its rows and provenance columns; Stage 5 uses one for the signal generation; Stage 6 uses one for the jointly swapped claims and snapshot of one assessment view; and Stage 10 uses one for the jointly swapped branch and bullets. A Stage 4 run that retains both prior sets allocates no generation ID because retention produces no rows. Generation IDs follow rule 11's allocation contract: they are opaque, collision-resistant, and never reused, including after purge. Supersession, verification, or any other lifecycle transition never changes either column; they record production, not lifecycle.
+    `produced_by_run_id` names the §13-stage run whose validated output the row belongs to. One fresh opaque `generation_id` is allocated per atomic business replacement batch and shared by every row committed in that swap:
 
-    These fields have no §11 model counterpart because neither value may cross the LLM boundary: every §15 input is a §11 shape or a contract-declared projection of one (§11), and adding model fields would widen every §29.3 transmission row for no semantic gain. They are service-owned inspection/provenance state, like `fact_sources`, and are hydrated only by inspection surfaces.
+    - Stage 3 allocates one per correction lineage, so a full extraction over N lineages allocates N generation IDs.
+    - Stage 4 uses one shared ID for the output set or sets it replaces in one swap, while a §13.4-retained set keeps its rows and provenance columns.
+    - Stage 5 uses one for the signal generation.
+    - Stage 6 uses one for the jointly swapped claims and snapshot of one assessment view.
+    - Stage 10 uses one for the jointly swapped branch and bullets.
+
+    A Stage 4 run that retains both prior sets allocates no generation ID because retention produces no rows. Generation IDs follow rule 11's allocation contract: they are opaque, collision-resistant, and never reused, including after purge. Supersession, verification, or any other lifecycle transition never changes either column. The columns record production, not lifecycle.
+
+    These fields have no §11 model counterpart because neither value may cross the LLM boundary. Every §15 input is a §11 shape or a contract-declared projection of one (§11), and adding model fields would widen every §29.3 transmission row for no semantic gain. They are service-owned inspection/provenance state, like `fact_sources`. They are hydrated only by inspection surfaces.
 
 14. `raw_logs` and `experience_facts` — the tables storing copied project provenance — additionally derive one service-set storage column:
 
@@ -40,7 +106,14 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
     project_key TEXT
     ```
 
-    `project_key` is `NULL` if and only if the row's `project` is `NULL`. The value is computed by the one service-owned canonical project-key function — Unicode NFC normalization, then leading/trailing Unicode-whitespace trim, then locale-independent Unicode Default Case Folding (§11's comparison identity, §14.9's canonicalization) — applied to the row's exact persisted `project` value, which itself remains untransformed provenance. Capture and import compute the key when the row is persisted; Stage 3 copies `project` and `project_key` together from each fact's governing record (§13.3 rule 13). A non-null `project` that canonicalizes to blank is invalid under §11's Model validation policy, so every stored key is non-empty. Hydration of a row carrying the column re-validates that the stored key equals that function applied to the stored label and fails closed on disagreement (rule 2). Project-view subject selection and every other project-identity comparison consume the stored key against the case-folded canonical selector (§13.6); no comparison site re-implements normalization over labels. Like rule 13's columns, `project_key` has no §11 model counterpart and never crosses the LLM boundary (§11, §15.11): it is service-owned comparison identity, not provenance, display, or export content — owner-facing output renders `project`, and the key may appear only in diagnostics. V1 has no project-label registry and no Project entity.
+    - `project_key` is `NULL` if and only if the row's `project` is `NULL`.
+    - The value is computed by the one service-owned canonical project-key function — Unicode NFC normalization, then leading/trailing Unicode-whitespace trim, then locale-independent Unicode Default Case Folding (§11's comparison identity, §14.9's canonicalization) — applied to the row's exact persisted `project` value, which itself remains untransformed provenance.
+    - Capture and import compute the key when the row is persisted. Stage 3 copies `project` and `project_key` together from each fact's governing record (§13.3 rule 13).
+    - A non-null `project` that canonicalizes to blank is invalid under §11's Model validation policy, so every stored key is non-empty.
+    - Hydration of a row carrying the column re-validates that the stored key equals that function applied to the stored label and fails closed on disagreement (rule 2).
+    - Project-view subject selection and every other project-identity comparison consume the stored key against the case-folded canonical selector (§13.6). No comparison site re-implements normalization over labels.
+    - Like rule 13's columns, `project_key` has no §11 model counterpart and never crosses the LLM boundary (§11, §15.11): it is service-owned comparison identity, not provenance, display, or export content. Owner-facing output renders `project`; the key may appear only in diagnostics.
+    - V1 has no project-label registry and no Project entity.
 
 | Typed reference fields | Required current target |
 |---|---|
