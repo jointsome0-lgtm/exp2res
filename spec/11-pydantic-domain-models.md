@@ -14,39 +14,104 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
 
 ### Model validation policy
 
-Every top-level and embedded §11 model and every outer or nested §15/§19 transport shape uses one common validation policy. Each `BaseModel` declaration shown below is shorthand for that configured base rather than Pydantic's defaults, and every shown `metadata: dict` field is shorthand for the bounded entity-metadata shape defined here. Undeclared fields are rejected (`extra = forbid`). Validation is strict: a value must already have its declared type, with exactly one boundary coercion. When values arrive as JSON — an LLM response, an import payload, or SQLite JSON/ISO-TEXT hydration — an ISO 8601 string may be parsed into a declared `datetime` field. That string must carry an explicit UTC offset — `Z` or numeric `±hh:mm` — and the requirement is value-level: every accepted `datetime` is offset-aware however it arrives, and a naive value fails validation at transport, at hydration, and at direct construction alike. Model validation never consults a workspace or platform timezone; §14.14's Time input resolution rule may resolve naive owner CLI input before model construction and validation. No other cross-type coercion is permitted: strings, integers, booleans, and floats do not bridge in either direction, and truthiness never substitutes for a boolean. SQLite first performs §12's normative storage-representation decoding — for example, an `INTEGER` 0/1 boolean column becomes a JSON boolean — and then validates the reconstructed shape through this same JSON-boundary mode; representation decoding is not model coercion, and storage and transport use one rule set.
+1. Every top-level and embedded §11 model and every outer or nested §15/§19 transport shape uses one common validation policy.
+    - Each `BaseModel` declaration shown below is shorthand for that configured base rather than Pydantic's defaults.
+    - Every shown `metadata: dict` field is shorthand for the bounded entity-metadata shape defined here.
+2. Undeclared fields are rejected (`extra = forbid`).
+3. Validation is strict: a value must already have its declared type, with exactly one boundary coercion. When values arrive as JSON — an LLM response, an import payload, or SQLite JSON/ISO-TEXT hydration — an ISO 8601 string may be parsed into a declared `datetime` field.
+4. The parsed ISO 8601 string must carry an explicit UTC offset — `Z` or numeric `±hh:mm` — and the requirement is value-level: every accepted `datetime` is offset-aware however it arrives, and a naive value fails validation at transport, at hydration, and at direct construction alike.
+5. Model validation never consults a workspace or platform timezone; §14.14's Time input resolution rule may resolve naive owner CLI input before model construction and validation.
+6. No other cross-type coercion is permitted: strings, integers, booleans, and floats do not bridge in either direction, and truthiness never substitutes for a boolean.
+7. SQLite first performs §12's normative storage-representation decoding — for example, an `INTEGER` 0/1 boolean column becomes a JSON boolean — and then validates the reconstructed shape through this same JSON-boundary mode. Representation decoding is not model coercion, and storage and transport use one rule set.
+8. Assignment validation is enabled. A constructed model instance is immutable to ordinary assignment. Only the lifecycle-owned field on an entity for which §11/§13 already defines the owning transition may change:
+    - `superseded_at`;
+    - `SelfClaim.verification_status` and `counterevidence`;
+    - `AssessmentSnapshot.verification_status`;
+    - `ResumeBullet.verification_status`, `unsupported_phrases`, and `verifier_reason`;
+    - `GapQuestion.answered` and `answer_log_id`.
+9. Each field listed in rule 8 changes only through its owning stage transition.
+10. Same-named fields on another model gain no mutation right; in particular, a `VerificationFinding` remains immutable.
+11. Assignment immutability is a model-instance policy: a storage referential action already defined by §12 rehydrates a newly validated state rather than mutating an existing instance.
+12. Canonical serialization uses UTF-8 JSON and declared field names only.
+13. For the §12.15 `input_hash` and `output_hash`, the exact byte form is pinned:
+    - Object keys are sorted by code point.
+    - Insignificant whitespace is omitted.
+    - Every `datetime` value is normalized to UTC and rendered as `YYYY-MM-DDThh:mm:ss.ffffffZ` with exactly six zero-padded fractional digits, including all-zero digits, so equal instants recorded under different offsets serialize to identical bytes. This normalization is total because validation admits only offset-aware `datetime` values — a naive value can never reach hash serialization.
+    - Strings serialize their validated code points with no case, normalization, or other transformation, and non-ASCII code points are emitted as raw UTF-8 rather than `\uXXXX` escapes.
+    - Only mandatory JSON escapes are used: `\"`, `\\`, the defined two-character forms (`\b`, `\f`, `\n`, `\r`, `\t`), and lowercase `\u00xx` for any remaining control character.
+    - Numbers are integers in minimal decimal form, while `true`, `false`, and `null` use their JSON literals.
+14. No §11 model declares a float-typed field, and introducing one requires first pinning its canonical rendering here.
+15. The hash function is SHA-256 over those pinned bytes, stored as lowercase hexadecimal.
+16. The datetime normalization-and-rendering rule governs hash bytes only and does not change any stored or displayed value.
+17. Two conforming implementations therefore hash identical validated inputs and outputs identically.
+18. Canonical serialization governs hash-input bytes only:
+    - §12 rule 3 governs stored-offset retention and UTC-instant comparison.
+    - §14.14's Time input resolution rule governs workspace-timezone interpretation before model validation.
+    - The Unicode policy below governs normalization and comparison outside hashing.
 
-Assignment validation is enabled. A constructed model instance is immutable to ordinary assignment. Only the lifecycle-owned field on an entity for which §11/§13 already defines the owning transition may change: `superseded_at`; `SelfClaim.verification_status` and `counterevidence`; `AssessmentSnapshot.verification_status`; `ResumeBullet.verification_status`, `unsupported_phrases`, and `verifier_reason`; and `GapQuestion.answered` and `answer_log_id`. Those changes occur only through their owning stage transition. Same-named fields on another model gain no mutation right; in particular, a `VerificationFinding` remains immutable. This is a model-instance assignment policy: a storage referential action already defined by §12 rehydrates a newly validated state rather than mutating an existing instance.
+19. For each producing or transition operation, every persisted field has exactly one authorship class:
+    - Model-authored values are exactly the fields declared by the applicable §15 output shape.
+    - Importer-authored values are exactly the mappings declared by the applicable §19 contract.
+    - Owner-authored values include `raw_text`, correction and answer text, and configuration.
+    - Service-owned persisted fields include IDs, timestamps, lifecycle fields, production provenance, paths, entity `metadata`, and the deterministic post-response copies and derivations §15.11's ownership matrix assigns to a producing stage — for example fact `project` and `source_log_ids`, snapshot `summary` and `gap_question_ids`, and bullet `source_log_ids` and `source_self_claim_ids`.
+20. A declared verifier `status`, `counterevidence`, `unsupported_phrases`, or `reason` is a model-authored transition result, not direct assignment to the same-named or mapped persisted lifecycle field; the owning service alone validates and applies that result.
+21. Authorship follows the declared shape and operation, not matching key spelling.
+22. A model response that sets a service-owned persisted field outside its declared transition result or sets any undeclared field is invalid structured output.
+23. Entity `metadata` is a bounded, inert service/importer channel; §12.13 `processing_runs.metadata_json` is separate execution telemetry governed only by that subsection.
+24. Only deterministic service code authors entity metadata.
+25. Capture/import commands (§14.2–§14.5 and §14.7), including §19 importers, may supply a validated copied value; every LLM-backed producer service supplies the persisted empty value.
+26. No §15 output shape contains `metadata`, and an LLM response that supplies it is invalid structured output.
+27. A §19 importer may pass through a source payload's metadata object only when its source contract declares that field and the value passes this policy; the result remains inert provenance.
+28. A metadata key can never carry authority, control, selection, or lifecycle state unless one specification section names both its producer and its consumer, applying to keys the same producer-closure principle reflected in §10's enum domains.
+29. The V1 named keys are:
+    - `question_text` and `question_reason` on a gap-answer `RawLog`, produced by §14.7 and consumed by §15.2;
+    - `source_system`, `source_record_id`, and `content_hash` on an imported `RawLog`, produced by a §19.4 importer and consumed only by §19.4's retained-identity duplicate/conflict check;
+    - `content_digest` on an imported `EvidenceItem`, produced by a §19.4 importer and consumed only by §19.4's integrity check at an explicitly authorized §29.4 dereference;
+    - `repaired_from_snapshot_id` on an `AssessmentSnapshot` plus `adopted_rewrite_of_claim_id` on a `SelfClaim`, produced only by §13.6's deterministic repair form and consumed by no V1 operation — inert repair provenance for inspection.
+30. The import identity keys are non-empty structural strings; `content_hash` and `content_digest` are exactly the lowercase SHA-256 hexadecimal forms defined by §19.4.
+31. The digest remains inert for authority, control, selection, and lifecycle purposes.
+32. A §19.4 source metadata object containing a reserved import key for the target entity is invalid rather than overwritten, and the final service-mapped metadata remains subject to the limits below.
+33. The same key names from any other producer remain inert.
+34. Every object within entity metadata has at most 16 keys.
+35. A key is non-empty lowercase ASCII snake case matching `^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$` and is at most 64 characters.
+36. A value is a JSON scalar, an array of scalars, or one nested object whose values are scalars or arrays of scalars; arrays and objects cannot nest further.
+37. The canonical serialized metadata is at most 4 KiB (4,096 UTF-8 bytes) per entity.
 
-Canonical serialization uses UTF-8 JSON and declared field names only. For the §12.15 `input_hash` and `output_hash`, the exact byte form is pinned: object keys are sorted by code point and insignificant whitespace is omitted; every `datetime` value is normalized to UTC and rendered as `YYYY-MM-DDThh:mm:ss.ffffffZ` with exactly six zero-padded fractional digits, including all-zero digits, so equal instants recorded under different offsets serialize to identical bytes, and this normalization is total because validation admits only offset-aware `datetime` values — a naive value can never reach hash serialization; strings serialize their validated code points with no case, normalization, or other transformation, non-ASCII code points are emitted as raw UTF-8 rather than `\uXXXX` escapes, and only mandatory JSON escapes are used — `\"`, `\\`, the defined two-character forms (`\b`, `\f`, `\n`, `\r`, `\t`), and lowercase `\u00xx` for any remaining control character; numbers are integers in minimal decimal form, while `true`, `false`, and `null` use their JSON literals. No §11 model declares a float-typed field, and introducing one requires first pinning its canonical rendering here. The hash function is SHA-256 over those bytes, stored as lowercase hexadecimal. The datetime rule governs hash bytes only and does not change any stored or displayed value. Two conforming implementations therefore hash identical validated inputs and outputs identically. This paragraph governs hash-input bytes only; §12 rule 3 governs stored-offset retention and UTC-instant comparison, §14.14's Time input resolution rule governs workspace-timezone interpretation before model validation, and the Unicode policy below governs normalization and comparison outside hashing.
+    The §14.7 copied pair fits that budget by construction: `question_text` copies a `GapQuestion.question` bounded at 1,024 UTF-8 bytes whose free-text hygiene admits no character that canonical serialization expands beyond two bytes, and `question_reason` copies a `GapTrigger` literal, so the copied metadata object stays under 2.2 KiB even at maximal escaping and a persisted gap can never be unanswerable under the metadata limit.
 
-For each producing or transition operation, every persisted field has exactly one authorship class. Model-authored values are exactly the fields declared by the applicable §15 output shape. Importer-authored values are exactly the mappings declared by the applicable §19 contract. Owner-authored values include `raw_text`, correction and answer text, and configuration. Service-owned persisted fields include IDs, timestamps, lifecycle fields, production provenance, paths, entity `metadata`, and the deterministic post-response copies and derivations §15.11's ownership matrix assigns to a producing stage — for example fact `project` and `source_log_ids`, snapshot `summary` and `gap_question_ids`, and bullet `source_log_ids` and `source_self_claim_ids`. A declared verifier `status`, `counterevidence`, `unsupported_phrases`, or `reason` is a model-authored transition result, not direct assignment to the same-named or mapped persisted lifecycle field; the owning service alone validates and applies that result. Authorship follows the declared shape and operation, not matching key spelling. A model response that sets a service-owned persisted field outside its declared transition result or sets any undeclared field is invalid structured output.
+38. The following limits apply at every external boundary: LLM inputs and responses, import payloads, owner-supplied files, and SQLite hydration.
 
-Entity `metadata` is a bounded, inert service/importer channel; §12.13 `processing_runs.metadata_json` is separate execution telemetry governed only by that subsection. Only deterministic service code authors entity metadata. Capture/import commands (§14.2–§14.5 and §14.7), including §19 importers, may supply a validated copied value; every LLM-backed producer service supplies the persisted empty value. No §15 output shape contains `metadata`, and an LLM response that supplies it is invalid structured output. A §19 importer may pass through a source payload's metadata object only when its source contract declares that field and the value passes this policy; the result remains inert provenance.
+    ```text
+    raw_text: at most 1 MiB (1,048,576 UTF-8 bytes) for one source document or payload read into the field
+    GapQuestion.question: at most 1,024 UTF-8 bytes
+    every other string field: at most 16 KiB (16,384 UTF-8 bytes)
+    each list field: at most 1,000 items
+    each payload: at most 10,000 total objects
+    JSON nesting: at most 32 levels
+    each warnings list and each findings list: at most 100 entries
+    typed ID lists: duplicate-free under their existing rules
+    each string-list member: non-empty
+    ```
 
-A metadata key can never carry authority, control, selection, or lifecycle state unless one specification section names both its producer and its consumer, applying to keys the same producer-closure principle reflected in §10's enum domains. The V1 named keys are `question_text` and `question_reason` on a gap-answer `RawLog`, produced by §14.7 and consumed by §15.2; `source_system`, `source_record_id`, and `content_hash` on an imported `RawLog`, produced by a §19.4 importer and consumed only by §19.4's retained-identity duplicate/conflict check; `content_digest` on an imported `EvidenceItem`, produced by a §19.4 importer and consumed only by §19.4's integrity check at an explicitly authorized §29.4 dereference; and `repaired_from_snapshot_id` on an `AssessmentSnapshot` plus `adopted_rewrite_of_claim_id` on a `SelfClaim`, produced only by §13.6's deterministic repair form and consumed by no V1 operation — inert repair provenance for inspection. The import identity keys are non-empty structural strings; `content_hash` and `content_digest` are exactly the lowercase SHA-256 hexadecimal forms defined by §19.4. The digest remains inert for authority, control, selection, and lifecycle purposes. A §19.4 source metadata object containing a reserved import key for the target entity is invalid rather than overwritten, and the final service-mapped metadata remains subject to the limits below. The same key names from any other producer remain inert. Every object within entity metadata has at most 16 keys. A key is non-empty lowercase ASCII snake case matching `^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$` and is at most 64 characters. A value is a JSON scalar, an array of scalars, or one nested object whose values are scalars or arrays of scalars; arrays and objects cannot nest further. The canonical serialized metadata is at most 4 KiB (4,096 UTF-8 bytes) per entity. The §14.7 copied pair fits that budget by construction: `question_text` copies a `GapQuestion.question` bounded at 1,024 UTF-8 bytes whose free-text hygiene admits no character that canonical serialization expands beyond two bytes, and `question_reason` copies a `GapTrigger` literal, so the copied metadata object stays under 2.2 KiB even at maximal escaping and a persisted gap can never be unanswerable under the metadata limit.
-
-The following limits apply at every external boundary: LLM inputs and responses, import payloads, owner-supplied files, and SQLite hydration.
-
-```text
-raw_text: at most 1 MiB (1,048,576 UTF-8 bytes) for one source document or payload read into the field
-GapQuestion.question: at most 1,024 UTF-8 bytes
-every other string field: at most 16 KiB (16,384 UTF-8 bytes)
-each list field: at most 1,000 items
-each payload: at most 10,000 total objects
-JSON nesting: at most 32 levels
-each warnings list and each findings list: at most 100 entries
-typed ID lists: duplicate-free under their existing rules
-each string-list member: non-empty
-```
-
-Exceeding a limit is a deterministic local failure: an input fails preflight before any provider call; a model response is invalid structured output; an import or owner-supplied file fails at acquisition; and a stored row fails closed at hydration. Stored JSON is not grandfathered around validation or limits (§12 rule 2).
-
-Every string rejects NUL. Structural strings — IDs, enum values, metadata keys, names, paths, and selectors — also reject every C0/C1 control character. Free-text strings — including `raw_text`, claims, statements, summaries, and questions — permit tabs and newlines but reject every other control character. An inert metadata string follows free-text hygiene unless a named-key contract types it as structural. Accepted source text is never normalized or rewritten and retains the byte-for-byte preservation required by §16.12 and §19. Generated prose is stored as its validated Unicode code points; the service applies no Unicode normalization, and canonical hash bytes remain governed by the serialization rule above.
-
-Comparison identity uses Unicode NFC normalization followed by locale-independent Unicode Default Case Folding only at the named identity points: scope-target and assessment-view/project matching (§14.9, §11.7, §13.6), and branch replacement and selection (§14.10, §11.12). The separately named leading/trailing whitespace trim in §14.9 still applies. Project provenance remains copied exactly under §13.3 rule 13; its comparison identity is computed once at persistence as the §12 rule 14 stored `project_key`, and a non-null `project` value must remain non-blank after §14.9's canonicalization (Unicode NFC plus leading/trailing whitespace trim) — a label that canonicalizes to blank fails structural validation at every boundary. Managed-output path keys are opaque service IDs under §13.14 and never derive from these comparison identities. No other identifier, selector, label, duplicate comparison, or prose string receives implicit normalization or case folding; strings differing only by normalization form or case remain distinct wherever no owning rule names a fold. Locale-dependent casing, including Turkish-I special casing, is forbidden; "locale-independent case fold" means Unicode Default Case Folding.
-
-A non-null `path` field value must use POSIX path syntax under §29.4; a Windows drive-letter, UNC, or backslash-separated form fails the same structural validation as unsupported.
+39. Exceeding a limit is a deterministic local failure:
+    - an input fails preflight before any provider call;
+    - a model response is invalid structured output;
+    - an import or owner-supplied file fails at acquisition;
+    - a stored row fails closed at hydration.
+40. Stored JSON is not grandfathered around validation or limits (§12 rule 2).
+41. Every string rejects NUL.
+42. Structural strings — IDs, enum values, metadata keys, names, paths, and selectors — also reject every C0/C1 control character.
+43. Free-text strings — including `raw_text`, claims, statements, summaries, and questions — permit tabs and newlines but reject every other control character.
+44. An inert metadata string follows free-text hygiene unless a named-key contract types it as structural.
+45. Accepted source text is never normalized or rewritten and retains the byte-for-byte preservation required by §16.12 and §19.
+46. Generated prose is stored as its validated Unicode code points; the service applies no Unicode normalization, and canonical hash bytes remain governed by the serialization rules above.
+47. Comparison identity uses Unicode NFC normalization followed by locale-independent Unicode Default Case Folding only at the named identity points: scope-target and assessment-view/project matching (§14.9, §11.7, §13.6), and branch replacement and selection (§14.10, §11.12).
+48. The separately named leading/trailing whitespace trim in §14.9 still applies.
+49. Project provenance remains copied exactly under §13.3 rule 13. Its comparison identity is computed once at persistence as the §12 rule 14 stored `project_key`. A non-null `project` value must remain non-blank after §14.9's canonicalization (Unicode NFC plus leading/trailing whitespace trim) — a label that canonicalizes to blank fails structural validation at every boundary.
+50. Managed-output path keys are opaque service IDs under §13.14 and never derive from these comparison identities.
+51. No other identifier, selector, label, duplicate comparison, or prose string receives implicit normalization or case folding; strings differing only by normalization form or case remain distinct wherever no owning rule names a fold.
+52. Locale-dependent casing, including Turkish-I special casing, is forbidden; "locale-independent case fold" means Unicode Default Case Folding.
+53. A non-null `path` field value must use POSIX path syntax under §29.4; a Windows drive-letter, UNC, or backslash-separated form fails the same structural validation as unsupported.
 
 ## §11.1 OccurredAt
 
