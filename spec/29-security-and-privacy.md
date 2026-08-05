@@ -24,7 +24,7 @@
    - It holds network access only for the duration of that authorized transit window, which version 1 does not endpoint-filter.
 
    The residual named in this section's closing inventory is therefore two-part: the invocation's own declared input, which the action was already authorized to transmit, and the adapter's declared authentication material, which §15.12 rule 2 necessarily binds into the sandbox for provider transit. §15.12 rules 1–6 leave nothing else readable, and suspected credential exposure is recovered by owner-initiated rotation or revocation through the platform or provider — the credential-lifecycle responsibility §29.6's inventory places outside Exp2Res.
-3. **Local view serving.** Serving a §30 view only on the local host's loopback interface and returning it to a local browser is local presentation, not egress or a ninth model-call site.
+3. **Local view serving.** Serving a §30 view only on the local host's loopback interface and returning it to a local browser is local presentation, not egress or an eighth model-call site.
    - Every view-triggered workflow that reaches §15 remains an explicit foreground user-initiated §14 action under the same authority and confirmation rules.
    - The serving process makes no outbound connection of any kind and accepts only requests carrying its own bound loopback authority.
    - Its reads are exactly the ones selection and complete revalidation require:
@@ -110,7 +110,7 @@ The following seven contracts are the complete model-call surface. The selected 
 | §15.9 job-description parser | Third-party `JobDescription.raw_text` only, including any company, contact, or other personal data the supplied vacancy contains. No local record ID transits: no job-description entity exists at call time, and Stage 8 assigns the ID only after the response validates (§15.9). |
 
 1. No invocation receives the full database, ambient provider conversation history, another contract's inputs, or a persistent remote assistant, file store, vector store, or cache created by Exp2Res.
-2. Adding a ninth call site, adding a network-capable tool, or widening any row beyond its declared §15 input is a weakening governed by §29.7.
+2. Adding an eighth call site, adding a network-capable tool, or widening any row beyond its declared §15 input is a weakening governed by §29.7.
 
 ## §29.4 Secret, Ignore-Path, and Prompt Isolation
 

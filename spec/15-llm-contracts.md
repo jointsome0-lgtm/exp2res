@@ -45,7 +45,7 @@ The one retry above applies only to an invalid model response. Failure in determ
 
 Example notation:
 
-- An entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-owned fields §15.11's ownership matrix assigns to the producing stage — IDs, lifecycle and answer-state fields, `metadata`, and the deterministic post-response copies and derivations named there.
+- An entity's model-emitted shape appears once, at its producing contract — §15.2 (fact), §15.4 (claim), §15.8 (gap, contradiction), §15.9 (`ParsedJD`) — and the complete persisted §11 shape is that shape plus exactly the service-owned fields §15.11's ownership matrix assigns to the producing stage — IDs, lifecycle and answer-state fields, `metadata`, and the deterministic post-response copies and derivations named there. A producing contract may additionally declare transport-only response fields — §15.4's `patterns` list and per-claim `source_pattern_labels` — that belong to the response schema alone: omitting one is invalid structured output, but they are consumed at the producing stage's boundary and are never part of the persisted §11 shape, so no implementation or schema generator persists them or widens a §11 model to admit them.
 - Persisted-row examples appear where a contract consumes them: §15.2's input (`RawLog`, `EvidenceItem`), §15.4's input (`GapQuestion`), §15.6's input (a verified `SelfClaim`).
 - Other examples elide a repeated body to a `"<id: complete §NN.N Model — canonical example in §NN.N>"` string pointing at the named example.
 - The literal `{}` candidates in §15.5 and §15.7 are schema-envelope notation for the complete typed candidate, never empty transport objects; those examples demonstrate response shape rather than a reproducible verdict from hidden candidate content.
@@ -331,6 +331,7 @@ Input:
       "claim_kind": "pattern_signal",
       "dimension": "domain_interest",
       "source_fact_ids": ["fact_001"],
+      "counter_fact_ids": [],
       "confidence": "medium",
       "verification_status": "supported",
       "counterevidence": [],
@@ -362,7 +363,7 @@ Hard rule:
 Self-claims can guide selection and wording, but resume bullets must still link to concrete experience facts and raw logs.
 ```
 
-Stage 10 invokes this contract once per planned bullet under §13.10's isolated-context and input-selection rules. It does not pass `AssessmentSnapshot.title` or `.summary` as independent prose inputs. Stage 10 service-sets the persisted bullet's `source_self_claim_ids` under §13.10's exact-use rule (§15.11); the writer does not return the field, so it can neither use an unlisted claim nor list one it did not receive.
+Stage 10 invokes this contract once per planned bullet under §13.10's isolated-context and input-selection rules. Each supplied claim arrives as its complete §11.6 object, so its `counter_fact_ids` contrary-role marking stays visible: a fact marked counter on a claim grounds no bullet wording through that claim, and Stage 11 judges against the same marking. It does not pass `AssessmentSnapshot.title` or `.summary` as independent prose inputs. Stage 10 service-sets the persisted bullet's `source_self_claim_ids` under §13.10's exact-use rule (§15.11); the writer does not return the field, so it can neither use an unlisted claim nor list one it did not receive.
 
 Each `selected_facts[].evidence` array contains one ID-ordered entry for every §12.4 row of that fact. Under §13.3 rule 10, an item linked to a non-displaced record is a complete `EvidenceItem` paired with its complete `RawLog`; an item linked to a displaced record is the displaced-record support descriptor paired with `raw_log = null`. The descriptor can support the fact only within its §9.4 scope and cannot source bullet content; content-bearing record evidence remains the effective-record context used at Stage 3.
 

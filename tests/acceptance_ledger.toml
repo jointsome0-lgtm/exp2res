@@ -32,11 +32,11 @@ issues = ["#81", "PR #95", "#82", "PR #125"]
 note = "Stage 1 proves atomic EvidenceItem capture and Stage 3 now proves direct fact_sources rows plus source_log_ids derived through selected evidence; the broader wrong-type, superseded, duplicate, and Stage 6 clauses in the linked eval remain"
 
 ["24.6"]
-status = "met"
+status = "partial"
 phases = ["3"]
 evals = ["21.10"]
 issues = []
-note = "Stage 7 deterministically rejects a passing verdict for a self-claim without a direct source chain, while covered eval 21.10 executes the failed supported attempt and the valid rejected closure in required CI"
+note = "Stage 7 deterministically rejects a passing verdict for a self-claim without a direct source chain, and covered eval 21.10 executes the failed supported attempt and the valid rejected closure in required CI; §24.6 now also requires Stage 6 to reject an empty source_fact_ids list as invalid structured output (§15.4), and no registered node proves that write-time path — it lands with the #76 follow-up"
 
 ["24.7"]
 status = "pending"
