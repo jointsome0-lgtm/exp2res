@@ -674,6 +674,33 @@ def test_expired_processing_deadline_outweighs_a_pre_state_refusal(tmp_path):
     assert fresh is not None and fresh.outcome == "authority_not_bound"
 
 
+def test_a_resolver_thread_that_cannot_start_is_the_fixed_internal_error(
+    tmp_path, monkeypatch
+):
+    # §30 rule 7 owes every complete admitted request exactly one outcome. A
+    # thread the operating system refuses to create is an unexpected local
+    # failure, and the connection's own thread is still alive to answer it,
+    # so the request gets the fixed 500 rather than a close with no response.
+    bind = free_bind()
+    server = ViewServer(tmp_path, bind, _timeouts=GENEROUS)
+    parser = RequestParser()
+    parser.feed(
+        b"GET /mirror?scope=global HTTP/1.1\r\nHost: "
+        + bind.authority.encode("ascii")
+        + b"\r\n\r\n"
+    )
+    assert parser.done and not parser.malformed
+
+    def refuse_start(self):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse_start)
+    page = server._decide(parser, time.monotonic() + 30.0)
+    assert page is not None
+    assert page.outcome == "internal_error"
+    assert page.status == 500
+
+
 def test_processing_expiry_during_composition_composes_the_503(tmp_path):
     # §14.17 places response composition inside processing: a payload whose
     # serialization outlives the deadline is not the outcome — the fixed
@@ -739,6 +766,71 @@ def test_first_interrupt_drains_and_in_flight_requests_complete(tmp_path):
         assert rig.result == "drained"
     finally:
         release.set()
+        server.interrupt()
+        server.interrupt()
+        rig.thread.join(15.0)
+
+
+class DrainAtAcceptClock:
+    """Interrupts exactly at the serve thread's post-`accept` clock read.
+
+    That read is the accept loop's first clock call, so firing there puts the
+    first interruption in the one window the loop condition cannot see: the
+    connection is already accepted, and the admission decision that follows
+    is what has to refuse it.
+    """
+
+    def __init__(self) -> None:
+        self.server: ViewServer | None = None
+        self.serve_thread: threading.Thread | None = None
+        self.fired = threading.Event()
+
+    def __call__(self) -> float:
+        now = time.monotonic()
+        if (
+            not self.fired.is_set()
+            and self.serve_thread is not None
+            and threading.current_thread() is self.serve_thread
+        ):
+            # Set before interrupting: `interrupt` reads this same clock.
+            self.fired.set()
+            assert self.server is not None
+            self.server.interrupt()
+        return now
+
+
+def test_a_backlog_connection_accepted_at_the_drain_boundary_is_refused(tmp_path):
+    """§14.17: the first interruption stops accepting connections at that
+    instant. Closing the listener does not empty the kernel backlog, so
+    `accept` can still hand back a queued socket after the drain began; that
+    socket is closed unread and never becomes work the drain waits on."""
+
+    clock = DrainAtAcceptClock()
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        _resolver=page_resolver(MARKER_PAGE),
+        _clock=clock,
+        _timeouts=GENEROUS,
+    )
+    clock.server = server
+    server.open()
+    rig = Rig(server, bind)
+    clock.serve_thread = rig.thread
+    # Connected — and queued in the backlog — before the accept loop exists,
+    # so the first `accept` returns it without waiting on anything.
+    client = socket.create_connection((bind.host, bind.port), 10.0)
+    try:
+        client.sendall(rig.request_bytes())
+        rig.thread.start()
+        assert read_to_close(client) == b""
+        rig.thread.join(15.0)
+        assert not rig.thread.is_alive()
+        assert clock.fired.is_set()
+        assert rig.result == "drained"
+    finally:
+        client.close()
         server.interrupt()
         server.interrupt()
         rig.thread.join(15.0)

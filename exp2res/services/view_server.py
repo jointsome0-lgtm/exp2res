@@ -382,11 +382,19 @@ class ViewServer:
                     connection.close()
                     continue
                 with self._state_lock:
-                    # Atomic with the forced-close sweep: either this socket
-                    # registers before the sweep's snapshot and gets swept, or
-                    # the immediate flag — set before any sweep — is already
-                    # visible here and the connection is refused unserved.
-                    admitted = not self._immediate.is_set()
+                    # Atomic with both interruption steps. `accept` can return
+                    # a socket the kernel queued in the backlog after
+                    # `interrupt` closed the listener, so the drain boundary
+                    # has to be part of the admission decision and not only
+                    # the loop condition: §14.17's first interruption stops
+                    # accepting connections at that instant, and a connection
+                    # admitted afterwards would also make the drain wait on
+                    # work the deadline never covered. The draining flag
+                    # subsumes the immediate one — a forced close only ever
+                    # follows a drain — so either this socket registers before
+                    # the sweep's snapshot and gets swept, or the interruption
+                    # is already visible here and the socket is closed unread.
+                    admitted = not self._draining.is_set()
                     if admitted:
                         self._sockets.add(connection)
                         self._active += 1
@@ -636,7 +644,15 @@ class ViewServer:
             worker = threading.Thread(
                 target=self._run_resolver, args=(request, deadline, handle), daemon=True
             )
-            worker.start()
+            try:
+                worker.start()
+            except RuntimeError:
+                # The process cannot create another thread. §30 rule 7 still
+                # owes this complete admitted request exactly one outcome, and
+                # this connection's own thread is alive to emit it, so the
+                # unexpected local failure becomes the fixed `internal_error`
+                # page rather than a close with no response.
+                return self._within(views.internal_error_page(), deadline)
             finished = handle.done.wait(
                 max(0.0, self._phase_deadline(deadline) - self._clock())
             )
