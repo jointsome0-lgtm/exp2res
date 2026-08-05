@@ -42,7 +42,7 @@ grammar (`scripts/check_decision_log.py`, checker 1.1.0, baseline
 decision, then the rejected alternative — linted at an 80-word ceiling
 with a 40-word warning.
 
-<!-- BEGIN SDD-CONVENTIONS v1.1.0 sha256:3003d86d310122af19c0c89da88f7087e682eab9f086dda9e245cfdad0833072 -->
+<!-- BEGIN SDD-CONVENTIONS v1.2.0 sha256:2c830687df9cca24ed7b15d606386598f5f87272be03195d92a0ad3092a9672c -->
 ## SDD conventions — shared mechanics
 
 Shared structural rules for SDD-stage repositories, vendored from
@@ -67,6 +67,17 @@ lanes, and review policy stay local to each repository.
   source.
 - **A decision lands as three writes.** An accepted decision = the SDD edit,
   one concise Decision Log line, and the rationale in the issue or commit.
+- **Decisions land at property altitude.** A ratified mechanism-level
+  decision — a concrete sort key, a message text, a serialized-field
+  list — enters the spec as the property or invariant it guarantees; the
+  mechanism itself lives in code and its tests, and the rationale is one
+  Decision Log line. No § accumulates mechanism essays — this covers
+  every §, not a named list.
+- **Unloading by maturity.** Once merged code and offline tests enforce
+  a §'s mechanics, that § gets an unloading PR: the property stays in
+  the § (or moves to the repository's invariants §), the mechanism text
+  is deleted, and the "why" goes to the Decision Log. Retiring follows
+  the stable-section-numbers rule; nothing is renumbered.
 - **Correction versus trade-off.** A factual or editorial fix whose desired
   state existing canon already determines may be proposed as a correction;
   everything else is an owner trade-off and needs the owner's decision.
