@@ -56,13 +56,13 @@ The section projection is deterministic. The unique `narrative_summary` claim re
   - Rule 5 places the four orientation dimensions at any status rules 3 and 4 leave.
   - The two capability dimensions — `technical_skill` and `execution_capacity` — fall through to rules 3, 4, 6, and 7, which together cover every admitted status.
   - The invalid-report rule remains the defense against out-of-contract state.
-- Strongly Supported Facts is not a second claim-placement channel: it renders the current `ExperienceFact.claim` values that are reached directly from at least one rendered `supported` claim and whose `Confidence` is the maximum member under §10, with the fact ID, supporting claim IDs, and the fact's `source_log_ids` visible.
+- Strongly Supported Facts is not a second claim-placement channel: it renders the current `ExperienceFact.claim` values that are reached directly through a supporting membership — `source_fact_ids` minus `counter_fact_ids` — of at least one rendered `supported` claim and whose `Confidence` is the maximum member under §10, with the fact ID, supporting claim IDs, and the fact's `source_log_ids` visible.
 - Counterevidence renders inline in its claim's block, never as a section of its own.
 
 The report carries its provenance at the claim level, inline:
 
 - Every rendered claim block opens its fields with the claim's own ID — the identity a counterevidence reader, a §13.12 companion consumer, and Strongly Supported Facts' supporting-claim lists all join on.
-- Every rendered claim block ends with one renderer-owned sources line built from the claim's stored `source_fact_ids`, the ID list ascending by UTF-8 bytes.
+- Every rendered claim block ends with one renderer-owned sources line built from the claim's stored `source_fact_ids`, the ID list ascending by UTF-8 bytes, with each member that appears in the claim's `counter_fact_ids` suffixed by the fixed literal ` (counter)`.
 - That sources line contains typed IDs and fixed renderer-owned labels only, never explanatory factual prose.
 - That sources line is never empty for a rendered claim, because §16.1 bars a chainless claim from export.
 - The record-level closure — facts to evidence items to retained raw logs — is not repeated in the report: the §13.12 `evidence_map.json` companion is the complete machine-checkable typed link closure, while the report renders the claim-level trail for verification by reading.

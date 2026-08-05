@@ -539,6 +539,7 @@ case = '''
 Given a current claim whose source_fact_ids carry, under §15.4's inclusion rule, a cited pattern's supporting facts and its stronger counter fact
 When Stage 7 assembles the §15.5 input for that claim
 Then source_facts contains exactly the claim's listed facts once each, counter fact included
+And the claim's persisted counter_fact_ids arrive with it and mark that member's contrary role
 And source_evidence_items is every EvidenceItem reached through those facts' fact_sources rows, serialized under §13.3 rule 10 with strength and raw_log_id visible
 And source_logs is exactly the duplicate-free retained RawLog object set referenced by non-displaced members, with displaced logs omitted
 And every array is ID-ordered and contains no row outside the displacement-aware bundle, with raw logs and evidence items reached only through the closure

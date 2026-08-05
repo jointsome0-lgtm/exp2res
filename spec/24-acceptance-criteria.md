@@ -7,7 +7,7 @@ V1 is acceptable when:
 3. Raw logs are append-only to automation, while the owner can hard-delete any raw log without an FK or rebuild failure blocking deletion.
 4. Corrections are stored as self-contained new events linked to their targets; targets are not mutated.
 5. Experience facts require at least one direct, non-null EvidenceItem-backed source row and derive their source-log IDs through those items.
-6. Self-claims require source facts to verify: a sourceless claim caps at `unknown` (§9.4) and fails §13.7 rule 1.
+6. Self-claims require source facts: Stage 6 rejects an empty `source_fact_ids` list as invalid structured output (§15.4), and §13.7 rule 1 backstops verification.
 7. Assessment snapshots preserve uncertainty and contradictions.
 8. Assessment verifier blocks flattery, unsupported identity claims, and diagnostic claims.
 9. Resume bullets require source facts and source logs.

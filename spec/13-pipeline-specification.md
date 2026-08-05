@@ -588,7 +588,7 @@ Every JSON companion above other than `manifest.json` is one closed document: it
 CounterevidenceExport = {statement, source_ref_type, source_ref_id}
 GapExport = {id, target_type, target_id, question, reason, priority, answered}
 ContradictionExport = {id, title, description, left_ref_type, left_ref_id, right_ref_type, right_ref_id}
-ClaimLink = {claim_id, source_fact_ids}
+ClaimLink = {claim_id, source_fact_ids, counter_fact_ids}
 FactLink = {fact_id, evidence_item_ids, source_log_ids}
 EvidenceLink = {evidence_item_id, raw_log_id}
 ```
@@ -600,7 +600,7 @@ self_claims.json = {
   schema_version,
   snapshot: {id, created_at, scope, scope_target, title, verification_status},
   claims: list[{id, claim, claim_kind, dimension, confidence, verification_status,
-                uncertainty, source_fact_ids,
+                uncertainty, source_fact_ids, counter_fact_ids,
                 counterevidence: list[CounterevidenceExport]}],
   unknowns: list[GapExport],
   contradictions: list[ContradictionExport]
@@ -654,7 +654,7 @@ For a bullet-pack export:
 
 Each evidence map is a complete typed link closure, not free-form explanatory prose.
 
-- `claim_links` resolves every rendered/source claim to its facts; `fact_links` resolves every reached fact to evidence-item and raw-log IDs; and `evidence_links` resolves each reached item to its raw-log ID.
+- `claim_links` resolves every rendered/source claim to its facts, with the contrary members repeated in `counter_fact_ids` (§11.6) so a consumer never reads a counter fact as support; `fact_links` resolves every reached fact to evidence-item and raw-log IDs; and `evidence_links` resolves each reached item to its raw-log ID.
 - A facts-only bullet legally has no claim edge and starts at its exact `source_fact_ids`; no unresolved placeholder is allowed.
 - Every rendered bullet sentence must therefore round-trip from its exact `rendered_bullets` entry through these typed links to the current domain rows.
 - A missing closure member, an unused extra member, or disagreement with the persisted §11 relations fails export.
