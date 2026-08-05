@@ -124,6 +124,23 @@ class GapAlreadyAnsweredError(InvalidInputError):
     public_message = "The selected gap has already been answered."
 
 
+class ViewBindNotLoopbackError(InvalidUsageError):
+    diagnostic_class = "view_bind_not_loopback"
+    public_message = (
+        "--host accepts only the literal loopback addresses 127.0.0.1 and ::1."
+    )
+
+
+class ViewBindInvalidError(InvalidUsageError):
+    diagnostic_class = "view_bind_invalid"
+    public_message = "--port accepts an integer from 1024 through 65535."
+
+
+class ViewBindFailedError(InvalidUsageError):
+    diagnostic_class = "view_bind_failed"
+    public_message = "The requested address and port could not be bound."
+
+
 class WorkspaceError(Exp2ResError):
     exit_code = 3
     diagnostic_class = "workspace_not_found"

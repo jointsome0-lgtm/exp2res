@@ -656,7 +656,7 @@ note = "Offline tests pin the dimension- and status-keyed §17 routing and its t
 ["21.57"]
 status = "pending"
 phase = "3"
-note = "tests/test_view_resolution.py already proves the state-dependent half offline — both selector forms, the §16.11 gate order, §13.14 revalidation with its residual/changed/not-current split, the question projection and its escaping, and the schema-invalid companion — but the row stays pending until the §14.17 command and its transport land, because the case also binds authority, framing, methods, admission, and the deadline behaviors no service-level test can observe"
+note = "tests/test_view_resolution.py proves the state-dependent half offline — both selector forms, the §16.11 gate order, §13.14 revalidation with its residual/changed/not-current split, the question projection and its escaping, and the schema-invalid companion — and tests/test_view_http.py plus tests/test_view_transport.py now prove the transport half over real loopback sockets: the rule 9 grammar and caps, the rule 2 framing classification, rule 1 authority and declared-origin matching, rule 10 admission, and the §14.17 receive/processing/drain deadline behaviors. The row stays pending until the §14.17 command form itself lands and binds the startup URLs and envelope"
 
 ["21.58"]
 status = "partial"
