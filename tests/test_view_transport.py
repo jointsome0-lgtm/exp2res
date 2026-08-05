@@ -693,6 +693,31 @@ def test_first_interrupt_drains_and_in_flight_requests_complete(tmp_path):
         rig.thread.join(15.0)
 
 
+def test_stalled_reporter_does_not_consume_the_drain(tmp_path):
+    """§14.17 reserves the drain for unfinished request work: a reporter
+    blocked after its request closed and released everything must not make
+    the drain wait, let alone expire."""
+
+    gate = threading.Event()
+    reported = threading.Event()
+
+    def reporter(outcome, route):
+        reported.set()
+        gate.wait(30.0)
+
+    try:
+        with running_server(tmp_path, report=reporter) as rig:
+            response = rig.exchange(rig.request_bytes())
+            assert status_of(response) == 200
+            assert reported.wait(10.0)
+            rig.server.interrupt()
+            rig.thread.join(10.0)
+            assert not rig.thread.is_alive()
+            assert rig.result == "drained"
+    finally:
+        gate.set()
+
+
 def test_drain_expiry_forces_the_close_without_a_response(tmp_path):
     timeouts = Timeouts(receive=30.0, processing=30.0, emit=30.0, drain=0.2)
     bind = free_bind()

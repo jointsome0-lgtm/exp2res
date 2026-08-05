@@ -274,7 +274,11 @@ class ViewServer:
         self._state_lock = threading.RLock()
         self._sockets: set[socket.socket] = set()
         self._handles: set[_WorkerHandle] = set()
-        self._threads: list[threading.Thread] = []
+        # Admitted requests still holding their slot. The drain waits on this
+        # count, never on connection threads, so a thread outliving its
+        # released request — a stalled reporter — cannot consume the drain.
+        self._active = 0
+        self._idle = threading.Condition(self._state_lock)
         self._draining = threading.Event()
         self._immediate = threading.Event()
         self._drain_deadline: float | None = None
@@ -348,40 +352,38 @@ class ViewServer:
                 admitted_at = self._clock()
                 with self._state_lock:
                     self._sockets.add(connection)
-                thread = threading.Thread(
+                    self._active += 1
+                threading.Thread(
                     target=self._serve_connection,
                     args=(connection, admitted_at),
                     daemon=True,
-                )
-                self._threads = [t for t in self._threads if t.is_alive()]
-                self._threads.append(thread)
-                thread.start()
+                ).start()
         finally:
             with suppress(OSError):
                 listener.close()
         return self._drain()
 
     def _drain(self) -> ServeResult:
-        """Join connections until the one absolute drain deadline, then close.
+        """Await open requests until the one absolute drain deadline, then close.
 
-        An abandoned worker is never joined: it is a daemon thread whose slot
-        and transaction were already released, and waiting on it would hand a
-        wedged call the drain budget.
+        The wait is on the count of admitted requests still holding their
+        slot, never on connection threads: a finished request's stalled
+        reporter and an abandoned worker each hold no slot, and joining
+        either thread would hand a wedged call the drain budget §14.17
+        reserves for unfinished request work.
         """
 
         with self._state_lock:
             deadline = self._drain_deadline
         assert deadline is not None
         expired = False
-        for thread in self._threads:
-            if self._immediate.is_set():
-                break
-            remaining = deadline - self._clock()
-            if remaining > 0:
-                thread.join(remaining)
-            if thread.is_alive():
-                expired = True
-                break
+        with self._idle:
+            while self._active and not self._immediate.is_set():
+                remaining = deadline - self._clock()
+                if remaining <= 0:
+                    expired = True
+                    break
+                self._idle.wait(remaining)
         if expired and not self._immediate.is_set():
             self._force_close()
         if self._immediate.is_set():
@@ -406,6 +408,8 @@ class ViewServer:
         for connection in sockets:
             with suppress(OSError):
                 connection.shutdown(socket.SHUT_RDWR)
+        with self._idle:
+            self._idle.notify_all()
 
     def _phase_deadline(self, deadline: float) -> float:
         """§14.17: under a drain, every phase wait is `min(phase, drain)`."""
@@ -448,8 +452,12 @@ class ViewServer:
             with suppress(OSError):
                 connection.close()
             self._slots.release()
-        # Reporting runs only after the terminal close and the slot release,
-        # so a stalled reporter stalls nothing but its own finished thread.
+            with self._idle:
+                self._active -= 1
+                self._idle.notify_all()
+        # Reporting runs only after the terminal close, the slot release, and
+        # the drain count-down, so a stalled reporter stalls nothing but its
+        # own finished thread — not even the drain.
         if line is not None and self._report is not None:
             with suppress(Exception):
                 self._report(*line)
