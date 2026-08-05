@@ -79,6 +79,9 @@ ServeResult = Literal["drained", "expired", "interrupted"]
 
 # One progress line per completed response: the outcome class and, when the
 # request named one of the closed routes, that route — nothing else (§14.17).
+# The callback runs on the connection thread after emission and must not
+# block indefinitely: a stalled reporter stalls only its own connection
+# thread, and the drain deadline will not wait for it.
 ReportLine = Callable[[str, str | None], None]
 
 
@@ -149,15 +152,26 @@ def default_timeouts(busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -> Timeouts
     )
 
 
+class _AbandonedError(Exception):
+    """Raised inside an abandoned worker to stop it before it reads.
+
+    Deliberately outside the exception set `views.resolve` converts to an
+    outcome: it unwinds through the resolver's transaction cleanup, reaches
+    the worker's own catch-all, and the abandoned handle drops the result.
+    """
+
+
 class _WorkerHandle:
     """The lock-guarded rendezvous between one connection and its worker.
 
     The worker publishes its open SQLite connection here for the length of
     the read transaction and delivers its page through `deliver`; the
     connection thread alone owns the socket. After `abandon`, a late worker's
-    delivery is dropped unread — it writes nothing and touches nothing — and
-    any registered read is interrupted so the transaction's own
-    `read_database` rollback path releases it inside the worker.
+    delivery is dropped unread — it writes nothing and touches nothing — a
+    registered running read is interrupted so the transaction's own
+    `read_database` rollback path releases it inside the worker, and a
+    registration arriving after the abandonment stops immediately — an
+    interrupt alone would not reach statements that start later.
     """
 
     def __init__(self) -> None:
@@ -172,7 +186,11 @@ class _WorkerHandle:
         """`views.ConnectionRegistrar`: publish the read for cancellation."""
 
         with self._lock:
-            self._connection = connection
+            abandoned = self._abandoned
+            if not abandoned:
+                self._connection = connection
+        if abandoned:
+            raise _AbandonedError()
         try:
             yield
         finally:
@@ -234,7 +252,11 @@ class ViewServer:
         self._authority = bind.authority.encode("ascii")
         self._origin = bind.origin.encode("ascii")
         self._slots = threading.Semaphore(MAX_CONNECTIONS)
-        self._state_lock = threading.Lock()
+        # Reentrant because `interrupt()` may run in a signal handler on the
+        # accept-loop thread while that thread already holds the lock; a
+        # plain lock would deadlock the first interruption instead of
+        # starting the drain.
+        self._state_lock = threading.RLock()
         self._sockets: set[socket.socket] = set()
         self._handles: set[_WorkerHandle] = set()
         self._threads: list[threading.Thread] = []
@@ -347,14 +369,16 @@ class ViewServer:
                 break
         if expired and not self._immediate.is_set():
             self._force_close()
-        # Forced-closed connection threads only run their bounded cleanup
-        # path now that every blocking wait is released; join them so the
-        # command's envelope never races a releasing slot.
-        for thread in self._threads:
-            thread.join()
         if self._immediate.is_set():
             return "interrupted"
-        return "expired" if expired else "drained"
+        if expired:
+            # §14.17: expiry closes the unfinished connections and returns to
+            # the envelope without waiting further. The forced-closed daemon
+            # threads finish their released cleanup on their own; joining
+            # them here would hand a stalled emission or reporter the time
+            # the deadline already refused.
+            return "expired"
+        return "drained"
 
     def _force_close(self) -> None:
         """Release every blocked phase: wake waits, shut down sockets."""
@@ -437,6 +461,11 @@ class ViewServer:
             if not chunk:
                 return None
             parser.feed(chunk)
+        if self._phase_deadline(deadline) - self._clock() <= 0:
+            # The absolute deadline is the boundary even when the final read
+            # was already in flight at expiry: a request completed late is a
+            # receive expiry, not an admitted request.
+            return None
         return parser
 
     def _decide(
@@ -451,18 +480,31 @@ class ViewServer:
         """
 
         if parser.malformed:
-            return views.malformed_request_page()
+            return self._within(views.malformed_request_page(), deadline)
         request = parser.request
         assert request is not None
         if request.host != self._authority:
-            return views.authority_not_bound_page()
+            return self._within(views.authority_not_bound_page(), deadline)
         if request.origin is not None and request.origin != self._origin:
-            return views.authority_not_bound_page()
+            return self._within(views.authority_not_bound_page(), deadline)
         if request.method not in _SAFE_METHODS:
-            return views.method_not_allowed_page()
+            return self._within(views.method_not_allowed_page(), deadline)
         if request.framing == "declared_body":
-            return views.malformed_request_page()
+            return self._within(views.malformed_request_page(), deadline)
         return self._resolve_abandonable(request, deadline)
+
+    def _within(self, page: views.ViewPage, deadline: float) -> views.ViewPage:
+        """The processing deadline is an outer boundary over every check.
+
+        A row not fully composed when the budget expires is not the outcome,
+        so an expired deadline turns any pre-state refusal into the fixed
+        timeout page; the resolver path applies the same rule inside
+        `views.resolve`.
+        """
+
+        if self._clock() < deadline:
+            return page
+        return views.processing_timeout_page()
 
     def _resolve_abandonable(
         self, request: ParsedRequest, deadline: float
@@ -542,8 +584,8 @@ class ViewServer:
         never changes the computed outcome (§14.17).
         """
 
-        response = memoryview(compose_response(page, head=head))
         deadline = self._clock() + self._timeouts.emit
+        response = memoryview(compose_response(page, head=head))
         while response:
             if self._immediate.is_set():
                 return

@@ -196,7 +196,10 @@ class RequestParser:
         if not method or any(byte not in _TCHAR for byte in method):
             self._fail()
             return
-        if not target.startswith(b"/") or any(
+        # A raw `#` opens a fragment, which origin-form's path-plus-optional-
+        # query never carries, so it fails the closed shape here rather than
+        # reaching selector parsing.
+        if not target.startswith(b"/") or b"#" in target or any(
             byte < 0x21 or byte > 0x7E for byte in target
         ):
             self._fail()

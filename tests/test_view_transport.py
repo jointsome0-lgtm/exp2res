@@ -11,7 +11,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 import socket
+import sqlite3
 import threading
+import time
 from typing import Callable, Iterator
 
 import pytest
@@ -22,7 +24,10 @@ from exp2res.errors import (
     ViewBindNotLoopbackError,
 )
 from exp2res.services import views
+from exp2res.services.view_http import RequestParser
 from exp2res.services.view_server import (
+    _AbandonedError,
+    _WorkerHandle,
     BindAddress,
     MAX_CONNECTIONS,
     Timeouts,
@@ -474,6 +479,37 @@ def test_processing_expiry_interrupts_a_wedged_sqlite_reader(workspace):
         # With the reader released, a writer acquires the workspace at once.
         with writer_database(workspace) as connection:
             connection.execute("SELECT 1").fetchone()
+
+
+def test_registration_after_abandonment_stops_the_worker_immediately():
+    # An interrupt reaches only running statements, so a worker that
+    # registers its read after the abandonment must be stopped by the
+    # registration itself rather than allowed to read on.
+    handle = _WorkerHandle()
+    handle.abandon()
+    connection = sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(_AbandonedError):
+            with handle.register(connection):
+                raise AssertionError("an abandoned worker must not reach here")
+    finally:
+        connection.close()
+
+
+def test_expired_processing_deadline_outweighs_a_pre_state_refusal(tmp_path):
+    # §14.17: the processing deadline is an outer boundary over every check,
+    # so even an authority refusal composed after expiry is the fixed
+    # timeout outcome.
+    server = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+    parser = RequestParser()
+    parser.feed(
+        b"GET /mirror?scope=global HTTP/1.1\r\nHost: evil.invalid\r\n\r\n"
+    )
+    assert parser.done and not parser.malformed
+    page = server._decide(parser, time.monotonic() - 1.0)
+    assert page is not None and page.outcome == "processing_timeout"
+    fresh = server._decide(parser, time.monotonic() + 30.0)
+    assert fresh is not None and fresh.outcome == "authority_not_bound"
 
 
 # --- interruption drain and forced shutdown --------------------------------

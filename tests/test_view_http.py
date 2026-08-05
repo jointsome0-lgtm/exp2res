@@ -88,6 +88,8 @@ def test_query_split_is_literal_and_first_question_mark_only():
         b"G@T /mirror HTTP/1.1",
         b"GET /mi\x80rror HTTP/1.1",
         b"GET /mi\x00rror HTTP/1.1",
+        b"GET /mirror#frag HTTP/1.1",
+        b"GET /mirror?scope=global#frag HTTP/1.1",
     ],
 )
 def test_request_line_outside_the_closed_shape_is_malformed(line):
@@ -282,7 +284,10 @@ def test_field_line_count_cap_is_64():
     assert over.malformed
 
 
-def test_bytes_after_the_terminating_empty_line_are_dropped_unread():
+def test_bytes_after_the_terminating_empty_line_are_dropped_never_framed():
+    # Bytes a peer bundles past the terminating empty line may already sit in
+    # the same socket read; the parser discards them and its budget drops to
+    # zero, so nothing after the one request is ever framed as a next one.
     pipelined = raw_request() + b"GET /questions?scope=global HTTP/1.1\r\n"
     parser = parse(pipelined)
     assert parser.done and not parser.malformed
