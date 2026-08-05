@@ -467,6 +467,9 @@ class ViewServer:
 
         parser = RequestParser()
         deadline = admitted_at + self._timeouts.receive
+        # The last three consumed octets, so a header terminator split across
+        # reads is still found before the bytes behind it are consumed.
+        tail = b""
         while not parser.done:
             if self._immediate.is_set():
                 return None
@@ -475,12 +478,25 @@ class ViewServer:
                 return None
             try:
                 connection.settimeout(remaining)
-                chunk = connection.recv(parser.receive_budget)
+                # Peek first and consume only through the header terminator:
+                # §30 rule 2 refuses a declared body without reading its
+                # bytes, so octets a peer coalesced behind the terminating
+                # empty line must stay in the kernel buffer, never drained.
+                peeked = connection.recv(parser.receive_budget, socket.MSG_PEEK)
+                if not peeked:
+                    return None
+                terminator = (tail + peeked).find(b"\r\n\r\n")
+                if terminator >= 0:
+                    take = terminator + 4 - len(tail)
+                else:
+                    take = len(peeked)
+                chunk = connection.recv(take)
             except OSError:
                 return None
             if not chunk:
                 return None
             parser.feed(chunk)
+            tail = (tail + chunk)[-3:]
         if self._phase_deadline(deadline) - self._clock() <= 0:
             # The absolute deadline is the boundary even when the final read
             # was already in flight at expiry: a request completed late is a

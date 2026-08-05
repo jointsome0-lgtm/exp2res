@@ -325,6 +325,81 @@ def test_framing_matrix_over_the_socket(tmp_path):
         assert status_of(doubled) == 400
 
 
+def test_coalesced_body_bytes_stay_unread_in_the_kernel_buffer(tmp_path):
+    """§30 rule 2: a declared body's bytes are never read, even when the
+    peer coalesces them with the terminating empty line in one segment."""
+
+    server = ViewServer(
+        tmp_path,
+        free_bind(),
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    ours, theirs = socket.socketpair()
+    with ours, theirs:
+        theirs.sendall(
+            b"POST /mirror HTTP/1.1\r\n"
+            b"Host: 127.0.0.1:1\r\n"
+            b"Content-Length: 5\r\n"
+            b"\r\n"
+            b"hello"
+        )
+        parser = server._receive(ours, time.monotonic())
+        assert parser is not None
+        assert parser.request is not None
+        assert parser.request.framing == "declared_body"
+        leftover = ours.recv(64, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+        assert leftover == b"hello"
+
+
+class ScriptedSocket:
+    """A recv-only stand-in whose buffer refills one scripted chunk at a
+    time, so a header terminator split across reads is exercised
+    deterministically."""
+
+    def __init__(self, chunks: tuple[bytes, ...]) -> None:
+        self._buffer = bytearray()
+        self._chunks = list(chunks)
+
+    def settimeout(self, value: float) -> None:
+        pass
+
+    def recv(self, size: int, flags: int = 0) -> bytes:
+        if not self._buffer and self._chunks:
+            self._buffer.extend(self._chunks.pop(0))
+        taken = bytes(self._buffer[:size])
+        if not flags & socket.MSG_PEEK:
+            del self._buffer[: len(taken)]
+        return taken
+
+    @property
+    def leftover(self) -> bytes:
+        return bytes(self._buffer) + b"".join(self._chunks)
+
+
+def test_body_bytes_behind_a_split_terminator_stay_unread(tmp_path):
+    server = ViewServer(
+        tmp_path,
+        free_bind(),
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    connection = ScriptedSocket(
+        (
+            b"POST /mirror HTTP/1.1\r\n"
+            b"Host: 127.0.0.1:1\r\n"
+            b"Content-Length: 5\r\n"
+            b"\r",
+            b"\nhello",
+        )
+    )
+    parser = server._receive(connection, time.monotonic())
+    assert parser is not None
+    assert parser.request is not None
+    assert parser.request.framing == "declared_body"
+    assert connection.leftover == b"hello"
+
+
 def test_refusals_run_in_rule_7_order(tmp_path):
     with running_server(tmp_path) as rig:
         # Transport parse failure decides before the authority check.
