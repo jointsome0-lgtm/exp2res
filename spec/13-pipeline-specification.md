@@ -9,7 +9,7 @@ Every stage inherits these cross-cutting invariants; the cited § is each one's 
 - Unless a stage explicitly says otherwise, its inputs and outputs are current rows (§12 rule 9).
 - Every stage validates its typed output references before committing business rows (§12 rule 10).
 - Every atomic business replacement follows §12 rule 13's one-swap/one-`generation_id` allocation.
-- Every persisted recomputable business row and completed verifier finding resolves to the stage run that produced it (§12 rule 13, §11.14); a failed run owns no business rows or finding rows (§12.13).
+- Every persisted recomputable business row and completed verifier finding resolves to the stage run that produced it through §12 rule 13 or §11.14; a failed run owns no business rows or finding rows (§12.13).
 - Whenever a status-bearing row is offered to Stage 10 bullet generation or either export, the consumer applies the canonical `VerificationStatus` allowlists (§16.11).
 - Every §13 business-state mutation and its coupled managed-output work run under the §8.1 writer-lock boundary.
 
