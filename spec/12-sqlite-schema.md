@@ -110,7 +110,7 @@ The SQLite schema is derived from the Pydantic models in §11; §11 is the norma
     - The value is computed by the one service-owned canonical project-key function — Unicode NFC normalization, then leading/trailing Unicode-whitespace trim, then locale-independent Unicode Default Case Folding (§11's comparison identity, §14.9's canonicalization) — applied to the row's exact persisted `project` value, which itself remains untransformed provenance.
     - Capture and import compute the key when the row is persisted. Stage 3 copies `project` and `project_key` together from each fact's governing record (§13.3 rule 13).
     - A non-null `project` that canonicalizes to blank is invalid under §11's Model validation policy, so every stored key is non-empty.
-    - Hydration of a row carrying the column re-validates that the stored key equals that function applied to the stored label and fails closed on disagreement (rule 2).
+    - Hydration of a row carrying the column re-validates that the stored key equals that function applied to the stored label and fails closed on disagreement.
     - Project-view subject selection and every other project-identity comparison consume the stored key against the case-folded canonical selector (§13.6). No comparison site re-implements normalization over labels.
     - Like rule 13's columns, `project_key` has no §11 model counterpart and never crosses the LLM boundary (§11, §15.11): it is service-owned comparison identity, not provenance, display, or export content. Owner-facing output renders `project`; the key may appear only in diagnostics.
     - V1 has no project-label registry and no Project entity.
