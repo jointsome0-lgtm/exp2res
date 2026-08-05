@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import os
@@ -742,6 +743,126 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
     return tuple(sorted(residuals, key=id_key))
 
 
+@dataclass(frozen=True)
+class CurrentAssessmentRead:
+    """One §13.14 rule 3 read verdict for a reader that publishes nothing.
+
+    The verdict distinguishes the three §30 rule 7 managed-output outcomes:
+    `not_current` for a set §13.14 rule 5 can still replace in place,
+    `residual` for stable state no re-export can replace on its own, and
+    `changed` for a final entry that moved between one validation and the
+    next no-follow operation.
+    """
+
+    status: Literal["current", "not_current", "residual", "changed"]
+    members: dict[str, bytes] | None = None
+
+
+_CURRENT_NOT = CurrentAssessmentRead("not_current")
+_CURRENT_RESIDUAL = CurrentAssessmentRead("residual")
+_CURRENT_CHANGED = CurrentAssessmentRead("changed")
+
+
+def _entry_identity(path: Path) -> tuple[int, int, int] | None:
+    """Identify one no-follow entry, so a replacement is never mistaken for it."""
+
+    info = _lstat(path)
+    if info is None:
+        return None
+    return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode))
+
+
+def read_current_assessment_members(
+    workspace: Path, graph: AssessmentExportGraph
+) -> CurrentAssessmentRead:
+    """Revalidate the published assessment set and return its member bytes.
+
+    §13.14 rule 3's complete current-output standard applied by a reader: the
+    manifest must be structurally valid, matching, and agree with the graph
+    read from the caller's coherent database snapshot, including a recomputed
+    `render_input_sha256`. The returned bytes are the bytes whose digests this
+    function verified against that manifest, so a §30 view serves exactly what
+    it validated rather than re-reading afterwards.
+
+    The reader creates, repairs, and publishes nothing: every failure is one
+    of the three refusal verdicts above, never a different path.
+    """
+
+    snapshot = graph.snapshot.value
+    if ENTITY_ID.fullmatch(snapshot.id) is None:
+        # Rule 1's stored-ID invariant is the writer's fail-closed check; a
+        # reader that reached one is looking at corrupted stored state.
+        raise IntegrityFailureError("managed_output_entity_id_invalid")
+
+    try:
+        root = workspace.resolve(strict=True)
+    except OSError:
+        return _CURRENT_RESIDUAL
+    out = root / "out"
+    if _lstat(out) is None:
+        # Nothing has been published under this workspace at all.
+        return _CURRENT_NOT
+    if not _is_real_dir(out):
+        return _CURRENT_RESIDUAL
+    try:
+        out_root = out.resolve(strict=True)
+        out_root.relative_to(root)
+    except (OSError, ValueError):
+        return _CURRENT_RESIDUAL
+
+    parent = out_root / "assessment"
+    if _lstat(parent) is None:
+        return _CURRENT_NOT
+    if not _is_real_dir(parent):
+        return _CURRENT_RESIDUAL
+
+    final_path = parent / snapshot.id
+    identity = _entry_identity(final_path)
+    if identity is None:
+        return _CURRENT_NOT
+
+    def _stable(verdict: CurrentAssessmentRead) -> CurrentAssessmentRead:
+        # Rule 6's narrow §30 reporting exception: a failure whose validated
+        # entry no longer occupies the final path is a concurrent publication,
+        # not an owner-removable residual.
+        if _entry_identity(final_path) != identity:
+            return _CURRENT_CHANGED
+        return verdict
+
+    # Every observation from here on is guarded: once the entry has been
+    # identified, a failure the reader sees because that entry was replaced
+    # under it is the concurrent publication, never manual-repair state.
+    if not _is_real_dir(final_path):
+        return _stable(_CURRENT_RESIDUAL)
+
+    manifest = _inspect_set(final_path, parent, out_root)
+    if manifest is None:
+        # Rule 5: an incomplete, invalid, or superseded-version set at the
+        # final path aborts publication instead of being overwritten.
+        return _stable(_CURRENT_RESIDUAL)
+    if not _manifest_matches_prior(manifest, graph):
+        return _stable(_CURRENT_RESIDUAL)
+    if not _manifest_matches_current(manifest, graph):
+        # A replaceable prior set whose sources or render input moved on: the
+        # ordinary §14.9 export publishes over it.
+        return _stable(_CURRENT_NOT)
+
+    members: dict[str, bytes] = {}
+    for member in manifest.members:
+        try:
+            data = _read_regular(final_path / member.name, out_root)
+        except OSError:
+            return _stable(_CURRENT_RESIDUAL)
+        if hashlib.sha256(data).hexdigest() != member.sha256:
+            return _stable(_CURRENT_RESIDUAL)
+        members[member.name] = data
+    if set(members) != set(_MEMBER_NAMES):
+        return _stable(_CURRENT_RESIDUAL)
+    if _entry_identity(final_path) != identity:
+        return _CURRENT_CHANGED
+    return CurrentAssessmentRead("current", members)
+
+
 def _candidate_cleanup(path: Path, out_root: Path) -> None:
     if _lstat(path) is not None and not _remove_tree(path, out_root):
         raise ManagedOutputIncompleteError((str(path),))
@@ -777,17 +898,19 @@ def _build_candidate(
         raise
 
 
-def _matching_current_manifest(
-    final_path: Path,
-    parent: Path,
-    out_root: Path,
-    graph: AssessmentExportGraph,
-) -> AssessmentManifest | None:
-    manifest = _inspect_set(final_path, parent, out_root)
-    if manifest is None:
-        return None
+def _manifest_matches_prior(
+    manifest: AssessmentManifest, graph: AssessmentExportGraph
+) -> bool:
+    """Recognize a prior set whose lifecycle-sensitive parts may be stale.
+
+    The render hash and the source closure both move with §14.7 lifecycle
+    events (a gap answered after export adds its answer log), so a prior set
+    for the same snapshot, generation, and identity stays replaceable; the
+    reuse short-circuit in publish_assessment still requires full equality.
+    """
+
     snapshot = graph.snapshot.value
-    if (
+    return not (
         manifest.entity_id != snapshot.id
         or manifest.generation_id != graph.snapshot.generation_id
         or manifest.produced_by_run_id != graph.snapshot.produced_by_run_id
@@ -797,9 +920,27 @@ def _matching_current_manifest(
             scope=snapshot.scope,
             scope_target=snapshot.scope_target,
         )
-        or manifest.source_ids != AssessmentSourceIds(**graph.source_ids())
-        or manifest.render_input_sha256 != render_input_sha256(graph)
-    ):
+    )
+
+
+def _manifest_matches_current(
+    manifest: AssessmentManifest, graph: AssessmentExportGraph
+) -> bool:
+    return (
+        _manifest_matches_prior(manifest, graph)
+        and manifest.source_ids == AssessmentSourceIds(**graph.source_ids())
+        and manifest.render_input_sha256 == render_input_sha256(graph)
+    )
+
+
+def _matching_current_manifest(
+    final_path: Path,
+    parent: Path,
+    out_root: Path,
+    graph: AssessmentExportGraph,
+) -> AssessmentManifest | None:
+    manifest = _inspect_set(final_path, parent, out_root)
+    if manifest is None or not _manifest_matches_current(manifest, graph):
         return None
     return manifest
 
@@ -810,29 +951,8 @@ def _matching_prior_manifest(
     out_root: Path,
     graph: AssessmentExportGraph,
 ) -> AssessmentManifest | None:
-    """Validate a prior set while allowing its lifecycle-sensitive parts to be stale.
-
-    The render hash and the source closure both move with §14.7 lifecycle
-    events (a gap answered after export adds its answer log), so a prior set
-    for the same snapshot, generation, and identity stays replaceable; the
-    reuse short-circuit in publish_assessment still requires full equality.
-    """
-
     manifest = _inspect_set(final_path, parent, out_root)
-    if manifest is None:
-        return None
-    snapshot = graph.snapshot.value
-    if (
-        manifest.entity_id != snapshot.id
-        or manifest.generation_id != graph.snapshot.generation_id
-        or manifest.produced_by_run_id != graph.snapshot.produced_by_run_id
-        or manifest.identity
-        != AssessmentIdentity(
-            snapshot_title=snapshot.title,
-            scope=snapshot.scope,
-            scope_target=snapshot.scope_target,
-        )
-    ):
+    if manifest is None or not _manifest_matches_prior(manifest, graph):
         return None
     return manifest
 

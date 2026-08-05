@@ -193,11 +193,23 @@ def _aware_iso(value: object) -> bool:
     return parsed.tzinfo is not None and parsed.utcoffset() is not None
 
 
+def _is_contention(error: sqlite3.Error) -> bool:
+    text = str(error).lower()
+    return "locked" in text or "busy" in text
+
+
 def inspect_schema(connection: sqlite3.Connection) -> SchemaStatus:
     try:
         rows = connection.execute(
             "SELECT version, applied_at, app_version FROM schema_meta ORDER BY version"
         ).fetchall()
+    except sqlite3.OperationalError as error:
+        # A compatibility read that lost its complete bounded wait to another
+        # SQLite operation says nothing about the stored version: contention
+        # is its own §14.14 class, never an unrecognized workspace.
+        if not _is_contention(error):
+            return SchemaStatus(None, CURRENT_SCHEMA_VERSION, False, False, None)
+        raise WorkspaceBusyError() from error
     except sqlite3.DatabaseError:
         return SchemaStatus(None, CURRENT_SCHEMA_VERSION, False, False, None)
     if not rows:
@@ -263,7 +275,18 @@ def migration_available(stored_version: int) -> bool:
     )
 
 
-def inspect_workspace(workspace: Path) -> SchemaStatus:
+def inspect_workspace(
+    workspace: Path, *, require_managed_root: bool = True
+) -> SchemaStatus:
+    """Report the stored §12.14 schema state of one workspace.
+
+    `require_managed_root` stays on for every command that reaches managed
+    output. A §30 read turns it off for one diagnosis only: it must tell an
+    unreadable schema apart from a schema this build supports whose `out/`
+    entry is a §13.14 rule 6 containment failure, and those are different
+    outcomes to its requester.
+    """
+
     marker = workspace / ".exp2res"
     database = marker / "exp2res.sqlite"
     required_layout = (
@@ -271,7 +294,7 @@ def inspect_workspace(workspace: Path) -> SchemaStatus:
         and _is_real_file(database)
         and _is_real_file(marker / "config.toml")
         and _is_real_file(marker / "lock")
-        and _is_real_directory(workspace / "out")
+        and (not require_managed_root or _is_real_directory(workspace / "out"))
     )
     if not required_layout:
         return SchemaStatus(None, CURRENT_SCHEMA_VERSION, False, False, None)

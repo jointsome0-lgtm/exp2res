@@ -351,12 +351,18 @@ def _validated_answer_log(
     return answer_log
 
 
-def load_assessment_graph(
+def load_snapshot_claims(
     connection: sqlite3.Connection,
     *,
     snapshot_row: sqlite3.Row,
     snapshot: AssessmentSnapshot,
-) -> AssessmentExportGraph:
+) -> tuple[StoredRecord[AssessmentSnapshot], list[StoredRecord[SelfClaim]]]:
+    """Load one snapshot's complete current claim set, before any §16.11 gate.
+
+    Separating the load from the gate lets §30's read path run §16.11's
+    integrity half strictly before its status half without duplicating either.
+    """
+
     snapshot_record = _stored(snapshot_row, snapshot)
     claim_rows = connection.execute(
         "SELECT * FROM self_claims WHERE snapshot_id = ?", (snapshot.id,)
@@ -378,14 +384,46 @@ def load_assessment_graph(
             raise IntegrityFailureError("snapshot_claim_generation_mismatch")
         claims.append(stored)
     claims.sort(key=lambda item: id_key(item.value.id))
+    return snapshot_record, claims
+
+
+def assessment_integrity_failure(
+    snapshot: AssessmentSnapshot, claims: list[StoredRecord[SelfClaim]]
+) -> Literal["aggregate_mismatch", "narrative_summary"] | None:
+    """Apply §16.11's integrity half to one loaded snapshot and its claims.
+
+    Both checks are stored-state invariants rather than verdicts: an aggregate
+    that no longer reduces from its own claims, or a claim set without exactly
+    one `narrative_summary` equal to the stored summary, is broken state that
+    no consumer may read a status against.
+    """
 
     fresh = aggregate_verification_status(
         [item.value.verification_status for item in claims]
     )
     if snapshot.verification_status != fresh:
-        raise IntegrityFailureError("snapshot_aggregate_mismatch")
-    summaries = [item.value for item in claims if item.value.claim_kind == "narrative_summary"]
+        return "aggregate_mismatch"
+    summaries = [
+        item.value for item in claims if item.value.claim_kind == "narrative_summary"
+    ]
     if len(summaries) != 1 or summaries[0].claim != snapshot.summary:
+        return "narrative_summary"
+    return None
+
+
+def load_assessment_graph(
+    connection: sqlite3.Connection,
+    *,
+    snapshot_row: sqlite3.Row,
+    snapshot: AssessmentSnapshot,
+) -> AssessmentExportGraph:
+    snapshot_record, claims = load_snapshot_claims(
+        connection, snapshot_row=snapshot_row, snapshot=snapshot
+    )
+    failure = assessment_integrity_failure(snapshot, claims)
+    if failure == "aggregate_mismatch":
+        raise IntegrityFailureError("snapshot_aggregate_mismatch")
+    if failure is not None:
         raise IntegrityFailureError("snapshot_narrative_gate_failed")
 
     supplemental_refs: dict[str, set[str]] = {}
