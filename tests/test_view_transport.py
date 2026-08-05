@@ -193,6 +193,20 @@ def test_occupied_bind_fails_closed_without_another_try(tmp_path):
         first.serve()
 
 
+def test_socket_creation_failure_fails_closed_as_bind_failed(tmp_path, monkeypatch):
+    """A refused socket creation — disabled family, exhausted descriptors —
+    is the same operating-system bind refusal as a failing `bind` call."""
+
+    server = ViewServer(tmp_path, free_bind())
+
+    def refuse(*_args, **_kwargs):
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(socket, "socket", refuse)
+    with pytest.raises(ViewBindFailedError):
+        server.open()
+
+
 # --- served responses and the closed response headers ----------------------
 
 
@@ -344,8 +358,9 @@ def test_coalesced_body_bytes_stay_unread_in_the_kernel_buffer(tmp_path):
             b"\r\n"
             b"hello"
         )
-        parser = server._receive(ours, time.monotonic())
-        assert parser is not None
+        received = server._receive(ours, time.monotonic())
+        assert received is not None
+        parser, _completed_at = received
         assert parser.request is not None
         assert parser.request.framing == "declared_body"
         leftover = ours.recv(64, socket.MSG_PEEK | socket.MSG_DONTWAIT)
@@ -393,8 +408,9 @@ def test_body_bytes_behind_a_split_terminator_stay_unread(tmp_path):
             b"\nhello",
         )
     )
-    parser = server._receive(connection, time.monotonic())
-    assert parser is not None
+    received = server._receive(connection, time.monotonic())
+    assert received is not None
+    parser, _completed_at = received
     assert parser.request is not None
     assert parser.request.framing == "declared_body"
     assert connection.leftover == b"hello"
@@ -649,6 +665,34 @@ def test_expired_processing_deadline_outweighs_a_pre_state_refusal(tmp_path):
     assert page is not None and page.outcome == "processing_timeout"
     fresh = server._decide(parser, time.monotonic() + 30.0)
     assert fresh is not None and fresh.outcome == "authority_not_bound"
+
+
+def test_processing_expiry_during_composition_composes_the_503(tmp_path):
+    # §14.17 places response composition inside processing: a payload whose
+    # serialization outlives the deadline is not the outcome — the fixed
+    # timeout page is, and it gets the ordinary emit allowance.
+    server = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+    ours, theirs = socket.socketpair()
+    with ours, theirs:
+        emitted = server._emit(
+            ours, MARKER_PAGE, time.monotonic() - 1.0, head=False
+        )
+        ours.close()
+        response = read_to_close(theirs)
+    assert emitted.outcome == "processing_timeout"
+    assert status_of(response) == 503
+    assert outcome_of(response) == b"processing_timeout"
+
+    server_fresh = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+    ours, theirs = socket.socketpair()
+    with ours, theirs:
+        emitted = server_fresh._emit(
+            ours, MARKER_PAGE, time.monotonic() + 30.0, head=False
+        )
+        ours.close()
+        response = read_to_close(theirs)
+    assert emitted.outcome == "served"
+    assert status_of(response) == 200
 
 
 # --- interruption drain and forced shutdown --------------------------------

@@ -288,7 +288,13 @@ class ViewServer:
         """Bind exactly the validated address, or fail without another try."""
 
         family = socket.AF_INET6 if ":" in self.bind_address.host else socket.AF_INET
-        listener = socket.socket(family, socket.SOCK_STREAM)
+        try:
+            # Creation is inside the conversion: a disabled address family or
+            # an exhausted descriptor table is the same operating-system
+            # refusal of the requested bind as a failing `bind` itself.
+            listener = socket.socket(family, socket.SOCK_STREAM)
+        except OSError as error:
+            raise ViewBindFailedError() from error
         try:
             if family == socket.AF_INET6:
                 # The bind names exactly one literal loopback address, so an
@@ -310,14 +316,19 @@ class ViewServer:
         phase; the listener close is what unblocks a waiting `accept`.
         """
 
-        if self._draining.is_set():
+        with self._state_lock:
+            # Classification and the deadline write are one atomic step, so
+            # two near-simultaneous interruptions cannot both take the first
+            # path or replace the recorded drain deadline with a later one.
+            second = self._draining.is_set()
+            if not second:
+                self._drain_deadline = self._clock() + self._timeouts.drain
+                self._draining.set()
+        if second:
             if not self._immediate.is_set():
                 self._immediate.set()
                 self._force_close()
             return
-        with self._state_lock:
-            self._drain_deadline = self._clock() + self._timeouts.drain
-        self._draining.set()
         listener = self._listener
         if listener is not None:
             # Shutdown before close: closing alone does not wake an accept
@@ -424,20 +435,23 @@ class ViewServer:
         line: tuple[str, str | None] | None = None
         try:
             try:
-                parser = self._receive(connection, admitted_at)
-                if parser is None:
+                received = self._receive(connection, admitted_at)
+                if received is None:
                     # Receive expiry, peer close, or forced close: no
                     # complete request was admitted, so there is nothing to
                     # answer (§30 rule 7).
                     return
+                parser, completed_at = received
                 # §14.17: the absolute processing deadline begins the moment
-                # receiving ends and spans every remaining check.
-                deadline = self._clock() + self._timeouts.processing
+                # the terminating empty header line made the request complete
+                # — the timestamp `_receive` captured, so a scheduling stall
+                # after completion spends the budget rather than extending it.
+                deadline = completed_at + self._timeouts.processing
                 page = self._decide(parser, deadline)
                 if page is None:
                     return
                 head = not parser.malformed and parser.request.method == b"HEAD"
-                self._emit(connection, page, head=head)
+                page = self._emit(connection, page, deadline, head=head)
                 route = None
                 if not parser.malformed and parser.request.path in views.ROUTES:
                     route = parser.request.path.decode("ascii")
@@ -447,10 +461,13 @@ class ViewServer:
                 # detail: §30 rule 6 keeps request bytes out of diagnostics.
                 pass
         finally:
-            with self._state_lock:
-                self._sockets.discard(connection)
+            # Close before deregistering: a forced close arriving in between
+            # must still find a socket that is already closed or closing,
+            # never a live peer the shutdown sweep cannot reach.
             with suppress(OSError):
                 connection.close()
+            with self._state_lock:
+                self._sockets.discard(connection)
             self._slots.release()
             with self._idle:
                 self._active -= 1
@@ -464,24 +481,26 @@ class ViewServer:
 
     def _receive(
         self, connection: socket.socket, admitted_at: float
-    ) -> RequestParser | None:
+    ) -> tuple[RequestParser, float] | None:
         """Read one bounded envelope under the absolute receive deadline.
 
         The deadline began when the admission slot was acquired; another byte
         never pauses, restarts, or replaces it. Each read asks the parser's
         budget, so at most one octet beyond an applicable cap is ever read.
-        `None` closes the connection with no response bytes.
+        Returns the parser with the clock reading taken the moment parsing
+        completed — the §14.17 processing-deadline anchor. `None` closes the
+        connection with no response bytes.
         """
 
         parser = RequestParser()
-        deadline = admitted_at + self._timeouts.receive
+        receive_deadline = admitted_at + self._timeouts.receive
         # The last three consumed octets, so a header terminator split across
         # reads is still found before the bytes behind it are consumed.
         tail = b""
         while not parser.done:
             if self._immediate.is_set():
                 return None
-            remaining = self._phase_deadline(deadline) - self._clock()
+            remaining = self._phase_deadline(receive_deadline) - self._clock()
             if remaining <= 0:
                 return None
             try:
@@ -505,12 +524,13 @@ class ViewServer:
                 return None
             parser.feed(chunk)
             tail = (tail + chunk)[-3:]
-        if self._phase_deadline(deadline) - self._clock() <= 0:
+        completed_at = self._clock()
+        if self._phase_deadline(receive_deadline) - completed_at <= 0:
             # The absolute deadline is the boundary even when the final read
             # was already in flight at expiry: a request completed late is a
             # receive expiry, not an admitted request.
             return None
-        return parser
+        return parser, completed_at
 
     def _decide(
         self, parser: RequestParser, deadline: float
@@ -618,27 +638,40 @@ class ViewServer:
         handle.deliver(page)
 
     def _emit(
-        self, connection: socket.socket, page: views.ViewPage, *, head: bool
-    ) -> None:
-        """Send one response under the absolute emit deadline.
+        self,
+        connection: socket.socket,
+        page: views.ViewPage,
+        processing_deadline: float,
+        *,
+        head: bool,
+    ) -> views.ViewPage:
+        """Compose inside the processing budget, then send under the emit one.
 
-        The deadline starts before the first byte, after the outcome was
-        composed and its read transaction closed. Expiry or a transport
-        failure closes without retry — a partial response is acceptable and
-        never changes the computed outcome (§14.17).
+        §14.17 places response composition inside processing: serialization
+        that outlives the processing deadline turns the outcome into the
+        fixed `processing_timeout` page, which is what gets the ordinary emit
+        allowance. The emit deadline starts before the first byte, after the
+        outcome was composed. Expiry or a transport failure closes without
+        retry — a partial response is acceptable and never changes the
+        computed outcome. Returns the page actually emitted.
         """
 
+        payload = compose_response(page, head=head)
+        if self._clock() >= self._phase_deadline(processing_deadline):
+            page = views.processing_timeout_page()
+            payload = compose_response(page, head=head)
         deadline = self._clock() + self._timeouts.emit
-        response = memoryview(compose_response(page, head=head))
+        response = memoryview(payload)
         while response:
             if self._immediate.is_set():
-                return
+                return page
             remaining = self._phase_deadline(deadline) - self._clock()
             if remaining <= 0:
-                return
+                return page
             try:
                 connection.settimeout(remaining)
                 sent = connection.send(response)
             except OSError:
-                return
+                return page
             response = response[sent:]
+        return page
