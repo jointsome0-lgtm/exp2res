@@ -231,7 +231,7 @@ nodes = [
   "tests/test_stage7_verification.py::test_verifier_input_supplies_the_current_contradiction_set",
 ]
 phase = "3"
-note = "The registered closure tests prove the retired signal-bearing §15.5 bundle; the fact-only bundle with §15.4's inclusion rule lands with the #76 follow-up"
+note = "The registered closure tests prove the retired signal-bearing §15.5 bundle; the fact-only bundle with §15.4's equality rule lands with the #76 follow-up"
 
 ["21.33"]
 status = "partial"

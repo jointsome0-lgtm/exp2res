@@ -517,9 +517,13 @@ Given a candidate claim cites a pattern whose counter_fact_ids are non-empty
 When the claim emits confidence high
 Then §9.4 caps the claim at medium and structured-output validation fails
 
-Given a claim cites a pattern whose supporting facts are all low while a high counter fact joins its source_fact_ids under §15.4's inclusion rule
+Given a claim cites a pattern whose supporting facts are all low while a high counter fact joins its source_fact_ids under §15.4's equality rule
 When the claim emits confidence medium
 Then §9.4 pattern-generalization validation fails because the cited patterns' supporting-fact maximum is low and a counter fact never raises it
+
+Given a pattern-citing claim lists a source fact that no cited pattern lists
+When §15.4 structured-output validation runs
+Then the equality rule fails the response, so an unrelated direct fact cannot bypass the recurrence cap
 
 Given one narrow fact is the only support for a broader claim whose confidence does not exceed that fact's confidence
 When Stage 7 judges coverage under §9.4 and §13.7 rule 2
@@ -536,7 +540,7 @@ And the service never silently lowers the candidate confidence
 ["21.32"]
 title = "Assessment Verifier Receives the Exact Provenance Closure"
 case = '''
-Given a current claim whose source_fact_ids carry, under §15.4's inclusion rule, a cited pattern's supporting facts and its stronger counter fact
+Given a current claim whose source_fact_ids carry, under §15.4's equality rule, a cited pattern's supporting facts and its stronger counter fact
 When Stage 7 assembles the §15.5 input for that claim
 Then source_facts contains exactly the claim's listed facts once each, counter fact included
 And the claim's persisted counter_fact_ids arrive with it and mark that member's contrary role
