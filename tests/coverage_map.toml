@@ -222,7 +222,7 @@ nodes = [
   "tests/test_stage3_extraction.py::test_confidence_ceiling_and_independent_displaced_support",
 ]
 phase = "3"
-note = "Stage 3 fact ceilings and Stage 6 claim source-maximum caps are enforced at structured output and commit; the §9.4 pattern-generalization caps await the §15.4 pattern implementation (#76 follow-up), and Stage 7 semantic breadth remains pending"
+note = "The registered node proves Stage 3 fact ceilings at structured output and commit; the Stage 6 claim source-maximum cap, the §9.4 pattern-generalization caps, and the §15.4 equality rule await the #76 follow-up, and Stage 7 semantic breadth remains pending"
 
 ["21.32"]
 status = "partial"
