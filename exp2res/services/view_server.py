@@ -79,9 +79,9 @@ ServeResult = Literal["drained", "expired", "interrupted"]
 
 # One progress line per completed response: the outcome class and, when the
 # request named one of the closed routes, that route — nothing else (§14.17).
-# The callback runs on the connection thread after emission and must not
-# block indefinitely: a stalled reporter stalls only its own connection
-# thread, and the drain deadline will not wait for it.
+# The callback runs on the connection thread only after the terminal close
+# and slot release, so a stalled reporter holds no socket, slot, or drain
+# time — only its own finished daemon thread.
 ReportLine = Callable[[str, str | None], None]
 
 
@@ -183,7 +183,13 @@ class _WorkerHandle:
 
     @contextmanager
     def register(self, connection: sqlite3.Connection) -> Iterator[None]:
-        """`views.ConnectionRegistrar`: publish the read for cancellation."""
+        """`views.ConnectionRegistrar`: publish the read for cancellation.
+
+        The progress handler is what makes abandonment cover the gap an
+        `interrupt()` alone leaves: an interrupt aborts only a statement
+        already running, while the handler also aborts a statement the
+        abandoned worker starts later inside the still-open transaction.
+        """
 
         with self._lock:
             abandoned = self._abandoned
@@ -191,11 +197,20 @@ class _WorkerHandle:
                 self._connection = connection
         if abandoned:
             raise _AbandonedError()
+        # n=1 so even a statement short enough to finish within any larger
+        # interval is checked — and aborted — at its first VM instruction.
+        connection.set_progress_handler(self._abort_when_abandoned, 1)
         try:
             yield
         finally:
+            connection.set_progress_handler(None, 0)
             with self._lock:
                 self._connection = None
+
+    def _abort_when_abandoned(self) -> int:
+        # Runs on the worker thread between SQLite VM instructions; a plain
+        # flag read is atomic and a nonzero return aborts the statement.
+        return 1 if self._abandoned else 0
 
     def deliver(self, page: views.ViewPage) -> None:
         with self._lock:
@@ -402,6 +417,7 @@ class ViewServer:
         return deadline if drain is None else min(deadline, drain)
 
     def _serve_connection(self, connection: socket.socket, admitted_at: float) -> None:
+        line: tuple[str, str | None] | None = None
         try:
             try:
                 parser = self._receive(connection, admitted_at)
@@ -418,11 +434,10 @@ class ViewServer:
                     return
                 head = not parser.malformed and parser.request.method == b"HEAD"
                 self._emit(connection, page, head=head)
-                if self._report is not None:
-                    route = None
-                    if not parser.malformed and parser.request.path in views.ROUTES:
-                        route = parser.request.path.decode("ascii")
-                    self._report(page.outcome, route)
+                route = None
+                if not parser.malformed and parser.request.path in views.ROUTES:
+                    route = parser.request.path.decode("ascii")
+                line = (page.outcome, route)
             except Exception:
                 # A per-connection failure never prints a traceback or peer
                 # detail: §30 rule 6 keeps request bytes out of diagnostics.
@@ -433,6 +448,11 @@ class ViewServer:
             with suppress(OSError):
                 connection.close()
             self._slots.release()
+        # Reporting runs only after the terminal close and the slot release,
+        # so a stalled reporter stalls nothing but its own finished thread.
+        if line is not None and self._report is not None:
+            with suppress(Exception):
+                self._report(*line)
 
     def _receive(
         self, connection: socket.socket, admitted_at: float

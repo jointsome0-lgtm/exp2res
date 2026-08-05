@@ -481,6 +481,70 @@ def test_processing_expiry_interrupts_a_wedged_sqlite_reader(workspace):
             connection.execute("SELECT 1").fetchone()
 
 
+def test_abandonment_aborts_a_statement_started_after_the_interrupt(workspace):
+    # The abandonment window an interrupt alone misses: the worker is
+    # between statements when expiry fires, then starts another read inside
+    # the still-open transaction. The registered progress handler must abort
+    # that later statement rather than let the reader run on.
+    mid_transaction = threading.Event()
+    resume = threading.Event()
+    reader_exited = threading.Event()
+    completed: list[bool] = []
+
+    def resolver(workspace_path, route, query, *, register_connection, **_kwargs):
+        try:
+            with read_database(workspace_path) as connection, register_connection(
+                connection
+            ):
+                connection.execute("SELECT 1").fetchone()
+                mid_transaction.set()
+                resume.wait(30.0)
+                connection.execute(
+                    "SELECT count(*) FROM schema_meta"
+                ).fetchall()
+                completed.append(True)
+        finally:
+            reader_exited.set()
+        return MARKER_PAGE
+
+    timeouts = Timeouts(receive=30.0, processing=0.2, emit=30.0, drain=30.0)
+    with running_server(workspace, resolver=resolver, timeouts=timeouts) as rig:
+        response = rig.exchange(rig.request_bytes())
+        assert status_of(response) == 503
+        assert outcome_of(response) == b"processing_timeout"
+        assert mid_transaction.is_set()
+        # Only now does the abandoned worker try its next read.
+        resume.set()
+        assert reader_exited.wait(10.0)
+        assert completed == []
+        with writer_database(workspace) as connection:
+            connection.execute("SELECT 1").fetchone()
+
+
+def test_report_runs_after_the_terminal_close_and_slot_release(tmp_path):
+    gate = threading.Event()
+    seen: list[tuple[str, str | None]] = []
+
+    def reporter(outcome, route):
+        seen.append((outcome, route))
+        gate.wait(30.0)
+
+    try:
+        with running_server(tmp_path, report=reporter) as rig:
+            # The exchange completes — full response plus the terminal close
+            # — while the reporter is still blocked, so reporting holds
+            # neither the socket nor the slot.
+            response = rig.exchange(rig.request_bytes())
+            assert status_of(response) == 200
+            deadline = time.monotonic() + 10.0
+            while not seen and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert seen == [("served", "/mirror")]
+            gate.set()
+    finally:
+        gate.set()
+
+
 def test_registration_after_abandonment_stops_the_worker_immediately():
     # An interrupt reaches only running statements, so a worker that
     # registers its read after the abandonment must be stopped by the
