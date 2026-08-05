@@ -109,8 +109,8 @@ The complete `bullet_pack.md` for this small branch is:
 
 ## Selected Projects
 
-- Redesigned Exp2Res from a resume\-first tool into a self\-assessment\-first system grounded in owner\-controlled evidence\.
-- Defined verifier\-gated bullet generation as a secondary projection of the evidence and assessment model\.
+- Redesigned Exp2Res from a resume-first tool into a self-assessment-first system grounded in owner-controlled evidence.
+- Defined verifier-gated bullet generation as a secondary projection of the evidence and assessment model.
 
 ## Competitions
 

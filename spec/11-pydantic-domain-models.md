@@ -301,7 +301,7 @@ class ResumeBullet(BaseModel):
     verifier_reason: Optional[str] = None
 ```
 
-The initial `verification_status` values, their owning verifier transitions, and all consumer permissions are defined in §13.6–§13.11 and §16.11.
+The initial `verification_status` values, their owning verifier transitions, and all consumer permissions are defined in §13.10, §13.11, and §16.11.
 
 `source_self_claim_ids` follows the exact-use contract in §13.10/§15.6.
 
