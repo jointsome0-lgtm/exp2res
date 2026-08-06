@@ -208,6 +208,74 @@ def test_socket_creation_failure_fails_closed_as_bind_failed(tmp_path, monkeypat
         server.open()
 
 
+def test_a_reporter_thread_the_os_refuses_gives_the_port_back(
+    tmp_path, monkeypatch
+):
+    """`serve` binds before it starts the reporter, so a refused reporter
+    thread must not strand the listener: the port has to come free for the
+    caller that sees the failure, and the empty reporter slot has to stay
+    empty so a retry starts one instead of serving without progress output."""
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path, bind, report=lambda outcome, route: None, _timeouts=GENEROUS
+    )
+
+    def refuse_start(self):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse_start)
+    with pytest.raises(RuntimeError):
+        server.serve()
+    monkeypatch.undo()
+
+    assert server._report_thread is None
+    # The strongest evidence the listener was closed: the port rebinds.
+    rebound = ViewServer(tmp_path, bind)
+    rebound.open()
+    rebound.interrupt()
+    rebound.interrupt()
+    rebound.serve()
+
+
+class TickingClock:
+    """Distinct increasing readings, and a signal on the first one taken."""
+
+    def __init__(self, *readings: float) -> None:
+        self._readings = iter(readings)
+        self._last = readings[-1]
+        self.first_read = threading.Event()
+
+    def __call__(self) -> float:
+        value = next(self._readings, self._last)
+        self.first_read.set()
+        return value
+
+
+def test_the_drain_deadline_is_anchored_at_the_interruption_instant(tmp_path):
+    """§14.17 starts the absolute drain deadline at the interruption instant.
+    Time spent waiting for a connection thread to release the state lock is
+    inside that allowance, never added to it."""
+
+    clock = TickingClock(100.0, 200.0, 300.0)
+    server = ViewServer(
+        tmp_path,
+        free_bind(),
+        _clock=clock,
+        _timeouts=Timeouts(receive=1.0, processing=1.0, emit=1.0, drain=5.0),
+    )
+    interrupting = threading.Thread(target=server.interrupt, daemon=True)
+    with server._state_lock:
+        interrupting.start()
+        # Observable only because the instant is sampled before the lock is
+        # contended. Anchoring inside the lock leaves nothing to see here,
+        # and the deadline then grows by however long this block lasts.
+        assert clock.first_read.wait(10.0)
+    interrupting.join(10.0)
+    assert not interrupting.is_alive()
+    assert server._drain_deadline == 105.0
+
+
 # --- served responses and the closed response headers ----------------------
 
 
@@ -475,6 +543,19 @@ def test_real_resolver_answers_route_selector_and_state(workspace):
         )
         assert status_of(deferred) == 400
         assert outcome_of(deferred) == b"invalid_selector"
+        # §30 rule 6: a malformed escape in a selector value is a refusal of
+        # the value, so it survives transport parsing and reaches the
+        # selector rather than being pre-empted as `malformed_request`. Only
+        # a socket-level check sees this: the resolver never runs the parser.
+        bad_escape = rig.exchange(
+            rig.request_bytes(target=b"/mirror?snapshot=snapshot%2")
+        )
+        assert status_of(bad_escape) == 400
+        assert outcome_of(bad_escape) == b"invalid_selector"
+        # The path's own escapes stay rule 9's, before any route matching.
+        bad_path = rig.exchange(rig.request_bytes(target=b"/mirror%2"))
+        assert status_of(bad_path) == 400
+        assert outcome_of(bad_path) == b"malformed_request"
 
 
 # --- rule 10: bounded connection admission ---------------------------------

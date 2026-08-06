@@ -70,22 +70,23 @@ _LF = 0x0A
 Framing = Literal["bodyless", "declared_body"]
 
 
-def _complete_escapes(target: bytes) -> bool:
-    """Every `%` in the target opens a full `%` HEXDIG HEXDIG triplet.
+def _complete_escapes(path: bytes) -> bool:
+    """Every `%` in the path opens a full `%` HEXDIG HEXDIG triplet.
 
     The byte set alone accepts `%` anywhere, so `/mirror%` and `/mirror%GG`
-    would parse and reach a route. They are not origin-form targets, and
-    nothing downstream decodes them into one — rule 6 splits the query on
-    literal bytes — so the escape is checked here, where §30 rule 9 puts it.
+    would parse and reach a route. Neither is an absolute path, and nothing
+    downstream decodes one — rule 6 matches the path literally — so the
+    escape is checked here, where §30 rule 9 puts it. The query is
+    deliberately excluded: rule 6 hands its escapes to selector parsing.
     Work stays bounded by the request line's own cap.
     """
 
-    index = target.find(b"%")
+    index = path.find(b"%")
     while index >= 0:
-        escape = target[index + 1 : index + 3]
+        escape = path[index + 1 : index + 3]
         if len(escape) != 2 or any(byte not in _HEXDIG for byte in escape):
             return False
-        index = target.find(b"%", index + 3)
+        index = path.find(b"%", index + 3)
     return True
 
 
@@ -234,15 +235,20 @@ class RequestParser:
         # escape — is `malformed_request` here rather than a later
         # `route_not_found` or `invalid_selector` reached by normalizing it
         # into a route.
-        if (
-            not target.startswith(b"/")
-            or any(byte not in _TARGET for byte in target)
-            or not _complete_escapes(target)
+        if not target.startswith(b"/") or any(
+            byte not in _TARGET for byte in target
         ):
             self._fail()
             return
-        self._method = method
         path, separator, query = target.partition(b"?")
+        # Escapes are checked in the path alone. §30 rule 6 gives the query's
+        # to selector parsing, where a malformed or truncated escape in a
+        # selector value is `invalid_selector` — a refusal of what the value
+        # says, not of the request envelope.
+        if not _complete_escapes(path):
+            self._fail()
+            return
+        self._method = method
         self._path = path
         self._query = query if separator else None
         self._state = "headers"

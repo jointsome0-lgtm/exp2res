@@ -331,13 +331,19 @@ class ViewServer:
         phase; the listener close is what unblocks a waiting `accept`.
         """
 
+        # Read before the lock: §14.17 starts the absolute drain deadline at
+        # the interruption instant, so waiting behind a connection thread that
+        # holds the state lock has to spend the allowance rather than extend
+        # it. The sample is kept only by the call that wins the first-
+        # interruption classification below.
+        interrupted_at = self._clock()
         with self._state_lock:
             # Classification and the deadline write are one atomic step, so
             # two near-simultaneous interruptions cannot both take the first
             # path or replace the recorded drain deadline with a later one.
             second = self._draining.is_set()
             if not second:
-                self._drain_deadline = self._clock() + self._timeouts.drain
+                self._drain_deadline = interrupted_at + self._timeouts.drain
                 self._draining.set()
         if second:
             if not self._immediate.is_set():
@@ -362,10 +368,22 @@ class ViewServer:
         listener = self._listener
         assert listener is not None
         if self._report is not None and self._report_thread is None:
-            self._report_thread = threading.Thread(
+            reporter = threading.Thread(
                 target=self._report_loop, name="view-report", daemon=True
             )
-            self._report_thread.start()
+            try:
+                reporter.start()
+            except RuntimeError:
+                # Nothing has been served yet, so this failure belongs to the
+                # caller — but the bound listener must not outlive it, or the
+                # port stays taken and no retry can rebind. The reporter slot
+                # is left empty so a retry starts one rather than serving
+                # silently with no progress output.
+                self._listener = None
+                with suppress(OSError):
+                    listener.close()
+                raise
+            self._report_thread = reporter
         try:
             while not self._draining.is_set():
                 try:

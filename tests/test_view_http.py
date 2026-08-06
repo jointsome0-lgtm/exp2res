@@ -67,6 +67,23 @@ def test_query_split_is_literal_and_first_question_mark_only():
     assert request.query == b"a=b?c"
 
 
+@pytest.mark.parametrize(
+    "query",
+    [b"snapshot=%GG", b"snapshot=snapshot%2", b"scope=glo%zzbal", b"scope=%"],
+)
+def test_a_malformed_query_escape_is_left_to_selector_parsing(query):
+    # §30 rule 6 decodes a selector value exactly once and calls a malformed
+    # or truncated escape there `invalid_selector` — a refusal of what the
+    # value says. Transport parsing must not pre-empt that with
+    # `malformed_request`, so the escape check covers the path alone.
+    parser = parse(raw_request(line=b"GET /mirror?" + query + b" HTTP/1.1"))
+    assert not parser.malformed
+    request = parser.request
+    assert request is not None
+    assert request.path == b"/mirror"
+    assert request.query == query
+
+
 def test_the_full_origin_form_byte_set_still_reaches_route_and_selector():
     # Narrowing the target grammar to RFC 3986 must not refuse a byte an
     # absolute path or query may legitimately carry: unreserved, every
@@ -120,7 +137,6 @@ def test_the_full_origin_form_byte_set_still_reaches_route_and_selector():
         b"GET /mirror%4 HTTP/1.1",
         b"GET /mirror%GG HTTP/1.1",
         b"GET /mirror%%41 HTTP/1.1",
-        b"GET /mirror?scope=glo%zzbal HTTP/1.1",
     ],
 )
 def test_request_line_outside_the_closed_shape_is_malformed(line):
