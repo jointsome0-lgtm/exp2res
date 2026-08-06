@@ -358,7 +358,7 @@ def _run_command(
     operation: Callable[[Path, Controls], Outcome],
     *,
     init_command: bool = False,
-    interrupt: Callable[[int, object], None] | None = None,
+    interrupt: Callable[[int, object], bool | None] | None = None,
 ) -> None:
     """Run one command's operation and emit its §14.14 envelope.
 
@@ -371,11 +371,14 @@ def _run_command(
     """
 
     interruption_observed = threading.Event()
+    startup_active = threading.Event()
 
     def handle_interrupt(signum: int, frame: object) -> None:
         interruption_observed.set()
         assert interrupt is not None
-        interrupt(signum, frame)
+        cancel_startup = interrupt(signum, frame)
+        if cancel_startup and startup_active.is_set():
+            raise Abort()
 
     with _interrupt_disposition_restored():
         if interrupt is not None and threading.current_thread() is threading.main_thread():
@@ -388,6 +391,7 @@ def _run_command(
             interruption_observed=(
                 interruption_observed.is_set if interrupt is not None else None
             ),
+            startup_active=startup_active if interrupt is not None else None,
         )
 
 
@@ -398,12 +402,17 @@ def _run_operation(
     *,
     init_command: bool = False,
     interruption_observed: Callable[[], bool] | None = None,
+    startup_active: threading.Event | None = None,
 ) -> None:
     controls = cast(Controls, context.obj)
     workspace: Path | None = None
     preamble_residuals: list[str] = []
+    if startup_active is not None:
+        startup_active.set()
     try:
         try:
+            if interruption_observed is not None and interruption_observed():
+                raise Abort()
             if controls.verbose and controls.quiet:
                 error = Exp2ResError()
                 error.exit_code = 2
@@ -429,6 +438,9 @@ def _run_operation(
                 outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
             else:
                 raise
+        finally:
+            if startup_active is not None:
+                startup_active.clear()
     except KeyboardInterrupt:
         outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
     except Abort:
@@ -2475,8 +2487,9 @@ class _ServeCancellation:
     workspace are all interruptible, and each one left to the default handler
     is a window where the run enters envelope assembly with no handler
     installed — where a second interrupt raises past every catch in the
-    runtime. An interrupt taken before `adopt` is remembered and handed to
-    the server the moment it exists.
+    runtime. Before `adopt`, the first interrupt asks the runtime to abort
+    active startup work; later interrupts are absorbed so they cannot tear
+    down envelope assembly. After `adopt`, every call reaches the server.
 
     Nothing is restored here. `_run_command` hands `SIGINT` back to whoever
     held it only once the envelope is written, because the second interrupt
@@ -2488,29 +2501,18 @@ class _ServeCancellation:
         self._server: ViewServer | None = None
         self._pending = 0
 
-    def __call__(self, _signum: int, _frame: object) -> None:
+    def __call__(self, _signum: int, _frame: object) -> bool:
         server = self._server
         if server is not None:
             server.interrupt()
-            return
+            return False
         self._pending += 1
+        return self._pending == 1
 
     def adopt(self, server: ViewServer) -> None:
-        """Give the server every interrupt taken before it existed.
-
-        Counted, not collapsed: the owner who pressed Ctrl-C twice through a
-        blocked compatibility read asked for the immediate close the second
-        call performs, and one replayed interrupt would leave them waiting
-        out a full drain instead. Beyond the second, `interrupt` is a no-op
-        by its own contract, so nothing is gained by replaying more. The
-        drain deadline dates from adoption rather than from the first signal,
-        which costs nothing: no connection can have been admitted before the
-        server existed, so the drain it bounds has nothing in it.
-        """
+        """Hand every later interrupt to the server."""
 
         self._server = server
-        for _ in range(min(self._pending, 2)):
-            server.interrupt()
         self._pending = 0
 
 

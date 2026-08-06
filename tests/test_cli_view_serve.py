@@ -401,26 +401,46 @@ def test_a_startup_gate_failure_after_an_interrupt_is_still_cancelled(
     assert nothing_listens("127.0.0.1", port)
 
 
-def test_interrupts_taken_before_the_server_exists_are_all_replayed() -> None:
-    """Two Ctrl-Cs through a blocked startup stay two, not one.
+@pytest.mark.parametrize("startup_step", ["discover_workspace", "require_compatible"])
+def test_an_interrupt_cancels_blocked_pre_server_startup(
+    workspace: Path, monkeypatch, startup_step: str
+) -> None:
+    port = free_port()
+    entered = threading.Event()
+    previous = signal.getsignal(signal.SIGINT)
 
-    The second interrupt is what forces the immediate close, so collapsing
-    the pair would leave an owner who asked to stop waiting out a full drain.
-    Past the second, `interrupt` is a no-op by its own contract.
-    """
+    def block_then_fail(*_args, **_kwargs):
+        entered.set()
+        time.sleep(2.0)
+        raise WorkspaceBusyError()
 
-    calls: list[int] = []
+    def interrupt_blocked_startup() -> None:
+        assert entered.wait(10.0)
+        assert signal.getsignal(signal.SIGINT) is not previous
+        os.kill(os.getpid(), signal.SIGINT)
 
-    class Server:
-        def interrupt(self) -> None:
-            calls.append(len(calls))
+    monkeypatch.setattr(cli, startup_step, block_then_fail)
+    interrupter = threading.Thread(target=interrupt_blocked_startup, daemon=True)
+    interrupter.start()
 
+    started = time.monotonic()
+    result = invoke(workspace, "--port", str(port), controls=("--json",))
+    elapsed = time.monotonic() - started
+    interrupter.join(10.0)
+
+    assert result.exit_code == 9
+    assert envelope(result)["diagnostic_class"] == "cancelled"
+    assert elapsed < 1.0
+    assert result.stderr == ""
+    assert nothing_listens("127.0.0.1", port)
+
+
+def test_only_the_first_pre_server_interrupt_requests_startup_abort() -> None:
     cancellation = cli._ServeCancellation()
-    for _ in range(3):
-        cancellation(signal.SIGINT, None)
-    cancellation.adopt(Server())
 
-    assert len(calls) == 2
+    assert cancellation(signal.SIGINT, None) is True
+    assert cancellation(signal.SIGINT, None) is False
+    assert cancellation(signal.SIGINT, None) is False
 
 
 def test_an_interrupt_after_the_bind_advertises_no_unreachable_url(
