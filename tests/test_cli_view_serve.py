@@ -13,18 +13,22 @@ reaches §14.17's drain instead of the default `KeyboardInterrupt`.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from pathlib import Path
 import os
 import signal
 import socket
 import sqlite3
+import sys
 import threading
 import time
 
 import pytest
 from typer.testing import CliRunner
 
+from exp2res import cli
 from exp2res.cli import app
 from exp2res.services.view_server import DEFAULT_PORT
 
@@ -392,3 +396,47 @@ def test_serving_off_the_main_thread_is_refused_before_any_bind(
     assert body["diagnostic_class"] == "internal_error"
     assert body["result"] is None
     assert nothing_listens("127.0.0.1", port)
+
+
+def test_a_late_progress_line_never_reaches_a_later_invocation(
+    workspace: Path,
+) -> None:
+    """The reporter writes to the stream its own invocation owned.
+
+    §14.17 forbids cancellation from waiting on a wedged reporter, so a line
+    can still be written after the command returned. It must not follow
+    `sys.stderr` to wherever the process points next.
+    """
+
+    port = free_port()
+    reporters: list[object] = []
+    real_reporter = cli._progress_reporter
+
+    def capture(controls) -> object:
+        made = real_reporter(controls)
+        reporters.append(made)
+        return made
+
+    cli._progress_reporter = capture
+    try:
+        interrupt_once_serving()
+        first = invoke(workspace, "--port", str(port))
+    finally:
+        cli._progress_reporter = real_reporter
+
+    assert first.exit_code == 9
+    assert len(reporters) == 1
+
+    # A line the retired reporter writes after its command returned reaches
+    # the stream that command owned, which the runner has already closed —
+    # never whatever `sys.stderr` names now.
+    marker = "/mirror served-after-return"
+    live = io.StringIO()
+    previous, sys.stderr = sys.stderr, live
+    try:
+        with contextlib.suppress(ValueError):
+            reporters[0]("served-after-return", "/mirror")
+    finally:
+        sys.stderr = previous
+
+    assert marker not in live.getvalue()

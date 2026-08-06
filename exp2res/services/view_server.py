@@ -68,9 +68,6 @@ LOOPBACK_HOSTS = ("127.0.0.1", "::1")
 MIN_PORT = 1024
 MAX_PORT = 65535
 
-# The one V1 global view identity §14.17 advertises. Every served request
-# still resolves its own explicit selector under §30 rule 6; this constant is
-# only what the startup lines name.
 GLOBAL_SELECTOR = "scope=global"
 
 # §30 rule 10: fixed service constants with no flag, environment, or
@@ -335,9 +332,6 @@ class ViewServer:
         # One dedicated reporter thread behind a bounded queue: a blocked
         # stderr can then stall only this one thread and drop excess progress
         # lines, never accumulate a blocked thread per completed connection.
-        # One slot deeper than the semaphore ever grants: the extra capacity
-        # is reserved for the stop sentinel, so a saturated queue can drop a
-        # progress line but never the reporter's own termination signal.
         self._report_queue: queue.Queue[tuple[str, str | None] | None] = queue.Queue(
             maxsize=REPORT_QUEUE_LIMIT + 1
         )
@@ -430,15 +424,17 @@ class ViewServer:
                 listener.close()
 
     def serve(self) -> ServeResult:
-        """Accept until interrupted, then drain; returns the termination class."""
+        """Accept until interrupted, then drain; returns the termination class.
+
+        Every exit retires the reporter — drained, expired, forced, or a
+        failure that never reached a drain. A process that serves once and
+        exits would not notice; an embedding one would otherwise accumulate a
+        blocked thread and a live callback per run.
+        """
 
         try:
             return self._serve()
         finally:
-            # Every exit retires the reporter — drained, expired, forced, or
-            # a failure that never reached a drain at all. A process that
-            # serves once and exits would not notice, but an embedding one
-            # would accumulate a blocked thread and a live callback per run.
             self._stop_reporter()
 
     def _serve(self) -> ServeResult:
@@ -656,26 +652,28 @@ class ViewServer:
                 # detail: §30 rule 6 keeps request bytes out of diagnostics.
                 pass
         finally:
-            # The line is enqueued before the slot release, not after: the
-            # release is what lets a waiting drain return, and a drain that
-            # returns first would retire the reporter ahead of this completed
-            # request's own diagnostic. Enqueueing costs the connection
-            # nothing it was protected from — it is one non-blocking put on a
-            # bounded queue, so a stalled reporter still holds no socket,
-            # slot, or drain time, and the dedicated reporter thread remains
-            # the sole caller of the callback.
             self._enqueue_report(line)
             self._release_admission(connection)
 
     def _enqueue_report(self, line: tuple[str, str | None] | None) -> None:
         """Hand one completed request's line to the reporter, or drop it.
 
+        Callers must reach this before releasing the connection's admission
+        slot. That release is what lets a waiting drain return, and a drain
+        that returns first retires the reporter ahead of the line. Doing it
+        first costs the connection nothing it was protected from: this is one
+        non-blocking put, so a stalled reporter still holds no socket, slot,
+        or drain time, and the reporter thread remains the sole caller of the
+        callback.
+
         A refused acquisition means all `REPORT_QUEUE_LIMIT` data slots are
         held by lines a stalled reporter has not taken yet; the line is
-        dropped rather than waited on. The queue itself holds one slot more
-        than the semaphore ever grants, and that reserve belongs to the stop
-        sentinel alone, so saturation can never cost the reporter its own
-        termination signal.
+        dropped rather than waited on. The queue holds one slot more than the
+        semaphore ever grants, and that reserve belongs to the stop sentinel
+        alone, so saturation can never cost the reporter its termination
+        signal. `_report_loop` returns a permit when it takes a line rather
+        than when it finishes writing it, so a slow stream costs capacity
+        only while lines are undelivered.
         """
 
         if line is None or self._report is None:
@@ -707,9 +705,6 @@ class ViewServer:
             line = self._report_queue.get()
             if line is None:
                 return
-            # Returned before the callback runs, so a slow stream costs the
-            # producers queue capacity for exactly as long as the lines are
-            # undelivered and not for the delivery itself.
             self._report_slots.release()
             with suppress(Exception):
                 report = self._report

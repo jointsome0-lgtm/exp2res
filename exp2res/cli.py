@@ -2436,6 +2436,33 @@ def _require_interruptible() -> None:
         raise error
 
 
+def _progress_reporter(controls: Controls) -> Callable[[str, str | None], None]:
+    """Bind §14.17's progress lines to the stream this invocation owns.
+
+    The sink is captured now rather than resolved at write time. §14.17's
+    cancellation may not wait on a wedged reporter, so a line can still be
+    written after the command returned; resolving `sys.stderr` then would
+    send it wherever the process points next — under an embedding host or a
+    test runner, into a later invocation's output. Writing to the captured
+    stream instead means a late line reaches this command's own stderr or,
+    once that stream is gone, nothing at all.
+
+    A line carries only the closed outcome class and, when the request named
+    one, the closed route literal: §30 rule 6 keeps request bytes out of
+    every diagnostic. `--quiet` suppresses these per-request lines; §14.17
+    exempts the startup URLs, which the command writes itself.
+    """
+
+    stream = sys.stderr
+
+    def report(outcome: str, route: str | None) -> None:
+        if controls.quiet:
+            return
+        typer.echo(outcome if route is None else f"{route} {outcome}", file=stream)
+
+    return report
+
+
 @view_app.command("serve")
 def view_serve(
     context: typer.Context,
@@ -2443,37 +2470,17 @@ def view_serve(
     port: int = typer.Option(DEFAULT_PORT, "--port"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
-        # §14.17: the bind is admitted, the §12.14 compatibility gate
-        # applied, and the interruption path proved available before a socket
-        # exists, so every one of those refusals leaves nothing served.
         _require_interruptible()
         bind = validate_bind(host, port)
         require_compatible(workspace)
 
-        def report(outcome: str, route: str | None) -> None:
-            # §30 rule 6 bars request bytes from every diagnostic line, so a
-            # progress line carries only the closed outcome class and, when
-            # the request named one, the closed route literal.
-            if controls.quiet:
-                return
-            typer.echo(outcome if route is None else f"{route} {outcome}", err=True)
-
+        report = _progress_reporter(controls)
         server = ViewServer(workspace, bind, report=report)
-        # Binding here rather than inside `serve` is what lets the startup
-        # URLs be reported after a successful bind and before the first
-        # connection can be accepted.
         server.open()
         for url in bound_urls(bind):
-            # §14.17: stderr in both modes, so `--json` stdout still carries
-            # exactly one envelope. `--quiet` only *may* suppress progress
-            # (§14.14 rule 5), and these two values are the whole usable
-            # output of the command — a view nothing can name is unreachable
-            # — so they are reported in a quiet run too.
             typer.echo(url, err=True)
         with _interruption_drains(server):
             server.serve()
-        # Serving ends only on interruption, so the command reaches no
-        # completed primary result and `result` stays null (§14.17).
         return Outcome(exit_code=9, diagnostic_class="cancelled")
 
     _run_command(context, "view serve", operation)
