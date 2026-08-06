@@ -194,6 +194,25 @@ def test_occupied_bind_fails_closed_without_another_try(tmp_path):
         first.serve()
 
 
+def test_a_restart_can_take_the_same_address_right_after_serving(tmp_path):
+    """A stop/start cycle is not blocked by the connection it just served.
+
+    §30 rule 1 pins the restart to one literal address with no port 0 and no
+    fallback, and every served connection closes from the server's side — so
+    without address reuse the socket left in `TIME_WAIT` would refuse the
+    next `open` until the kernel timeout expired.
+    """
+
+    with running_server(tmp_path) as rig:
+        assert outcome_of(rig.exchange(rig.request_bytes())) == b"served"
+        bind = rig.bind
+    restarted = ViewServer(tmp_path, bind)
+    restarted.open()
+    restarted.interrupt()
+    restarted.interrupt()
+    restarted.serve()
+
+
 @pytest.mark.parametrize(
     ("host", "port", "error"),
     [

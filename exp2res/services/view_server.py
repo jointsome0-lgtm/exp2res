@@ -346,6 +346,18 @@ class ViewServer:
                 # The bind names exactly one literal loopback address, so an
                 # IPv6 socket must not also accept IPv4 traffic (§30 rule 1).
                 listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            # §30 rule 1 forbids port 0 and any fallback port, so a restart
+            # has exactly one address to take and no way to route around a
+            # refusal. Every served connection closes from this side, leaving
+            # the accepted socket in `TIME_WAIT`, and that is enough to make a
+            # plain rebind of the same address fail — a normal stop/start
+            # cycle would lose the view until the kernel timeout expires.
+            # Address reuse is what makes the restart deterministic; it never
+            # relaxes the bind itself, because a live listener still holds the
+            # address exclusively. Accepted sockets inherit the option, so
+            # setting it here also covers the `TIME_WAIT` entries this run
+            # leaves behind for the next one.
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind((self.bind_address.host, self.bind_address.port))
             listener.listen(LISTEN_BACKLOG)
         except OSError as error:
