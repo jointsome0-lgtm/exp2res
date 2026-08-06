@@ -327,7 +327,44 @@ def _failing_surface(error: Exp2ResError) -> str | None:
     )
 
 
+@contextmanager
+def _interrupt_disposition_restored() -> Iterator[None]:
+    """Give `SIGINT` back to its pre-invocation owner after the envelope.
+
+    Only `view serve` installs a handler of its own (§14.17), and a second
+    interrupt while the first drain finishes is its documented way to stop
+    waiting. Handing `SIGINT` back the moment serving ends would leave that
+    interrupt to the default handler while §14.14 rule 6's class-9 envelope
+    is still being written, ending the process without it. Every other
+    command leaves the disposition untouched, so this restores nothing.
+
+    Off the main thread no handler can be installed or restored at all;
+    `_require_interruptible` refuses the one command that would care.
+    """
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.getsignal(signal.SIGINT)
+    try:
+        yield
+    finally:
+        if signal.getsignal(signal.SIGINT) is not previous:
+            signal.signal(signal.SIGINT, previous)
+
+
 def _run_command(
+    context: typer.Context,
+    command: CommandPath,
+    operation: Callable[[Path, Controls], Outcome],
+    *,
+    init_command: bool = False,
+) -> None:
+    with _interrupt_disposition_restored():
+        _run_operation(context, command, operation, init_command=init_command)
+
+
+def _run_operation(
     context: typer.Context,
     command: CommandPath,
     operation: Callable[[Path, Controls], Outcome],
@@ -2387,8 +2424,7 @@ def _purge_outcome(purged: PurgeOutcome) -> Outcome:
     )
 
 
-@contextmanager
-def _interruption_drains(server: ViewServer) -> Iterator[None]:
+def _drain_on_interrupt(server: ViewServer) -> None:
     """Route the user interrupt into §14.17's drain, not a raised exception.
 
     `view serve` is the one §14 form that runs until it is interrupted, so
@@ -2399,6 +2435,14 @@ def _interruption_drains(server: ViewServer) -> Iterator[None]:
     the first call drains, the second forces the close, and both keep the
     §14.14 rule 6 class-9 envelope this command returns either way.
 
+    Nothing is restored here. `_run_command` hands `SIGINT` back to whoever
+    held it only once the envelope is written, because the second interrupt
+    this handler exists to absorb is exactly what an impatient owner sends
+    while the first drain is finishing. Restoring at the end of serving would
+    leave that interrupt to the default handler and end the process without
+    the class-9 envelope. On an already-stopped server the extra call is a
+    no-op.
+
     `_require_interruptible` has already refused the one case this cannot
     cover, so the installation here never fails.
     """
@@ -2406,11 +2450,7 @@ def _interruption_drains(server: ViewServer) -> Iterator[None]:
     def handle(_signum: int, _frame: object) -> None:
         server.interrupt()
 
-    previous = signal.signal(signal.SIGINT, handle)
-    try:
-        yield
-    finally:
-        signal.signal(signal.SIGINT, previous)
+    signal.signal(signal.SIGINT, handle)
 
 
 def _require_interruptible() -> None:
@@ -2472,15 +2512,15 @@ def view_serve(
     def operation(workspace: Path, controls: Controls) -> Outcome:
         _require_interruptible()
         bind = validate_bind(host, port)
-        require_compatible(workspace)
+        require_compatible(workspace, require_managed_root=False)
 
         report = _progress_reporter(controls)
         server = ViewServer(workspace, bind, report=report)
         server.open()
         for url in bound_urls(bind):
             typer.echo(url, err=True)
-        with _interruption_drains(server):
-            server.serve()
+        _drain_on_interrupt(server)
+        server.serve()
         return Outcome(exit_code=9, diagnostic_class="cancelled")
 
     _run_command(context, "view serve", operation)

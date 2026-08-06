@@ -308,8 +308,10 @@ def inspect_workspace(
         return SchemaStatus(None, CURRENT_SCHEMA_VERSION, False, False, None)
 
 
-def require_compatible(workspace: Path) -> SchemaStatus:
-    status = inspect_workspace(workspace)
+def require_compatible(
+    workspace: Path, *, require_managed_root: bool = True
+) -> SchemaStatus:
+    status = inspect_workspace(workspace, require_managed_root=require_managed_root)
     if not status.recognized or not status.compatible:
         raise SchemaCompatibilityError()
     return status

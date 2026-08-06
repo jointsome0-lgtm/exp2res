@@ -185,6 +185,75 @@ def test_the_schema_gate_fails_closed_before_any_bind(workspace: Path) -> None:
     assert nothing_listens("127.0.0.1", port)
 
 
+def test_a_residual_managed_root_is_served_as_409_not_refused_at_startup(
+    workspace: Path,
+) -> None:
+    """A broken `out/` entry is §30's per-request outcome, not a startup gate.
+
+    §12.14's compatibility gate is about the schema this build can read. A
+    managed root that is a symlink rather than a directory is a §13.14 rule 6
+    containment failure, which the request resolver answers with the closed
+    `export_residual` 409 — an outcome the owner can only see if the command
+    binds in the first place.
+    """
+
+    moved = workspace / "elsewhere"
+    (workspace / "out").rename(moved)
+    (workspace / "out").symlink_to(moved, target_is_directory=True)
+
+    port = free_port()
+    previous = signal.getsignal(signal.SIGINT)
+
+    def request_then_interrupt() -> None:
+        installed_handler(previous)
+        with socket.create_connection(("127.0.0.1", port), 10.0) as client:
+            client.sendall(
+                b"GET /mirror?scope=global HTTP/1.1\r\n"
+                b"Host: 127.0.0.1:" + str(port).encode("ascii") + b"\r\n\r\n"
+            )
+            while client.recv(65536):
+                pass
+        installed_handler(previous)(signal.SIGINT, None)
+
+    thread = threading.Thread(target=request_then_interrupt, daemon=True)
+    thread.start()
+
+    result = invoke(workspace, "--port", str(port))
+    thread.join(30.0)
+
+    assert result.exit_code == 9
+    assert result.stderr.splitlines()[2:] == ["/mirror export_residual"]
+
+
+def test_a_second_interrupt_during_the_envelope_still_reports_class_nine(
+    workspace: Path, monkeypatch
+) -> None:
+    """The command owns `SIGINT` until §14.14 rule 6's envelope is written.
+
+    An owner who sends the second Ctrl-C just as the first drain finishes
+    lands it in the window between serving and output. Handing the signal
+    back to the default handler at the end of serving would raise
+    `KeyboardInterrupt` there, past every handler in the runtime, and the
+    process would exit without the cancelled envelope.
+    """
+
+    port = free_port()
+    interrupt_once_serving()
+
+    original = cli._invalidated_view_lines
+
+    def interrupt_then_continue(views):
+        os.kill(os.getpid(), signal.SIGINT)
+        return original(views)
+
+    monkeypatch.setattr(cli, "_invalidated_view_lines", interrupt_then_continue)
+
+    result = invoke(workspace, "--port", str(port), controls=("--json",))
+
+    assert result.exit_code == 9
+    assert envelope(result)["status"] == "cancelled"
+
+
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1"])
 def test_a_successful_bind_reports_exactly_two_urls_then_cancels(
     workspace: Path, host: str
