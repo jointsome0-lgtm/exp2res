@@ -218,6 +218,38 @@ def test_the_schema_gate_fails_closed_before_any_bind(workspace: Path) -> None:
     assert nothing_listens("127.0.0.1", port)
 
 
+def test_startup_contention_is_class_five_not_an_unrecognized_workspace(
+    workspace: Path,
+) -> None:
+    """§21.57: a blocked startup compatibility read is its own class.
+
+    Contention says nothing about the stored version, so it must not be
+    relabelled as an incompatible schema, answered as a per-request 503, or
+    reached after the socket is already bound.
+    """
+
+    port = free_port()
+    blocker = sqlite3.connect(
+        workspace / ".exp2res" / "exp2res.sqlite", isolation_level=None
+    )
+    try:
+        blocker.execute("PRAGMA locking_mode = EXCLUSIVE")
+        blocker.execute("BEGIN IMMEDIATE")
+        blocker.execute("PRAGMA user_version = 1")
+
+        result = invoke(workspace, "--port", str(port), controls=("--json",))
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+    assert result.exit_code == 5
+    body = envelope(result)
+    assert body["diagnostic_class"] == "workspace_busy"
+    assert body["result"] is None
+    assert result.stderr.splitlines() == ["The workspace is busy."]
+    assert nothing_listens("127.0.0.1", port)
+
+
 def test_a_residual_managed_root_is_served_as_409_not_refused_at_startup(
     workspace: Path, serving: threading.Event
 ) -> None:
