@@ -98,3 +98,11 @@ new decisions is effective immediately. Remove this paragraph when #231
 unblocks.
 
 Git worktrees: create them only in `.worktrees/<name>` inside the repo (globally gitignored via `~/.config/git/ignore`), never as sibling directories. Any work that will open a PR branches and builds in such a worktree, never in the primary checkout — the primary checkout stays on a clean `main` so parallel sessions don't fight for its index. Trivial read-only work and single-file doc edits on a clean main need no worktree. Remove the worktree and delete its local branch once its PR merges.
+
+## Style
+
+- Avoid code comments unless explicitly asked to add comments.
+- Deliver what was asked, at the scope asked — no extra features,
+  refactoring, or abstractions beyond the task.
+- In prose (PR text, docs, summaries): lead with the outcome, cut
+  anything that doesn't change what the reader does next.
