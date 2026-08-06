@@ -4,9 +4,9 @@ This module owns only the transport half of serving: which bind is admitted,
 §30 rule 10's connection admission, rule 9's parsing through `view_http`,
 rule 7's ordered pre-state refusals — authority, method, declared body — and
 §14.17's absolute receive, processing, emit, and drain deadlines. Every
-state-dependent decision is `services.views.resolve`, run in a one-shot
-worker thread the connection can abandon, so a connection thread never blocks
-without a deadline.
+state-dependent decision is `services.views.resolve`, run in a one-shot child
+process the connection can terminate, so a connection thread never blocks
+without a deadline and expired filesystem work cannot outlive its slot.
 
 Deadlines are absolute values on one injected monotonic clock and are never
 paused, restarted, or extended; under an interruption drain every phase wait
@@ -26,10 +26,17 @@ from __future__ import annotations
 
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+import json
+import multiprocessing
+from multiprocessing.connection import Connection, wait as wait_for_connections
+from multiprocessing.context import BaseContext
+import os
 from pathlib import Path
 import queue
+import signal
 import socket
 import sqlite3
+import struct
 import threading
 import time
 from typing import Callable, Iterator, Literal
@@ -40,13 +47,18 @@ from exp2res.errors import (
     ViewBindNotLoopbackError,
 )
 from exp2res.services import views
-from exp2res.services.view_http import ParsedRequest, RequestParser, compose_response
+from exp2res.services.view_http import (
+    ParsedRequest,
+    RequestParser,
+    compose_response_parts,
+)
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS
 
 
 __all__ = [
     "DEFAULT_HOST",
     "DEFAULT_PORT",
+    "GLOBAL_SELECTOR",
     "LISTEN_BACKLOG",
     "LOOPBACK_HOSTS",
     "MAX_CONNECTIONS",
@@ -56,6 +68,7 @@ __all__ = [
     "ServeResult",
     "Timeouts",
     "ViewServer",
+    "bound_urls",
     "validate_bind",
 ]
 
@@ -66,6 +79,8 @@ LOOPBACK_HOSTS = ("127.0.0.1", "::1")
 MIN_PORT = 1024
 MAX_PORT = 65535
 
+GLOBAL_SELECTOR = "scope=global"
+
 # §30 rule 10: fixed service constants with no flag, environment, or
 # configuration representation.
 MAX_CONNECTIONS = 32
@@ -73,6 +88,13 @@ LISTEN_BACKLOG = 32
 # Progress lines held for a slow reporter before excess lines are dropped;
 # diagnostics never get to block or accumulate request-side threads.
 REPORT_QUEUE_LIMIT = 64
+# How often the post-drain flush rechecks its two exits — the deadline and a
+# second interruption. Not an allowance of its own: it only bounds how long
+# either one goes unnoticed.
+_FLUSH_POLL_SECONDS = 0.05
+_PROCESS_REAP_POLL_SECONDS = 0.05
+_RESULT_LENGTH = struct.Struct("!Q")
+_RESULT_METADATA_LIMIT = 4096
 
 _SAFE_METHODS = (b"GET", b"HEAD")
 
@@ -87,6 +109,7 @@ ServeResult = Literal["drained", "expired", "interrupted"]
 # and slot release, so a stalled reporter holds no socket, slot, or drain
 # time — only its own finished daemon thread.
 ReportLine = Callable[[str, str | None], None]
+ReportItem = tuple[Callable[..., None], tuple[object, ...], bool]
 
 
 def _check_bind(host: str, port: int) -> None:
@@ -148,6 +171,21 @@ def validate_bind(host: str, port: int) -> BindAddress:
 
     _check_bind(host, port)
     return BindAddress(host=host, port=port)
+
+
+def bound_urls(bind: BindAddress) -> tuple[str, ...]:
+    """Exactly §14.17's two usable startup URLs, in §30 rule 6's route order.
+
+    Derived from `views.ROUTES` rather than restated, so the closed route set
+    and the order the command reports stay one definition. Each URL carries
+    the explicit identity selector §30 requires: no selectorless base route,
+    template, snapshot selector, project selector, trailing path, fragment,
+    or extra parameter is ever advertised.
+    """
+
+    return tuple(
+        bind.url(route.decode("ascii"), GLOBAL_SELECTOR) for route in views.ROUTES
+    )
 
 
 @dataclass(frozen=True)
@@ -264,6 +302,173 @@ class _WorkerHandle:
         self.done.set()
 
 
+class _ProcessHandle:
+    def __init__(
+        self,
+        process,
+        *,
+        starting: bool = False,
+        cancelled=None,
+        start_allowed=None,
+    ) -> None:
+        self.process = process
+        self._cancel_event = cancelled
+        self._start_allowed = start_allowed
+        self._lock = threading.Lock()
+        self._start_done = threading.Event()
+        self._started = not starting
+        self._start_failed = False
+        self._cancelled = False
+        if not starting:
+            self._start_done.set()
+
+    def complete_start(self, *, failed: bool) -> None:
+        with self._lock:
+            self._started = not failed
+            self._start_failed = failed
+            cancelled = self._cancelled
+        if failed or cancelled:
+            if self._cancel_event is not None:
+                self._cancel_event.set()
+        elif self._start_allowed is not None:
+            self._start_allowed.set()
+        if cancelled and not failed:
+            self._kill()
+        self._start_done.set()
+
+    def wait_started(self, timeout: float) -> bool:
+        return self._start_done.wait(timeout)
+
+    @property
+    def start_failed(self) -> bool:
+        with self._lock:
+            return self._start_failed
+
+    @property
+    def start_pending(self) -> bool:
+        return not self._start_done.is_set()
+
+    def wake(self) -> None:
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+        with self._lock:
+            self._cancelled = True
+            started = self._started
+        if started:
+            self._kill()
+
+    def _kill(self) -> None:
+        with suppress(AssertionError, OSError, ValueError):
+            if self.process.is_alive():
+                self.process.kill()
+
+    def finish(self) -> bool:
+        self.wake()
+        if not self._start_done.is_set():
+            return False
+        with self._lock:
+            started = self._started
+        if not started:
+            with suppress(AttributeError, ValueError):
+                self.process.close()
+            return True
+        try:
+            self.process.join(timeout=0)
+            finished = not self.process.is_alive()
+        except (AssertionError, OSError, ValueError):
+            return False
+        if finished:
+            with suppress(ValueError):
+                self.process.close()
+        return finished
+
+
+class _AdmissionLease:
+    def __init__(self, semaphore: threading.Semaphore) -> None:
+        self._semaphore = semaphore
+        self._lock = threading.Lock()
+        self._connection_done = False
+        self._process_done = True
+        self._released = False
+
+    def defer(self) -> None:
+        with self._lock:
+            self._process_done = False
+
+    def release(self) -> None:
+        with self._lock:
+            self._connection_done = True
+            release = self._release_if_ready()
+        if release:
+            self._semaphore.release()
+
+    def release_deferred(self) -> None:
+        with self._lock:
+            self._process_done = True
+            release = self._release_if_ready()
+        if release:
+            self._semaphore.release()
+
+    def _release_if_ready(self) -> bool:
+        if self._released or not self._connection_done or not self._process_done:
+            return False
+        self._released = True
+        return True
+
+
+def _write_process_result(sender: Connection, page: views.ViewPage) -> None:
+    metadata = json.dumps(
+        {
+            "body_length": len(page.body),
+            "content_type": page.content_type,
+            "outcome": page.outcome,
+            "published_member": page.published_member,
+            "status": page.status,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    for part in (_RESULT_LENGTH.pack(len(metadata)), metadata, page.body):
+        remaining = memoryview(part)
+        while remaining:
+            remaining = remaining[os.write(sender.fileno(), remaining) :]
+
+
+def _run_resolver_process(
+    sender: Connection,
+    cancelled,
+    start_allowed,
+    resolver: Callable[..., views.ViewPage],
+    workspace: Path,
+    request: ParsedRequest,
+    deadline: float,
+    busy_timeout_ms: int,
+) -> None:
+    try:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        with suppress(AttributeError):
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+        while not start_allowed.wait(_PROCESS_REAP_POLL_SECONDS):
+            if cancelled.is_set():
+                return
+        if cancelled.is_set():
+            return
+        try:
+            page = resolver(
+                workspace,
+                request.path,
+                request.query,
+                deadline=deadline,
+                busy_timeout_ms=busy_timeout_ms,
+            )
+        except BaseException:
+            page = views.internal_error_page()
+        with suppress(BrokenPipeError, EOFError, OSError):
+            _write_process_result(sender, page)
+    finally:
+        sender.close()
+
+
 class ViewServer:
     """One bound loopback listener serving §30's closed route set.
 
@@ -282,6 +487,8 @@ class ViewServer:
         _clock: Callable[[], float] = time.monotonic,
         _timeouts: Timeouts | None = None,
         _resolver: Callable[..., views.ViewPage] = views.resolve,
+        _isolate_resolver: bool | None = None,
+        _process_context: BaseContext | None = None,
         _busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     ) -> None:
         self._workspace = workspace
@@ -290,24 +497,30 @@ class ViewServer:
         self._clock = _clock
         self._timeouts = _timeouts if _timeouts is not None else default_timeouts()
         self._resolver = _resolver
+        self._isolate_resolver = (
+            _resolver is views.resolve if _isolate_resolver is None else _isolate_resolver
+        )
+        self._process_context = (
+            multiprocessing.get_context("spawn")
+            if _process_context is None
+            else _process_context
+        )
         self._busy_timeout_ms = _busy_timeout_ms
         self._authority = bind.authority.encode("ascii")
         self._origin = bind.origin.encode("ascii")
         self._slots = threading.Semaphore(MAX_CONNECTIONS)
+        self._process_start_slots = threading.Semaphore(MAX_CONNECTIONS)
         # Reentrant because `interrupt()` may run in a signal handler on the
         # accept-loop thread while that thread already holds the lock; a
         # plain lock would deadlock the first interruption instead of
         # starting the drain.
         self._state_lock = threading.RLock()
         self._sockets: set[socket.socket] = set()
-        self._handles: set[_WorkerHandle] = set()
-        # Admitted requests still holding their slot. The drain waits on this
-        # count, never on connection threads, so a thread outliving its
-        # released request — a stalled reporter — cannot consume the drain.
+        self._handles: set[_WorkerHandle | _ProcessHandle] = set()
+        # Admitted connections not yet terminally closed. The drain waits on
+        # this count, never on connection threads, so a stalled reporter
+        # cannot consume the drain after its connection has been released.
         self._active = 0
-        # Distinguishes the reporter-start cancellation window from a normal
-        # drain whose completed requests may already have queued diagnostics.
-        self._ever_admitted = False
         self._idle = threading.Condition(self._state_lock)
         self._draining = threading.Event()
         self._immediate = threading.Event()
@@ -316,10 +529,81 @@ class ViewServer:
         # One dedicated reporter thread behind a bounded queue: a blocked
         # stderr can then stall only this one thread and drop excess progress
         # lines, never accumulate a blocked thread per completed connection.
-        self._report_queue: queue.Queue[tuple[str, str | None] | None] = queue.Queue(
-            maxsize=REPORT_QUEUE_LIMIT
+        self._report_queue: queue.Queue[ReportItem | None] = queue.Queue(
+            maxsize=REPORT_QUEUE_LIMIT + 3
         )
+        self._report_slots = threading.Semaphore(REPORT_QUEUE_LIMIT)
         self._report_thread: threading.Thread | None = None
+        self._reap_queue: queue.Queue[
+            tuple[_ProcessHandle, _AdmissionLease | None]
+        ] = queue.Queue()
+        self._reap_stop = threading.Event()
+        self._reap_thread: threading.Thread | None = None
+
+    def advertise(self, announce: Callable[[str], None]) -> None:
+        """Queue §14.17's two startup URLs while the listener is usable."""
+
+        completions: list[threading.Event] = []
+        failed = threading.Event()
+        failures: list[BaseException] = []
+        with self._state_lock:
+            if self._listener is None or self._draining.is_set():
+                return
+            if not self._start_reporter():
+                return
+            for url in bound_urls(self.bind_address):
+                if self._draining.is_set():
+                    return
+                complete = threading.Event()
+                completions.append(complete)
+                self._report_queue.put_nowait(
+                    (
+                        self._announce_if_live,
+                        (announce, url, complete, failed, failures),
+                        False,
+                    )
+                )
+        for complete in completions:
+            while not complete.wait(_FLUSH_POLL_SECONDS):
+                if self._draining.is_set() or self._immediate.is_set():
+                    return
+            if failures:
+                self._abort_advertisement()
+                raise failures[0]
+
+    def _announce_if_live(
+        self,
+        announce: Callable[[str], None],
+        url: str,
+        complete: threading.Event,
+        failed: threading.Event,
+        failures: list[BaseException],
+    ) -> None:
+        try:
+            with self._state_lock:
+                listener = self._listener
+                live = (
+                    listener is not None
+                    and listener.fileno() >= 0
+                    and not self._draining.is_set()
+                )
+            if live and not failed.is_set():
+                try:
+                    announce(url)
+                except BaseException as error:
+                    failures.append(error)
+                    failed.set()
+        finally:
+            complete.set()
+
+    def _abort_advertisement(self) -> None:
+        with self._state_lock:
+            listener = self._listener
+            self._listener = None
+        if listener is not None:
+            with suppress(OSError):
+                listener.close()
+        self._stop_reporter()
 
     def open(self) -> None:
         """Bind exactly the validated address, or fail without another try.
@@ -366,7 +650,17 @@ class ViewServer:
         except OSError as error:
             listener.close()
             raise ViewBindFailedError() from error
-        self._listener = listener
+        with self._state_lock:
+            # Publication and the drain check are one atomic step. An
+            # interruption that arrived while this socket was still local
+            # found no listener to close, and `serve` would return through the
+            # early drain without reaching the close in its own `finally` —
+            # leaving the port held for the life of an embedding process.
+            # Whichever side takes the lock first owns the close.
+            if not self._draining.is_set():
+                self._listener = listener
+                return
+        listener.close()
 
     def interrupt(self) -> None:
         """First call drains; a second forces the close. Never raises.
@@ -407,8 +701,42 @@ class ViewServer:
                 listener.close()
 
     def serve(self) -> ServeResult:
-        """Accept until interrupted, then drain; returns the termination class."""
+        """Accept until interrupted, then drain; returns the termination class.
 
+        Every exit retires the reporter — drained, expired, forced, or a
+        failure that never reached a drain. A process that serves once and
+        exits would not notice; an embedding one would otherwise accumulate a
+        blocked thread and a live callback per run.
+        """
+
+        try:
+            return self._serve()
+        finally:
+            self._stop_reporter()
+            self._stop_process_reaper()
+
+    def _start_reporter(self) -> bool:
+        if self._report_thread is not None:
+            return True
+        reporter = threading.Thread(
+            target=self._report_loop, name="view-report", daemon=True
+        )
+        try:
+            reporter.start()
+        except RuntimeError:
+            with self._state_lock:
+                listener = self._listener
+                self._listener = None
+            if listener is not None:
+                with suppress(OSError):
+                    listener.close()
+            if self._draining.is_set():
+                return False
+            raise
+        self._report_thread = reporter
+        return True
+
+    def _serve(self) -> ServeResult:
         if self._listener is None:
             if self._draining.is_set():
                 # `interrupt` is callable at any instant, including before
@@ -426,29 +754,12 @@ class ViewServer:
             # produce a progress line; starting the optional reporter would
             # create new work whose queue can only remain empty.
             return self._drain()
-        if self._report is not None and self._report_thread is None:
-            reporter = threading.Thread(
-                target=self._report_loop, name="view-report", daemon=True
-            )
-            try:
-                reporter.start()
-            except RuntimeError:
-                # Unless cancellation became visible during the refused
-                # start, this failure belongs to the caller — but the bound
-                # listener must not outlive it, or the port stays taken and
-                # no retry can rebind. The reporter slot stays empty so a
-                # retry starts one rather than serving silently.
-                self._listener = None
-                with suppress(OSError):
-                    listener.close()
-                if self._draining.is_set():
-                    # Cancellation that became visible during the refused
-                    # start still owns the command result. No reporter exists
-                    # and no request was admitted, so the existing drain is
-                    # the complete cleanup path.
-                    return self._drain()
-                raise
-            self._report_thread = reporter
+        if (
+            self._report is not None
+            and self._report_thread is None
+            and not self._start_reporter()
+        ):
+            return self._drain()
         try:
             while not self._draining.is_set():
                 try:
@@ -487,7 +798,6 @@ class ViewServer:
                     if admitted:
                         self._sockets.add(connection)
                         self._active += 1
-                        self._ever_admitted = True
                 if not admitted:
                     self._slots.release()
                     with suppress(OSError):
@@ -546,7 +856,6 @@ class ViewServer:
                 self._idle.wait(remaining)
         if expired and not self._immediate.is_set():
             self._force_close()
-        self._stop_reporter_if_unused()
         if self._immediate.is_set():
             return "interrupted"
         if expired:
@@ -597,6 +906,7 @@ class ViewServer:
 
     def _serve_connection(self, connection: socket.socket, admitted_at: float) -> None:
         line: tuple[str, str | None] | None = None
+        lease = _AdmissionLease(self._slots)
         try:
             try:
                 received = self._receive(connection, admitted_at)
@@ -611,7 +921,7 @@ class ViewServer:
                 # — the timestamp `_receive` captured, so a scheduling stall
                 # after completion spends the budget rather than extending it.
                 deadline = completed_at + self._timeouts.processing
-                page = self._decide(parser, deadline)
+                page = self._decide(parser, deadline, lease)
                 if page is None:
                     return
                 head = not parser.malformed and parser.request.method == b"HEAD"
@@ -625,17 +935,39 @@ class ViewServer:
                 # detail: §30 rule 6 keeps request bytes out of diagnostics.
                 pass
         finally:
-            self._release_admission(connection)
-        # Reporting runs only after the terminal close, the slot release, and
-        # the drain count-down, and only by enqueueing: the dedicated
-        # reporter thread is the sole caller of the callback, so a blocked
-        # reporter stalls one thread and drops excess lines instead of
-        # accumulating a blocked thread per completed connection.
-        if line is not None and self._report is not None:
-            with suppress(queue.Full):
-                self._report_queue.put_nowait(line)
+            self._enqueue_report(line)
+            self._release_admission(connection, lease)
 
-    def _release_admission(self, connection: socket.socket) -> None:
+    def _enqueue_report(self, line: tuple[str, str | None] | None) -> None:
+        """Hand one completed request's line to the reporter, or drop it.
+
+        Callers must reach this before releasing the connection's admission
+        slot. That release is what lets a waiting drain return, and a drain
+        that returns first retires the reporter ahead of the line. Doing it
+        first costs the connection nothing it was protected from: this is one
+        non-blocking put, so a stalled reporter still holds no socket, slot,
+        or drain time, and the reporter thread remains the sole caller of the
+        callback.
+
+        A refused acquisition means all `REPORT_QUEUE_LIMIT` data slots are
+        held by lines a stalled reporter has not taken yet; the line is
+        dropped rather than waited on. The queue holds one slot more than the
+        semaphore ever grants, and that reserve belongs to the stop sentinel
+        alone, so saturation can never cost the reporter its termination
+        signal. `_report_loop` returns a permit when it takes a line rather
+        than when it finishes writing it, so a slow stream costs capacity
+        only while lines are undelivered.
+        """
+
+        if line is None or self._report is None:
+            return
+        if not self._report_slots.acquire(blocking=False):
+            return
+        self._report_queue.put_nowait((self._report, line, True))
+
+    def _release_admission(
+        self, connection: socket.socket, lease: _AdmissionLease | None = None
+    ) -> None:
         """Give back everything one admission took, in the one safe order.
 
         Close before deregistering: a forced close arriving in between must
@@ -648,34 +980,98 @@ class ViewServer:
             connection.close()
         with self._state_lock:
             self._sockets.discard(connection)
-        self._slots.release()
+        if lease is None:
+            self._slots.release()
+        else:
+            lease.release()
         with self._idle:
             self._active -= 1
             self._idle.notify_all()
 
     def _report_loop(self) -> None:
         while True:
-            line = self._report_queue.get()
-            if line is None:
+            item = self._report_queue.get()
+            if item is None:
                 return
+            callback, arguments, releases_slot = item
+            if releases_slot:
+                self._report_slots.release()
             with suppress(Exception):
-                report = self._report
-                if report is not None:
-                    report(*line)
+                callback(*arguments)
 
-    def _stop_reporter_if_unused(self) -> None:
-        """Wake a reporter that cancellation left with no possible line.
+    def _stop_reporter(self) -> None:
+        """Retire the reporter once serving is over, whatever it reported.
 
-        This path is deliberately limited to a server that never admitted a
-        connection. Its queue is therefore empty, so the sentinel is
-        non-blocking and cannot overtake or discard a request diagnostic.
+        Ordering is what makes this safe rather than timing. Every completed
+        request queues its line before releasing the slot the drain waits on,
+        so by the time this runs each one is already ahead of the sentinel in
+        one FIFO queue: the thread delivers them all and then returns on its
+        own. The put needs no failure path because `_enqueue_report` never
+        spends the queue's last slot — that reserve exists for exactly this
+        signal, so a saturated queue cannot swallow it.
+
+        The wait is whatever the one absolute drain deadline has left, and
+        never a second past it: §14.17 lets nothing extend that bound, and a
+        second interruption performs the close immediately, so it leaves none
+        at all. Without any wait a line queued just before the interruption
+        would race the caller's return, and the sink it was bound to — a
+        `CliRunner` stderr, a process about to exit — would be gone before
+        the reporter reached it. A returning thread has delivered every line
+        ahead of the sentinel; a wedged one keeps its own losses when the
+        deadline arrives, a daemon thread holding no socket, slot, or
+        transaction, and a sink wedged that long could not have carried the
+        envelope either.
         """
 
         with self._state_lock:
-            unused = not self._ever_admitted
             reporter = self._report_thread
-        if unused and reporter is not None:
-            self._report_queue.put_nowait(None)
+            self._report_thread = None
+        if reporter is None:
+            return
+        self._await_producers()
+        self._report_queue.put_nowait(None)
+        self._flush(reporter)
+
+    def _await_producers(self) -> None:
+        """Let every admitted request queue its line ahead of the sentinel.
+
+        A drain ends with none outstanding, so this is for the path that has
+        no drain: an `accept` the operating system refused force-closes and
+        unwinds, and a connection that had already emitted its response but
+        not yet queued its line would put it behind the sentinel, where no
+        reporter is left to take it. Bounded by the same §8.1 timeout the
+        drain uses — a force-closed request has only its own release left to
+        run — and skipped outright once the second interruption has demanded
+        the immediate close, which outranks any diagnostic.
+        """
+
+        if self._immediate.is_set():
+            return
+        deadline = self._clock() + self._timeouts.drain
+        with self._idle:
+            while self._active and not self._immediate.is_set():
+                remaining = deadline - self._clock()
+                if remaining <= 0:
+                    return
+                self._idle.wait(remaining)
+
+    def _flush(self, reporter: threading.Thread) -> None:
+        """Wait for the sentinel to come back, inside the drain's own bound.
+
+        Sliced rather than one long join so the second interruption is not
+        merely recorded: it forces the close, and a wait that could not see it
+        would hold the envelope for the rest of the deadline instead.
+        """
+
+        with self._state_lock:
+            deadline = self._drain_deadline
+        if deadline is None:
+            return
+        while reporter.is_alive():
+            remaining = deadline - self._clock()
+            if remaining <= 0 or self._immediate.is_set():
+                return
+            reporter.join(min(remaining, _FLUSH_POLL_SECONDS))
 
     def _receive(
         self, connection: socket.socket, admitted_at: float
@@ -731,7 +1127,10 @@ class ViewServer:
         return parser, completed_at
 
     def _decide(
-        self, parser: RequestParser, deadline: float
+        self,
+        parser: RequestParser,
+        deadline: float,
+        lease: _AdmissionLease | None = None,
     ) -> views.ViewPage | None:
         """Run §30 rule 7's ordered pre-state refusals, then the resolver.
 
@@ -753,7 +1152,7 @@ class ViewServer:
             return self._within(views.method_not_allowed_page(), deadline)
         if request.framing == "declared_body":
             return self._within(views.malformed_request_page(), deadline)
-        return self._resolve_abandonable(request, deadline)
+        return self._resolve_abandonable(request, deadline, lease)
 
     def _within(self, page: views.ViewPage, deadline: float) -> views.ViewPage:
         """The processing deadline is an outer boundary over every check.
@@ -769,6 +1168,301 @@ class ViewServer:
         return views.processing_timeout_page()
 
     def _resolve_abandonable(
+        self,
+        request: ParsedRequest,
+        deadline: float,
+        lease: _AdmissionLease | None = None,
+    ) -> views.ViewPage | None:
+        if self._isolate_resolver:
+            return self._resolve_in_process(request, deadline, lease)
+        return self._resolve_in_thread(request, deadline)
+
+    def _resolve_in_process(
+        self,
+        request: ParsedRequest,
+        deadline: float,
+        lease: _AdmissionLease | None,
+    ) -> views.ViewPage | None:
+        if self._immediate.is_set() or self._drain_expired():
+            return None
+        if self._phase_deadline(deadline) - self._clock() <= 0:
+            return views.processing_timeout_page()
+        if not self._ensure_process_reaper():
+            return self._within(views.internal_error_page(), deadline)
+        try:
+            receiver, sender = self._process_context.Pipe(duplex=False)
+        except Exception:
+            return self._within(views.internal_error_page(), deadline)
+        try:
+            cancelled = self._process_context.Event()
+            start_allowed = self._process_context.Event()
+            process = self._process_context.Process(
+                target=_run_resolver_process,
+                args=(
+                    sender,
+                    cancelled,
+                    start_allowed,
+                    self._resolver,
+                    self._workspace,
+                    request,
+                    deadline,
+                    self._busy_timeout_ms,
+                ),
+                daemon=True,
+            )
+        except Exception:
+            receiver.close()
+            sender.close()
+            return self._within(views.internal_error_page(), deadline)
+        handle = _ProcessHandle(
+            process,
+            starting=True,
+            cancelled=cancelled,
+            start_allowed=start_allowed,
+        )
+        with self._state_lock:
+            self._handles.add(handle)
+            forced = self._immediate.is_set()
+        try:
+            try:
+                if not self._begin_process_start(handle, sender):
+                    return self._within(views.internal_error_page(), deadline)
+                if forced or self._drain_expired():
+                    handle.wake()
+                    return None
+                remaining = self._phase_deadline(deadline) - self._clock()
+                if remaining <= 0 or not handle.wait_started(remaining):
+                    handle.wake()
+                    return views.processing_timeout_page()
+                if self._immediate.is_set() or self._drain_expired():
+                    handle.wake()
+                    return None
+                if handle.start_failed:
+                    return self._within(views.internal_error_page(), deadline)
+                return self._receive_process_result(receiver, process, deadline)
+            finally:
+                if not handle.finish():
+                    deferred_lease = None
+                    if lease is not None and not handle.start_pending:
+                        lease.defer()
+                        deferred_lease = lease
+                    self._reap_process(handle, deferred_lease)
+                with self._state_lock:
+                    self._handles.discard(handle)
+        finally:
+            receiver.close()
+
+    def _begin_process_start(
+        self, handle: _ProcessHandle, sender: Connection
+    ) -> bool:
+        if not self._process_start_slots.acquire(blocking=False):
+            sender.close()
+            handle.complete_start(failed=True)
+            return False
+
+        def start() -> None:
+            failed = False
+            try:
+                self._start_resolver_process(handle.process)
+            except BaseException:
+                failed = True
+            finally:
+                sender.close()
+                handle.complete_start(failed=failed)
+                self._process_start_slots.release()
+
+        starter = threading.Thread(
+            target=start, name="view-resolver-start", daemon=True
+        )
+        try:
+            starter.start()
+        except RuntimeError:
+            sender.close()
+            handle.complete_start(failed=True)
+            self._process_start_slots.release()
+            return False
+        return True
+
+    def _start_resolver_process(self, process) -> None:
+        try:
+            previous_mask = signal.pthread_sigmask(
+                signal.SIG_BLOCK, {signal.SIGINT}
+            )
+        except AttributeError:
+            process.start()
+            return
+        try:
+            process.start()
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+    def _receive_process_result(
+        self, receiver: Connection, process, deadline: float
+    ) -> views.ViewPage | None:
+        buffer = bytearray()
+        metadata_size: int | None = None
+        metadata: dict[str, object] | None = None
+        body_offset: int | None = None
+        body_size: int | None = None
+        process_done = False
+        eof = False
+        os.set_blocking(receiver.fileno(), False)
+        while True:
+            if self._immediate.is_set():
+                return None
+            if self._drain_expired():
+                return None
+            if process_done and eof:
+                break
+
+            remaining = self._phase_deadline(deadline) - self._clock()
+            if remaining <= 0:
+                return views.processing_timeout_page()
+            ready = wait_for_connections(
+                (receiver, process.sentinel), remaining
+            )
+            process_done = process_done or process.sentinel in ready
+            if receiver in ready:
+                while True:
+                    if self._immediate.is_set() or self._drain_expired():
+                        return None
+                    if self._clock() >= deadline:
+                        return views.processing_timeout_page()
+                    try:
+                        chunk = os.read(receiver.fileno(), 65536)
+                    except BlockingIOError:
+                        break
+                    if not chunk:
+                        eof = True
+                        break
+                    buffer.extend(chunk)
+                    if self._immediate.is_set() or self._drain_expired():
+                        return None
+                    if self._clock() >= deadline:
+                        return views.processing_timeout_page()
+                    if metadata_size is None and len(buffer) >= _RESULT_LENGTH.size:
+                        metadata_size = _RESULT_LENGTH.unpack_from(buffer)[0]
+                        if metadata_size > _RESULT_METADATA_LIMIT:
+                            return self._within(
+                                views.internal_error_page(), deadline
+                            )
+                    if (
+                        metadata_size is not None
+                        and metadata is None
+                        and len(buffer) >= _RESULT_LENGTH.size + metadata_size
+                    ):
+                        metadata_end = _RESULT_LENGTH.size + metadata_size
+                        try:
+                            decoded = json.loads(
+                                buffer[_RESULT_LENGTH.size : metadata_end]
+                            )
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            return self._within(
+                                views.internal_error_page(), deadline
+                            )
+                        if not isinstance(decoded, dict):
+                            return self._within(
+                                views.internal_error_page(), deadline
+                            )
+                        candidate_body_size = decoded.get("body_length")
+                        if (
+                            not isinstance(candidate_body_size, int)
+                            or isinstance(candidate_body_size, bool)
+                            or candidate_body_size < 0
+                        ):
+                            return self._within(
+                                views.internal_error_page(), deadline
+                            )
+                        metadata = decoded
+                        body_offset = metadata_end
+                        body_size = candidate_body_size
+                    if body_offset is not None and body_size is not None:
+                        framed_size = body_offset + body_size
+                        if len(buffer) >= framed_size:
+                            if len(buffer) != framed_size:
+                                return self._within(
+                                    views.internal_error_page(), deadline
+                                )
+                            eof = True
+                            break
+
+        if (
+            metadata is None
+            or body_offset is None
+            or body_size is None
+            or len(buffer) != body_offset + body_size
+        ):
+            return self._within(views.internal_error_page(), deadline)
+        outcome = metadata.get("outcome")
+        status = metadata.get("status")
+        published_member = metadata.get("published_member")
+        content_type = metadata.get("content_type")
+        if (
+            not isinstance(outcome, str)
+            or not isinstance(status, int)
+            or isinstance(status, bool)
+            or not isinstance(published_member, bool)
+            or not isinstance(content_type, str)
+        ):
+            return self._within(views.internal_error_page(), deadline)
+        page = views.ViewPage(
+            outcome=outcome,
+            status=status,
+            body=memoryview(buffer)[body_offset:].toreadonly(),
+            published_member=published_member,
+            content_type=content_type,
+        )
+        return self._within(page, deadline)
+
+    def _reap_process(
+        self, handle: _ProcessHandle, lease: _AdmissionLease | None
+    ) -> None:
+        self._reap_queue.put_nowait((handle, lease))
+
+    def _ensure_process_reaper(self) -> bool:
+        with self._state_lock:
+            if self._reap_thread is not None:
+                return self._reap_thread.is_alive()
+            if self._reap_stop.is_set():
+                return False
+            reaper = threading.Thread(
+                target=self._process_reap_loop,
+                name="view-resolver-reap",
+                daemon=True,
+            )
+            try:
+                reaper.start()
+            except RuntimeError:
+                return False
+            self._reap_thread = reaper
+        return True
+
+    def _process_reap_loop(self) -> None:
+        pending: list[tuple[_ProcessHandle, _AdmissionLease | None]] = []
+        while True:
+            try:
+                pending.append(
+                    self._reap_queue.get(timeout=_PROCESS_REAP_POLL_SECONDS)
+                )
+            except queue.Empty:
+                pass
+            retained = []
+            for handle, lease in pending:
+                if handle.finish():
+                    if lease is not None:
+                        lease.release_deferred()
+                else:
+                    retained.append((handle, lease))
+            pending = retained
+            if self._reap_stop.is_set() and not pending:
+                with self._state_lock:
+                    if self._active == 0 and self._reap_queue.empty():
+                        return
+
+    def _stop_process_reaper(self) -> None:
+        self._reap_stop.set()
+
+    def _resolve_in_thread(
         self, request: ParsedRequest, deadline: float
     ) -> views.ViewPage | None:
         """Resolve in a one-shot worker the connection thread can abandon.
@@ -872,7 +1566,7 @@ class ViewServer:
         computed outcome. Returns the page actually emitted.
         """
 
-        payload = compose_response(page, head=head)
+        header, body = compose_response_parts(page, head=head)
         if self._clock() >= processing_deadline:
             # The ordinary processing deadline alone, never `min(phase,
             # drain)`: §30 rule 7 lets drain expiry truncate delivery after
@@ -881,19 +1575,20 @@ class ViewServer:
             # serialization closes this connection with the page it already
             # computed rather than relabelling it a timeout.
             page = views.processing_timeout_page()
-            payload = compose_response(page, head=head)
+            header, body = compose_response_parts(page, head=head)
         deadline = self._clock() + self._timeouts.emit
-        response = memoryview(payload)
-        while response:
-            if self._immediate.is_set():
-                return page
-            remaining = self._phase_deadline(deadline) - self._clock()
-            if remaining <= 0:
-                return page
-            try:
-                connection.settimeout(remaining)
-                sent = connection.send(response)
-            except OSError:
-                return page
-            response = response[sent:]
+        for part in (header, body):
+            response = memoryview(part)
+            while response:
+                if self._immediate.is_set():
+                    return page
+                remaining = self._phase_deadline(deadline) - self._clock()
+                if remaining <= 0:
+                    return page
+                try:
+                    connection.settimeout(remaining)
+                    sent = connection.send(response)
+                except OSError:
+                    return page
+                response = response[sent:]
         return page

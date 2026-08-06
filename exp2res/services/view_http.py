@@ -35,6 +35,7 @@ __all__ = [
     "ParsedRequest",
     "RequestParser",
     "compose_response",
+    "compose_response_parts",
 ]
 
 
@@ -349,13 +350,13 @@ _REASONS = {
 }
 
 
-def compose_response(page: ViewPage, *, head: bool) -> bytes:
-    """Serialize one composed outcome as its complete HTTP/1.1 response.
+def compose_response_parts(page: ViewPage, *, head: bool) -> tuple[bytes, bytes]:
+    """Serialize one outcome without copying its potentially large body.
 
     A `HEAD` response carries exactly the `GET` outcome's status and headers
     — `Content-Length` included — with an empty body (§30 rule 2). The body
-    bytes are appended untouched: for the mirror they are the revalidated
-    published member, which nothing may rewrite.
+    part is the original bytes object: for the mirror it is the revalidated
+    published member, which nothing may rewrite or copy during composition.
     """
 
     lines = [
@@ -369,4 +370,11 @@ def compose_response(page: ViewPage, *, head: bool) -> bytes:
         lines.append("Allow: GET, HEAD")
     lines.append("Connection: close")
     header = "\r\n".join(lines).encode("ascii") + b"\r\n\r\n"
-    return header if head else header + page.body
+    return header, b"" if head else page.body
+
+
+def compose_response(page: ViewPage, *, head: bool) -> bytes:
+    """Serialize one composed outcome as its complete HTTP/1.1 response."""
+
+    header, body = compose_response_parts(page, head=head)
+    return header + body

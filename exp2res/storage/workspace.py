@@ -308,8 +308,10 @@ def inspect_workspace(
         return SchemaStatus(None, CURRENT_SCHEMA_VERSION, False, False, None)
 
 
-def require_compatible(workspace: Path) -> SchemaStatus:
-    status = inspect_workspace(workspace)
+def require_compatible(
+    workspace: Path, *, require_managed_root: bool = True
+) -> SchemaStatus:
+    status = inspect_workspace(workspace, require_managed_root=require_managed_root)
     if not status.recognized or not status.compatible:
         raise SchemaCompatibilityError()
     return status
@@ -841,14 +843,27 @@ def writer_database(
 
 @contextmanager
 def read_database(
-    workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS
+    workspace: Path,
+    *,
+    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    require_managed_root: bool = True,
 ) -> Iterator[sqlite3.Connection]:
+    """Open one §8.1 read transaction over a workspace this build can read.
+
+    `require_managed_root` stays on for every command that reaches managed
+    output. A §30 read turns it off: business state is readable without a
+    published set, and whether one exists is a question §13.14 revalidation
+    answers after this transaction closes — as `export_not_current` under
+    §30's own ordering, behind the snapshot, integrity, and §16.11 gates,
+    rather than as a schema refusal in front of them.
+    """
+
     if not (
         _is_real_directory(workspace / ".exp2res")
         and _is_real_file(workspace / ".exp2res" / "exp2res.sqlite")
         and _is_real_file(workspace / ".exp2res" / "config.toml")
         and _is_real_file(workspace / ".exp2res" / "lock")
-        and _is_real_directory(workspace / "out")
+        and (not require_managed_root or _is_real_directory(workspace / "out"))
     ):
         raise SchemaCompatibilityError()
     connection = connect_database(

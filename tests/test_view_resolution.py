@@ -29,6 +29,7 @@ from exp2res.services.export import export_assessment
 from exp2res.services.views import MIRROR_ROUTE, QUESTIONS_ROUTE, resolve
 import exp2res.services.views as views
 from exp2res.storage.workspace import (
+    CURRENT_SCHEMA_VERSION,
     DEFAULT_BUSY_TIMEOUT_MS,
     read_database,
     writer_database,
@@ -427,6 +428,66 @@ def test_state_no_re_export_can_replace_is_the_residual_outcome(
     assert page.status == 409
     assert b"tampered" not in page.body
     assert str(workspace).encode("utf-8") not in page.body
+
+
+def test_an_absent_managed_root_is_replaceable_output_not_a_migration(
+    workspace: Path,
+) -> None:
+    """§30: managed output that is simply missing is `export_not_current`.
+
+    The §8.1 read gate refuses an absent `out/` root exactly as it refuses an
+    unreadable schema, but the schema here is one this build reads and the
+    §14.9 export puts the root back. Telling the owner to migrate would send
+    them at the wrong thing, and the residual outcome would claim a repair no
+    re-export can perform.
+    """
+
+    snapshot_id = exported_workspace(workspace)
+    shutil.rmtree(workspace / "out")
+
+    page = mirror(workspace, b"scope=global")
+
+    assert page.outcome == "export_not_current"
+    assert page.status == 409
+    assert b"schema" not in page.body.lower()
+    # Classified in phase 2, so it still carries the remedy for this snapshot.
+    assert snapshot_id.encode("ascii") in page.body
+
+
+def test_an_absent_managed_root_preserves_an_available_schema_migration(
+    workspace: Path,
+) -> None:
+    exported_workspace(workspace)
+    shutil.rmtree(workspace / "out")
+    with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
+        connection.execute(
+            "UPDATE schema_meta SET version = ? WHERE version = ?",
+            (CURRENT_SCHEMA_VERSION - 1, CURRENT_SCHEMA_VERSION),
+        )
+
+    page = mirror(workspace, b"scope=global")
+
+    assert page.outcome == "schema_incompatible"
+    assert page.status == 409
+    assert b"exp2res db migrate" in page.body
+    assert b"exp2res db status" not in page.body
+
+
+def test_an_absent_managed_root_does_not_pre_empt_the_snapshot_outcomes(
+    workspace: Path,
+) -> None:
+    """§30's ordering survives a missing root: business state answers first.
+
+    Refusing in front of the read would report missing output for a workspace
+    whose real answer is that it has no current assessment view at all.
+    """
+
+    shutil.rmtree(workspace / "out")
+
+    page = mirror(workspace, b"scope=global")
+
+    assert page.outcome == "no_current_view"
+    assert page.status == 404
 
 
 def test_a_final_entry_replaced_mid_read_is_export_changed(

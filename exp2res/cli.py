@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
 import shlex
+import signal
 import sys
-from typing import Callable, cast
+import threading
+from typing import Callable, Iterator, cast
 
 import typer
 
@@ -111,6 +114,12 @@ from exp2res.services.lifecycle import (
     run_recompute,
 )
 from exp2res.services.signals import list_current_signals, run_signals_generate
+from exp2res.services.view_server import (
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    ViewServer,
+    validate_bind,
+)
 from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.services.workspace import PurgeOutcome, purge_workspace
 from exp2res.storage.repository import get_assessment_snapshot
@@ -149,6 +158,7 @@ signals_app = typer.Typer(help="Generate and inspect current self-signals.")
 assess_app = typer.Typer(help="Generate and inspect self-assessment views.")
 export_app = typer.Typer(help="Publish deterministic managed exports.")
 workspace_app = typer.Typer(help="Manage the whole initialized workspace.")
+view_app = typer.Typer(help="Serve the read-only local views on loopback.")
 app.add_typer(db_app, name="db")
 app.add_typer(log_app, name="log")
 app.add_typer(logs_app, name="logs")
@@ -161,6 +171,7 @@ app.add_typer(signals_app, name="signals")
 app.add_typer(assess_app, name="assess")
 app.add_typer(export_app, name="export")
 app.add_typer(workspace_app, name="workspace")
+app.add_typer(view_app, name="view")
 
 
 @dataclass(frozen=True)
@@ -315,37 +326,121 @@ def _failing_surface(error: Exp2ResError) -> str | None:
     )
 
 
+@contextmanager
+def _interrupt_disposition_restored() -> Iterator[None]:
+    """Give `SIGINT` back to its pre-invocation owner after the envelope.
+
+    Only `view serve` installs a handler of its own (§14.17), and a second
+    interrupt while the first drain finishes is its documented way to stop
+    waiting. Handing `SIGINT` back the moment serving ends would leave that
+    interrupt to the default handler while §14.14 rule 6's class-9 envelope
+    is still being written, ending the process without it. Every other
+    command leaves the disposition untouched, so this restores nothing.
+
+    Off the main thread no handler can be installed or restored at all;
+    `_require_interruptible` refuses the one command that would care.
+    """
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.getsignal(signal.SIGINT)
+    try:
+        yield
+    finally:
+        if signal.getsignal(signal.SIGINT) is not previous:
+            signal.signal(signal.SIGINT, previous)
+
+
 def _run_command(
     context: typer.Context,
     command: CommandPath,
     operation: Callable[[Path, Controls], Outcome],
     *,
     init_command: bool = False,
+    interrupt: Callable[[int, object], bool | None] | None = None,
+) -> None:
+    """Run one command's operation and emit its §14.14 envelope.
+
+    `interrupt` belongs to a command that handles cancellation itself. It is
+    installed before workspace discovery — before anything interruptible
+    happens at all — and stays installed until the envelope is out, so no
+    step of the run is left to the default handler's `KeyboardInterrupt`.
+    Off the main thread nothing can be installed; the one command that
+    passes a handler refuses to run there.
+    """
+
+    interruption_observed = threading.Event()
+    startup_active = threading.Event()
+
+    def handle_interrupt(signum: int, frame: object) -> None:
+        interruption_observed.set()
+        assert interrupt is not None
+        cancel_startup = interrupt(signum, frame)
+        if cancel_startup and startup_active.is_set():
+            raise Abort()
+
+    with _interrupt_disposition_restored():
+        if interrupt is not None and threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, handle_interrupt)
+        _run_operation(
+            context,
+            command,
+            operation,
+            init_command=init_command,
+            interruption_observed=(
+                interruption_observed.is_set if interrupt is not None else None
+            ),
+            startup_active=startup_active if interrupt is not None else None,
+        )
+
+
+def _run_operation(
+    context: typer.Context,
+    command: CommandPath,
+    operation: Callable[[Path, Controls], Outcome],
+    *,
+    init_command: bool = False,
+    interruption_observed: Callable[[], bool] | None = None,
+    startup_active: threading.Event | None = None,
 ) -> None:
     controls = cast(Controls, context.obj)
     workspace: Path | None = None
     preamble_residuals: list[str] = []
+    if startup_active is not None:
+        startup_active.set()
     try:
-        if controls.verbose and controls.quiet:
-            error = Exp2ResError()
-            error.exit_code = 2
-            error.diagnostic_class = "invalid_usage"
-            error.public_message = "--verbose and --quiet cannot be combined."
-            raise error
-        if init_command:
-            if controls.workspace_override is not None:
+        try:
+            if interruption_observed is not None and interruption_observed():
+                raise Abort()
+            if controls.verbose and controls.quiet:
                 error = Exp2ResError()
                 error.exit_code = 2
                 error.diagnostic_class = "invalid_usage"
-                error.public_message = "init does not accept --workspace."
+                error.public_message = "--verbose and --quiet cannot be combined."
                 raise error
-            workspace = Path.cwd().resolve(strict=True)
-        else:
-            workspace = discover_workspace(
-                cwd=Path.cwd(), override=controls.workspace_override
-            )
-        with collect_preamble_residuals(preamble_residuals):
-            outcome = operation(workspace, controls)
+            if init_command:
+                if controls.workspace_override is not None:
+                    error = Exp2ResError()
+                    error.exit_code = 2
+                    error.diagnostic_class = "invalid_usage"
+                    error.public_message = "init does not accept --workspace."
+                    raise error
+                workspace = Path.cwd().resolve(strict=True)
+            else:
+                workspace = discover_workspace(
+                    cwd=Path.cwd(), override=controls.workspace_override
+                )
+            with collect_preamble_residuals(preamble_residuals):
+                outcome = operation(workspace, controls)
+        except Exception:
+            if interruption_observed is not None and interruption_observed():
+                outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
+            else:
+                raise
+        finally:
+            if startup_active is not None:
+                startup_active.clear()
     except KeyboardInterrupt:
         outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
     except Abort:
@@ -2373,6 +2468,127 @@ def _purge_outcome(purged: PurgeOutcome) -> Outcome:
             "Purged the workspace database; the initialized workspace remains."
         ),
     )
+
+
+class _ServeCancellation:
+    """The interrupt disposition for one `view serve` run, start to finish.
+
+    `view serve` is the one §14 form that runs until it is interrupted, so
+    the default handler's `KeyboardInterrupt` would unwind at whichever
+    bytecode it landed on instead of starting the one absolute drain deadline
+    at the interruption instant. `ViewServer.interrupt` is a state change that
+    never raises and is safe from a handler at any instant: the first call
+    drains, the second forces the close, and both keep the §14.14 rule 6
+    class-9 envelope the command returns either way.
+
+    This exists as an object rather than a closure because it is installed
+    before there is a server to interrupt. Workspace discovery, the bind
+    validation, and a §12.14 compatibility read that may block on a busy
+    workspace are all interruptible, and each one left to the default handler
+    is a window where the run enters envelope assembly with no handler
+    installed — where a second interrupt raises past every catch in the
+    runtime. Before `adopt`, the first interrupt asks the runtime to abort
+    active startup work; later interrupts are absorbed so they cannot tear
+    down envelope assembly. After `adopt`, every call reaches the server.
+
+    Nothing is restored here. `_run_command` hands `SIGINT` back to whoever
+    held it only once the envelope is written, because the second interrupt
+    this absorbs is exactly what an impatient owner sends while the first
+    drain is finishing.
+    """
+
+    def __init__(self) -> None:
+        self._server: ViewServer | None = None
+        self._pending = 0
+
+    def __call__(self, _signum: int, _frame: object) -> bool:
+        server = self._server
+        if server is not None:
+            server.interrupt()
+            return False
+        self._pending += 1
+        return self._pending == 1
+
+    def adopt(self, server: ViewServer) -> None:
+        """Hand every later interrupt to the server."""
+
+        self._server = server
+        self._pending = 0
+
+
+def _require_interruptible() -> None:
+    """Refuse to serve where no interrupt could ever end it.
+
+    Python delivers every signal handler on the main thread, and only the
+    main thread may install one. Serving from any other thread would
+    therefore block on `accept` with no path to §14.14 rule 6's class-9
+    envelope at all: the interrupt would reach the main thread, which is
+    somewhere else entirely. This runs before the bind, so the refusal costs
+    no socket — it is a defect in the embedding caller, not owner input, and
+    it takes the ordinary internal class rather than an invented one.
+    """
+
+    if threading.current_thread() is not threading.main_thread():
+        error = Exp2ResError()
+        error.exit_code = 1
+        error.diagnostic_class = "internal_error"
+        error.public_message = (
+            "view serve must run on the main thread, which is the only place "
+            "an interrupt can end it."
+        )
+        raise error
+
+
+def _progress_reporter(controls: Controls) -> Callable[[str, str | None], None]:
+    """Bind §14.17's progress lines to the stream this invocation owns.
+
+    The sink is captured now rather than resolved at write time. §14.17's
+    cancellation may not wait on a wedged reporter, so a line can still be
+    written after the command returned; resolving `sys.stderr` then would
+    send it wherever the process points next — under an embedding host or a
+    test runner, into a later invocation's output. Writing to the captured
+    stream instead means a late line reaches this command's own stderr or,
+    once that stream is gone, nothing at all.
+
+    A line carries only the closed outcome class and, when the request named
+    one, the closed route literal: §30 rule 6 keeps request bytes out of
+    every diagnostic. `--quiet` suppresses these per-request lines; §14.17
+    exempts the startup URLs, which the command writes itself.
+    """
+
+    stream = sys.stderr
+
+    def report(outcome: str, route: str | None) -> None:
+        if controls.quiet:
+            return
+        typer.echo(outcome if route is None else f"{route} {outcome}", file=stream)
+
+    return report
+
+
+@view_app.command("serve")
+def view_serve(
+    context: typer.Context,
+    host: str = typer.Option(DEFAULT_HOST, "--host"),
+    port: int = typer.Option(DEFAULT_PORT, "--port"),
+) -> None:
+    cancellation = _ServeCancellation()
+
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        _require_interruptible()
+        bind = validate_bind(host, port)
+        require_compatible(workspace, require_managed_root=False)
+
+        report = _progress_reporter(controls)
+        server = ViewServer(workspace, bind, report=report)
+        cancellation.adopt(server)
+        server.open()
+        stream = sys.stderr
+        server.advertise(lambda url: typer.echo(url, file=stream))
+        server.serve()
+        return Outcome(exit_code=9, diagnostic_class="cancelled")
+
+    _run_command(context, "view serve", operation, interrupt=cancellation)
 
 
 def _parse_error_envelope(json_output: bool, diagnostic: str, message: str) -> None:

@@ -181,6 +181,11 @@ _PROCESSING_TIMEOUT = (
     "unfinished work was released. Reload; if this persists, stop serving and "
     "inspect local workspace or filesystem health."
 )
+_EXPORT_NOT_CURRENT = (
+    "The published assessment set for this view is missing, stale, or no "
+    "longer matches current state. Nothing partial or re-rendered is served "
+    "in its place."
+)
 _EXPORT_RESIDUAL = (
     "The published assessment set is in a state no re-export can replace on "
     "its own. Remove or repair the residual the export command reports "
@@ -334,7 +339,7 @@ def _schema_remedy(workspace: Path) -> str:
     """
 
     try:
-        status = inspect_workspace(workspace)
+        status = inspect_workspace(workspace, require_managed_root=False)
     except Exp2ResError:
         return "exp2res db status"
     if status.recognized and status.migration_path_available:
@@ -611,7 +616,9 @@ def _compatibility_refusal(workspace: Path) -> _Refusal:
 
     The §8.1 read gate refuses both, but §30 answers them differently: a
     symlinked or non-directory `out/` entry under a schema this build reads is
-    §13.14 rule 6's containment failure, which no migration resolves.
+    §13.14 rule 6's containment failure, which no migration resolves. An
+    absent root never arrives here — the §30 read does not require one, so
+    that state is classified in phase 2 with the rest of the managed output.
     """
 
     try:
@@ -692,7 +699,7 @@ def resolve(
         # which re-reads §12.14 compatibility and closes before phase 2.
         try:
             with read_database(
-                workspace, timeout_ms=busy_timeout_ms
+                workspace, timeout_ms=busy_timeout_ms, require_managed_root=False
             ) as connection, register_connection(connection), _stored_state(selector):
                 snapshot_row, snapshot = _resolve_snapshot(connection, selector)
                 _record, claims = load_snapshot_claims(
@@ -720,11 +727,7 @@ def resolve(
         read = read_current_assessment_members(workspace, graph)
         if read.status == "not_current":
             raise _Refusal(
-                "export_not_current",
-                "The published assessment set for this view is missing, "
-                "stale, or no longer matches current state. Nothing partial "
-                "or re-rendered is served in its place.",
-                _export_command(snapshot.id),
+                "export_not_current", _EXPORT_NOT_CURRENT, _export_command(snapshot.id)
             )
         if read.status == "residual":
             raise _Refusal("export_residual", _EXPORT_RESIDUAL)

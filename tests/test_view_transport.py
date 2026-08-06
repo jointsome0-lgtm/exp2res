@@ -9,7 +9,11 @@ the observable release, never a calibrated sleep.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
+import multiprocessing
+import os
 from pathlib import Path
+import signal
 import socket
 import sqlite3
 import threading
@@ -28,6 +32,8 @@ from exp2res.services import view_server
 from exp2res.services.view_http import ParsedRequest, RequestParser
 from exp2res.services.view_server import (
     _AbandonedError,
+    _AdmissionLease,
+    _ProcessHandle,
     _WorkerHandle,
     BindAddress,
     MAX_CONNECTIONS,
@@ -47,6 +53,53 @@ MARKER_PAGE = views.ViewPage(
     status=200,
     body=b"<!doctype html><p>Vera Example marker page</p>",
 )
+
+
+class IsolatedResolverProbe:
+    def __init__(self, context) -> None:
+        self.entered = context.Event()
+        self.calls = context.Value("i", 0)
+        self.pid = context.Value("i", 0)
+
+    def __call__(self, workspace, route, query, **_kwargs):
+        with self.calls.get_lock():
+            call = self.calls.value
+            self.calls.value += 1
+        if call == 0:
+            self.pid.value = os.getpid()
+            self.entered.set()
+            time.sleep(30.0)
+        return MARKER_PAGE
+
+
+class SignalResolverProbe:
+    def __init__(self, context) -> None:
+        self.entered = context.Event()
+        self.pid = context.Value("i", 0)
+
+    def __call__(self, workspace, route, query, **_kwargs):
+        self.pid.value = os.getpid()
+        self.entered.set()
+        time.sleep(0.5)
+        return MARKER_PAGE
+
+
+class BootstrapSignalResolverProbe:
+    def __init__(self, context) -> None:
+        self.entered = context.Event()
+        self.pid = context.Value("i", 0)
+
+    def __getstate__(self):
+        return self.entered, self.pid
+
+    def __setstate__(self, state) -> None:
+        self.entered, self.pid = state
+        self.pid.value = os.getpid()
+        self.entered.set()
+        time.sleep(0.5)
+
+    def __call__(self, workspace, route, query, **_kwargs):
+        return MARKER_PAGE
 
 
 def free_bind(host: str = "127.0.0.1") -> BindAddress:
@@ -122,6 +175,8 @@ def running_server(
     resolver: Callable[..., views.ViewPage] | None = None,
     timeouts: Timeouts = GENEROUS,
     report=None,
+    isolate_resolver: bool | None = None,
+    process_context=None,
 ) -> Iterator[Rig]:
     bind = free_bind(host)
     server = ViewServer(
@@ -130,6 +185,8 @@ def running_server(
         report=report,
         _resolver=resolver if resolver is not None else page_resolver(MARKER_PAGE),
         _timeouts=timeouts,
+        _isolate_resolver=isolate_resolver,
+        _process_context=process_context,
     )
     server.open()
     rig = Rig(server, bind)
@@ -152,6 +209,20 @@ def outcome_of(response: bytes) -> bytes:
 
 def status_of(response: bytes) -> int:
     return int(response.split(b" ", 2)[1])
+
+
+def reporter_threads() -> set[threading.Thread]:
+    """Every live reporter thread in the process, by identity.
+
+    Reporters retire asynchronously, so an earlier test's thread may still be
+    enumerated here and may die at any moment afterwards. Comparing sets of
+    thread objects rather than counts keeps a neighbour's exit from moving
+    this server's baseline in either direction.
+    """
+
+    return {
+        thread for thread in threading.enumerate() if thread.name == "view-report"
+    }
 
 
 # --- bind validation -------------------------------------------------------
@@ -346,6 +417,67 @@ def test_an_unexpected_accept_failure_releases_the_admitted_work(tmp_path):
         runner.join(15.0)
 
 
+def test_an_accept_failure_still_reports_the_request_that_completed(tmp_path):
+    """The path with no drain still lets its producers reach the queue.
+
+    A connection that had already emitted its response when `accept` failed
+    would otherwise put its line behind a sentinel the unwinding call queued
+    first, where no reporter is left to take it — and that request completed.
+    """
+
+    emitted = threading.Event()
+    unwinding = threading.Event()
+    delivered: list[tuple[str, str | None]] = []
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        report=lambda outcome, route: delivered.append((outcome, route)),
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    server._listener = AcceptFailsOnceServing(server._listener, emitted)
+
+    real_enqueue = server._enqueue_report
+    real_force_close = server._force_close
+
+    def enqueue_once_unwinding(line):
+        emitted.set()
+        assert unwinding.wait(10.0)
+        # Give the unwinding call every chance to queue its sentinel first:
+        # a reporter that retires here is one this line can never reach.
+        for thread in reporter_threads():
+            thread.join(0.5)
+        real_enqueue(line)
+
+    def force_close():
+        unwinding.set()
+        real_force_close()
+
+    server._enqueue_report = enqueue_once_unwinding
+    server._force_close = force_close
+
+    rig = Rig(server, bind)
+    failure: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            server.serve()
+        except BaseException as error:
+            failure.append(error)
+
+    runner = threading.Thread(target=run, daemon=True)
+    runner.start()
+    assert status_of(rig.exchange(rig.request_bytes())) == 200
+    runner.join(15.0)
+
+    assert not runner.is_alive()
+    assert failure and isinstance(failure[0], OSError)
+    assert delivered == [("served", "/mirror")]
+
+
 def test_an_interruption_before_the_bind_takes_precedence_over_it(tmp_path):
     """`interrupt` is callable at any instant, including before `serve` binds.
     §14.14 rule 6's cancellation is not overtaken by a bind refusal for a
@@ -419,11 +551,108 @@ def test_an_interruption_during_reporter_start_stops_the_unused_reporter(
         real_start(thread)
 
     monkeypatch.setattr(threading.Thread, "start", interrupt_then_start)
+    reporters: list[threading.Thread] = []
+    real_thread_init = threading.Thread.__init__
+
+    def record(self, *args, **kwargs):
+        real_thread_init(self, *args, **kwargs)
+        if kwargs.get("name") == "view-report":
+            reporters.append(self)
+
+    monkeypatch.setattr(threading.Thread, "__init__", record)
     assert server.serve() == "drained"
-    reporter = server._report_thread
-    assert reporter is not None
-    reporter.join(10.0)
-    assert not reporter.is_alive()
+    # `serve` releases its handle on the reporter, so the thread is captured
+    # as it is constructed rather than read back off the server afterwards.
+    assert len(reporters) == 1
+    reporters[0].join(10.0)
+    assert not reporters[0].is_alive()
+
+
+def test_an_interruption_between_listen_and_publication_closes_the_socket(
+    tmp_path, monkeypatch
+):
+    """The interruption that found no listener still frees the port.
+
+    `interrupt` closes whatever `open` has published, and `serve` closes what
+    it accepted through. A socket interrupted in the window between the two
+    belongs to neither, and an embedding process would hold the address for
+    its whole life while the command reported an orderly cancellation.
+    """
+
+    bind = free_bind()
+    server = ViewServer(tmp_path, bind, _timeouts=GENEROUS)
+    original = socket.socket.listen
+    listeners: list[socket.socket] = []
+
+    def listen(self, backlog):
+        original(self, backlog)
+        listeners.append(self)
+        server.interrupt()
+
+    monkeypatch.setattr(socket.socket, "listen", listen)
+    server.open()
+    monkeypatch.undo()
+
+    announced: list[str] = []
+    server.advertise(announced.append)
+
+    assert announced == []
+    assert len(listeners) == 1
+    assert listeners[0].fileno() == -1
+    assert server.serve() == "drained"
+
+
+def test_queued_startup_urls_are_discarded_after_interruption(tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+    announced: list[str] = []
+    server = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+    server.open()
+    assert server._start_reporter()
+
+    def block_reporter() -> None:
+        entered.set()
+        release.wait(30.0)
+
+    server._report_queue.put_nowait((block_reporter, (), False))
+    assert entered.wait(10.0)
+    advertiser = threading.Thread(
+        target=server.advertise, args=(announced.append,), daemon=True
+    )
+    advertiser.start()
+    deadline = time.monotonic() + 10.0
+    while server._report_queue.qsize() < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server._report_queue.qsize() == 2
+    server.interrupt()
+    release.set()
+    advertiser.join(10.0)
+
+    assert not advertiser.is_alive()
+    assert server.serve() == "drained"
+    assert announced == []
+
+
+def test_a_startup_url_write_failure_releases_the_listener(tmp_path):
+    bind = free_bind()
+    server = ViewServer(tmp_path, bind, _timeouts=GENEROUS)
+    server.open()
+    calls: list[str] = []
+
+    def fail(url: str) -> None:
+        calls.append(url)
+        raise BrokenPipeError("stderr is closed")
+
+    with pytest.raises(BrokenPipeError, match="stderr is closed"):
+        server.advertise(fail)
+
+    assert len(calls) == 1
+    assert server._listener is None
+    assert server._report_thread is None
+    replacement = ViewServer(tmp_path, bind, _timeouts=GENEROUS)
+    replacement.open()
+    replacement.interrupt()
+    assert replacement.serve() == "drained"
 
 
 def test_a_refused_reporter_start_does_not_override_cancellation(
@@ -880,6 +1109,38 @@ def test_malformed_request_line_is_refused_with_400(tmp_path):
     assert outcome_of(response) == b"malformed_request"
 
 
+def test_unexpected_failure_is_redacted_from_response_and_diagnostic(tmp_path):
+    sentinels = (
+        b"Vera Example internal sentinel",
+        b"TracebackSentinel",
+        b"/tmp/Vera-Example-managed-path",
+        b"Vera Example stored sentinel",
+    )
+    reports: list[tuple[str, str | None]] = []
+    reported = threading.Event()
+
+    def fail_with_private_state(*_args, **_kwargs):
+        raise RuntimeError(b" ".join(sentinels).decode("ascii"))
+
+    def reporter(outcome: str, route: str | None) -> None:
+        reports.append((outcome, route))
+        reported.set()
+
+    with running_server(
+        tmp_path, resolver=fail_with_private_state, report=reporter
+    ) as rig:
+        response = rig.exchange(rig.request_bytes())
+        assert reported.wait(10.0)
+
+    assert status_of(response) == 500
+    assert outcome_of(response) == b"internal_error"
+    diagnostic = " ".join(part or "" for report in reports for part in report).encode()
+    for sentinel in sentinels:
+        assert sentinel not in response
+        assert sentinel not in diagnostic
+    assert reports == [("internal_error", "/mirror")]
+
+
 # --- the real resolver behind the transport --------------------------------
 
 
@@ -949,6 +1210,70 @@ def test_receive_expiry_closes_with_no_response_bytes(tmp_path):
             assert read_to_close(client) == b""
 
 
+def test_receive_expiry_is_not_restarted_by_a_slow_trickle(tmp_path):
+    timeouts = Timeouts(receive=0.25, processing=30.0, emit=30.0, drain=30.0)
+    stop = threading.Event()
+    sent: list[float] = []
+    with running_server(tmp_path, timeouts=timeouts) as rig:
+        with rig.connect() as client:
+            client.settimeout(1.0)
+
+            def trickle() -> None:
+                while not stop.is_set():
+                    try:
+                        client.sendall(b"G")
+                    except OSError:
+                        return
+                    sent.append(time.monotonic())
+                    stop.wait(0.05)
+
+            sender = threading.Thread(target=trickle, daemon=True)
+            started = time.monotonic()
+            sender.start()
+            try:
+                response = read_to_close(client)
+            finally:
+                stop.set()
+                sender.join(10.0)
+
+    assert not sender.is_alive()
+    assert response == b""
+    assert len(sent) >= 3
+    assert time.monotonic() - started < 0.75
+
+
+def test_emit_expiry_truncates_a_stalled_reader_without_relabelling_it(tmp_path):
+    """A client that stops reading loses the rest of its response, nothing more.
+
+    The emit allowance starts after the outcome is composed, so its expiry
+    closes the connection with the page already computed: no retry, no
+    second outcome, and no connection held past its budget. A body well past
+    the socket buffers is what makes the send block at all.
+    """
+
+    page = views.ViewPage(
+        outcome="served",
+        status=200,
+        body=b"<!doctype html><p>Vera Example</p>" + b"x" * (8 * 1024 * 1024),
+    )
+    timeouts = Timeouts(receive=30.0, processing=30.0, emit=0.2, drain=30.0)
+    delivered: list[tuple[str, str | None]] = []
+    with running_server(
+        tmp_path,
+        resolver=page_resolver(page),
+        timeouts=timeouts,
+        report=lambda outcome, route: delivered.append((outcome, route)),
+    ) as rig:
+        with rig.connect() as client:
+            client.sendall(rig.request_bytes())
+            time.sleep(1.0)
+            received = read_to_close(client)
+
+    assert 0 < len(received) < len(page.body)
+    assert received.startswith(b"HTTP/1.1 200 ")
+    assert delivered == [("served", "/mirror")]
+
+
 def test_processing_expiry_abandons_the_worker_and_frees_the_slot(tmp_path):
     release = threading.Event()
     entered = threading.Event()
@@ -982,6 +1307,268 @@ def test_processing_expiry_abandons_the_worker_and_frees_the_slot(tmp_path):
             assert status_of(third) == 200
     finally:
         release.set()
+
+
+def test_processing_expiry_terminates_isolated_work_before_reusing_the_slot(
+    tmp_path,
+):
+    context = multiprocessing.get_context("spawn")
+    resolver = IsolatedResolverProbe(context)
+
+    timeouts = Timeouts(receive=30.0, processing=2.0, emit=30.0, drain=30.0)
+    with running_server(
+        tmp_path,
+        resolver=resolver,
+        timeouts=timeouts,
+        isolate_resolver=True,
+        process_context=context,
+    ) as rig:
+        response = rig.exchange(rig.request_bytes())
+        assert resolver.entered.is_set()
+        assert status_of(response) == 503
+        assert outcome_of(response) == b"processing_timeout"
+
+        worker_pid = resolver.pid.value
+        assert worker_pid > 0
+        limit = time.monotonic() + 5.0
+        while time.monotonic() < limit:
+            try:
+                os.kill(worker_pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("the expired resolver process was not reaped")
+
+        assert status_of(rig.exchange(rig.request_bytes())) == 200
+
+
+def test_resolver_child_ignores_terminal_sigint(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    resolver = SignalResolverProbe(context)
+    timeouts = Timeouts(receive=30.0, processing=5.0, emit=30.0, drain=30.0)
+
+    with running_server(
+        tmp_path,
+        resolver=resolver,
+        timeouts=timeouts,
+        isolate_resolver=True,
+        process_context=context,
+    ) as rig:
+        with rig.connect() as client:
+            client.sendall(rig.request_bytes())
+            assert resolver.entered.wait(10.0)
+            os.kill(resolver.pid.value, signal.SIGINT)
+            response = read_to_close(client)
+
+    assert status_of(response) == 200
+    assert outcome_of(response) == b"served"
+
+
+def test_resolver_child_blocks_sigint_during_spawn_bootstrap(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    resolver = BootstrapSignalResolverProbe(context)
+    timeouts = Timeouts(receive=30.0, processing=5.0, emit=30.0, drain=30.0)
+
+    with running_server(
+        tmp_path,
+        resolver=resolver,
+        timeouts=timeouts,
+        isolate_resolver=True,
+        process_context=context,
+    ) as rig:
+        with rig.connect() as client:
+            client.sendall(rig.request_bytes())
+            assert resolver.entered.wait(10.0)
+            os.kill(resolver.pid.value, signal.SIGINT)
+            response = read_to_close(client)
+
+    assert status_of(response) == 200
+    assert outcome_of(response) == b"served"
+
+
+def test_partial_process_result_transfer_obeys_the_processing_deadline(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    sentinel, sentinel_writer = os.pipe()
+    release = threading.Event()
+
+    class IncompleteProcess:
+        @property
+        def sentinel(self):
+            return sentinel
+
+    def write_partial_result() -> None:
+        os.write(sender.fileno(), view_server._RESULT_LENGTH.pack(100))
+        os.write(sender.fileno(), b"partial")
+        release.wait(2.0)
+        sender.close()
+
+    writer = threading.Thread(target=write_partial_result, daemon=True)
+    writer.start()
+    server = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+    started = time.monotonic()
+    try:
+        page = server._receive_process_result(
+            receiver, IncompleteProcess(), started + 0.2
+        )
+    finally:
+        release.set()
+        writer.join(10.0)
+        receiver.close()
+        sender.close()
+        os.close(sentinel)
+        os.close(sentinel_writer)
+
+    assert page is not None and page.outcome == "processing_timeout"
+    assert time.monotonic() - started < 1.0
+
+
+def test_continuously_readable_process_result_rechecks_between_chunks(
+    tmp_path, monkeypatch
+):
+    payload = b"x" * (1024 * 1024)
+    metadata = json.dumps(
+        {
+            "body_length": len(payload),
+            "content_type": views.CONTENT_TYPE,
+            "outcome": "served",
+            "published_member": True,
+            "status": 200,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    frame = view_server._RESULT_LENGTH.pack(len(metadata)) + metadata + payload
+    offset = 0
+    reads = 0
+
+    class Receiver:
+        def fileno(self):
+            return 1
+
+    class Process:
+        sentinel = object()
+
+    receiver = Receiver()
+
+    def read(_descriptor, size):
+        nonlocal offset, reads
+        reads += 1
+        chunk = frame[offset : offset + size]
+        offset += len(chunk)
+        return chunk
+
+    ticks = iter((0.0, 0.1, 0.2, 0.4))
+    server = ViewServer(
+        tmp_path, free_bind(), _timeouts=GENEROUS, _clock=lambda: next(ticks)
+    )
+    monkeypatch.setattr(view_server.os, "set_blocking", lambda *_args: None)
+    monkeypatch.setattr(view_server.os, "read", read)
+    monkeypatch.setattr(
+        view_server, "wait_for_connections", lambda *_args: (receiver,)
+    )
+
+    page = server._receive_process_result(receiver, Process(), deadline=0.3)
+
+    assert page is not None and page.outcome == "processing_timeout"
+    assert reads == 1
+    assert offset < len(frame)
+
+
+def test_complete_process_result_keeps_the_body_buffer_without_decoding(
+    tmp_path, monkeypatch
+):
+    payload = b"<!doctype html><p>Vera Example</p>" + b"x" * (1024 * 1024)
+    metadata = json.dumps(
+        {
+            "body_length": len(payload),
+            "content_type": views.CONTENT_TYPE,
+            "outcome": "served",
+            "published_member": True,
+            "status": 200,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    frame = view_server._RESULT_LENGTH.pack(len(metadata)) + metadata + payload
+    offset = 0
+
+    class Receiver:
+        def fileno(self):
+            return 1
+
+    class Process:
+        sentinel = object()
+
+    receiver = Receiver()
+
+    def read(_descriptor, size):
+        nonlocal offset
+        chunk = frame[offset : offset + size]
+        offset += len(chunk)
+        return chunk
+
+    monkeypatch.setattr(view_server.os, "set_blocking", lambda *_args: None)
+    monkeypatch.setattr(view_server.os, "read", read)
+    monkeypatch.setattr(
+        view_server,
+        "wait_for_connections",
+        lambda *_args: (receiver, Process.sentinel),
+    )
+    server = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+
+    page = server._receive_process_result(
+        receiver, Process(), deadline=time.monotonic() + 30.0
+    )
+
+    assert page is not None and page.outcome == "served"
+    assert isinstance(page.body, memoryview)
+    assert page.body.readonly
+    assert bytes(page.body) == payload
+
+
+def test_resolver_process_finish_never_waits_for_uninterruptible_work():
+    class UninterruptibleProcess:
+        def is_alive(self):
+            return True
+
+        def kill(self):
+            pass
+
+        def join(self, timeout=None):
+            if timeout is None:
+                time.sleep(4.0)
+
+    handle = _ProcessHandle(UninterruptibleProcess())
+    started = time.monotonic()
+
+    assert handle.finish() is False
+    assert time.monotonic() - started < 1.0
+
+
+def test_deferred_admission_is_not_reused_until_the_process_is_reaped():
+    slots = threading.Semaphore(0)
+    lease = _AdmissionLease(slots)
+
+    lease.defer()
+    lease.release()
+    assert not slots.acquire(blocking=False)
+
+    lease.release_deferred()
+    assert slots.acquire(blocking=False)
+
+
+def test_reaping_before_connection_close_does_not_release_admission():
+    slots = threading.Semaphore(0)
+    lease = _AdmissionLease(slots)
+
+    lease.defer()
+    lease.release_deferred()
+    assert not slots.acquire(blocking=False)
+
+    lease.release()
+    assert slots.acquire(blocking=False)
 
 
 def test_processing_expiry_interrupts_a_wedged_sqlite_reader(workspace):
@@ -1109,15 +1696,58 @@ def test_expired_processing_deadline_outweighs_a_pre_state_refusal(tmp_path):
     assert fresh is not None and fresh.outcome == "authority_not_bound"
 
 
-def test_a_resolver_thread_that_cannot_start_is_the_fixed_internal_error(
-    tmp_path, monkeypatch
-):
+def test_emit_does_not_copy_the_published_body_during_composition(tmp_path):
+    body = b"<!doctype html><p>Vera Example</p>" + b"x" * (8 * 1024 * 1024)
+    page = views.ViewPage(
+        outcome="served",
+        status=200,
+        body=body,
+        published_member=True,
+    )
+    sent_objects: list[object] = []
+
+    class RecordingSocket:
+        def settimeout(self, _timeout):
+            pass
+
+        def send(self, payload):
+            sent_objects.append(payload.obj)
+            return len(payload)
+
+    server = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+    emitted = server._emit(
+        RecordingSocket(), page, time.monotonic() + 30.0, head=False
+    )
+
+    assert emitted is page
+    assert len(sent_objects) == 2
+    assert sent_objects[1] is body
+
+
+def test_a_resolver_process_that_cannot_start_is_the_fixed_internal_error(tmp_path):
     # §30 rule 7 owes every complete admitted request exactly one outcome. A
-    # thread the operating system refuses to create is an unexpected local
+    # process the operating system refuses to create is an unexpected local
     # failure, and the connection's own thread is still alive to answer it,
     # so the request gets the fixed 500 rather than a close with no response.
     bind = free_bind()
-    server = ViewServer(tmp_path, bind, _timeouts=GENEROUS)
+
+    class RefusingProcess:
+        def start(self):
+            raise RuntimeError("can't start new process")
+
+    class RefusingContext:
+        def Event(self):
+            return multiprocessing.get_context("spawn").Event()
+
+        def Pipe(self, *, duplex):
+            return multiprocessing.get_context("spawn").Pipe(duplex=duplex)
+
+        def Process(self, **_kwargs):
+            return RefusingProcess()
+
+    server = ViewServer(
+        tmp_path, bind, _timeouts=GENEROUS, _process_context=RefusingContext()
+    )
     parser = RequestParser()
     parser.feed(
         b"GET /mirror?scope=global HTTP/1.1\r\nHost: "
@@ -1126,14 +1756,203 @@ def test_a_resolver_thread_that_cannot_start_is_the_fixed_internal_error(
     )
     assert parser.done and not parser.malformed
 
-    def refuse_start(self):
-        raise RuntimeError("can't start new thread")
+    try:
+        page = server._decide(parser, time.monotonic() + 30.0)
+        assert page is not None
+        assert page.outcome == "internal_error"
+        assert page.status == 500
+    finally:
+        server._stop_process_reaper()
+
+
+def test_a_refused_reaper_starts_no_resolver_process(tmp_path, monkeypatch):
+    bind = free_bind()
+    process_resources: list[bool] = []
+
+    class UnusedContext:
+        def Pipe(self, *, duplex):
+            process_resources.append(True)
+            raise AssertionError("no process resources may be created")
+
+    server = ViewServer(
+        tmp_path, bind, _timeouts=GENEROUS, _process_context=UnusedContext()
+    )
+    parser = RequestParser()
+    parser.feed(
+        b"GET /mirror?scope=global HTTP/1.1\r\nHost: "
+        + bind.authority.encode("ascii")
+        + b"\r\n\r\n"
+    )
+
+    def refuse_start(_thread):
+        raise RuntimeError("can't start reaper")
 
     monkeypatch.setattr(threading.Thread, "start", refuse_start)
     page = server._decide(parser, time.monotonic() + 30.0)
+
     assert page is not None
     assert page.outcome == "internal_error"
-    assert page.status == 500
+    assert process_resources == []
+
+
+@pytest.mark.parametrize("expired_drain", [False, True])
+def test_expired_deadline_starts_no_resolver_process(tmp_path, expired_drain):
+    bind = free_bind()
+    process_resources: list[bool] = []
+
+    class UnusedContext:
+        def Pipe(self, *, duplex):
+            process_resources.append(True)
+            raise AssertionError("no process resources may be created")
+
+        def Event(self):
+            process_resources.append(True)
+            raise AssertionError("no process resources may be created")
+
+    server = ViewServer(
+        tmp_path, bind, _timeouts=GENEROUS, _process_context=UnusedContext()
+    )
+    if expired_drain:
+        server.interrupt()
+        with server._state_lock:
+            server._drain_deadline = time.monotonic() - 1.0
+    request = ParsedRequest(
+        method=b"GET",
+        path=b"/mirror",
+        query=b"scope=global",
+        host=bind.authority.encode("ascii"),
+        origin=None,
+        framing="bodyless",
+    )
+
+    page = server._resolve_in_process(
+        request, time.monotonic() - 1.0, lease=None
+    )
+
+    if expired_drain:
+        assert page is None
+    else:
+        assert page is not None and page.outcome == "processing_timeout"
+    assert process_resources == []
+
+
+def test_resolver_process_startup_obeys_the_processing_deadline(tmp_path):
+    bind = free_bind()
+    slots = threading.Semaphore(0)
+    lease = _AdmissionLease(slots)
+
+    class StalledProcess:
+        def start(self):
+            time.sleep(2.0)
+            raise RuntimeError("process creation stalled")
+
+        def close(self):
+            pass
+
+    class StalledContext:
+        def Event(self):
+            return multiprocessing.get_context("spawn").Event()
+
+        def Pipe(self, *, duplex):
+            return multiprocessing.get_context("spawn").Pipe(duplex=duplex)
+
+        def Process(self, **_kwargs):
+            return StalledProcess()
+
+    server = ViewServer(
+        tmp_path, bind, _timeouts=GENEROUS, _process_context=StalledContext()
+    )
+    parser = RequestParser()
+    parser.feed(
+        b"GET /mirror?scope=global HTTP/1.1\r\nHost: "
+        + bind.authority.encode("ascii")
+        + b"\r\n\r\n"
+    )
+    started = time.monotonic()
+    try:
+        page = server._decide(parser, started + 0.2, lease)
+        elapsed = time.monotonic() - started
+        lease.release()
+        assert slots.acquire(blocking=False)
+    finally:
+        server._stop_process_reaper()
+
+    assert page is not None and page.outcome == "processing_timeout"
+    assert elapsed < 1.0
+
+
+def test_expired_startup_never_enters_the_resolver(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    resolver = IsolatedResolverProbe(context)
+    child_created = threading.Event()
+    release_start = threading.Event()
+    processes = []
+
+    class DelayedProcess:
+        def __init__(self, process) -> None:
+            self._process = process
+            self.pid = 0
+
+        def start(self) -> None:
+            self._process.start()
+            self.pid = self._process.pid
+            child_created.set()
+            release_start.wait(2.0)
+
+        def __getattr__(self, name):
+            return getattr(self._process, name)
+
+    class DelayedContext:
+        def Event(self):
+            return context.Event()
+
+        def Pipe(self, *, duplex):
+            return context.Pipe(duplex=duplex)
+
+        def Process(self, **kwargs):
+            process = DelayedProcess(context.Process(**kwargs))
+            processes.append(process)
+            return process
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        _resolver=resolver,
+        _isolate_resolver=True,
+        _process_context=DelayedContext(),
+        _timeouts=GENEROUS,
+    )
+    request = ParsedRequest(
+        method=b"GET",
+        path=b"/mirror",
+        query=b"scope=global",
+        host=bind.authority.encode("ascii"),
+        origin=None,
+        framing="bodyless",
+    )
+    try:
+        page = server._resolve_in_process(
+            request, time.monotonic() + 1.0, lease=None
+        )
+        assert child_created.is_set()
+        assert not resolver.entered.is_set()
+    finally:
+        release_start.set()
+        server._stop_process_reaper()
+
+    assert page is not None and page.outcome == "processing_timeout"
+    worker_pid = processes[0].pid
+    limit = time.monotonic() + 5.0
+    while time.monotonic() < limit:
+        try:
+            os.kill(worker_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("the cancelled startup child was not reaped")
+    assert not resolver.entered.is_set()
 
 
 def test_processing_expiry_during_composition_composes_the_503(tmp_path):
@@ -1341,10 +2160,15 @@ def test_a_backlog_connection_accepted_at_the_drain_boundary_is_refused(tmp_path
         rig.thread.join(15.0)
 
 
-def test_stalled_reporter_does_not_consume_the_drain(tmp_path):
-    """§14.17 reserves the drain for unfinished request work: a reporter
-    blocked after its request closed and released everything must not make
-    the drain wait, let alone expire."""
+def test_a_stalled_reporter_never_outlives_the_drain_deadline(tmp_path):
+    """§14.17's one absolute deadline bounds the reporter too.
+
+    The drain itself never waits on a reporter: this one is blocked after its
+    request closed and released everything, and the drain completes anyway.
+    What follows is the flush of already-queued lines, and it ends at the
+    same absolute deadline rather than adding an allowance of its own — so a
+    writer that never returns cannot hold the class-9 envelope open.
+    """
 
     gate = threading.Event()
     reported = threading.Event()
@@ -1353,8 +2177,9 @@ def test_stalled_reporter_does_not_consume_the_drain(tmp_path):
         reported.set()
         gate.wait(30.0)
 
+    timeouts = Timeouts(receive=30.0, processing=30.0, emit=30.0, drain=0.3)
     try:
-        with running_server(tmp_path, report=reporter) as rig:
+        with running_server(tmp_path, report=reporter, timeouts=timeouts) as rig:
             response = rig.exchange(rig.request_bytes())
             assert status_of(response) == 200
             assert reported.wait(10.0)
@@ -1378,12 +2203,7 @@ def test_blocked_reporter_never_accumulates_threads(tmp_path):
         entered.set()
         gate.wait(30.0)
 
-    def reporter_thread_count() -> int:
-        return sum(
-            thread.name == "view-report" for thread in threading.enumerate()
-        )
-
-    before = reporter_thread_count()
+    before = reporter_threads()
     try:
         with running_server(tmp_path, report=reporter) as rig:
             for _ in range(8):
@@ -1391,9 +2211,206 @@ def test_blocked_reporter_never_accumulates_threads(tmp_path):
             assert entered.wait(10.0)
             # Eight completed requests behind a wedged reporter added exactly
             # the one dedicated thread, never one blocked thread each.
-            assert reporter_thread_count() == before + 1
+            assert len(reporter_threads() - before) == 1
     finally:
         gate.set()
+
+
+def test_a_finished_run_retires_its_reporter_after_serving_requests(tmp_path):
+    """Serving ends the reporter, so an embedding process accumulates none.
+
+    A process that serves once and exits would never notice, but a long-lived
+    one — a test session, an embedding host — would otherwise leave one
+    blocked thread and one live callback per serve-and-interrupt cycle.
+    """
+
+    delivered: list[tuple[str, str | None]] = []
+
+    def reporter(outcome, route):
+        delivered.append((outcome, route))
+
+    before = reporter_threads()
+    with running_server(tmp_path, report=reporter) as rig:
+        assert status_of(rig.exchange(rig.request_bytes())) == 200
+    rig.thread.join(30.0)
+    assert not rig.thread.is_alive()
+
+    for thread in reporter_threads() - before:
+        thread.join(30.0)
+    assert reporter_threads() - before == set()
+    # The retirement is a stop, not a silencing: the completed request's own
+    # line still reached the callback.
+    assert delivered == [("served", "/mirror")]
+
+
+def test_a_second_interruption_cuts_the_flush_short(tmp_path):
+    """The immediate close outranks delivering diagnostics.
+
+    A blocked writer would otherwise hold the class-9 envelope for the rest
+    of the drain deadline, which is exactly what the second interruption
+    exists to refuse.
+    """
+
+    gate = threading.Event()
+    reported = threading.Event()
+
+    def reporter(outcome, route):
+        reported.set()
+        gate.wait(30.0)
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        report=reporter,
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    rig = Rig(server, bind)
+    rig.thread.start()
+    try:
+        assert status_of(rig.exchange(rig.request_bytes())) == 200
+        assert reported.wait(10.0)
+        server.interrupt()
+        server.interrupt()
+        rig.thread.join(10.0)
+
+        assert not rig.thread.is_alive()
+    finally:
+        gate.set()
+
+
+def test_a_completed_line_reaches_the_sink_before_the_run_returns(tmp_path):
+    """A finished run has already reported what it served.
+
+    The reporter is a daemon thread with a sink the invocation captured, so a
+    line still in flight when `serve` returns races the caller: a CLI process
+    exits, a runner closes that stderr, and the required route and outcome
+    are simply lost. The reporter here takes long enough to write that only
+    the bounded flush can close the gap.
+    """
+
+    delivered: list[tuple[str, str | None]] = []
+
+    def reporter(outcome, route):
+        time.sleep(0.05)
+        delivered.append((outcome, route))
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        report=reporter,
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    rig = Rig(server, bind)
+    rig.thread.start()
+
+    assert status_of(rig.exchange(rig.request_bytes())) == 200
+    server.interrupt()
+    rig.thread.join(30.0)
+
+    assert not rig.thread.is_alive()
+    assert delivered == [("served", "/mirror")]
+
+
+def test_a_completed_line_is_queued_before_the_drain_can_return(tmp_path):
+    """The instant a slot comes back, the request's line is already queued.
+
+    Releasing the admission is what lets a waiting drain return and retire
+    the reporter. This drives the interruption from inside that release, so
+    a line enqueued afterwards would provably arrive behind the sentinel and
+    never reach the callback.
+    """
+
+    delivered: list[tuple[str, str | None]] = []
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        report=lambda outcome, route: delivered.append((outcome, route)),
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    rig = Rig(server, bind)
+    rig.thread.start()
+
+    real_release = server._release_admission
+    shut_down = threading.Event()
+
+    def release_then_shut_down(connection, lease=None):
+        real_release(connection, lease)
+        # The slot is back and the drain count is zero: this is the exact
+        # instant `_drain` may return and stop the reporter.
+        server.interrupt()
+        rig.thread.join(30.0)
+        shut_down.set()
+
+    server._release_admission = release_then_shut_down
+
+    assert status_of(rig.exchange(rig.request_bytes())) == 200
+    assert shut_down.wait(30.0)
+    assert not rig.thread.is_alive()
+    for thread in threading.enumerate():
+        if thread.name == "view-report":
+            thread.join(30.0)
+
+    assert delivered == [("served", "/mirror")]
+
+
+def test_a_saturated_report_queue_still_delivers_the_stop_signal(tmp_path):
+    """A wedged reporter can cost lines, never the reporter's own termination.
+
+    The data slots are bounded independently of the queue, so the last queue
+    slot stays reserved for the sentinel: once the callback recovers, the
+    reporter drains what it holds and returns instead of blocking on an
+    empty queue forever.
+    """
+
+    gate = threading.Event()
+    entered = threading.Event()
+    delivered: list[tuple[str, str | None]] = []
+
+    def reporter(outcome, route):
+        entered.set()
+        gate.wait(30.0)
+        delivered.append((outcome, route))
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        report=reporter,
+        _resolver=page_resolver(MARKER_PAGE),
+        # A short drain, because the wedged reporter here makes the flush
+        # spend that whole allowance: joining for exactly it would race.
+        _timeouts=Timeouts(receive=30.0, processing=30.0, emit=30.0, drain=0.3),
+    )
+    server.open()
+    rig = Rig(server, bind)
+    rig.thread.start()
+    try:
+        assert status_of(rig.exchange(rig.request_bytes())) == 200
+        assert entered.wait(10.0)
+        # Fill every data slot the semaphore grants while the reporter is
+        # wedged inside the callback, leaving only the reserved slot free.
+        for _ in range(view_server.REPORT_QUEUE_LIMIT + 8):
+            server._enqueue_report(("served", "/mirror"))
+        assert server._report_queue.full() is False
+    finally:
+        server.interrupt()
+        rig.thread.join(30.0)
+        gate.set()
+
+    assert not rig.thread.is_alive()
+    for thread in threading.enumerate():
+        if thread.name == "view-report":
+            thread.join(30.0)
+    assert not any(thread.name == "view-report" for thread in threading.enumerate())
 
 
 class DrainWhileReceivingClock:
