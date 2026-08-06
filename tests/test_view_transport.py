@@ -204,18 +204,45 @@ def test_occupied_bind_fails_closed_without_another_try(tmp_path):
         ("127.0.0.1", 80, ViewBindInvalidError),
     ],
 )
-def test_open_refuses_a_bind_that_never_went_through_validation(
+def test_an_inadmissible_bind_cannot_be_constructed_at_all(
     tmp_path, host, port, error
 ):
-    """§30 rule 1 refuses a non-loopback bind before a socket exists, so the
-    refusal cannot live only in the command that parsed the flags:
-    `BindAddress` is an exported plain value, and one built directly must not
-    reach `bind` and expose owner-only views off the loopback interface."""
+    """§30 rule 1 refuses a non-loopback bind before a socket exists, and that
+    refusal cannot depend on which entry point built the value: `BindAddress`
+    is exported, and one built directly must never reach `bind` and expose
+    owner-only views off the loopback interface. Nothing downstream — the
+    authority and origin encodings included — ever sees an invalid host."""
 
-    server = ViewServer(tmp_path, BindAddress(host=host, port=port))
     with pytest.raises(error):
+        BindAddress(host=host, port=port)
+
+
+def test_a_non_ascii_host_is_the_stable_loopback_refusal(tmp_path):
+    # Not a `UnicodeEncodeError` from deriving the authority: the bind is
+    # refused for what it is, with the stable §14.17 diagnostic.
+    with pytest.raises(ViewBindNotLoopbackError):
+        BindAddress(host="é", port=8731)
+
+
+def test_an_interruption_before_open_takes_precedence_over_the_bind(tmp_path):
+    """`open` is a public step a caller may take separately from `serve`, and
+    `interrupt` is callable at any instant. An interruption that arrives
+    first is not overtaken by a bind refusal for a socket never created."""
+
+    occupied = free_bind()
+    holder = ViewServer(tmp_path, occupied)
+    holder.open()
+    try:
+        server = ViewServer(tmp_path, occupied, _timeouts=GENEROUS)
+        server.interrupt()
+        # The port is taken, so attempting the bind would raise instead.
         server.open()
-    assert server._listener is None
+        assert server._listener is None
+        assert server.serve() == "drained"
+    finally:
+        holder.interrupt()
+        holder.interrupt()
+        holder.serve()
 
 
 def test_socket_creation_failure_fails_closed_as_bind_failed(tmp_path, monkeypatch):

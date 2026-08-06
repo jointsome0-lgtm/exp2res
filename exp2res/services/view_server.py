@@ -89,12 +89,37 @@ ServeResult = Literal["drained", "expired", "interrupted"]
 ReportLine = Callable[[str, str | None], None]
 
 
+def _check_bind(host: str, port: int) -> None:
+    """§30 rule 1's admissible bind, decided before anything is derived.
+
+    A name is never resolved: a name that resolves to loopback today is
+    refused exactly like any other, because what it resolves to later is not
+    Exp2Res's decision. Port 0 is refused because a URL configured outside
+    Exp2Res cannot name a port chosen at bind time (§14.17).
+    """
+
+    if host not in LOOPBACK_HOSTS:
+        raise ViewBindNotLoopbackError()
+    if not isinstance(port, int) or isinstance(port, bool):
+        raise ViewBindInvalidError()
+    if port < MIN_PORT or port > MAX_PORT:
+        raise ViewBindInvalidError()
+
+
 @dataclass(frozen=True)
 class BindAddress:
-    """One validated literal loopback bind."""
+    """One literal loopback bind, unconstructable as anything else.
+
+    The check lives here rather than only in `validate_bind` so that no code
+    path can hold an inadmissible bind at all: this is an exported value, and
+    §30 rule 1's refusal must not depend on which entry point built it.
+    """
 
     host: str
     port: int
+
+    def __post_init__(self) -> None:
+        _check_bind(self.host, self.port)
 
     @property
     def authority(self) -> str:
@@ -115,19 +140,13 @@ class BindAddress:
 def validate_bind(host: str, port: int) -> BindAddress:
     """Admit only a literal loopback address and a fixed usable port.
 
-    Refused before a socket exists (§30 rule 1). A name is never resolved: a
-    name that resolves to loopback today is refused exactly like any other,
-    because what it resolves to later is not Exp2Res's decision. Port 0 is
-    refused because a URL configured outside Exp2Res cannot name a port
-    chosen at bind time (§14.17).
+    Refused before a socket exists (§30 rule 1). This is the named entry
+    point the §14.17 command uses on its parsed flags; the same refusal is
+    enforced by `BindAddress` itself, so an inadmissible bind cannot be
+    reached by constructing one directly instead.
     """
 
-    if host not in LOOPBACK_HOSTS:
-        raise ViewBindNotLoopbackError()
-    if not isinstance(port, int) or isinstance(port, bool):
-        raise ViewBindInvalidError()
-    if port < MIN_PORT or port > MAX_PORT:
-        raise ViewBindInvalidError()
+    _check_bind(host, port)
     return BindAddress(host=host, port=port)
 
 
@@ -300,13 +319,20 @@ class ViewServer:
         self._report_thread: threading.Thread | None = None
 
     def open(self) -> None:
-        """Bind exactly the validated address, or fail without another try."""
+        """Bind exactly the validated address, or fail without another try.
 
-        # §30 rule 1 refuses a non-loopback bind "before a socket exists", so
-        # the refusal belongs here and not only in the command that parsed the
-        # flags: `BindAddress` is an exported plain value, and a caller that
-        # built one directly must not be able to reach `bind` with it.
-        validate_bind(self.bind_address.host, self.bind_address.port)
+        The address needs no check here: `BindAddress` cannot hold an
+        inadmissible bind, so §30 rule 1's refusal has already happened
+        before any instance reaches this method.
+        """
+
+        if self._draining.is_set():
+            # `interrupt` is callable at any instant, and `open` is a public
+            # step a caller may take separately from `serve`. §14.14 rule 6's
+            # cancellation outranks a bind that has not been attempted, so an
+            # interruption that arrived first is never overtaken by a bind
+            # refusal for a socket this call would only now create.
+            return
         family = socket.AF_INET6 if ":" in self.bind_address.host else socket.AF_INET
         try:
             # Creation is inside the conversion: a disabled address family or
