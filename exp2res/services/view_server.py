@@ -364,6 +364,12 @@ class ViewServer:
         """Accept until interrupted, then drain; returns the termination class."""
 
         if self._listener is None:
+            if self._draining.is_set():
+                # `interrupt` is callable at any instant, including before
+                # this bind is attempted. §14.14 rule 6's cancellation has
+                # precedence over a bind that never ran, so an interruption
+                # that arrives first is never overtaken by a bind refusal.
+                return self._drain()
             self.open()
         listener = self._listener
         assert listener is not None
@@ -441,6 +447,15 @@ class ViewServer:
                     # so the peer gets rule 10's unread close, and serving
                     # continues — a refused thread is transient.
                     self._release_admission(connection)
+        except BaseException:
+            # Serving ends without a drain — an `accept` the operating system
+            # refused for its own reasons, descriptor exhaustion among them.
+            # The requests already admitted must not outlive the call that
+            # owns them: they are released here, before the failure reaches
+            # §14.17's envelope, so no socket, worker, or read transaction
+            # keeps running behind a command that has already reported.
+            self._force_close()
+            raise
         finally:
             with suppress(OSError):
                 listener.close()

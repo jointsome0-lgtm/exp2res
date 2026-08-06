@@ -208,6 +208,94 @@ def test_socket_creation_failure_fails_closed_as_bind_failed(tmp_path, monkeypat
         server.open()
 
 
+class AcceptFailsOnceServing:
+    """The listener, but the accept after the first one is an OS refusal.
+
+    The refusal waits for the admitted request to reach the resolver, so the
+    failure is observed with request work provably in flight.
+    """
+
+    def __init__(self, listener: socket.socket, serving: threading.Event) -> None:
+        self._listener = listener
+        self._serving = serving
+        self._accepted = False
+
+    def accept(self):
+        if self._accepted:
+            assert self._serving.wait(10.0)
+            raise OSError(24, "Too many open files")
+        self._accepted = True
+        return self._listener.accept()
+
+    def __getattr__(self, name):
+        return getattr(self._listener, name)
+
+
+def test_an_unexpected_accept_failure_releases_the_admitted_work(tmp_path):
+    """An `accept` the operating system refuses ends serving with no drain.
+    The requests already admitted must not outlive the failing call: they are
+    released before it propagates, so no socket, worker, or read transaction
+    keeps running behind a command that has already reported."""
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def resolver(workspace, route, query, **_kwargs):
+        entered.set()
+        release.wait(30.0)
+        return MARKER_PAGE
+
+    bind = free_bind()
+    server = ViewServer(tmp_path, bind, _resolver=resolver, _timeouts=GENEROUS)
+    server.open()
+    server._listener = AcceptFailsOnceServing(server._listener, entered)
+    rig = Rig(server, bind)
+    failure: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            server.serve()
+        except BaseException as error:
+            failure.append(error)
+
+    runner = threading.Thread(target=run, daemon=True)
+    runner.start()
+    try:
+        client = rig.connect()
+        client.sendall(rig.request_bytes())
+        assert entered.wait(10.0)
+        # Released by the failing accept, never by a drain, and while the
+        # resolver is still blocked: no response, and no waiting on it.
+        assert read_to_close(client) == b""
+        client.close()
+        runner.join(15.0)
+        assert not runner.is_alive()
+        assert failure and isinstance(failure[0], OSError)
+    finally:
+        release.set()
+        runner.join(15.0)
+
+
+def test_an_interruption_before_the_bind_takes_precedence_over_it(tmp_path):
+    """`interrupt` is callable at any instant, including before `serve` binds.
+    §14.14 rule 6's cancellation is not overtaken by a bind refusal for a
+    socket that was never created."""
+
+    occupied = free_bind()
+    holder = ViewServer(tmp_path, occupied)
+    holder.open()
+    try:
+        server = ViewServer(tmp_path, occupied, _timeouts=GENEROUS)
+        server.interrupt()
+        # The port is taken, so attempting the bind would raise instead.
+        assert server.serve() == "drained"
+        assert server._listener is None
+    finally:
+        holder.interrupt()
+        holder.interrupt()
+        holder.serve()
+
+
 def test_a_reporter_thread_the_os_refuses_gives_the_port_back(
     tmp_path, monkeypatch
 ):
