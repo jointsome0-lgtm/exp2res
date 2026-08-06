@@ -335,6 +335,42 @@ def test_a_page_spanning_many_socket_writes_arrives_whole(workspace: Path) -> No
     assert len(response.body) > 30_000
 
 
+def test_a_shell_embed_is_served_under_either_fetch_metadata_declaration(
+    workspace: Path,
+) -> None:
+    """§21.57: the site declaration is not consulted and refuses nothing.
+
+    The consumer this surface exists for embeds the view by URL from its own
+    web origin, so the browser sends exactly these headers on the navigation
+    §30 is built to serve. Refusing either declaration would refuse the
+    intended embed, so both get the published bytes.
+    """
+
+    snapshot_id = exported_workspace(workspace)
+    published = member(workspace, snapshot_id, "report.html")
+
+    with live_view(workspace) as view:
+        cross_site = view.mirror(
+            extra=(
+                "Sec-Fetch-Site: cross-site",
+                "Sec-Fetch-Mode: navigate",
+                "Sec-Fetch-Dest: iframe",
+            )
+        )
+        same_site = view.mirror(
+            extra=(
+                "Sec-Fetch-Site: same-site",
+                "Sec-Fetch-Mode: navigate",
+                "Sec-Fetch-Dest: document",
+            )
+        )
+
+    for response in (cross_site, same_site):
+        assert response.status == 200
+        assert response.outcome == "served"
+        assert response.body == published
+
+
 def test_an_ambient_cookie_is_ignored_and_no_cross_origin_read_is_granted(
     workspace: Path,
 ) -> None:
