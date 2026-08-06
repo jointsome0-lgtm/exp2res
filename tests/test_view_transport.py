@@ -632,6 +632,28 @@ def test_queued_startup_urls_are_discarded_after_interruption(tmp_path):
     assert announced == []
 
 
+def test_a_startup_url_write_failure_releases_the_listener(tmp_path):
+    bind = free_bind()
+    server = ViewServer(tmp_path, bind, _timeouts=GENEROUS)
+    server.open()
+    calls: list[str] = []
+
+    def fail(url: str) -> None:
+        calls.append(url)
+        raise BrokenPipeError("stderr is closed")
+
+    with pytest.raises(BrokenPipeError, match="stderr is closed"):
+        server.advertise(fail)
+
+    assert len(calls) == 1
+    assert server._listener is None
+    assert server._report_thread is None
+    replacement = ViewServer(tmp_path, bind, _timeouts=GENEROUS)
+    replacement.open()
+    replacement.interrupt()
+    assert replacement.serve() == "drained"
+
+
 def test_a_refused_reporter_start_does_not_override_cancellation(
     tmp_path, monkeypatch
 ):
@@ -1517,6 +1539,9 @@ def test_a_resolver_process_that_cannot_start_is_the_fixed_internal_error(tmp_pa
             raise RuntimeError("can't start new process")
 
     class RefusingContext:
+        def Event(self):
+            return multiprocessing.get_context("spawn").Event()
+
         def Pipe(self, *, duplex):
             return multiprocessing.get_context("spawn").Pipe(duplex=duplex)
 
@@ -1573,6 +1598,47 @@ def test_a_refused_reaper_starts_no_resolver_process(tmp_path, monkeypatch):
     assert process_resources == []
 
 
+@pytest.mark.parametrize("expired_drain", [False, True])
+def test_expired_deadline_starts_no_resolver_process(tmp_path, expired_drain):
+    bind = free_bind()
+    process_resources: list[bool] = []
+
+    class UnusedContext:
+        def Pipe(self, *, duplex):
+            process_resources.append(True)
+            raise AssertionError("no process resources may be created")
+
+        def Event(self):
+            process_resources.append(True)
+            raise AssertionError("no process resources may be created")
+
+    server = ViewServer(
+        tmp_path, bind, _timeouts=GENEROUS, _process_context=UnusedContext()
+    )
+    if expired_drain:
+        server.interrupt()
+        with server._state_lock:
+            server._drain_deadline = time.monotonic() - 1.0
+    request = ParsedRequest(
+        method=b"GET",
+        path=b"/mirror",
+        query=b"scope=global",
+        host=bind.authority.encode("ascii"),
+        origin=None,
+        framing="bodyless",
+    )
+
+    page = server._resolve_in_process(
+        request, time.monotonic() - 1.0, lease=None
+    )
+
+    if expired_drain:
+        assert page is None
+    else:
+        assert page is not None and page.outcome == "processing_timeout"
+    assert process_resources == []
+
+
 def test_resolver_process_startup_obeys_the_processing_deadline(tmp_path):
     bind = free_bind()
     slots = threading.Semaphore(0)
@@ -1587,6 +1653,9 @@ def test_resolver_process_startup_obeys_the_processing_deadline(tmp_path):
             pass
 
     class StalledContext:
+        def Event(self):
+            return multiprocessing.get_context("spawn").Event()
+
         def Pipe(self, *, duplex):
             return multiprocessing.get_context("spawn").Pipe(duplex=duplex)
 
@@ -1607,13 +1676,86 @@ def test_resolver_process_startup_obeys_the_processing_deadline(tmp_path):
         page = server._decide(parser, started + 0.2, lease)
         elapsed = time.monotonic() - started
         lease.release()
-        assert not slots.acquire(blocking=False)
-        assert slots.acquire(timeout=5.0)
+        assert slots.acquire(blocking=False)
     finally:
         server._stop_process_reaper()
 
     assert page is not None and page.outcome == "processing_timeout"
     assert elapsed < 1.0
+
+
+def test_expired_startup_never_enters_the_resolver(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    resolver = IsolatedResolverProbe(context)
+    child_created = threading.Event()
+    release_start = threading.Event()
+    processes = []
+
+    class DelayedProcess:
+        def __init__(self, process) -> None:
+            self._process = process
+            self.pid = 0
+
+        def start(self) -> None:
+            self._process.start()
+            self.pid = self._process.pid
+            child_created.set()
+            release_start.wait(2.0)
+
+        def __getattr__(self, name):
+            return getattr(self._process, name)
+
+    class DelayedContext:
+        def Event(self):
+            return context.Event()
+
+        def Pipe(self, *, duplex):
+            return context.Pipe(duplex=duplex)
+
+        def Process(self, **kwargs):
+            process = DelayedProcess(context.Process(**kwargs))
+            processes.append(process)
+            return process
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        _resolver=resolver,
+        _isolate_resolver=True,
+        _process_context=DelayedContext(),
+        _timeouts=GENEROUS,
+    )
+    request = ParsedRequest(
+        method=b"GET",
+        path=b"/mirror",
+        query=b"scope=global",
+        host=bind.authority.encode("ascii"),
+        origin=None,
+        framing="bodyless",
+    )
+    try:
+        page = server._resolve_in_process(
+            request, time.monotonic() + 1.0, lease=None
+        )
+        assert child_created.is_set()
+        assert not resolver.entered.is_set()
+    finally:
+        release_start.set()
+        server._stop_process_reaper()
+
+    assert page is not None and page.outcome == "processing_timeout"
+    worker_pid = processes[0].pid
+    limit = time.monotonic() + 5.0
+    while time.monotonic() < limit:
+        try:
+            os.kill(worker_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("the cancelled startup child was not reaped")
+    assert not resolver.entered.is_set()
 
 
 def test_processing_expiry_during_composition_composes_the_503(tmp_path):

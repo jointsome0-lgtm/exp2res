@@ -298,8 +298,17 @@ class _WorkerHandle:
 
 
 class _ProcessHandle:
-    def __init__(self, process, *, starting: bool = False) -> None:
+    def __init__(
+        self,
+        process,
+        *,
+        starting: bool = False,
+        cancelled=None,
+        start_allowed=None,
+    ) -> None:
         self.process = process
+        self._cancel_event = cancelled
+        self._start_allowed = start_allowed
         self._lock = threading.Lock()
         self._start_done = threading.Event()
         self._started = not starting
@@ -313,6 +322,11 @@ class _ProcessHandle:
             self._started = not failed
             self._start_failed = failed
             cancelled = self._cancelled
+        if failed or cancelled:
+            if self._cancel_event is not None:
+                self._cancel_event.set()
+        elif self._start_allowed is not None:
+            self._start_allowed.set()
         if cancelled and not failed:
             self._kill()
         self._start_done.set()
@@ -325,7 +339,13 @@ class _ProcessHandle:
         with self._lock:
             return self._start_failed
 
+    @property
+    def start_pending(self) -> bool:
+        return not self._start_done.is_set()
+
     def wake(self) -> None:
+        if self._cancel_event is not None:
+            self._cancel_event.set()
         with self._lock:
             self._cancelled = True
             started = self._started
@@ -401,6 +421,8 @@ def _write_process_result(sender: Connection, page: views.ViewPage) -> None:
 
 def _run_resolver_process(
     sender: Connection,
+    cancelled,
+    start_allowed,
     resolver: Callable[..., views.ViewPage],
     workspace: Path,
     request: ParsedRequest,
@@ -411,6 +433,11 @@ def _run_resolver_process(
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         with suppress(AttributeError):
             signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+        while not start_allowed.wait(_PROCESS_REAP_POLL_SECONDS):
+            if cancelled.is_set():
+                return
+        if cancelled.is_set():
+            return
         try:
             page = resolver(
                 workspace,
@@ -467,6 +494,7 @@ class ViewServer:
         self._authority = bind.authority.encode("ascii")
         self._origin = bind.origin.encode("ascii")
         self._slots = threading.Semaphore(MAX_CONNECTIONS)
+        self._process_start_slots = threading.Semaphore(MAX_CONNECTIONS)
         # Reentrant because `interrupt()` may run in a signal handler on the
         # accept-loop thread while that thread already holds the lock; a
         # plain lock would deadlock the first interruption instead of
@@ -501,6 +529,8 @@ class ViewServer:
         """Queue §14.17's two startup URLs while the listener is usable."""
 
         completions: list[threading.Event] = []
+        failed = threading.Event()
+        failures: list[BaseException] = []
         with self._state_lock:
             if self._listener is None or self._draining.is_set():
                 return
@@ -512,18 +542,27 @@ class ViewServer:
                 complete = threading.Event()
                 completions.append(complete)
                 self._report_queue.put_nowait(
-                    (self._announce_if_live, (announce, url, complete), False)
+                    (
+                        self._announce_if_live,
+                        (announce, url, complete, failed, failures),
+                        False,
+                    )
                 )
         for complete in completions:
             while not complete.wait(_FLUSH_POLL_SECONDS):
                 if self._draining.is_set() or self._immediate.is_set():
                     return
+            if failures:
+                self._abort_advertisement()
+                raise failures[0]
 
     def _announce_if_live(
         self,
         announce: Callable[[str], None],
         url: str,
         complete: threading.Event,
+        failed: threading.Event,
+        failures: list[BaseException],
     ) -> None:
         try:
             with self._state_lock:
@@ -533,10 +572,23 @@ class ViewServer:
                     and listener.fileno() >= 0
                     and not self._draining.is_set()
                 )
-            if live:
-                announce(url)
+            if live and not failed.is_set():
+                try:
+                    announce(url)
+                except BaseException as error:
+                    failures.append(error)
+                    failed.set()
         finally:
             complete.set()
+
+    def _abort_advertisement(self) -> None:
+        with self._state_lock:
+            listener = self._listener
+            self._listener = None
+        if listener is not None:
+            with suppress(OSError):
+                listener.close()
+        self._stop_reporter()
 
     def open(self) -> None:
         """Bind exactly the validated address, or fail without another try.
@@ -1116,6 +1168,10 @@ class ViewServer:
         deadline: float,
         lease: _AdmissionLease | None,
     ) -> views.ViewPage | None:
+        if self._immediate.is_set() or self._drain_expired():
+            return None
+        if self._phase_deadline(deadline) - self._clock() <= 0:
+            return views.processing_timeout_page()
         if not self._ensure_process_reaper():
             return self._within(views.internal_error_page(), deadline)
         try:
@@ -1123,10 +1179,14 @@ class ViewServer:
         except Exception:
             return self._within(views.internal_error_page(), deadline)
         try:
+            cancelled = self._process_context.Event()
+            start_allowed = self._process_context.Event()
             process = self._process_context.Process(
                 target=_run_resolver_process,
                 args=(
                     sender,
+                    cancelled,
+                    start_allowed,
                     self._resolver,
                     self._workspace,
                     request,
@@ -1139,7 +1199,12 @@ class ViewServer:
             receiver.close()
             sender.close()
             return self._within(views.internal_error_page(), deadline)
-        handle = _ProcessHandle(process, starting=True)
+        handle = _ProcessHandle(
+            process,
+            starting=True,
+            cancelled=cancelled,
+            start_allowed=start_allowed,
+        )
         with self._state_lock:
             self._handles.add(handle)
             forced = self._immediate.is_set()
@@ -1162,9 +1227,11 @@ class ViewServer:
                 return self._receive_process_result(receiver, process, deadline)
             finally:
                 if not handle.finish():
-                    if lease is not None:
+                    deferred_lease = None
+                    if lease is not None and not handle.start_pending:
                         lease.defer()
-                    self._reap_process(handle, lease)
+                        deferred_lease = lease
+                    self._reap_process(handle, deferred_lease)
                 with self._state_lock:
                     self._handles.discard(handle)
         finally:
@@ -1173,6 +1240,11 @@ class ViewServer:
     def _begin_process_start(
         self, handle: _ProcessHandle, sender: Connection
     ) -> bool:
+        if not self._process_start_slots.acquire(blocking=False):
+            sender.close()
+            handle.complete_start(failed=True)
+            return False
+
         def start() -> None:
             failed = False
             try:
@@ -1182,6 +1254,7 @@ class ViewServer:
             finally:
                 sender.close()
                 handle.complete_start(failed=failed)
+                self._process_start_slots.release()
 
         starter = threading.Thread(
             target=start, name="view-resolver-start", daemon=True
@@ -1191,6 +1264,7 @@ class ViewServer:
         except RuntimeError:
             sender.close()
             handle.complete_start(failed=True)
+            self._process_start_slots.release()
             return False
         return True
 
