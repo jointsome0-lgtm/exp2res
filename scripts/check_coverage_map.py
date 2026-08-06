@@ -141,9 +141,11 @@ def validate_entry(
 
 
 def junit_identity(node: str) -> tuple[str, str]:
-    parts = node.split("::")
+    node_path, separator, parameter = node.partition("[")
+    parts = node_path.split("::")
     module = parts[0].removesuffix(".py").replace("/", ".")
-    return ".".join([module, *parts[1:-1]]), parts[-1]
+    name = parts[-1] + (f"[{parameter}" if separator else "")
+    return ".".join([module, *parts[1:-1]]), name
 
 
 def execute_evidence_nodes(nodes: set[str], skip_allowed: set[str]) -> list[str]:
