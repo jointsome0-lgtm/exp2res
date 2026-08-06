@@ -1310,6 +1310,10 @@ class ViewServer:
             process_done = process_done or process.sentinel in ready
             if receiver in ready:
                 while True:
+                    if self._immediate.is_set() or self._drain_expired():
+                        return None
+                    if self._clock() >= deadline:
+                        return views.processing_timeout_page()
                     try:
                         chunk = os.read(receiver.fileno(), 65536)
                     except BlockingIOError:
@@ -1318,6 +1322,10 @@ class ViewServer:
                         eof = True
                         break
                     buffer.extend(chunk)
+                    if self._immediate.is_set() or self._drain_expired():
+                        return None
+                    if self._clock() >= deadline:
+                        return views.processing_timeout_page()
                     if payload_size is None and len(buffer) >= _RESULT_LENGTH.size:
                         payload_size = _RESULT_LENGTH.unpack_from(buffer)[0]
                     if payload_size is not None:

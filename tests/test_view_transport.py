@@ -1359,6 +1359,47 @@ def test_partial_process_result_transfer_obeys_the_processing_deadline(tmp_path)
     assert time.monotonic() - started < 1.0
 
 
+def test_continuously_readable_process_result_rechecks_between_chunks(
+    tmp_path, monkeypatch
+):
+    payload = b"x" * (1024 * 1024)
+    frame = view_server._RESULT_LENGTH.pack(len(payload)) + payload
+    offset = 0
+    reads = 0
+
+    class Receiver:
+        def fileno(self):
+            return 1
+
+    class Process:
+        sentinel = object()
+
+    receiver = Receiver()
+
+    def read(_descriptor, size):
+        nonlocal offset, reads
+        reads += 1
+        chunk = frame[offset : offset + size]
+        offset += len(chunk)
+        return chunk
+
+    ticks = iter((0.0, 0.1, 0.2, 0.4))
+    server = ViewServer(
+        tmp_path, free_bind(), _timeouts=GENEROUS, _clock=lambda: next(ticks)
+    )
+    monkeypatch.setattr(view_server.os, "set_blocking", lambda *_args: None)
+    monkeypatch.setattr(view_server.os, "read", read)
+    monkeypatch.setattr(
+        view_server, "wait_for_connections", lambda *_args: (receiver,)
+    )
+
+    page = server._receive_process_result(receiver, Process(), deadline=0.3)
+
+    assert page is not None and page.outcome == "processing_timeout"
+    assert reads == 1
+    assert offset < len(frame)
+
+
 def test_resolver_process_finish_never_waits_for_uninterruptible_work():
     class UninterruptibleProcess:
         def is_alive(self):
