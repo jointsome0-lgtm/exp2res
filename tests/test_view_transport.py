@@ -194,6 +194,30 @@ def test_occupied_bind_fails_closed_without_another_try(tmp_path):
         first.serve()
 
 
+@pytest.mark.parametrize(
+    ("host", "port", "error"),
+    [
+        ("0.0.0.0", 8731, ViewBindNotLoopbackError),
+        ("localhost", 8731, ViewBindNotLoopbackError),
+        ("127.0.0.2", 8731, ViewBindNotLoopbackError),
+        ("127.0.0.1", 0, ViewBindInvalidError),
+        ("127.0.0.1", 80, ViewBindInvalidError),
+    ],
+)
+def test_open_refuses_a_bind_that_never_went_through_validation(
+    tmp_path, host, port, error
+):
+    """§30 rule 1 refuses a non-loopback bind before a socket exists, so the
+    refusal cannot live only in the command that parsed the flags:
+    `BindAddress` is an exported plain value, and one built directly must not
+    reach `bind` and expose owner-only views off the loopback interface."""
+
+    server = ViewServer(tmp_path, BindAddress(host=host, port=port))
+    with pytest.raises(error):
+        server.open()
+    assert server._listener is None
+
+
 def test_socket_creation_failure_fails_closed_as_bind_failed(tmp_path, monkeypatch):
     """A refused socket creation — disabled family, exhausted descriptors —
     is the same operating-system bind refusal as a failing `bind` call."""

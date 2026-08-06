@@ -302,6 +302,11 @@ class ViewServer:
     def open(self) -> None:
         """Bind exactly the validated address, or fail without another try."""
 
+        # §30 rule 1 refuses a non-loopback bind "before a socket exists", so
+        # the refusal belongs here and not only in the command that parsed the
+        # flags: `BindAddress` is an exported plain value, and a caller that
+        # built one directly must not be able to reach `bind` with it.
+        validate_bind(self.bind_address.host, self.bind_address.port)
         family = socket.AF_INET6 if ":" in self.bind_address.host else socket.AF_INET
         try:
             # Creation is inside the conversion: a disabled address family or
