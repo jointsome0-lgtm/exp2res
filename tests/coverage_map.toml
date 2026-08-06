@@ -663,13 +663,14 @@ nodes = [
   "tests/test_view_end_to_end.py::test_an_ambient_cookie_is_ignored_and_no_cross_origin_read_is_granted",
   "tests/test_cli_view_serve.py::test_a_successful_bind_reports_exactly_two_urls_then_cancels[127.0.0.1]",
   "tests/test_cli_view_serve.py::test_startup_contention_is_class_five_not_an_unrecognized_workspace",
+  "tests/test_view_transport.py::test_emit_expiry_truncates_a_stalled_reader_without_relabelling_it",
   "tests/test_cli_view_serve.py::test_the_two_allowed_boundary_ports_bind_exactly_as_requested[1024]",
   "tests/test_cli_view_serve.py::test_the_two_allowed_boundary_ports_bind_exactly_as_requested[65535]",
   "tests/test_cli_view_serve.py::test_json_stdout_carries_exactly_one_cancelled_envelope",
   "tests/test_cli_view_serve.py::test_quiet_keeps_the_urls_and_drops_the_request_lines",
 ]
 phase = "3"
-note = "The §14.17 command form now lands the last piece: tests/test_view_end_to_end.py serves the published Vera Example set over real loopback HTTP — both routes by both selector forms, byte-identical mirror members, the ignored ambient cookie against the refused foreign origin, the answer/re-export invalidation cycle on one unrestarted server, the ::1 bind, and the empty question projection — while tests/test_cli_view_serve.py pins the bind admission — including successful binds at both allowed port boundaries, 1024 and 65535, beside the refusals just outside them — the two startup URLs, both startup gates before any socket exists (the incompatible schema as class 4 and a blocked compatibility read as class 5, never relabelled as each other), and the class-9 envelope. tests/test_view_resolution.py keeps the offline state-dependent half and tests/test_view_http.py with tests/test_view_transport.py keep the rule 9 grammar and caps, rule 2 framing, rule 1 authority, rule 10 admission, and the receive/processing/drain deadlines"
+note = "The §14.17 command form now lands the last piece: tests/test_view_end_to_end.py serves the published Vera Example set over real loopback HTTP — both routes by both selector forms, byte-identical mirror members, the ignored ambient cookie against the refused foreign origin, the answer/re-export invalidation cycle on one unrestarted server, the ::1 bind, and the empty question projection — while tests/test_cli_view_serve.py pins the bind admission — including successful binds at both allowed port boundaries, 1024 and 65535, beside the refusals just outside them — the two startup URLs, both startup gates before any socket exists (the incompatible schema as class 4 and a blocked compatibility read as class 5, never relabelled as each other), and the class-9 envelope. tests/test_view_resolution.py keeps the offline state-dependent half and tests/test_view_http.py with tests/test_view_transport.py keep the rule 9 grammar and caps, rule 2 framing, rule 1 authority, rule 10 admission, and the receive/processing/emit/drain deadlines, the emit one against a client that stops reading a response past the socket buffers"
 
 ["21.58"]
 status = "partial"

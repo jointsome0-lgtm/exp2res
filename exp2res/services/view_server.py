@@ -338,16 +338,23 @@ class ViewServer:
         self._report_slots = threading.Semaphore(REPORT_QUEUE_LIMIT)
         self._report_thread: threading.Thread | None = None
 
-    @property
-    def bound(self) -> bool:
-        """Whether `open` left a listener on the requested address.
+    def advertise(self, announce: Callable[[str], None]) -> None:
+        """Hand §14.17's two startup URLs out while they are still usable.
 
-        `open` is a no-op once an interruption has already arrived, so a
-        caller that advertises §14.17's startup URLs has to tell that case
-        from a real bind rather than announce an address nothing listens on.
+        Only a live listener has them: `open` declines to bind once an
+        interruption has already arrived, and `interrupt` closes what `open`
+        published. Announcing outside the state lock would let either land
+        between the check and the write, so the owner would be given two
+        addresses nothing is listening on. `interrupt` samples its drain
+        deadline before taking this lock, so waiting behind two short writes
+        spends the drain allowance rather than extending it.
         """
 
-        return self._listener is not None
+        with self._state_lock:
+            if self._listener is None or self._draining.is_set():
+                return
+            for url in bound_urls(self.bind_address):
+                announce(url)
 
     def open(self) -> None:
         """Bind exactly the validated address, or fail without another try.

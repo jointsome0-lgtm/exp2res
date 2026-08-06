@@ -475,7 +475,10 @@ def test_an_interruption_between_listen_and_publication_closes_the_socket(
     server.open()
     monkeypatch.undo()
 
-    assert not server.bound
+    announced: list[str] = []
+    server.advertise(announced.append)
+
+    assert announced == []
     assert len(listeners) == 1
     assert listeners[0].fileno() == -1
     assert server.serve() == "drained"
@@ -1002,6 +1005,38 @@ def test_receive_expiry_closes_with_no_response_bytes(tmp_path):
         with rig.connect() as client:
             client.sendall(b"GET /mirror?scope=gl")  # never completes
             assert read_to_close(client) == b""
+
+
+def test_emit_expiry_truncates_a_stalled_reader_without_relabelling_it(tmp_path):
+    """A client that stops reading loses the rest of its response, nothing more.
+
+    The emit allowance starts after the outcome is composed, so its expiry
+    closes the connection with the page already computed: no retry, no
+    second outcome, and no connection held past its budget. A body well past
+    the socket buffers is what makes the send block at all.
+    """
+
+    page = views.ViewPage(
+        outcome="served",
+        status=200,
+        body=b"<!doctype html><p>Vera Example</p>" + b"x" * (8 * 1024 * 1024),
+    )
+    timeouts = Timeouts(receive=30.0, processing=30.0, emit=0.2, drain=30.0)
+    delivered: list[tuple[str, str | None]] = []
+    with running_server(
+        tmp_path,
+        resolver=page_resolver(page),
+        timeouts=timeouts,
+        report=lambda outcome, route: delivered.append((outcome, route)),
+    ) as rig:
+        with rig.connect() as client:
+            client.sendall(rig.request_bytes())
+            time.sleep(1.0)
+            received = read_to_close(client)
+
+    assert 0 < len(received) < len(page.body)
+    assert received.startswith(b"HTTP/1.1 200 ")
+    assert delivered == [("served", "/mirror")]
 
 
 def test_processing_expiry_abandons_the_worker_and_frees_the_slot(tmp_path):

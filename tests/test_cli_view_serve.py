@@ -342,6 +342,67 @@ def test_an_interrupt_before_the_bind_cancels_without_advertising_a_url(
     assert nothing_listens("127.0.0.1", port)
 
 
+def test_an_interrupt_during_the_startup_gate_keeps_the_command_in_charge(
+    workspace: Path, monkeypatch
+) -> None:
+    """Cancellation is installed before anything interruptible runs.
+
+    The compatibility read can block on a busy workspace, and an interrupt
+    there left to the default handler ends the operation but leaves envelope
+    assembly unguarded — where the owner's second Ctrl-C raises past every
+    catch in the runtime. Both interrupts land here, and the envelope still
+    comes out.
+    """
+
+    port = free_port()
+    gate = cli.require_compatible
+    lines = cli._invalidated_view_lines
+
+    def interrupt_then_check(*args, **kwargs):
+        os.kill(os.getpid(), signal.SIGINT)
+        return gate(*args, **kwargs)
+
+    def interrupt_then_report(views):
+        os.kill(os.getpid(), signal.SIGINT)
+        return lines(views)
+
+    monkeypatch.setattr(cli, "require_compatible", interrupt_then_check)
+    monkeypatch.setattr(cli, "_invalidated_view_lines", interrupt_then_report)
+
+    result = invoke(workspace, "--port", str(port), controls=("--json",))
+
+    assert result.exit_code == 9
+    assert envelope(result)["status"] == "cancelled"
+    assert nothing_listens("127.0.0.1", port)
+
+
+def test_an_interrupt_after_the_bind_advertises_no_unreachable_url(
+    workspace: Path, monkeypatch
+) -> None:
+    """A URL is advertised only while its listener is still live.
+
+    `interrupt` closes the socket `open` published, so an interrupt landing
+    between them would otherwise hand the owner two addresses nothing is
+    listening on.
+    """
+
+    port = free_port()
+    original = ViewServer.open
+
+    def open_then_interrupt(self):
+        original(self)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    monkeypatch.setattr(ViewServer, "open", open_then_interrupt)
+
+    result = invoke(workspace, "--port", str(port), controls=("--json",))
+
+    assert result.exit_code == 9
+    assert envelope(result)["status"] == "cancelled"
+    assert result.stderr == ""
+    assert nothing_listens("127.0.0.1", port)
+
+
 def test_a_second_interrupt_during_the_envelope_still_reports_class_nine(
     workspace: Path, monkeypatch, serving: threading.Event
 ) -> None:

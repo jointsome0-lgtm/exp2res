@@ -118,7 +118,6 @@ from exp2res.services.view_server import (
     DEFAULT_HOST,
     DEFAULT_PORT,
     ViewServer,
-    bound_urls,
     validate_bind,
 )
 from exp2res.services.time_input import parse_occurred, workspace_zone
@@ -359,8 +358,21 @@ def _run_command(
     operation: Callable[[Path, Controls], Outcome],
     *,
     init_command: bool = False,
+    interrupt: Callable[[int, object], None] | None = None,
 ) -> None:
+    """Run one command's operation and emit its §14.14 envelope.
+
+    `interrupt` belongs to a command that handles cancellation itself. It is
+    installed before workspace discovery — before anything interruptible
+    happens at all — and stays installed until the envelope is out, so no
+    step of the run is left to the default handler's `KeyboardInterrupt`.
+    Off the main thread nothing can be installed; the one command that
+    passes a handler refuses to run there.
+    """
+
     with _interrupt_disposition_restored():
+        if interrupt is not None and threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, interrupt)
         _run_operation(context, command, operation, init_command=init_command)
 
 
@@ -2424,41 +2436,46 @@ def _purge_outcome(purged: PurgeOutcome) -> Outcome:
     )
 
 
-def _drain_on_interrupt(server: ViewServer) -> None:
-    """Route the user interrupt into §14.17's drain, not a raised exception.
+class _ServeCancellation:
+    """The interrupt disposition for one `view serve` run, start to finish.
 
     `view serve` is the one §14 form that runs until it is interrupted, so
-    the default handler's `KeyboardInterrupt` would unwind the accept loop at
-    whichever bytecode it landed on instead of starting the one absolute
-    drain deadline at the interruption instant. `ViewServer.interrupt` is a
-    state change that never raises and is safe from a handler at any instant:
-    the first call drains, the second forces the close, and both keep the
-    §14.14 rule 6 class-9 envelope this command returns either way.
+    the default handler's `KeyboardInterrupt` would unwind at whichever
+    bytecode it landed on instead of starting the one absolute drain deadline
+    at the interruption instant. `ViewServer.interrupt` is a state change that
+    never raises and is safe from a handler at any instant: the first call
+    drains, the second forces the close, and both keep the §14.14 rule 6
+    class-9 envelope the command returns either way.
 
-    It is installed before the bind, not after it: the window from `open`
-    through the startup URLs is interruptible too, and an interrupt landing
-    there would otherwise be the default handler's `KeyboardInterrupt` — the
-    command would still report class 9, but it would enter envelope assembly
-    with no handler installed, where a second interrupt raises past every
-    catch in the runtime. `open` itself declines to bind once interrupted,
-    and the URLs are advertised only for a listener that exists.
+    This exists as an object rather than a closure because it is installed
+    before there is a server to interrupt. Workspace discovery, the bind
+    validation, and a §12.14 compatibility read that may block on a busy
+    workspace are all interruptible, and each one left to the default handler
+    is a window where the run enters envelope assembly with no handler
+    installed — where a second interrupt raises past every catch in the
+    runtime. An interrupt taken before `adopt` is remembered and handed to
+    the server the moment it exists.
 
     Nothing is restored here. `_run_command` hands `SIGINT` back to whoever
     held it only once the envelope is written, because the second interrupt
-    this handler exists to absorb is exactly what an impatient owner sends
-    while the first drain is finishing. Restoring at the end of serving would
-    leave that interrupt to the default handler and end the process without
-    the class-9 envelope. On an already-stopped server the extra call is a
-    no-op.
-
-    `_require_interruptible` has already refused the one case this cannot
-    cover, so the installation here never fails.
+    this absorbs is exactly what an impatient owner sends while the first
+    drain is finishing.
     """
 
-    def handle(_signum: int, _frame: object) -> None:
-        server.interrupt()
+    def __init__(self) -> None:
+        self._server: ViewServer | None = None
+        self._requested = False
 
-    signal.signal(signal.SIGINT, handle)
+    def __call__(self, _signum: int, _frame: object) -> None:
+        self._requested = True
+        server = self._server
+        if server is not None:
+            server.interrupt()
+
+    def adopt(self, server: ViewServer) -> None:
+        self._server = server
+        if self._requested:
+            server.interrupt()
 
 
 def _require_interruptible() -> None:
@@ -2517,6 +2534,8 @@ def view_serve(
     host: str = typer.Option(DEFAULT_HOST, "--host"),
     port: int = typer.Option(DEFAULT_PORT, "--port"),
 ) -> None:
+    cancellation = _ServeCancellation()
+
     def operation(workspace: Path, controls: Controls) -> Outcome:
         _require_interruptible()
         bind = validate_bind(host, port)
@@ -2524,15 +2543,13 @@ def view_serve(
 
         report = _progress_reporter(controls)
         server = ViewServer(workspace, bind, report=report)
-        _drain_on_interrupt(server)
+        cancellation.adopt(server)
         server.open()
-        if server.bound:
-            for url in bound_urls(bind):
-                typer.echo(url, err=True)
+        server.advertise(lambda url: typer.echo(url, err=True))
         server.serve()
         return Outcome(exit_code=9, diagnostic_class="cancelled")
 
-    _run_command(context, "view serve", operation)
+    _run_command(context, "view serve", operation, interrupt=cancellation)
 
 
 def _parse_error_envelope(json_output: bool, diagnostic: str, message: str) -> None:
