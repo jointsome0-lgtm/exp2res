@@ -25,7 +25,7 @@ from exp2res.errors import (
 )
 from exp2res.services import views
 from exp2res.services import view_server
-from exp2res.services.view_http import RequestParser
+from exp2res.services.view_http import ParsedRequest, RequestParser
 from exp2res.services.view_server import (
     _AbandonedError,
     _WorkerHandle,
@@ -432,6 +432,52 @@ def test_the_drain_deadline_is_anchored_at_the_interruption_instant(tmp_path):
     interrupting.join(10.0)
     assert not interrupting.is_alive()
     assert server._drain_deadline == 105.0
+
+
+def test_an_expired_drain_starts_no_new_resolver(tmp_path, monkeypatch):
+    """Expiry closes the connection; it never opens new request work.
+
+    A connection thread descheduled between complete receipt and worker
+    startup can resume after the drain deadline passed and `serve` already
+    returned its cancellation class. Expiry does not set the forced-close
+    flag, so only the drain deadline itself can refuse this. §14.17 forbids
+    leaving expired work holding a transaction or request resource, and the
+    cheapest way to keep that is never to create it.
+
+    Observed at thread construction rather than through the resolver: once a
+    worker exists it is abandoned immediately, so whether its target got to
+    run is a scheduling question and could not discriminate.
+    """
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=Timeouts(receive=30.0, processing=30.0, emit=30.0, drain=0.0),
+    )
+    # The first interruption anchors a drain deadline that is already spent.
+    server.interrupt()
+    assert server._drain_expired()
+
+    targets = []
+    real_thread = threading.Thread
+
+    def recording_thread(*args, **kwargs):
+        targets.append(kwargs.get("target"))
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr(view_server.threading, "Thread", recording_thread)
+    request = ParsedRequest(
+        method=b"GET",
+        path=b"/mirror",
+        query=b"scope=global",
+        host=bind.authority.encode("ascii"),
+        origin=None,
+        framing="bodyless",
+    )
+    assert server._resolve_abandonable(request, server._clock() + 30.0) is None
+    assert server._run_resolver not in targets
 
 
 # --- served responses and the closed response headers ----------------------

@@ -561,6 +561,20 @@ class ViewServer:
             drain = self._drain_deadline
         return deadline if drain is None else min(deadline, drain)
 
+    def _drain_expired(self) -> bool:
+        """Has a first interruption's absolute drain deadline already passed?
+
+        Expiry does not set `_immediate` — `_drain` closes the unfinished
+        connections and returns its class — so this is the only way a
+        connection thread can tell that its remaining time is gone.
+        """
+
+        if not self._draining.is_set():
+            return False
+        with self._state_lock:
+            drain = self._drain_deadline
+        return drain is not None and self._clock() >= drain
+
     def _serve_connection(self, connection: socket.socket, admitted_at: float) -> None:
         line: tuple[str, str | None] | None = None
         try:
@@ -740,6 +754,17 @@ class ViewServer:
                 # registration set the flag first, so checking it here closes
                 # the wake race.
                 return None
+            if self._drain_expired():
+                # Drain expiry closes without a response, and `serve` may
+                # already have returned its cancellation class: a connection
+                # thread descheduled between complete receipt and this point
+                # must not open a read that §14.17 has refused. Expiry does
+                # not set `_immediate`, so the flag above cannot see it, and
+                # the zero-length wait below would only abandon work already
+                # started. §14.17 forbids leaving expired work holding a
+                # transaction or request resource — the cheapest way to keep
+                # that is never to create it.
+                return None
             worker = threading.Thread(
                 target=self._run_resolver, args=(request, deadline, handle), daemon=True
             )
@@ -758,14 +783,11 @@ class ViewServer:
             if self._immediate.is_set():
                 handle.abandon()
                 return None
-            if self._draining.is_set():
-                with self._state_lock:
-                    drain = self._drain_deadline
-                if drain is not None and self._clock() >= drain:
-                    # Drain expiry closes without a response; the forced
-                    # close, not this thread, may already have woken us.
-                    handle.abandon()
-                    return None
+            if self._drain_expired():
+                # Drain expiry closes without a response; the forced close,
+                # not this thread, may already have woken us.
+                handle.abandon()
+                return None
             if not finished or handle.page is None:
                 handle.abandon()
                 return views.processing_timeout_page()
