@@ -370,10 +370,25 @@ def _run_command(
     passes a handler refuses to run there.
     """
 
+    interruption_observed = threading.Event()
+
+    def handle_interrupt(signum: int, frame: object) -> None:
+        interruption_observed.set()
+        assert interrupt is not None
+        interrupt(signum, frame)
+
     with _interrupt_disposition_restored():
         if interrupt is not None and threading.current_thread() is threading.main_thread():
-            signal.signal(signal.SIGINT, interrupt)
-        _run_operation(context, command, operation, init_command=init_command)
+            signal.signal(signal.SIGINT, handle_interrupt)
+        _run_operation(
+            context,
+            command,
+            operation,
+            init_command=init_command,
+            interruption_observed=(
+                interruption_observed.is_set if interrupt is not None else None
+            ),
+        )
 
 
 def _run_operation(
@@ -382,31 +397,38 @@ def _run_operation(
     operation: Callable[[Path, Controls], Outcome],
     *,
     init_command: bool = False,
+    interruption_observed: Callable[[], bool] | None = None,
 ) -> None:
     controls = cast(Controls, context.obj)
     workspace: Path | None = None
     preamble_residuals: list[str] = []
     try:
-        if controls.verbose and controls.quiet:
-            error = Exp2ResError()
-            error.exit_code = 2
-            error.diagnostic_class = "invalid_usage"
-            error.public_message = "--verbose and --quiet cannot be combined."
-            raise error
-        if init_command:
-            if controls.workspace_override is not None:
+        try:
+            if controls.verbose and controls.quiet:
                 error = Exp2ResError()
                 error.exit_code = 2
                 error.diagnostic_class = "invalid_usage"
-                error.public_message = "init does not accept --workspace."
+                error.public_message = "--verbose and --quiet cannot be combined."
                 raise error
-            workspace = Path.cwd().resolve(strict=True)
-        else:
-            workspace = discover_workspace(
-                cwd=Path.cwd(), override=controls.workspace_override
-            )
-        with collect_preamble_residuals(preamble_residuals):
-            outcome = operation(workspace, controls)
+            if init_command:
+                if controls.workspace_override is not None:
+                    error = Exp2ResError()
+                    error.exit_code = 2
+                    error.diagnostic_class = "invalid_usage"
+                    error.public_message = "init does not accept --workspace."
+                    raise error
+                workspace = Path.cwd().resolve(strict=True)
+            else:
+                workspace = discover_workspace(
+                    cwd=Path.cwd(), override=controls.workspace_override
+                )
+            with collect_preamble_residuals(preamble_residuals):
+                outcome = operation(workspace, controls)
+        except Exception:
+            if interruption_observed is not None and interruption_observed():
+                outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
+            else:
+                raise
     except KeyboardInterrupt:
         outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
     except Abort:

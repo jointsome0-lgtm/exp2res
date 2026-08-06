@@ -30,6 +30,7 @@ from typer.testing import CliRunner
 
 from exp2res import cli
 from exp2res.cli import app
+from exp2res.errors import WorkspaceBusyError
 from exp2res.services.view_server import DEFAULT_PORT, ViewServer
 
 
@@ -374,6 +375,29 @@ def test_an_interrupt_during_the_startup_gate_keeps_the_command_in_charge(
 
     assert result.exit_code == 9
     assert envelope(result)["status"] == "cancelled"
+    assert nothing_listens("127.0.0.1", port)
+
+
+def test_a_startup_gate_failure_after_an_interrupt_is_still_cancelled(
+    workspace: Path, monkeypatch
+) -> None:
+    """An accepted interrupt takes precedence over a failing startup gate."""
+
+    port = free_port()
+
+    def interrupt_then_fail(*_args, **_kwargs):
+        os.kill(os.getpid(), signal.SIGINT)
+        raise WorkspaceBusyError()
+
+    monkeypatch.setattr(cli, "require_compatible", interrupt_then_fail)
+
+    result = invoke(workspace, "--port", str(port), controls=("--json",))
+
+    assert result.exit_code == 9
+    body = envelope(result)
+    assert body["status"] == "cancelled"
+    assert body["diagnostic_class"] == "cancelled"
+    assert result.stderr == ""
     assert nothing_listens("127.0.0.1", port)
 
 
