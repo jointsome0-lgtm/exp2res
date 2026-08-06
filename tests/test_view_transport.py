@@ -1436,6 +1436,100 @@ def test_a_finished_run_retires_its_reporter_after_serving_requests(tmp_path):
     assert delivered == [("served", "/mirror")]
 
 
+def test_a_completed_line_is_queued_before_the_drain_can_return(tmp_path):
+    """The instant a slot comes back, the request's line is already queued.
+
+    Releasing the admission is what lets a waiting drain return and retire
+    the reporter. This drives the interruption from inside that release, so
+    a line enqueued afterwards would provably arrive behind the sentinel and
+    never reach the callback.
+    """
+
+    delivered: list[tuple[str, str | None]] = []
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        report=lambda outcome, route: delivered.append((outcome, route)),
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    rig = Rig(server, bind)
+    rig.thread.start()
+
+    real_release = server._release_admission
+    shut_down = threading.Event()
+
+    def release_then_shut_down(connection):
+        real_release(connection)
+        # The slot is back and the drain count is zero: this is the exact
+        # instant `_drain` may return and stop the reporter.
+        server.interrupt()
+        rig.thread.join(30.0)
+        shut_down.set()
+
+    server._release_admission = release_then_shut_down
+
+    assert status_of(rig.exchange(rig.request_bytes())) == 200
+    assert shut_down.wait(30.0)
+    assert not rig.thread.is_alive()
+    for thread in threading.enumerate():
+        if thread.name == "view-report":
+            thread.join(30.0)
+
+    assert delivered == [("served", "/mirror")]
+
+
+def test_a_saturated_report_queue_still_delivers_the_stop_signal(tmp_path):
+    """A wedged reporter can cost lines, never the reporter's own termination.
+
+    The data slots are bounded independently of the queue, so the last queue
+    slot stays reserved for the sentinel: once the callback recovers, the
+    reporter drains what it holds and returns instead of blocking on an
+    empty queue forever.
+    """
+
+    gate = threading.Event()
+    entered = threading.Event()
+    delivered: list[tuple[str, str | None]] = []
+
+    def reporter(outcome, route):
+        entered.set()
+        gate.wait(30.0)
+        delivered.append((outcome, route))
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        report=reporter,
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    rig = Rig(server, bind)
+    rig.thread.start()
+    try:
+        assert status_of(rig.exchange(rig.request_bytes())) == 200
+        assert entered.wait(10.0)
+        # Fill every data slot the semaphore grants while the reporter is
+        # wedged inside the callback, leaving only the reserved slot free.
+        for _ in range(view_server.REPORT_QUEUE_LIMIT + 8):
+            server._enqueue_report(("served", "/mirror"))
+        assert server._report_queue.full() is False
+    finally:
+        server.interrupt()
+        rig.thread.join(30.0)
+        gate.set()
+
+    assert not rig.thread.is_alive()
+    for thread in threading.enumerate():
+        if thread.name == "view-report":
+            thread.join(30.0)
+    assert not any(thread.name == "view-report" for thread in threading.enumerate())
+
+
 class DrainWhileReceivingClock:
     """Opens the drain from inside the connection thread's first clock read.
 

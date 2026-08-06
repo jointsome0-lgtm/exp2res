@@ -335,9 +335,13 @@ class ViewServer:
         # One dedicated reporter thread behind a bounded queue: a blocked
         # stderr can then stall only this one thread and drop excess progress
         # lines, never accumulate a blocked thread per completed connection.
+        # One slot deeper than the semaphore ever grants: the extra capacity
+        # is reserved for the stop sentinel, so a saturated queue can drop a
+        # progress line but never the reporter's own termination signal.
         self._report_queue: queue.Queue[tuple[str, str | None] | None] = queue.Queue(
-            maxsize=REPORT_QUEUE_LIMIT
+            maxsize=REPORT_QUEUE_LIMIT + 1
         )
+        self._report_slots = threading.Semaphore(REPORT_QUEUE_LIMIT)
         self._report_thread: threading.Thread | None = None
 
     def open(self) -> None:
@@ -652,15 +656,33 @@ class ViewServer:
                 # detail: §30 rule 6 keeps request bytes out of diagnostics.
                 pass
         finally:
+            # The line is enqueued before the slot release, not after: the
+            # release is what lets a waiting drain return, and a drain that
+            # returns first would retire the reporter ahead of this completed
+            # request's own diagnostic. Enqueueing costs the connection
+            # nothing it was protected from — it is one non-blocking put on a
+            # bounded queue, so a stalled reporter still holds no socket,
+            # slot, or drain time, and the dedicated reporter thread remains
+            # the sole caller of the callback.
+            self._enqueue_report(line)
             self._release_admission(connection)
-        # Reporting runs only after the terminal close, the slot release, and
-        # the drain count-down, and only by enqueueing: the dedicated
-        # reporter thread is the sole caller of the callback, so a blocked
-        # reporter stalls one thread and drops excess lines instead of
-        # accumulating a blocked thread per completed connection.
-        if line is not None and self._report is not None:
-            with suppress(queue.Full):
-                self._report_queue.put_nowait(line)
+
+    def _enqueue_report(self, line: tuple[str, str | None] | None) -> None:
+        """Hand one completed request's line to the reporter, or drop it.
+
+        A refused acquisition means all `REPORT_QUEUE_LIMIT` data slots are
+        held by lines a stalled reporter has not taken yet; the line is
+        dropped rather than waited on. The queue itself holds one slot more
+        than the semaphore ever grants, and that reserve belongs to the stop
+        sentinel alone, so saturation can never cost the reporter its own
+        termination signal.
+        """
+
+        if line is None or self._report is None:
+            return
+        if not self._report_slots.acquire(blocking=False):
+            return
+        self._report_queue.put_nowait(line)
 
     def _release_admission(self, connection: socket.socket) -> None:
         """Give back everything one admission took, in the one safe order.
@@ -685,6 +707,10 @@ class ViewServer:
             line = self._report_queue.get()
             if line is None:
                 return
+            # Returned before the callback runs, so a slow stream costs the
+            # producers queue capacity for exactly as long as the lines are
+            # undelivered and not for the delivery itself.
+            self._report_slots.release()
             with suppress(Exception):
                 report = self._report
                 if report is not None:
@@ -693,19 +719,20 @@ class ViewServer:
     def _stop_reporter(self) -> None:
         """Retire the reporter once serving is over, whatever it reported.
 
-        Ordering is what makes this safe rather than timing: the sentinel
-        goes to the back of one FIFO queue, so the thread delivers every line
-        already queued and then returns on its own. A line a connection
-        thread enqueues in the window after its own slot release may arrive
-        behind the sentinel and go undelivered — the same bounded-queue
-        contract that already drops a line under a slow reporter.
+        Ordering is what makes this safe rather than timing. Every completed
+        request queues its line before releasing the slot the drain waits on,
+        so by the time this runs each one is already ahead of the sentinel in
+        one FIFO queue: the thread delivers them all and then returns on its
+        own. The put needs no failure path because `_enqueue_report` never
+        spends the queue's last slot — that reserve exists for exactly this
+        signal, so a saturated queue cannot swallow it.
 
         Nothing is joined or waited for. §14.17's cancellation may not wait
         on a reporter, and a wedged one is a daemon thread holding no socket,
         slot, or transaction; it stops when its own write completes rather
-        than when the envelope needs it to. The guarantee this method does
-        give is termination: no serving run leaves a reporter that will
-        never be told to stop.
+        than when the envelope needs it to. The guarantee this method gives
+        is termination: no serving run leaves a reporter that will never be
+        told to stop.
         """
 
         with self._state_lock:
@@ -713,8 +740,7 @@ class ViewServer:
             self._report_thread = None
         if reporter is None:
             return
-        with suppress(queue.Full):
-            self._report_queue.put_nowait(None)
+        self._report_queue.put_nowait(None)
 
     def _receive(
         self, connection: socket.socket, admitted_at: float
