@@ -429,6 +429,28 @@ def test_state_no_re_export_can_replace_is_the_residual_outcome(
     assert str(workspace).encode("utf-8") not in page.body
 
 
+def test_an_absent_managed_root_is_replaceable_output_not_a_migration(
+    workspace: Path,
+) -> None:
+    """§30: managed output that is simply missing is `export_not_current`.
+
+    The §8.1 read gate refuses an absent `out/` root exactly as it refuses an
+    unreadable schema, but the schema here is one this build reads and the
+    §14.9 export puts the root back. Telling the owner to migrate would send
+    them at the wrong thing, and the residual outcome would claim a repair no
+    re-export can perform.
+    """
+
+    exported_workspace(workspace)
+    shutil.rmtree(workspace / "out")
+
+    page = mirror(workspace, b"scope=global")
+
+    assert page.outcome == "export_not_current"
+    assert page.status == 409
+    assert b"schema" not in page.body.lower()
+
+
 def test_a_final_entry_replaced_mid_read_is_export_changed(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

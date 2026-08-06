@@ -77,6 +77,11 @@ LISTEN_BACKLOG = 32
 # Progress lines held for a slow reporter before excess lines are dropped;
 # diagnostics never get to block or accumulate request-side threads.
 REPORT_QUEUE_LIMIT = 64
+# How long a finished run waits for already-queued lines to reach the sink.
+# Not the drain allowance, which §14.17 reserves for unfinished request work:
+# this covers delivery of what completed requests already produced, and a
+# wedged writer costs it once.
+REPORT_FLUSH_SECONDS = 1.0
 
 _SAFE_METHODS = (b"GET", b"HEAD")
 
@@ -750,12 +755,16 @@ class ViewServer:
         spends the queue's last slot — that reserve exists for exactly this
         signal, so a saturated queue cannot swallow it.
 
-        Nothing is joined or waited for. §14.17's cancellation may not wait
-        on a reporter, and a wedged one is a daemon thread holding no socket,
-        slot, or transaction; it stops when its own write completes rather
-        than when the envelope needs it to. The guarantee this method gives
-        is termination: no serving run leaves a reporter that will never be
-        told to stop.
+        The wait is bounded, and by its own allowance rather than the drain's:
+        §14.17 reserves the drain for unfinished request work, so a blocked
+        writer may not spend it. Without any wait at all a line queued just
+        before the interruption would race the caller's return, and the sink
+        it was bound to — a `CliRunner` stderr, a process about to exit —
+        would be gone before the reporter reached it. The sentinel sits behind
+        every queued line in one FIFO queue, so a returning thread has
+        delivered all of them; a wedged one costs `REPORT_FLUSH_SECONDS` once
+        and then keeps its own losses, a daemon thread holding no socket,
+        slot, or transaction.
         """
 
         with self._state_lock:
@@ -764,6 +773,7 @@ class ViewServer:
         if reporter is None:
             return
         self._report_queue.put_nowait(None)
+        reporter.join(REPORT_FLUSH_SECONDS)
 
     def _receive(
         self, connection: socket.socket, admitted_at: float

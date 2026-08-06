@@ -1508,6 +1508,42 @@ def test_a_finished_run_retires_its_reporter_after_serving_requests(tmp_path):
     assert delivered == [("served", "/mirror")]
 
 
+def test_a_completed_line_reaches_the_sink_before_the_run_returns(tmp_path):
+    """A finished run has already reported what it served.
+
+    The reporter is a daemon thread with a sink the invocation captured, so a
+    line still in flight when `serve` returns races the caller: a CLI process
+    exits, a runner closes that stderr, and the required route and outcome
+    are simply lost. The reporter here takes long enough to write that only
+    the bounded flush can close the gap.
+    """
+
+    delivered: list[tuple[str, str | None]] = []
+
+    def reporter(outcome, route):
+        time.sleep(0.05)
+        delivered.append((outcome, route))
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        report=reporter,
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    rig = Rig(server, bind)
+    rig.thread.start()
+
+    assert status_of(rig.exchange(rig.request_bytes())) == 200
+    server.interrupt()
+    rig.thread.join(30.0)
+
+    assert not rig.thread.is_alive()
+    assert delivered == [("served", "/mirror")]
+
+
 def test_a_completed_line_is_queued_before_the_drain_can_return(tmp_path):
     """The instant a slot comes back, the request's line is already queued.
 

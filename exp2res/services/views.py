@@ -181,6 +181,11 @@ _PROCESSING_TIMEOUT = (
     "unfinished work was released. Reload; if this persists, stop serving and "
     "inspect local workspace or filesystem health."
 )
+_EXPORT_NOT_CURRENT = (
+    "The published assessment set for this view is missing, stale, or no "
+    "longer matches current state. Nothing partial or re-rendered is served "
+    "in its place."
+)
 _EXPORT_RESIDUAL = (
     "The published assessment set is in a state no re-export can replace on "
     "its own. Remove or repair the residual the export command reports "
@@ -609,21 +614,24 @@ def _entry_is_present_non_directory(path: Path) -> bool:
 def _compatibility_refusal(workspace: Path) -> _Refusal:
     """Tell an unreadable schema apart from an unusable managed root.
 
-    The §8.1 read gate refuses both, but §30 answers them differently: a
-    symlinked or non-directory `out/` entry under a schema this build reads is
-    §13.14 rule 6's containment failure, which no migration resolves.
+    The §8.1 read gate refuses all three, but §30 answers them differently
+    under a schema this build reads. A symlinked or non-directory `out/`
+    entry is §13.14 rule 6's containment failure, which no migration and no
+    re-export resolves. An `out/` root that is simply absent is §30's
+    "managed output missing": the §14.9 export replaces it in place, so the
+    owner is pointed at that rather than at a migration. Only an unreadable
+    or unsupported schema is the migration answer.
     """
 
     try:
         status = inspect_workspace(workspace, require_managed_root=False)
     except WorkspaceBusyError:
         return _Refusal("workspace_busy", _WORKSPACE_BUSY)
-    if (
-        status.recognized
-        and status.compatible
-        and _entry_is_present_non_directory(workspace / "out")
-    ):
-        return _Refusal("export_residual", _EXPORT_RESIDUAL)
+    if status.recognized and status.compatible:
+        if _entry_is_present_non_directory(workspace / "out"):
+            return _Refusal("export_residual", _EXPORT_RESIDUAL)
+        if not (workspace / "out").exists():
+            return _Refusal("export_not_current", _EXPORT_NOT_CURRENT)
     return _Refusal(
         "schema_incompatible", _SCHEMA_INCOMPATIBLE, _schema_remedy(workspace)
     )
@@ -720,11 +728,7 @@ def resolve(
         read = read_current_assessment_members(workspace, graph)
         if read.status == "not_current":
             raise _Refusal(
-                "export_not_current",
-                "The published assessment set for this view is missing, "
-                "stale, or no longer matches current state. Nothing partial "
-                "or re-rendered is served in its place.",
-                _export_command(snapshot.id),
+                "export_not_current", _EXPORT_NOT_CURRENT, _export_command(snapshot.id)
             )
         if read.status == "residual":
             raise _Refusal("export_residual", _EXPORT_RESIDUAL)
