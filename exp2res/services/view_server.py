@@ -338,6 +338,17 @@ class ViewServer:
         self._report_slots = threading.Semaphore(REPORT_QUEUE_LIMIT)
         self._report_thread: threading.Thread | None = None
 
+    @property
+    def bound(self) -> bool:
+        """Whether `open` left a listener on the requested address.
+
+        `open` is a no-op once an interruption has already arrived, so a
+        caller that advertises §14.17's startup URLs has to tell that case
+        from a real bind rather than announce an address nothing listens on.
+        """
+
+        return self._listener is not None
+
     def open(self) -> None:
         """Bind exactly the validated address, or fail without another try.
 

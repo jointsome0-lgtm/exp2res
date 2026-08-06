@@ -2435,6 +2435,14 @@ def _drain_on_interrupt(server: ViewServer) -> None:
     the first call drains, the second forces the close, and both keep the
     §14.14 rule 6 class-9 envelope this command returns either way.
 
+    It is installed before the bind, not after it: the window from `open`
+    through the startup URLs is interruptible too, and an interrupt landing
+    there would otherwise be the default handler's `KeyboardInterrupt` — the
+    command would still report class 9, but it would enter envelope assembly
+    with no handler installed, where a second interrupt raises past every
+    catch in the runtime. `open` itself declines to bind once interrupted,
+    and the URLs are advertised only for a listener that exists.
+
     Nothing is restored here. `_run_command` hands `SIGINT` back to whoever
     held it only once the envelope is written, because the second interrupt
     this handler exists to absorb is exactly what an impatient owner sends
@@ -2516,10 +2524,11 @@ def view_serve(
 
         report = _progress_reporter(controls)
         server = ViewServer(workspace, bind, report=report)
-        server.open()
-        for url in bound_urls(bind):
-            typer.echo(url, err=True)
         _drain_on_interrupt(server)
+        server.open()
+        if server.bound:
+            for url in bound_urls(bind):
+                typer.echo(url, err=True)
         server.serve()
         return Outcome(exit_code=9, diagnostic_class="cancelled")
 

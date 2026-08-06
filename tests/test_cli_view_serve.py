@@ -30,7 +30,7 @@ from typer.testing import CliRunner
 
 from exp2res import cli
 from exp2res.cli import app
-from exp2res.services.view_server import DEFAULT_PORT
+from exp2res.services.view_server import DEFAULT_PORT, ViewServer
 
 
 pytestmark = [pytest.mark.lifecycle]
@@ -223,6 +223,58 @@ def test_a_residual_managed_root_is_served_as_409_not_refused_at_startup(
 
     assert result.exit_code == 9
     assert result.stderr.splitlines()[2:] == ["/mirror export_residual"]
+
+
+@pytest.mark.parametrize("port", [1024, 65535])
+def test_the_two_allowed_boundary_ports_bind_exactly_as_requested(
+    workspace: Path, port: int
+) -> None:
+    """§21.57: 1024 and 65535 are inside the allowed range, not just outside.
+
+    The case is stated over free ports at those boundaries; a machine where
+    something already holds one has no boundary bind to observe.
+    """
+
+    if not nothing_listens("127.0.0.1", port):
+        pytest.skip(f"port {port} is already in use on this machine")
+
+    interrupt_once_serving()
+
+    result = invoke(workspace, "--port", str(port))
+
+    assert result.exit_code == 9
+    assert result.stderr.splitlines() == [
+        f"http://127.0.0.1:{port}/mirror?scope=global",
+        f"http://127.0.0.1:{port}/questions?scope=global",
+    ]
+
+
+def test_an_interrupt_before_the_bind_cancels_without_advertising_a_url(
+    workspace: Path, monkeypatch
+) -> None:
+    """The whole startup window belongs to the command's own handler.
+
+    An interrupt between construction and the bind must reach `interrupt`,
+    not the default `KeyboardInterrupt`: the run still ends in class 9, but
+    only an installed handler keeps the second interrupt out of envelope
+    assembly. Nothing was bound, so nothing is advertised.
+    """
+
+    port = free_port()
+    original = ViewServer.open
+
+    def interrupt_then_open(self):
+        os.kill(os.getpid(), signal.SIGINT)
+        return original(self)
+
+    monkeypatch.setattr(ViewServer, "open", interrupt_then_open)
+
+    result = invoke(workspace, "--port", str(port), controls=("--json",))
+
+    assert result.exit_code == 9
+    assert envelope(result)["status"] == "cancelled"
+    assert result.stderr == ""
+    assert nothing_listens("127.0.0.1", port)
 
 
 def test_a_second_interrupt_during_the_envelope_still_reports_class_nine(
