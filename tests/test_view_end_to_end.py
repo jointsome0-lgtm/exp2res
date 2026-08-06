@@ -24,7 +24,7 @@ from typing import Iterator
 import pytest
 
 from exp2res.services.capture import capture_gap_answer
-from exp2res.storage.workspace import CURRENT_SCHEMA_VERSION
+from exp2res.storage.workspace import CURRENT_SCHEMA_VERSION, writer_database
 from exp2res.services.export import export_assessment
 from exp2res.services.view_server import (
     BindAddress,
@@ -111,11 +111,17 @@ class LiveView:
 
 
 @contextmanager
-def live_view(workspace: Path, host: str = "127.0.0.1") -> Iterator[LiveView]:
+def live_view(
+    workspace: Path,
+    host: str = "127.0.0.1",
+    *,
+    busy_timeout_ms: int | None = None,
+) -> Iterator[LiveView]:
     """One real server over the real resolver — no stub anywhere in the path."""
 
     bind = free_bind(host)
-    server = ViewServer(workspace, bind, _timeouts=GENEROUS)
+    keywords = {} if busy_timeout_ms is None else {"_busy_timeout_ms": busy_timeout_ms}
+    server = ViewServer(workspace, bind, _timeouts=GENEROUS, **keywords)
     server.open()
     view = LiveView(server, bind)
     view.thread.start()
@@ -188,6 +194,71 @@ def test_both_routes_serve_both_selector_forms_over_a_real_socket(
         assert item["target_id"] not in page
     assert snapshot_id not in page
     assert str(workspace) not in page
+
+
+def test_a_single_encoded_selector_is_served_over_a_real_socket(
+    workspace: Path,
+) -> None:
+    snapshot_id = exported_workspace(workspace)
+    published = member(workspace, snapshot_id, "report.html")
+
+    with live_view(workspace) as view:
+        encoded_scope = view.mirror("scope=glob%61l")
+        encoded_snapshot = view.mirror(
+            f"snapshot={snapshot_id[:-1]}%{ord(snapshot_id[-1]):02x}"
+        )
+
+    assert encoded_scope.status == 200
+    assert encoded_scope.outcome == "served"
+    assert encoded_scope.body == published
+    assert encoded_snapshot.status == 200
+    assert encoded_snapshot.outcome == "served"
+    assert encoded_snapshot.body == published
+
+
+def test_requests_proceed_while_the_advisory_writer_lock_is_held(
+    workspace: Path,
+) -> None:
+    exported_workspace(workspace)
+
+    with live_view(workspace) as view, writer_database(workspace):
+        mirror = view.mirror()
+        questions = view.questions()
+
+    assert mirror.status == 200
+    assert mirror.outcome == "served"
+    assert questions.status == 200
+    assert questions.outcome == "served"
+
+
+def test_sqlite_contention_releases_the_live_server_for_the_next_request(
+    workspace: Path,
+) -> None:
+    snapshot_id = exported_workspace(workspace)
+    published = member(workspace, snapshot_id, "report.html")
+    blocker: sqlite3.Connection | None = sqlite3.connect(
+        workspace / ".exp2res" / "exp2res.sqlite", isolation_level=None
+    )
+    try:
+        with live_view(workspace, busy_timeout_ms=200) as view:
+            blocker.execute("PRAGMA locking_mode = EXCLUSIVE")
+            blocker.execute("BEGIN IMMEDIATE")
+            blocker.execute("PRAGMA user_version = 1")
+            busy = view.mirror()
+            blocker.rollback()
+            blocker.close()
+            blocker = None
+            served = view.mirror()
+    finally:
+        if blocker is not None:
+            blocker.rollback()
+            blocker.close()
+
+    assert busy.status == 503
+    assert busy.outcome == "workspace_busy"
+    assert served.status == 200
+    assert served.outcome == "served"
+    assert served.body == published
 
 
 def test_head_returns_the_get_status_and_headers_with_no_body(

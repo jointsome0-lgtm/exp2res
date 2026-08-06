@@ -26,12 +26,12 @@ from __future__ import annotations
 
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+import json
 import multiprocessing
 from multiprocessing.connection import Connection, wait as wait_for_connections
 from multiprocessing.context import BaseContext
 import os
 from pathlib import Path
-import pickle
 import queue
 import signal
 import socket
@@ -94,6 +94,7 @@ REPORT_QUEUE_LIMIT = 64
 _FLUSH_POLL_SECONDS = 0.05
 _PROCESS_REAP_POLL_SECONDS = 0.05
 _RESULT_LENGTH = struct.Struct("!Q")
+_RESULT_METADATA_LIMIT = 4096
 
 _SAFE_METHODS = (b"GET", b"HEAD")
 
@@ -416,11 +417,21 @@ class _AdmissionLease:
 
 
 def _write_process_result(sender: Connection, page: views.ViewPage) -> None:
-    payload = pickle.dumps(page, protocol=pickle.HIGHEST_PROTOCOL)
-    frame = _RESULT_LENGTH.pack(len(payload)) + payload
-    offset = 0
-    while offset < len(frame):
-        offset += os.write(sender.fileno(), frame[offset:])
+    metadata = json.dumps(
+        {
+            "body_length": len(page.body),
+            "content_type": page.content_type,
+            "outcome": page.outcome,
+            "published_member": page.published_member,
+            "status": page.status,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    for part in (_RESULT_LENGTH.pack(len(metadata)), metadata, page.body):
+        remaining = memoryview(part)
+        while remaining:
+            remaining = remaining[os.write(sender.fileno(), remaining) :]
 
 
 def _run_resolver_process(
@@ -1289,7 +1300,10 @@ class ViewServer:
         self, receiver: Connection, process, deadline: float
     ) -> views.ViewPage | None:
         buffer = bytearray()
-        payload_size: int | None = None
+        metadata_size: int | None = None
+        metadata: dict[str, object] | None = None
+        body_offset: int | None = None
+        body_size: int | None = None
         process_done = False
         eof = False
         os.set_blocking(receiver.fileno(), False)
@@ -1326,10 +1340,44 @@ class ViewServer:
                         return None
                     if self._clock() >= deadline:
                         return views.processing_timeout_page()
-                    if payload_size is None and len(buffer) >= _RESULT_LENGTH.size:
-                        payload_size = _RESULT_LENGTH.unpack_from(buffer)[0]
-                    if payload_size is not None:
-                        framed_size = _RESULT_LENGTH.size + payload_size
+                    if metadata_size is None and len(buffer) >= _RESULT_LENGTH.size:
+                        metadata_size = _RESULT_LENGTH.unpack_from(buffer)[0]
+                        if metadata_size > _RESULT_METADATA_LIMIT:
+                            return self._within(
+                                views.internal_error_page(), deadline
+                            )
+                    if (
+                        metadata_size is not None
+                        and metadata is None
+                        and len(buffer) >= _RESULT_LENGTH.size + metadata_size
+                    ):
+                        metadata_end = _RESULT_LENGTH.size + metadata_size
+                        try:
+                            decoded = json.loads(
+                                buffer[_RESULT_LENGTH.size : metadata_end]
+                            )
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            return self._within(
+                                views.internal_error_page(), deadline
+                            )
+                        if not isinstance(decoded, dict):
+                            return self._within(
+                                views.internal_error_page(), deadline
+                            )
+                        candidate_body_size = decoded.get("body_length")
+                        if (
+                            not isinstance(candidate_body_size, int)
+                            or isinstance(candidate_body_size, bool)
+                            or candidate_body_size < 0
+                        ):
+                            return self._within(
+                                views.internal_error_page(), deadline
+                            )
+                        metadata = decoded
+                        body_offset = metadata_end
+                        body_size = candidate_body_size
+                    if body_offset is not None and body_size is not None:
+                        framed_size = body_offset + body_size
                         if len(buffer) >= framed_size:
                             if len(buffer) != framed_size:
                                 return self._within(
@@ -1338,14 +1386,32 @@ class ViewServer:
                             eof = True
                             break
 
-        if payload_size is None or len(buffer) != _RESULT_LENGTH.size + payload_size:
+        if (
+            metadata is None
+            or body_offset is None
+            or body_size is None
+            or len(buffer) != body_offset + body_size
+        ):
             return self._within(views.internal_error_page(), deadline)
-        try:
-            page = pickle.loads(buffer[_RESULT_LENGTH.size :])
-        except Exception:
+        outcome = metadata.get("outcome")
+        status = metadata.get("status")
+        published_member = metadata.get("published_member")
+        content_type = metadata.get("content_type")
+        if (
+            not isinstance(outcome, str)
+            or not isinstance(status, int)
+            or isinstance(status, bool)
+            or not isinstance(published_member, bool)
+            or not isinstance(content_type, str)
+        ):
             return self._within(views.internal_error_page(), deadline)
-        if not isinstance(page, views.ViewPage):
-            return self._within(views.internal_error_page(), deadline)
+        page = views.ViewPage(
+            outcome=outcome,
+            status=status,
+            body=memoryview(buffer)[body_offset:].toreadonly(),
+            published_member=published_member,
+            content_type=content_type,
+        )
         return self._within(page, deadline)
 
     def _reap_process(

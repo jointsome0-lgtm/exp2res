@@ -339,7 +339,7 @@ def _schema_remedy(workspace: Path) -> str:
     """
 
     try:
-        status = inspect_workspace(workspace)
+        status = inspect_workspace(workspace, require_managed_root=False)
     except Exp2ResError:
         return "exp2res db status"
     if status.recognized and status.migration_path_available:

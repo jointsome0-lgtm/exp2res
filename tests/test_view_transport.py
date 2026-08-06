@@ -9,6 +9,7 @@ the observable release, never a calibrated sleep.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
 import multiprocessing
 import os
 from pathlib import Path
@@ -1177,6 +1178,38 @@ def test_receive_expiry_closes_with_no_response_bytes(tmp_path):
             assert read_to_close(client) == b""
 
 
+def test_receive_expiry_is_not_restarted_by_a_slow_trickle(tmp_path):
+    timeouts = Timeouts(receive=0.25, processing=30.0, emit=30.0, drain=30.0)
+    stop = threading.Event()
+    sent: list[float] = []
+    with running_server(tmp_path, timeouts=timeouts) as rig:
+        with rig.connect() as client:
+            client.settimeout(1.0)
+
+            def trickle() -> None:
+                while not stop.is_set():
+                    try:
+                        client.sendall(b"G")
+                    except OSError:
+                        return
+                    sent.append(time.monotonic())
+                    stop.wait(0.05)
+
+            sender = threading.Thread(target=trickle, daemon=True)
+            started = time.monotonic()
+            sender.start()
+            try:
+                response = read_to_close(client)
+            finally:
+                stop.set()
+                sender.join(10.0)
+
+    assert not sender.is_alive()
+    assert response == b""
+    assert len(sent) >= 3
+    assert time.monotonic() - started < 0.75
+
+
 def test_emit_expiry_truncates_a_stalled_reader_without_relabelling_it(tmp_path):
     """A client that stops reading loses the rest of its response, nothing more.
 
@@ -1334,7 +1367,7 @@ def test_partial_process_result_transfer_obeys_the_processing_deadline(tmp_path)
             return sentinel
 
     def write_partial_result() -> None:
-        os.write(sender.fileno(), view_server._RESULT_LENGTH.pack(1024 * 1024))
+        os.write(sender.fileno(), view_server._RESULT_LENGTH.pack(100))
         os.write(sender.fileno(), b"partial")
         release.wait(2.0)
         sender.close()
@@ -1363,7 +1396,18 @@ def test_continuously_readable_process_result_rechecks_between_chunks(
     tmp_path, monkeypatch
 ):
     payload = b"x" * (1024 * 1024)
-    frame = view_server._RESULT_LENGTH.pack(len(payload)) + payload
+    metadata = json.dumps(
+        {
+            "body_length": len(payload),
+            "content_type": views.CONTENT_TYPE,
+            "outcome": "served",
+            "published_member": True,
+            "status": 200,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    frame = view_server._RESULT_LENGTH.pack(len(metadata)) + metadata + payload
     offset = 0
     reads = 0
 
@@ -1398,6 +1442,58 @@ def test_continuously_readable_process_result_rechecks_between_chunks(
     assert page is not None and page.outcome == "processing_timeout"
     assert reads == 1
     assert offset < len(frame)
+
+
+def test_complete_process_result_keeps_the_body_buffer_without_decoding(
+    tmp_path, monkeypatch
+):
+    payload = b"<!doctype html><p>Vera Example</p>" + b"x" * (1024 * 1024)
+    metadata = json.dumps(
+        {
+            "body_length": len(payload),
+            "content_type": views.CONTENT_TYPE,
+            "outcome": "served",
+            "published_member": True,
+            "status": 200,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    frame = view_server._RESULT_LENGTH.pack(len(metadata)) + metadata + payload
+    offset = 0
+
+    class Receiver:
+        def fileno(self):
+            return 1
+
+    class Process:
+        sentinel = object()
+
+    receiver = Receiver()
+
+    def read(_descriptor, size):
+        nonlocal offset
+        chunk = frame[offset : offset + size]
+        offset += len(chunk)
+        return chunk
+
+    monkeypatch.setattr(view_server.os, "set_blocking", lambda *_args: None)
+    monkeypatch.setattr(view_server.os, "read", read)
+    monkeypatch.setattr(
+        view_server,
+        "wait_for_connections",
+        lambda *_args: (receiver, Process.sentinel),
+    )
+    server = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+
+    page = server._receive_process_result(
+        receiver, Process(), deadline=time.monotonic() + 30.0
+    )
+
+    assert page is not None and page.outcome == "served"
+    assert isinstance(page.body, memoryview)
+    assert page.body.readonly
+    assert bytes(page.body) == payload
 
 
 def test_resolver_process_finish_never_waits_for_uninterruptible_work():
