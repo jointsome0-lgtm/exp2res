@@ -77,11 +77,10 @@ LISTEN_BACKLOG = 32
 # Progress lines held for a slow reporter before excess lines are dropped;
 # diagnostics never get to block or accumulate request-side threads.
 REPORT_QUEUE_LIMIT = 64
-# How long a finished run waits for already-queued lines to reach the sink.
-# Not the drain allowance, which §14.17 reserves for unfinished request work:
-# this covers delivery of what completed requests already produced, and a
-# wedged writer costs it once.
-REPORT_FLUSH_SECONDS = 1.0
+# How often the post-drain flush rechecks its two exits — the deadline and a
+# second interruption. Not an allowance of its own: it only bounds how long
+# either one goes unnoticed.
+_FLUSH_POLL_SECONDS = 0.05
 
 _SAFE_METHODS = (b"GET", b"HEAD")
 
@@ -755,16 +754,17 @@ class ViewServer:
         spends the queue's last slot — that reserve exists for exactly this
         signal, so a saturated queue cannot swallow it.
 
-        The wait is bounded, and by its own allowance rather than the drain's:
-        §14.17 reserves the drain for unfinished request work, so a blocked
-        writer may not spend it. Without any wait at all a line queued just
-        before the interruption would race the caller's return, and the sink
-        it was bound to — a `CliRunner` stderr, a process about to exit —
-        would be gone before the reporter reached it. The sentinel sits behind
-        every queued line in one FIFO queue, so a returning thread has
-        delivered all of them; a wedged one costs `REPORT_FLUSH_SECONDS` once
-        and then keeps its own losses, a daemon thread holding no socket,
-        slot, or transaction.
+        The wait is whatever the one absolute drain deadline has left, and
+        never a second past it: §14.17 lets nothing extend that bound, and a
+        second interruption performs the close immediately, so it leaves none
+        at all. Without any wait a line queued just before the interruption
+        would race the caller's return, and the sink it was bound to — a
+        `CliRunner` stderr, a process about to exit — would be gone before
+        the reporter reached it. A returning thread has delivered every line
+        ahead of the sentinel; a wedged one keeps its own losses when the
+        deadline arrives, a daemon thread holding no socket, slot, or
+        transaction, and a sink wedged that long could not have carried the
+        envelope either.
         """
 
         with self._state_lock:
@@ -773,7 +773,25 @@ class ViewServer:
         if reporter is None:
             return
         self._report_queue.put_nowait(None)
-        reporter.join(REPORT_FLUSH_SECONDS)
+        self._flush(reporter)
+
+    def _flush(self, reporter: threading.Thread) -> None:
+        """Wait for the sentinel to come back, inside the drain's own bound.
+
+        Sliced rather than one long join so the second interruption is not
+        merely recorded: it forces the close, and a wait that could not see it
+        would hold the envelope for the rest of the deadline instead.
+        """
+
+        with self._state_lock:
+            deadline = self._drain_deadline
+        if deadline is None:
+            return
+        while reporter.is_alive():
+            remaining = deadline - self._clock()
+            if remaining <= 0 or self._immediate.is_set():
+                return
+            reporter.join(min(remaining, _FLUSH_POLL_SECONDS))
 
     def _receive(
         self, connection: socket.socket, admitted_at: float

@@ -1431,10 +1431,15 @@ def test_a_backlog_connection_accepted_at_the_drain_boundary_is_refused(tmp_path
         rig.thread.join(15.0)
 
 
-def test_stalled_reporter_does_not_consume_the_drain(tmp_path):
-    """§14.17 reserves the drain for unfinished request work: a reporter
-    blocked after its request closed and released everything must not make
-    the drain wait, let alone expire."""
+def test_a_stalled_reporter_never_outlives_the_drain_deadline(tmp_path):
+    """§14.17's one absolute deadline bounds the reporter too.
+
+    The drain itself never waits on a reporter: this one is blocked after its
+    request closed and released everything, and the drain completes anyway.
+    What follows is the flush of already-queued lines, and it ends at the
+    same absolute deadline rather than adding an allowance of its own — so a
+    writer that never returns cannot hold the class-9 envelope open.
+    """
 
     gate = threading.Event()
     reported = threading.Event()
@@ -1443,8 +1448,9 @@ def test_stalled_reporter_does_not_consume_the_drain(tmp_path):
         reported.set()
         gate.wait(30.0)
 
+    timeouts = Timeouts(receive=30.0, processing=30.0, emit=30.0, drain=0.3)
     try:
-        with running_server(tmp_path, report=reporter) as rig:
+        with running_server(tmp_path, report=reporter, timeouts=timeouts) as rig:
             response = rig.exchange(rig.request_bytes())
             assert status_of(response) == 200
             assert reported.wait(10.0)
@@ -1506,6 +1512,44 @@ def test_a_finished_run_retires_its_reporter_after_serving_requests(tmp_path):
     # The retirement is a stop, not a silencing: the completed request's own
     # line still reached the callback.
     assert delivered == [("served", "/mirror")]
+
+
+def test_a_second_interruption_cuts_the_flush_short(tmp_path):
+    """The immediate close outranks delivering diagnostics.
+
+    A blocked writer would otherwise hold the class-9 envelope for the rest
+    of the drain deadline, which is exactly what the second interruption
+    exists to refuse.
+    """
+
+    gate = threading.Event()
+    reported = threading.Event()
+
+    def reporter(outcome, route):
+        reported.set()
+        gate.wait(30.0)
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        report=reporter,
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    rig = Rig(server, bind)
+    rig.thread.start()
+    try:
+        assert status_of(rig.exchange(rig.request_bytes())) == 200
+        assert reported.wait(10.0)
+        server.interrupt()
+        server.interrupt()
+        rig.thread.join(10.0)
+
+        assert not rig.thread.is_alive()
+    finally:
+        gate.set()
 
 
 def test_a_completed_line_reaches_the_sink_before_the_run_returns(tmp_path):
