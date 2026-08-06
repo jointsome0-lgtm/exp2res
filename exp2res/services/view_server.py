@@ -772,8 +772,32 @@ class ViewServer:
             self._report_thread = None
         if reporter is None:
             return
+        self._await_producers()
         self._report_queue.put_nowait(None)
         self._flush(reporter)
+
+    def _await_producers(self) -> None:
+        """Let every admitted request queue its line ahead of the sentinel.
+
+        A drain ends with none outstanding, so this is for the path that has
+        no drain: an `accept` the operating system refused force-closes and
+        unwinds, and a connection that had already emitted its response but
+        not yet queued its line would put it behind the sentinel, where no
+        reporter is left to take it. Bounded by the same §8.1 timeout the
+        drain uses — a force-closed request has only its own release left to
+        run — and skipped outright once the second interruption has demanded
+        the immediate close, which outranks any diagnostic.
+        """
+
+        if self._immediate.is_set():
+            return
+        deadline = self._clock() + self._timeouts.drain
+        with self._idle:
+            while self._active and not self._immediate.is_set():
+                remaining = deadline - self._clock()
+                if remaining <= 0:
+                    return
+                self._idle.wait(remaining)
 
     def _flush(self, reporter: threading.Thread) -> None:
         """Wait for the sentinel to come back, inside the drain's own bound.

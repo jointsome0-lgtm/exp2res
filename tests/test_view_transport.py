@@ -360,6 +360,67 @@ def test_an_unexpected_accept_failure_releases_the_admitted_work(tmp_path):
         runner.join(15.0)
 
 
+def test_an_accept_failure_still_reports_the_request_that_completed(tmp_path):
+    """The path with no drain still lets its producers reach the queue.
+
+    A connection that had already emitted its response when `accept` failed
+    would otherwise put its line behind a sentinel the unwinding call queued
+    first, where no reporter is left to take it — and that request completed.
+    """
+
+    emitted = threading.Event()
+    unwinding = threading.Event()
+    delivered: list[tuple[str, str | None]] = []
+
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        report=lambda outcome, route: delivered.append((outcome, route)),
+        _resolver=page_resolver(MARKER_PAGE),
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    server._listener = AcceptFailsOnceServing(server._listener, emitted)
+
+    real_enqueue = server._enqueue_report
+    real_force_close = server._force_close
+
+    def enqueue_once_unwinding(line):
+        emitted.set()
+        assert unwinding.wait(10.0)
+        # Give the unwinding call every chance to queue its sentinel first:
+        # a reporter that retires here is one this line can never reach.
+        for thread in reporter_threads():
+            thread.join(0.5)
+        real_enqueue(line)
+
+    def force_close():
+        unwinding.set()
+        real_force_close()
+
+    server._enqueue_report = enqueue_once_unwinding
+    server._force_close = force_close
+
+    rig = Rig(server, bind)
+    failure: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            server.serve()
+        except BaseException as error:
+            failure.append(error)
+
+    runner = threading.Thread(target=run, daemon=True)
+    runner.start()
+    assert status_of(rig.exchange(rig.request_bytes())) == 200
+    runner.join(15.0)
+
+    assert not runner.is_alive()
+    assert failure and isinstance(failure[0], OSError)
+    assert delivered == [("served", "/mirror")]
+
+
 def test_an_interruption_before_the_bind_takes_precedence_over_it(tmp_path):
     """`interrupt` is callable at any instant, including before `serve` binds.
     §14.14 rule 6's cancellation is not overtaken by a bind refusal for a

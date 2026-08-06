@@ -17,12 +17,14 @@ from contextlib import contextmanager
 import json
 from pathlib import Path
 import socket
+import sqlite3
 import threading
 from typing import Iterator
 
 import pytest
 
 from exp2res.services.capture import capture_gap_answer
+from exp2res.storage.workspace import CURRENT_SCHEMA_VERSION
 from exp2res.services.export import export_assessment
 from exp2res.services.view_server import (
     BindAddress,
@@ -246,6 +248,58 @@ def test_one_running_server_observes_invalidation_and_the_replacement(
     assert served_questions.status == 200
     # The answered question is gone from the replacement projection.
     assert served_questions.body != first_questions
+
+
+def migrate_beyond_this_build(workspace: Path) -> None:
+    """Let another build carry the workspace one schema version past ours.
+
+    Written straight to the database, the way a newer build's migration
+    would land it while this server keeps holding its socket.
+    """
+
+    connection = sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite")
+    try:
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at, app_version)"
+            " VALUES (?, ?, ?)",
+            (
+                CURRENT_SCHEMA_VERSION + 1,
+                "2026-08-06T00:00:00+00:00",
+                "99.0.0",
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_a_forward_migration_under_a_live_server_refuses_the_next_request(
+    workspace: Path,
+) -> None:
+    """§21.57: the §12.14 gate is a per-request check, not a bind-time one.
+
+    The server was bound against a compatible workspace and served the
+    published bytes. Another build then migrates past this one, and the very
+    next request on that same server refuses instead of replaying what it
+    already read.
+    """
+
+    snapshot_id = exported_workspace(workspace)
+    published = member(workspace, snapshot_id, "report.html")
+
+    with live_view(workspace) as view:
+        assert view.mirror().body == published
+
+        migrate_beyond_this_build(workspace)
+
+        refused_mirror = view.mirror()
+        refused_questions = view.questions()
+
+    assert refused_mirror.status == 409
+    assert refused_mirror.outcome == "schema_incompatible"
+    assert refused_mirror.body != published
+    assert refused_questions.status == 409
+    assert refused_questions.outcome == "schema_incompatible"
 
 
 def test_the_ipv6_loopback_serves_the_same_routes(workspace: Path) -> None:
