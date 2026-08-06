@@ -250,16 +250,17 @@ def test_startup_contention_is_class_five_not_an_unrecognized_workspace(
     assert nothing_listens("127.0.0.1", port)
 
 
-def test_a_residual_managed_root_is_served_as_409_not_refused_at_startup(
+def test_a_broken_managed_root_is_served_per_request_not_refused_at_startup(
     workspace: Path, serving: threading.Event
 ) -> None:
-    """A broken `out/` entry is §30's per-request outcome, not a startup gate.
+    """A broken `out/` entry is §30's business, not the startup gate's.
 
     §12.14's compatibility gate is about the schema this build can read. A
     managed root that is a symlink rather than a directory is a §13.14 rule 6
-    containment failure, which the request resolver answers with the closed
-    `export_residual` 409 — an outcome the owner can only see if the command
-    binds in the first place.
+    containment failure, and this workspace has published nothing at all — so
+    §30's ordering answers the request before revalidation is even reached.
+    Either way the owner sees a served outcome, which is only possible if the
+    command binds instead of refusing in front of it.
     """
 
     moved = workspace / "elsewhere"
@@ -287,7 +288,7 @@ def test_a_residual_managed_root_is_served_as_409_not_refused_at_startup(
     thread.join(30.0)
 
     assert result.exit_code == 9
-    assert result.stderr.splitlines()[2:] == ["/mirror export_residual"]
+    assert result.stderr.splitlines()[2:] == ["/mirror no_current_view"]
 
 
 @pytest.mark.parametrize("port", [1024, 65535])

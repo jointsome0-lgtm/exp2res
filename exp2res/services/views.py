@@ -614,24 +614,23 @@ def _entry_is_present_non_directory(path: Path) -> bool:
 def _compatibility_refusal(workspace: Path) -> _Refusal:
     """Tell an unreadable schema apart from an unusable managed root.
 
-    The §8.1 read gate refuses all three, but §30 answers them differently
-    under a schema this build reads. A symlinked or non-directory `out/`
-    entry is §13.14 rule 6's containment failure, which no migration and no
-    re-export resolves. An `out/` root that is simply absent is §30's
-    "managed output missing": the §14.9 export replaces it in place, so the
-    owner is pointed at that rather than at a migration. Only an unreadable
-    or unsupported schema is the migration answer.
+    The §8.1 read gate refuses both, but §30 answers them differently: a
+    symlinked or non-directory `out/` entry under a schema this build reads is
+    §13.14 rule 6's containment failure, which no migration resolves. An
+    absent root never arrives here — the §30 read does not require one, so
+    that state is classified in phase 2 with the rest of the managed output.
     """
 
     try:
         status = inspect_workspace(workspace, require_managed_root=False)
     except WorkspaceBusyError:
         return _Refusal("workspace_busy", _WORKSPACE_BUSY)
-    if status.recognized and status.compatible:
-        if _entry_is_present_non_directory(workspace / "out"):
-            return _Refusal("export_residual", _EXPORT_RESIDUAL)
-        if not (workspace / "out").exists():
-            return _Refusal("export_not_current", _EXPORT_NOT_CURRENT)
+    if (
+        status.recognized
+        and status.compatible
+        and _entry_is_present_non_directory(workspace / "out")
+    ):
+        return _Refusal("export_residual", _EXPORT_RESIDUAL)
     return _Refusal(
         "schema_incompatible", _SCHEMA_INCOMPATIBLE, _schema_remedy(workspace)
     )
@@ -700,7 +699,7 @@ def resolve(
         # which re-reads §12.14 compatibility and closes before phase 2.
         try:
             with read_database(
-                workspace, timeout_ms=busy_timeout_ms
+                workspace, timeout_ms=busy_timeout_ms, require_managed_root=False
             ) as connection, register_connection(connection), _stored_state(selector):
                 snapshot_row, snapshot = _resolve_snapshot(connection, selector)
                 _record, claims = load_snapshot_claims(

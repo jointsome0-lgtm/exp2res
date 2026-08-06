@@ -441,7 +441,7 @@ def test_an_absent_managed_root_is_replaceable_output_not_a_migration(
     re-export can perform.
     """
 
-    exported_workspace(workspace)
+    snapshot_id = exported_workspace(workspace)
     shutil.rmtree(workspace / "out")
 
     page = mirror(workspace, b"scope=global")
@@ -449,6 +449,25 @@ def test_an_absent_managed_root_is_replaceable_output_not_a_migration(
     assert page.outcome == "export_not_current"
     assert page.status == 409
     assert b"schema" not in page.body.lower()
+    # Classified in phase 2, so it still carries the remedy for this snapshot.
+    assert snapshot_id.encode("ascii") in page.body
+
+
+def test_an_absent_managed_root_does_not_pre_empt_the_snapshot_outcomes(
+    workspace: Path,
+) -> None:
+    """§30's ordering survives a missing root: business state answers first.
+
+    Refusing in front of the read would report missing output for a workspace
+    whose real answer is that it has no current assessment view at all.
+    """
+
+    shutil.rmtree(workspace / "out")
+
+    page = mirror(workspace, b"scope=global")
+
+    assert page.outcome == "no_current_view"
+    assert page.status == 404
 
 
 def test_a_final_entry_replaced_mid_read_is_export_changed(
