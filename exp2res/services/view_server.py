@@ -416,6 +416,13 @@ class ViewServer:
             self.open()
         listener = self._listener
         assert listener is not None
+        if self._draining.is_set():
+            # `open` is a public step, so an interruption can close an
+            # already-bound listener before `serve` reaches this point. The
+            # cancellation result has precedence and no request can now
+            # produce a progress line; starting the optional reporter would
+            # create new work whose queue can only remain empty.
+            return self._drain()
         if self._report is not None and self._report_thread is None:
             reporter = threading.Thread(
                 target=self._report_loop, name="view-report", daemon=True

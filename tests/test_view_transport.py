@@ -366,6 +366,34 @@ def test_an_interruption_before_the_bind_takes_precedence_over_it(tmp_path):
         holder.serve()
 
 
+def test_an_interruption_after_open_starts_no_reporter(tmp_path, monkeypatch):
+    """Cancellation visible before `serve` starts wins without new work.
+
+    `open` is a public step, so the first interruption can close an already
+    bound listener before `serve` reaches its optional reporter startup. That
+    cancelled server has no request to report and must return through its
+    drain instead of creating a daemon whose queue can never receive a line.
+    """
+
+    starts: list[threading.Thread] = []
+    server = ViewServer(
+        tmp_path,
+        free_bind(),
+        report=lambda outcome, route: None,
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    server.interrupt()
+
+    def record_start(thread):
+        starts.append(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", record_start)
+    assert server.serve() == "drained"
+    assert starts == []
+    assert server._report_thread is None
+
+
 def test_a_reporter_thread_the_os_refuses_gives_the_port_back(
     tmp_path, monkeypatch
 ):
