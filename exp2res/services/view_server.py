@@ -29,11 +29,14 @@ from dataclasses import dataclass
 import multiprocessing
 from multiprocessing.connection import Connection, wait as wait_for_connections
 from multiprocessing.context import BaseContext
+import os
 from pathlib import Path
+import pickle
 import queue
 import signal
 import socket
 import sqlite3
+import struct
 import threading
 import time
 from typing import Callable, Iterator, Literal
@@ -85,6 +88,7 @@ REPORT_QUEUE_LIMIT = 64
 # second interruption. Not an allowance of its own: it only bounds how long
 # either one goes unnoticed.
 _FLUSH_POLL_SECONDS = 0.05
+_RESULT_LENGTH = struct.Struct("!Q")
 
 _SAFE_METHODS = (b"GET", b"HEAD")
 
@@ -320,26 +324,41 @@ class _AdmissionLease:
     def __init__(self, semaphore: threading.Semaphore) -> None:
         self._semaphore = semaphore
         self._lock = threading.Lock()
-        self._deferred = False
+        self._connection_done = False
+        self._process_done = True
         self._released = False
 
     def defer(self) -> None:
         with self._lock:
-            self._deferred = True
+            self._process_done = False
 
     def release(self) -> None:
         with self._lock:
-            if self._released or self._deferred:
-                return
-            self._released = True
-        self._semaphore.release()
+            self._connection_done = True
+            release = self._release_if_ready()
+        if release:
+            self._semaphore.release()
 
     def release_deferred(self) -> None:
         with self._lock:
-            if self._released:
-                return
-            self._released = True
-        self._semaphore.release()
+            self._process_done = True
+            release = self._release_if_ready()
+        if release:
+            self._semaphore.release()
+
+    def _release_if_ready(self) -> bool:
+        if self._released or not self._connection_done or not self._process_done:
+            return False
+        self._released = True
+        return True
+
+
+def _write_process_result(sender: Connection, page: views.ViewPage) -> None:
+    payload = pickle.dumps(page, protocol=pickle.HIGHEST_PROTOCOL)
+    frame = _RESULT_LENGTH.pack(len(payload)) + payload
+    offset = 0
+    while offset < len(frame):
+        offset += os.write(sender.fileno(), frame[offset:])
 
 
 def _run_resolver_process(
@@ -352,6 +371,8 @@ def _run_resolver_process(
 ) -> None:
     try:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
+        with suppress(AttributeError):
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
         try:
             page = resolver(
                 workspace,
@@ -363,7 +384,7 @@ def _run_resolver_process(
         except BaseException:
             page = views.internal_error_page()
         with suppress(BrokenPipeError, EOFError, OSError):
-            sender.send(page)
+            _write_process_result(sender, page)
     finally:
         sender.close()
 
@@ -1046,7 +1067,7 @@ class ViewServer:
             return self._within(views.internal_error_page(), deadline)
         try:
             try:
-                process.start()
+                self._start_resolver_process(process)
             except Exception:
                 return self._within(views.internal_error_page(), deadline)
             finally:
@@ -1060,23 +1081,7 @@ class ViewServer:
                 if forced or self._drain_expired():
                     handle.wake()
                     return None
-                ready = wait_for_connections(
-                    (receiver, process.sentinel),
-                    max(0.0, self._phase_deadline(deadline) - self._clock()),
-                )
-                if self._immediate.is_set():
-                    handle.wake()
-                    return None
-                if self._drain_expired():
-                    handle.wake()
-                    return None
-                if receiver not in ready:
-                    handle.wake()
-                    return views.processing_timeout_page()
-                try:
-                    return receiver.recv()
-                except (EOFError, OSError):
-                    return self._within(views.internal_error_page(), deadline)
+                return self._receive_process_result(receiver, process, deadline)
             finally:
                 if not handle.finish():
                     if lease is not None:
@@ -1086,6 +1091,74 @@ class ViewServer:
                     self._handles.discard(handle)
         finally:
             receiver.close()
+
+    def _start_resolver_process(self, process) -> None:
+        try:
+            previous_mask = signal.pthread_sigmask(
+                signal.SIG_BLOCK, {signal.SIGINT}
+            )
+        except AttributeError:
+            process.start()
+            return
+        try:
+            process.start()
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+    def _receive_process_result(
+        self, receiver: Connection, process, deadline: float
+    ) -> views.ViewPage | None:
+        buffer = bytearray()
+        payload_size: int | None = None
+        process_done = False
+        eof = False
+        os.set_blocking(receiver.fileno(), False)
+        while True:
+            if self._immediate.is_set():
+                return None
+            if self._drain_expired():
+                return None
+            if process_done and eof:
+                break
+
+            remaining = self._phase_deadline(deadline) - self._clock()
+            if remaining <= 0:
+                return views.processing_timeout_page()
+            ready = wait_for_connections(
+                (receiver, process.sentinel), remaining
+            )
+            process_done = process_done or process.sentinel in ready
+            if receiver in ready:
+                while True:
+                    try:
+                        chunk = os.read(receiver.fileno(), 65536)
+                    except BlockingIOError:
+                        break
+                    if not chunk:
+                        eof = True
+                        break
+                    buffer.extend(chunk)
+                    if payload_size is None and len(buffer) >= _RESULT_LENGTH.size:
+                        payload_size = _RESULT_LENGTH.unpack_from(buffer)[0]
+                    if payload_size is not None:
+                        framed_size = _RESULT_LENGTH.size + payload_size
+                        if len(buffer) >= framed_size:
+                            if len(buffer) != framed_size:
+                                return self._within(
+                                    views.internal_error_page(), deadline
+                                )
+                            eof = True
+                            break
+
+        if payload_size is None or len(buffer) != _RESULT_LENGTH.size + payload_size:
+            return self._within(views.internal_error_page(), deadline)
+        try:
+            page = pickle.loads(buffer[_RESULT_LENGTH.size :])
+        except Exception:
+            return self._within(views.internal_error_page(), deadline)
+        if not isinstance(page, views.ViewPage):
+            return self._within(views.internal_error_page(), deadline)
+        return self._within(page, deadline)
 
     def _reap_process(
         self, handle: _ProcessHandle, lease: _AdmissionLease | None

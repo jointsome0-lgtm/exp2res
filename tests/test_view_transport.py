@@ -83,6 +83,24 @@ class SignalResolverProbe:
         return MARKER_PAGE
 
 
+class BootstrapSignalResolverProbe:
+    def __init__(self, context) -> None:
+        self.entered = context.Event()
+        self.pid = context.Value("i", 0)
+
+    def __getstate__(self):
+        return self.entered, self.pid
+
+    def __setstate__(self, state) -> None:
+        self.entered, self.pid = state
+        self.pid.value = os.getpid()
+        self.entered.set()
+        time.sleep(0.5)
+
+    def __call__(self, workspace, route, query, **_kwargs):
+        return MARKER_PAGE
+
+
 def free_bind(host: str = "127.0.0.1") -> BindAddress:
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     with socket.socket(family, socket.SOCK_STREAM) as probe:
@@ -1229,6 +1247,65 @@ def test_resolver_child_ignores_terminal_sigint(tmp_path):
     assert outcome_of(response) == b"served"
 
 
+def test_resolver_child_blocks_sigint_during_spawn_bootstrap(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    resolver = BootstrapSignalResolverProbe(context)
+    timeouts = Timeouts(receive=30.0, processing=5.0, emit=30.0, drain=30.0)
+
+    with running_server(
+        tmp_path,
+        resolver=resolver,
+        timeouts=timeouts,
+        isolate_resolver=True,
+        process_context=context,
+    ) as rig:
+        with rig.connect() as client:
+            client.sendall(rig.request_bytes())
+            assert resolver.entered.wait(10.0)
+            os.kill(resolver.pid.value, signal.SIGINT)
+            response = read_to_close(client)
+
+    assert status_of(response) == 200
+    assert outcome_of(response) == b"served"
+
+
+def test_partial_process_result_transfer_obeys_the_processing_deadline(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    sentinel, sentinel_writer = os.pipe()
+    release = threading.Event()
+
+    class IncompleteProcess:
+        @property
+        def sentinel(self):
+            return sentinel
+
+    def write_partial_result() -> None:
+        os.write(sender.fileno(), view_server._RESULT_LENGTH.pack(1024 * 1024))
+        os.write(sender.fileno(), b"partial")
+        release.wait(2.0)
+        sender.close()
+
+    writer = threading.Thread(target=write_partial_result, daemon=True)
+    writer.start()
+    server = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+    started = time.monotonic()
+    try:
+        page = server._receive_process_result(
+            receiver, IncompleteProcess(), started + 0.2
+        )
+    finally:
+        release.set()
+        writer.join(10.0)
+        receiver.close()
+        sender.close()
+        os.close(sentinel)
+        os.close(sentinel_writer)
+
+    assert page is not None and page.outcome == "processing_timeout"
+    assert time.monotonic() - started < 1.0
+
+
 def test_resolver_process_finish_never_waits_for_uninterruptible_work():
     class UninterruptibleProcess:
         def is_alive(self):
@@ -1257,6 +1334,18 @@ def test_deferred_admission_is_not_reused_until_the_process_is_reaped():
     assert not slots.acquire(blocking=False)
 
     lease.release_deferred()
+    assert slots.acquire(blocking=False)
+
+
+def test_reaping_before_connection_close_does_not_release_admission():
+    slots = threading.Semaphore(0)
+    lease = _AdmissionLease(slots)
+
+    lease.defer()
+    lease.release_deferred()
+    assert not slots.acquire(blocking=False)
+
+    lease.release()
     assert slots.acquire(blocking=False)
 
 
