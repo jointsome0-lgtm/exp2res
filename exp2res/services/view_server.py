@@ -47,7 +47,11 @@ from exp2res.errors import (
     ViewBindNotLoopbackError,
 )
 from exp2res.services import views
-from exp2res.services.view_http import ParsedRequest, RequestParser, compose_response
+from exp2res.services.view_http import (
+    ParsedRequest,
+    RequestParser,
+    compose_response_parts,
+)
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS
 
 
@@ -1488,7 +1492,7 @@ class ViewServer:
         computed outcome. Returns the page actually emitted.
         """
 
-        payload = compose_response(page, head=head)
+        header, body = compose_response_parts(page, head=head)
         if self._clock() >= processing_deadline:
             # The ordinary processing deadline alone, never `min(phase,
             # drain)`: §30 rule 7 lets drain expiry truncate delivery after
@@ -1497,19 +1501,20 @@ class ViewServer:
             # serialization closes this connection with the page it already
             # computed rather than relabelling it a timeout.
             page = views.processing_timeout_page()
-            payload = compose_response(page, head=head)
+            header, body = compose_response_parts(page, head=head)
         deadline = self._clock() + self._timeouts.emit
-        response = memoryview(payload)
-        while response:
-            if self._immediate.is_set():
-                return page
-            remaining = self._phase_deadline(deadline) - self._clock()
-            if remaining <= 0:
-                return page
-            try:
-                connection.settimeout(remaining)
-                sent = connection.send(response)
-            except OSError:
-                return page
-            response = response[sent:]
+        for part in (header, body):
+            response = memoryview(part)
+            while response:
+                if self._immediate.is_set():
+                    return page
+                remaining = self._phase_deadline(deadline) - self._clock()
+                if remaining <= 0:
+                    return page
+                try:
+                    connection.settimeout(remaining)
+                    sent = connection.send(response)
+                except OSError:
+                    return page
+                response = response[sent:]
         return page

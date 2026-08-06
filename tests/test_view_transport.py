@@ -1527,6 +1527,34 @@ def test_expired_processing_deadline_outweighs_a_pre_state_refusal(tmp_path):
     assert fresh is not None and fresh.outcome == "authority_not_bound"
 
 
+def test_emit_does_not_copy_the_published_body_during_composition(tmp_path):
+    body = b"<!doctype html><p>Vera Example</p>" + b"x" * (8 * 1024 * 1024)
+    page = views.ViewPage(
+        outcome="served",
+        status=200,
+        body=body,
+        published_member=True,
+    )
+    sent_objects: list[object] = []
+
+    class RecordingSocket:
+        def settimeout(self, _timeout):
+            pass
+
+        def send(self, payload):
+            sent_objects.append(payload.obj)
+            return len(payload)
+
+    server = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+    emitted = server._emit(
+        RecordingSocket(), page, time.monotonic() + 30.0, head=False
+    )
+
+    assert emitted is page
+    assert len(sent_objects) == 2
+    assert sent_objects[1] is body
+
+
 def test_a_resolver_process_that_cannot_start_is_the_fixed_internal_error(tmp_path):
     # §30 rule 7 owes every complete admitted request exactly one outcome. A
     # process the operating system refuses to create is an unexpected local
