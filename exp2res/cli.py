@@ -2464,18 +2464,32 @@ class _ServeCancellation:
 
     def __init__(self) -> None:
         self._server: ViewServer | None = None
-        self._requested = False
+        self._pending = 0
 
     def __call__(self, _signum: int, _frame: object) -> None:
-        self._requested = True
         server = self._server
         if server is not None:
             server.interrupt()
+            return
+        self._pending += 1
 
     def adopt(self, server: ViewServer) -> None:
+        """Give the server every interrupt taken before it existed.
+
+        Counted, not collapsed: the owner who pressed Ctrl-C twice through a
+        blocked compatibility read asked for the immediate close the second
+        call performs, and one replayed interrupt would leave them waiting
+        out a full drain instead. Beyond the second, `interrupt` is a no-op
+        by its own contract, so nothing is gained by replaying more. The
+        drain deadline dates from adoption rather than from the first signal,
+        which costs nothing: no connection can have been admitted before the
+        server existed, so the drain it bounds has nothing in it.
+        """
+
         self._server = server
-        if self._requested:
+        for _ in range(min(self._pending, 2)):
             server.interrupt()
+        self._pending = 0
 
 
 def _require_interruptible() -> None:

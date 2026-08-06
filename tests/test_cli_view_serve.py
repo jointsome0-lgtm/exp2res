@@ -377,6 +377,28 @@ def test_an_interrupt_during_the_startup_gate_keeps_the_command_in_charge(
     assert nothing_listens("127.0.0.1", port)
 
 
+def test_interrupts_taken_before_the_server_exists_are_all_replayed() -> None:
+    """Two Ctrl-Cs through a blocked startup stay two, not one.
+
+    The second interrupt is what forces the immediate close, so collapsing
+    the pair would leave an owner who asked to stop waiting out a full drain.
+    Past the second, `interrupt` is a no-op by its own contract.
+    """
+
+    calls: list[int] = []
+
+    class Server:
+        def interrupt(self) -> None:
+            calls.append(len(calls))
+
+    cancellation = cli._ServeCancellation()
+    for _ in range(3):
+        cancellation(signal.SIGINT, None)
+    cancellation.adopt(Server())
+
+    assert len(calls) == 2
+
+
 def test_an_interrupt_after_the_bind_advertises_no_unreachable_url(
     workspace: Path, monkeypatch
 ) -> None:
