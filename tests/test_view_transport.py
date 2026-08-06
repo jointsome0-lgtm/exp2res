@@ -154,6 +154,20 @@ def status_of(response: bytes) -> int:
     return int(response.split(b" ", 2)[1])
 
 
+def reporter_threads() -> set[threading.Thread]:
+    """Every live reporter thread in the process, by identity.
+
+    Reporters retire asynchronously, so an earlier test's thread may still be
+    enumerated here and may die at any moment afterwards. Comparing sets of
+    thread objects rather than counts keeps a neighbour's exit from moving
+    this server's baseline in either direction.
+    """
+
+    return {
+        thread for thread in threading.enumerate() if thread.name == "view-report"
+    }
+
+
 # --- bind validation -------------------------------------------------------
 
 
@@ -1388,12 +1402,7 @@ def test_blocked_reporter_never_accumulates_threads(tmp_path):
         entered.set()
         gate.wait(30.0)
 
-    def reporter_thread_count() -> int:
-        return sum(
-            thread.name == "view-report" for thread in threading.enumerate()
-        )
-
-    before = reporter_thread_count()
+    before = reporter_threads()
     try:
         with running_server(tmp_path, report=reporter) as rig:
             for _ in range(8):
@@ -1401,7 +1410,7 @@ def test_blocked_reporter_never_accumulates_threads(tmp_path):
             assert entered.wait(10.0)
             # Eight completed requests behind a wedged reporter added exactly
             # the one dedicated thread, never one blocked thread each.
-            assert reporter_thread_count() == before + 1
+            assert len(reporter_threads() - before) == 1
     finally:
         gate.set()
 
@@ -1419,18 +1428,15 @@ def test_a_finished_run_retires_its_reporter_after_serving_requests(tmp_path):
     def reporter(outcome, route):
         delivered.append((outcome, route))
 
-    def reporter_threads() -> list[threading.Thread]:
-        return [thread for thread in threading.enumerate() if thread.name == "view-report"]
-
-    before = len(reporter_threads())
+    before = reporter_threads()
     with running_server(tmp_path, report=reporter) as rig:
         assert status_of(rig.exchange(rig.request_bytes())) == 200
     rig.thread.join(30.0)
     assert not rig.thread.is_alive()
 
-    for thread in reporter_threads():
+    for thread in reporter_threads() - before:
         thread.join(30.0)
-    assert len(reporter_threads()) == before
+    assert reporter_threads() - before == set()
     # The retirement is a stop, not a silencing: the completed request's own
     # line still reached the callback.
     assert delivered == [("served", "/mirror")]

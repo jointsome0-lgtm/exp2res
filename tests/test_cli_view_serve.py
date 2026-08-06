@@ -61,31 +61,43 @@ def envelope(result) -> dict:
     return json.loads(lines[0])
 
 
-def installed_handler(deadline: float = 30.0):
+def installed_handler(previous, deadline: float = 30.0):
     """Wait for the handler the serving command owns, then hand it back.
 
     Observing the handler is the one race-free way to know the command is
     serving *and* still owns `SIGINT`: it installs the handler only after a
     successful bind and restores the previous one before returning. A real
-    A real `os.kill` is safe only once that handler is observed, and only
-    once per run: a second signal could land after the restore and reach the
-    test runner instead of the command.
+    `os.kill` is safe only once that handler is observed, and only once per
+    run: a second signal could land after the restore and reach the test
+    runner instead of the command.
+
+    `previous` is whatever held `SIGINT` before the invocation started, read
+    on the main thread by the caller. Identity against it is what makes the
+    wait specific: a runner, IDE, or plugin may already have installed a
+    callable handler of its own, and calling *that* one would leave the
+    command serving forever.
     """
 
     limit = time.monotonic() + deadline
     while time.monotonic() < limit:
         handler = signal.getsignal(signal.SIGINT)
-        if callable(handler) and handler is not signal.default_int_handler:
+        if callable(handler) and handler is not previous:
             return handler
         time.sleep(0.005)
     raise AssertionError("the command never installed its interrupt handler")
 
 
 def interrupt_once_serving(times: int = 1) -> threading.Thread:
-    """Interrupt the serving command from a helper thread, `times` times."""
+    """Interrupt the serving command from a helper thread, `times` times.
+
+    Called on the main thread before the invocation, so the handler it reads
+    now is the one the command is about to displace.
+    """
+
+    previous = signal.getsignal(signal.SIGINT)
 
     def run() -> None:
-        handler = installed_handler()
+        handler = installed_handler(previous)
         for _ in range(times):
             handler(signal.SIGINT, None)
 
@@ -247,9 +259,10 @@ def test_a_real_interrupt_signal_drains_and_cancels(workspace: Path) -> None:
     """
 
     port = free_port()
+    previous = signal.getsignal(signal.SIGINT)
 
     def run() -> None:
-        installed_handler()
+        installed_handler(previous)
         os.kill(os.getpid(), signal.SIGINT)
 
     threading.Thread(target=run, daemon=True).start()
@@ -289,9 +302,10 @@ def test_a_served_request_prints_only_its_route_and_outcome_class(
     """
 
     port = free_port()
+    previous = signal.getsignal(signal.SIGINT)
 
     def request_then_interrupt() -> None:
-        installed_handler()
+        installed_handler(previous)
         with socket.create_connection(("127.0.0.1", port), 10.0) as client:
             client.sendall(
                 b"GET /mirror?scope=global HTTP/1.1\r\n"
@@ -301,7 +315,7 @@ def test_a_served_request_prints_only_its_route_and_outcome_class(
             )
             while client.recv(65536):
                 pass
-        installed_handler()(signal.SIGINT, None)
+        installed_handler(previous)(signal.SIGINT, None)
 
     thread = threading.Thread(target=request_then_interrupt, daemon=True)
     thread.start()
@@ -330,9 +344,10 @@ def test_quiet_keeps_the_urls_and_drops_the_request_lines(
     """
 
     port = free_port()
+    previous = signal.getsignal(signal.SIGINT)
 
     def request_then_interrupt() -> None:
-        installed_handler()
+        installed_handler(previous)
         with socket.create_connection(("127.0.0.1", port), 10.0) as client:
             client.sendall(
                 b"GET /mirror?scope=global HTTP/1.1\r\n"
@@ -340,7 +355,7 @@ def test_quiet_keeps_the_urls_and_drops_the_request_lines(
             )
             while client.recv(65536):
                 pass
-        installed_handler()(signal.SIGINT, None)
+        installed_handler(previous)(signal.SIGINT, None)
 
     thread = threading.Thread(target=request_then_interrupt, daemon=True)
     thread.start()
