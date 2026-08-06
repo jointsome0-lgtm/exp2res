@@ -728,6 +728,7 @@ nodes = [
   "tests/test_view_transport.py::test_body_bytes_behind_a_split_terminator_stay_unread",
   "tests/test_view_transport.py::test_refusals_run_in_rule_7_order",
   "tests/test_view_transport.py::test_malformed_request_line_is_refused_with_400",
+  "tests/test_view_transport.py::test_unexpected_failure_is_redacted_from_response_and_diagnostic",
   "tests/test_view_transport.py::test_real_resolver_answers_route_selector_and_state",
   "tests/test_view_transport.py::test_33rd_connection_is_closed_unread_with_zero_response_bytes",
   "tests/test_view_transport.py::test_receive_expiry_closes_with_no_response_bytes",

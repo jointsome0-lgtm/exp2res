@@ -1109,6 +1109,38 @@ def test_malformed_request_line_is_refused_with_400(tmp_path):
     assert outcome_of(response) == b"malformed_request"
 
 
+def test_unexpected_failure_is_redacted_from_response_and_diagnostic(tmp_path):
+    sentinels = (
+        b"Vera Example internal sentinel",
+        b"TracebackSentinel",
+        b"/tmp/Vera-Example-managed-path",
+        b"Vera Example stored sentinel",
+    )
+    reports: list[tuple[str, str | None]] = []
+    reported = threading.Event()
+
+    def fail_with_private_state(*_args, **_kwargs):
+        raise RuntimeError(b" ".join(sentinels).decode("ascii"))
+
+    def reporter(outcome: str, route: str | None) -> None:
+        reports.append((outcome, route))
+        reported.set()
+
+    with running_server(
+        tmp_path, resolver=fail_with_private_state, report=reporter
+    ) as rig:
+        response = rig.exchange(rig.request_bytes())
+        assert reported.wait(10.0)
+
+    assert status_of(response) == 500
+    assert outcome_of(response) == b"internal_error"
+    diagnostic = " ".join(part or "" for report in reports for part in report).encode()
+    for sentinel in sentinels:
+        assert sentinel not in response
+        assert sentinel not in diagnostic
+    assert reports == [("internal_error", "/mirror")]
+
+
 # --- the real resolver behind the transport --------------------------------
 
 
