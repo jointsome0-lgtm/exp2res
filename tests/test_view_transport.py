@@ -24,6 +24,7 @@ from exp2res.errors import (
     ViewBindNotLoopbackError,
 )
 from exp2res.services import views
+from exp2res.services import view_server
 from exp2res.services.view_http import RequestParser
 from exp2res.services.view_server import (
     _AbandonedError,
@@ -771,6 +772,58 @@ def test_first_interrupt_drains_and_in_flight_requests_complete(tmp_path):
         rig.thread.join(15.0)
 
 
+class ThreadRefusingConnections:
+    """A `threading.Thread` stand-in the way an exhausted thread table looks.
+
+    Only the per-connection thread is refused, so the accept loop keeps
+    running and every other thread the test needs still starts.
+    """
+
+    def __init__(self, *args, target=None, **kwargs) -> None:
+        self._refuse = target is not None and target.__name__ == "_serve_connection"
+        self._thread = threading.Thread(*args, target=target, **kwargs)
+
+    def start(self) -> None:
+        if self._refuse:
+            raise RuntimeError("can't start new thread")
+        self._thread.start()
+
+    def __getattr__(self, name):
+        return getattr(self._thread, name)
+
+
+def test_a_connection_thread_the_os_refuses_gives_back_its_admission(
+    tmp_path, monkeypatch
+):
+    """§30 rule 10 holds a slot only for a connection that is being served.
+    When the operating system refuses the connection thread there is nobody
+    left to run that connection's release, so the accept loop performs it:
+    the socket closes unread, the slot and the drain count come back, and
+    serving continues."""
+
+    timeouts = Timeouts(receive=30.0, processing=30.0, emit=30.0, drain=0.3)
+    with running_server(tmp_path, timeouts=timeouts) as rig:
+        monkeypatch.setattr(
+            view_server.threading, "Thread", ThreadRefusingConnections
+        )
+        refused = rig.connect()
+        refused.sendall(rig.request_bytes())
+        # Rule 10's unread close: no thread ever existed to compose a reply.
+        assert read_to_close(refused) == b""
+        refused.close()
+        monkeypatch.undo()
+
+        # The listener survived the refusal and the slot came back.
+        assert status_of(rig.exchange(rig.request_bytes())) == 200
+
+        # The strongest evidence that the drain count came back too: a leaked
+        # count would keep `_drain` waiting until its 0.3s deadline expired.
+        rig.server.interrupt()
+        rig.thread.join(10.0)
+        assert not rig.thread.is_alive()
+        assert rig.result == "drained"
+
+
 class DrainAtAcceptClock:
     """Interrupts exactly at the serve thread's post-`accept` clock read.
 
@@ -891,23 +944,66 @@ def test_blocked_reporter_never_accumulates_threads(tmp_path):
         gate.set()
 
 
+class DrainWhileReceivingClock:
+    """Opens the drain from inside the connection thread's first clock read.
+
+    Under a drain every phase wait becomes `min(phase, drain)`, so a wait
+    *entered* after the drain opens ends at the drain deadline itself — the
+    connection would then release its own slot at the same instant `_drain`
+    wakes, and `serve` could legitimately report either class. Firing here
+    removes that tie: `_receive` evaluates `_phase_deadline` before this
+    clock read, so the receive wait already holds its full pre-drain budget
+    and the connection is provably still unfinished when the drain expires.
+    """
+
+    def __init__(self) -> None:
+        self.owner = threading.current_thread()
+        self.server: ViewServer | None = None
+        self.serve_thread: threading.Thread | None = None
+        self.fired = threading.Event()
+
+    def __call__(self) -> float:
+        now = time.monotonic()
+        current = threading.current_thread()
+        if (
+            not self.fired.is_set()
+            and current is not self.owner
+            and current is not self.serve_thread
+        ):
+            # Set before interrupting: `interrupt` reads this same clock.
+            self.fired.set()
+            assert self.server is not None
+            self.server.interrupt()
+        return now
+
+
 def test_drain_expiry_forces_the_close_without_a_response(tmp_path):
     timeouts = Timeouts(receive=30.0, processing=30.0, emit=30.0, drain=0.2)
+    clock = DrainWhileReceivingClock()
     bind = free_bind()
     server = ViewServer(
-        tmp_path, bind, _resolver=page_resolver(MARKER_PAGE), _timeouts=timeouts
+        tmp_path,
+        bind,
+        _resolver=page_resolver(MARKER_PAGE),
+        _clock=clock,
+        _timeouts=timeouts,
     )
+    clock.server = server
     server.open()
     rig = Rig(server, bind)
+    clock.serve_thread = rig.thread
     rig.thread.start()
     try:
+        # No request bytes at all, so the connection takes exactly one
+        # receive wait and stays parked in it: any byte sent here would let
+        # the loop come round again and recompute that wait against the
+        # drain deadline, which is the tie the clock above exists to avoid.
         client = rig.connect()
-        client.sendall(b"GET /mirr")  # held mid-receive, 30s phase budget
-        server.interrupt()
         assert read_to_close(client) == b""
         client.close()
         rig.thread.join(15.0)
         assert not rig.thread.is_alive()
+        assert clock.fired.is_set()
         assert rig.result == "expired"
     finally:
         server.interrupt()

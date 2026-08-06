@@ -50,6 +50,18 @@ _TCHAR = frozenset(
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     b"abcdefghijklmnopqrstuvwxyz"
 )
+# Origin-form's byte set: RFC 3986 `pchar` — unreserved, sub-delims, `:` and
+# `@` — plus `/` for segment separators, `?` for the query, and `%` for a
+# percent-encoded octet. Every other visible byte, including `"`, `<`, `>`,
+# `\`, `^`, `` ` ``, `{`, `}`, `|`, and the fragment's `#`, is outside the
+# target grammar, so §30 rule 9 refuses it during transport parsing instead
+# of letting it reach a route or a selector.
+_TARGET = frozenset(
+    b"-._~!$&'()*+,;=:@/?%"
+    b"0123456789"
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    b"abcdefghijklmnopqrstuvwxyz"
+)
 _OWS = b" \t"
 _CR = 0x0D
 _LF = 0x0A
@@ -196,11 +208,13 @@ class RequestParser:
         if not method or any(byte not in _TCHAR for byte in method):
             self._fail()
             return
-        # A raw `#` opens a fragment, which origin-form's path-plus-optional-
-        # query never carries, so it fails the closed shape here rather than
-        # reaching selector parsing.
-        if not target.startswith(b"/") or b"#" in target or any(
-            byte < 0x21 or byte > 0x7E for byte in target
+        # §30 rule 9 puts transport parsing first, so a target carrying any
+        # byte outside origin-form's grammar — a raw `#` opening a fragment,
+        # a `\` or `"` no absolute path or query may contain — is
+        # `malformed_request` here rather than a later `route_not_found` or
+        # `invalid_selector` reached by normalizing it into a route.
+        if not target.startswith(b"/") or any(
+            byte not in _TARGET for byte in target
         ):
             self._fail()
             return

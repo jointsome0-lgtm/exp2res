@@ -403,11 +403,22 @@ class ViewServer:
                     with suppress(OSError):
                         connection.close()
                     continue
-                threading.Thread(
-                    target=self._serve_connection,
-                    args=(connection, admitted_at),
-                    daemon=True,
-                ).start()
+                try:
+                    threading.Thread(
+                        target=self._serve_connection,
+                        args=(connection, admitted_at),
+                        daemon=True,
+                    ).start()
+                except RuntimeError:
+                    # The operating system refused the connection thread, so
+                    # nothing will ever run this connection's own release. It
+                    # happens here instead: without it the socket stays live
+                    # and registered, the §30 rule 10 slot stays taken, and
+                    # the drain count stays raised forever. No thread exists
+                    # to compose a response on and no request byte was read,
+                    # so the peer gets rule 10's unread close, and serving
+                    # continues — a refused thread is transient.
+                    self._release_admission(connection)
         finally:
             with suppress(OSError):
                 listener.close()
@@ -500,17 +511,7 @@ class ViewServer:
                 # detail: §30 rule 6 keeps request bytes out of diagnostics.
                 pass
         finally:
-            # Close before deregistering: a forced close arriving in between
-            # must still find a socket that is already closed or closing,
-            # never a live peer the shutdown sweep cannot reach.
-            with suppress(OSError):
-                connection.close()
-            with self._state_lock:
-                self._sockets.discard(connection)
-            self._slots.release()
-            with self._idle:
-                self._active -= 1
-                self._idle.notify_all()
+            self._release_admission(connection)
         # Reporting runs only after the terminal close, the slot release, and
         # the drain count-down, and only by enqueueing: the dedicated
         # reporter thread is the sole caller of the callback, so a blocked
@@ -519,6 +520,24 @@ class ViewServer:
         if line is not None and self._report is not None:
             with suppress(queue.Full):
                 self._report_queue.put_nowait(line)
+
+    def _release_admission(self, connection: socket.socket) -> None:
+        """Give back everything one admission took, in the one safe order.
+
+        Close before deregistering: a forced close arriving in between must
+        still find a socket that is already closed or closing, never a live
+        peer the shutdown sweep cannot reach. The drain count drops last, so
+        a drain never returns while this connection still holds a slot.
+        """
+
+        with suppress(OSError):
+            connection.close()
+        with self._state_lock:
+            self._sockets.discard(connection)
+        self._slots.release()
+        with self._idle:
+            self._active -= 1
+            self._idle.notify_all()
 
     def _report_loop(self) -> None:
         while True:

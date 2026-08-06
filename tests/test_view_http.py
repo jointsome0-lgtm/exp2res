@@ -67,6 +67,19 @@ def test_query_split_is_literal_and_first_question_mark_only():
     assert request.query == b"a=b?c"
 
 
+def test_the_full_origin_form_byte_set_still_reaches_route_and_selector():
+    # Narrowing the target grammar to RFC 3986 must not refuse a byte an
+    # absolute path or query may legitimately carry: unreserved, every
+    # sub-delim, `:`, `@`, and a percent-encoded octet all stay parseable,
+    # so the refusal they earn is the route's or the selector's, not the
+    # parser's.
+    target = b"/a-b._~!$&'()*+,;=:@%2f?x=1&y=a:b@c,d;e=(f)*+$!'~"
+    request = parse(raw_request(line=b"GET " + target + b" HTTP/1.1")).request
+    assert request is not None
+    assert request.path == b"/a-b._~!$&'()*+,;=:@%2f"
+    assert request.query == b"x=1&y=a:b@c,d;e=(f)*+$!'~"
+
+
 @pytest.mark.parametrize(
     "line",
     [
@@ -90,6 +103,16 @@ def test_query_split_is_literal_and_first_question_mark_only():
         b"GET /mi\x00rror HTTP/1.1",
         b"GET /mirror#frag HTTP/1.1",
         b"GET /mirror?scope=global#frag HTTP/1.1",
+        # Visible bytes no absolute path or query may carry. §30 rule 9 runs
+        # before the route, so these are `malformed_request` rather than a
+        # later `route_not_found` or `invalid_selector`.
+        b"GET /mirror\\evil HTTP/1.1",
+        b'GET /mirror" HTTP/1.1',
+        b"GET /mirror<script> HTTP/1.1",
+        b"GET /mirror{0} HTTP/1.1",
+        b"GET /mirror|pipe HTTP/1.1",
+        b"GET /mirror^caret HTTP/1.1",
+        b"GET /mirror?scope=glo\\bal HTTP/1.1",
     ],
 )
 def test_request_line_outside_the_closed_shape_is_malformed(line):
