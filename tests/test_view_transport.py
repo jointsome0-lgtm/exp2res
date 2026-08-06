@@ -1657,7 +1657,9 @@ def test_a_saturated_report_queue_still_delivers_the_stop_signal(tmp_path):
         bind,
         report=reporter,
         _resolver=page_resolver(MARKER_PAGE),
-        _timeouts=GENEROUS,
+        # A short drain, because the wedged reporter here makes the flush
+        # spend that whole allowance: joining for exactly it would race.
+        _timeouts=Timeouts(receive=30.0, processing=30.0, emit=30.0, drain=0.3),
     )
     server.open()
     rig = Rig(server, bind)
