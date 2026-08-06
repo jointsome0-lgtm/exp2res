@@ -434,6 +434,73 @@ def test_the_drain_deadline_is_anchored_at_the_interruption_instant(tmp_path):
     assert server._drain_deadline == 105.0
 
 
+class AdvancingClock:
+    """A monotone reading the test moves by hand."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self._lock = threading.Lock()
+        self._now = start
+
+    def __call__(self) -> float:
+        with self._lock:
+            return self._now
+
+    def advance(self, seconds: float) -> None:
+        with self._lock:
+            self._now += seconds
+
+
+class SlowSlots:
+    """Admission slots whose acquisition costs observable time."""
+
+    def __init__(self, slots, clock: AdvancingClock, cost: float) -> None:
+        self._slots = slots
+        self._clock = clock
+        self._cost = cost
+
+    def acquire(self, blocking: bool = True) -> bool:
+        taken = self._slots.acquire(blocking=blocking)
+        if taken:
+            self._clock.advance(self._cost)
+        return taken
+
+    def release(self) -> None:
+        self._slots.release()
+
+
+def test_the_receive_deadline_is_anchored_at_the_slot_acquisition(tmp_path):
+    """§14.17 starts the receive deadline when the slot is acquired.
+
+    Time spent reaching that acquisition belongs to no connection's budget:
+    anchoring before the attempt would hand the admitted connection a
+    deadline that a delay it never caused had already partly — here wholly —
+    spent, closing it before it could send the request its own allowance
+    covers.
+    """
+
+    clock = AdvancingClock()
+    bind = free_bind()
+    server = ViewServer(
+        tmp_path,
+        bind,
+        _resolver=page_resolver(MARKER_PAGE),
+        _clock=clock,
+        _timeouts=Timeouts(receive=5.0, processing=30.0, emit=30.0, drain=30.0),
+    )
+    server._slots = SlowSlots(server._slots, clock, 10.0)
+    server.open()
+    rig = Rig(server, bind)
+    rig.thread.start()
+    try:
+        response = rig.exchange(rig.request_bytes())
+    finally:
+        server.interrupt()
+        server.interrupt()
+        rig.thread.join(15.0)
+        assert not rig.thread.is_alive()
+    assert outcome_of(response) == b"served"
+
+
 def test_an_expired_drain_starts_no_new_resolver(tmp_path, monkeypatch):
     """Expiry closes the connection; it never opens new request work.
 

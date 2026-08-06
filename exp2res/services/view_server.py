@@ -441,17 +441,19 @@ class ViewServer:
                     if self._draining.is_set():
                         break
                     raise
-                # The receive anchor is read before the slot attempt: §14.17
-                # starts the deadline when the slot is acquired, and anchoring
-                # a bytecode earlier means a scheduling stall around the
-                # acquisition spends the budget rather than extending it.
-                admitted_at = self._clock()
                 if not self._slots.acquire(blocking=False):
                     # §30 rule 10: closed unread — no buffer, no thread, no
                     # HTTP response — so it is not a complete request and
                     # reaches no state.
                     connection.close()
                     continue
+                # §14.17 starts the receive deadline when §30 rule 10 acquires
+                # the admission slot, so the anchor is read after a successful
+                # acquisition and not before the attempt. Nothing is waited for
+                # in between — the acquisition is non-blocking — so reading it
+                # earlier would charge the connection for time before the event
+                # the deadline is defined to begin at.
+                admitted_at = self._clock()
                 with self._state_lock:
                     # Atomic with both interruption steps. `accept` can return
                     # a socket the kernel queued in the backlog after
