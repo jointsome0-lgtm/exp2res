@@ -58,6 +58,7 @@ CommandPath = Literal[
     "gaps answer",
     "contradictions list",
     "contradictions show",
+    "view serve",
 ]
 
 

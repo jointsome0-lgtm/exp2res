@@ -8,9 +8,9 @@ It turns owner-controlled experience evidence that automation cannot rewrite int
 
 ## Project stage: implementation-ready with controlled amendments
 
-SDD v0.3 is implementation-ready and remains the binding product contract. The manual-capture and private-workspace foundation is implemented, together with isolated Codex and Claude agent-backed runner substrates and the model-backed pipeline from fact extraction through gap/contradiction detection, self-signals, assessment, and verification; current work proceeds phase by phase along the approved dependency frontier summarized in [`AGENTS.md`](AGENTS.md). [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implemented and verified the global Mirror as a CLI-generated assessment export, so this is not yet a browser-served Mirror, a verified bullet-pack, or a resume product. The first browser target is [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98): that Mirror plus unanswered Gap Questions on loopback. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
+SDD v0.3 is implementation-ready and remains the binding product contract. The manual-capture and private-workspace foundation is implemented, together with isolated Codex and Claude agent-backed runner substrates and the model-backed pipeline from fact extraction through gap/contradiction detection, self-signals, assessment, and verification; current work proceeds phase by phase along the approved dependency frontier summarized in [`AGENTS.md`](AGENTS.md). [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implemented and verified the global Mirror as a CLI-generated assessment export, and [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98) now serves that Mirror plus unanswered Gap Questions on loopback through `exp2res view serve`. This is not yet a verified bullet-pack or a resume product. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
 
-§22 phase status: Phases 0–2 complete; Phase 3 complete except its §14.17 view-serving slice; Phases 4–5 not yet implemented.
+§22 phase status: Phases 0–3 complete, including the §14.17 view-serving slice; Phases 4–5 not yet implemented.
 
 Exp2Res remains a public engine. Real owner data lives in a private workspace outside this repository, never in the public checkout.
 

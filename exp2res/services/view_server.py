@@ -47,6 +47,7 @@ from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS
 __all__ = [
     "DEFAULT_HOST",
     "DEFAULT_PORT",
+    "GLOBAL_SELECTOR",
     "LISTEN_BACKLOG",
     "LOOPBACK_HOSTS",
     "MAX_CONNECTIONS",
@@ -56,6 +57,7 @@ __all__ = [
     "ServeResult",
     "Timeouts",
     "ViewServer",
+    "bound_urls",
     "validate_bind",
 ]
 
@@ -65,6 +67,11 @@ DEFAULT_PORT = 8731
 LOOPBACK_HOSTS = ("127.0.0.1", "::1")
 MIN_PORT = 1024
 MAX_PORT = 65535
+
+# The one V1 global view identity §14.17 advertises. Every served request
+# still resolves its own explicit selector under §30 rule 6; this constant is
+# only what the startup lines name.
+GLOBAL_SELECTOR = "scope=global"
 
 # §30 rule 10: fixed service constants with no flag, environment, or
 # configuration representation.
@@ -148,6 +155,21 @@ def validate_bind(host: str, port: int) -> BindAddress:
 
     _check_bind(host, port)
     return BindAddress(host=host, port=port)
+
+
+def bound_urls(bind: BindAddress) -> tuple[str, ...]:
+    """Exactly §14.17's two usable startup URLs, in §30 rule 6's route order.
+
+    Derived from `views.ROUTES` rather than restated, so the closed route set
+    and the order the command reports stay one definition. Each URL carries
+    the explicit identity selector §30 requires: no selectorless base route,
+    template, snapshot selector, project selector, trailing path, fragment,
+    or extra parameter is ever advertised.
+    """
+
+    return tuple(
+        bind.url(route.decode("ascii"), GLOBAL_SELECTOR) for route in views.ROUTES
+    )
 
 
 @dataclass(frozen=True)

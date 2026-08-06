@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
 import shlex
+import signal
 import sys
-from typing import Callable, cast
+from typing import Callable, Iterator, cast
 
 import typer
 
@@ -111,6 +113,13 @@ from exp2res.services.lifecycle import (
     run_recompute,
 )
 from exp2res.services.signals import list_current_signals, run_signals_generate
+from exp2res.services.view_server import (
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    ViewServer,
+    bound_urls,
+    validate_bind,
+)
 from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.services.workspace import PurgeOutcome, purge_workspace
 from exp2res.storage.repository import get_assessment_snapshot
@@ -149,6 +158,7 @@ signals_app = typer.Typer(help="Generate and inspect current self-signals.")
 assess_app = typer.Typer(help="Generate and inspect self-assessment views.")
 export_app = typer.Typer(help="Publish deterministic managed exports.")
 workspace_app = typer.Typer(help="Manage the whole initialized workspace.")
+view_app = typer.Typer(help="Serve the read-only local views on loopback.")
 app.add_typer(db_app, name="db")
 app.add_typer(log_app, name="log")
 app.add_typer(logs_app, name="logs")
@@ -161,6 +171,7 @@ app.add_typer(signals_app, name="signals")
 app.add_typer(assess_app, name="assess")
 app.add_typer(export_app, name="export")
 app.add_typer(workspace_app, name="workspace")
+app.add_typer(view_app, name="view")
 
 
 @dataclass(frozen=True)
@@ -2373,6 +2384,80 @@ def _purge_outcome(purged: PurgeOutcome) -> Outcome:
             "Purged the workspace database; the initialized workspace remains."
         ),
     )
+
+
+@contextmanager
+def _interruption_drains(server: ViewServer) -> Iterator[None]:
+    """Route the user interrupt into §14.17's drain, not a raised exception.
+
+    `view serve` is the one §14 form that runs until it is interrupted, so
+    the default handler's `KeyboardInterrupt` would unwind the accept loop at
+    whichever bytecode it landed on instead of starting the one absolute
+    drain deadline at the interruption instant. `ViewServer.interrupt` is a
+    state change that never raises and is safe from a handler at any instant:
+    the first call drains, the second forces the close, and both keep the
+    §14.14 rule 6 class-9 envelope this command returns either way.
+
+    Only the main thread may install a handler. Elsewhere — an embedding test
+    runner, for instance — the default behavior stands: the interrupt reaches
+    `_run_command`'s own class-9 path, after `serve` releases every admitted
+    request on its way out.
+    """
+
+    def handle(_signum: int, _frame: object) -> None:
+        server.interrupt()
+
+    try:
+        previous = signal.signal(signal.SIGINT, handle)
+    except ValueError:
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+@view_app.command("serve")
+def view_serve(
+    context: typer.Context,
+    host: str = typer.Option(DEFAULT_HOST, "--host"),
+    port: int = typer.Option(DEFAULT_PORT, "--port"),
+) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        # §14.17: the bind is admitted and the §12.14 compatibility gate
+        # applied before a socket exists, so a refused bind and an
+        # incompatible workspace both fail closed with nothing served.
+        bind = validate_bind(host, port)
+        require_compatible(workspace)
+
+        def report(outcome: str, route: str | None) -> None:
+            # §30 rule 6 bars request bytes from every diagnostic line, so a
+            # progress line carries only the closed outcome class and, when
+            # the request named one, the closed route literal.
+            if controls.quiet:
+                return
+            typer.echo(outcome if route is None else f"{route} {outcome}", err=True)
+
+        server = ViewServer(workspace, bind, report=report)
+        # Binding here rather than inside `serve` is what lets the startup
+        # URLs be reported after a successful bind and before the first
+        # connection can be accepted.
+        server.open()
+        for url in bound_urls(bind):
+            # §14.17: stderr in both modes, so `--json` stdout still carries
+            # exactly one envelope. `--quiet` only *may* suppress progress
+            # (§14.14 rule 5), and these two values are the whole usable
+            # output of the command — a view nothing can name is unreachable
+            # — so they are reported in a quiet run too.
+            typer.echo(url, err=True)
+        with _interruption_drains(server):
+            server.serve()
+        # Serving ends only on interruption, so the command reaches no
+        # completed primary result and `result` stays null (§14.17).
+        return Outcome(exit_code=9, diagnostic_class="cancelled")
+
+    _run_command(context, "view serve", operation)
 
 
 def _parse_error_envelope(json_output: bool, diagnostic: str, message: str) -> None:
