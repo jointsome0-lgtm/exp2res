@@ -9,6 +9,8 @@ the observable release, never a calibrated sleep.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import multiprocessing
+import os
 from pathlib import Path
 import socket
 import sqlite3
@@ -47,6 +49,23 @@ MARKER_PAGE = views.ViewPage(
     status=200,
     body=b"<!doctype html><p>Vera Example marker page</p>",
 )
+
+
+class IsolatedResolverProbe:
+    def __init__(self, context) -> None:
+        self.entered = context.Event()
+        self.calls = context.Value("i", 0)
+        self.pid = context.Value("i", 0)
+
+    def __call__(self, workspace, route, query, **_kwargs):
+        with self.calls.get_lock():
+            call = self.calls.value
+            self.calls.value += 1
+        if call == 0:
+            self.pid.value = os.getpid()
+            self.entered.set()
+            time.sleep(30.0)
+        return MARKER_PAGE
 
 
 def free_bind(host: str = "127.0.0.1") -> BindAddress:
@@ -122,6 +141,8 @@ def running_server(
     resolver: Callable[..., views.ViewPage] | None = None,
     timeouts: Timeouts = GENEROUS,
     report=None,
+    isolate_resolver: bool | None = None,
+    process_context=None,
 ) -> Iterator[Rig]:
     bind = free_bind(host)
     server = ViewServer(
@@ -130,6 +151,8 @@ def running_server(
         report=report,
         _resolver=resolver if resolver is not None else page_resolver(MARKER_PAGE),
         _timeouts=timeouts,
+        _isolate_resolver=isolate_resolver,
+        _process_context=process_context,
     )
     server.open()
     rig = Rig(server, bind)
@@ -1135,6 +1158,33 @@ def test_processing_expiry_abandons_the_worker_and_frees_the_slot(tmp_path):
         release.set()
 
 
+def test_processing_expiry_terminates_isolated_work_before_reusing_the_slot(
+    tmp_path,
+):
+    context = multiprocessing.get_context("spawn")
+    resolver = IsolatedResolverProbe(context)
+
+    timeouts = Timeouts(receive=30.0, processing=2.0, emit=30.0, drain=30.0)
+    with running_server(
+        tmp_path,
+        resolver=resolver,
+        timeouts=timeouts,
+        isolate_resolver=True,
+        process_context=context,
+    ) as rig:
+        response = rig.exchange(rig.request_bytes())
+        assert resolver.entered.is_set()
+        assert status_of(response) == 503
+        assert outcome_of(response) == b"processing_timeout"
+
+        worker_pid = resolver.pid.value
+        assert worker_pid > 0
+        with pytest.raises(ProcessLookupError):
+            os.kill(worker_pid, 0)
+
+        assert status_of(rig.exchange(rig.request_bytes())) == 200
+
+
 def test_processing_expiry_interrupts_a_wedged_sqlite_reader(workspace):
     reader_exited = threading.Event()
 
@@ -1260,15 +1310,27 @@ def test_expired_processing_deadline_outweighs_a_pre_state_refusal(tmp_path):
     assert fresh is not None and fresh.outcome == "authority_not_bound"
 
 
-def test_a_resolver_thread_that_cannot_start_is_the_fixed_internal_error(
-    tmp_path, monkeypatch
-):
+def test_a_resolver_process_that_cannot_start_is_the_fixed_internal_error(tmp_path):
     # §30 rule 7 owes every complete admitted request exactly one outcome. A
-    # thread the operating system refuses to create is an unexpected local
+    # process the operating system refuses to create is an unexpected local
     # failure, and the connection's own thread is still alive to answer it,
     # so the request gets the fixed 500 rather than a close with no response.
     bind = free_bind()
-    server = ViewServer(tmp_path, bind, _timeouts=GENEROUS)
+
+    class RefusingProcess:
+        def start(self):
+            raise RuntimeError("can't start new process")
+
+    class RefusingContext:
+        def Pipe(self, *, duplex):
+            return multiprocessing.get_context("spawn").Pipe(duplex=duplex)
+
+        def Process(self, **_kwargs):
+            return RefusingProcess()
+
+    server = ViewServer(
+        tmp_path, bind, _timeouts=GENEROUS, _process_context=RefusingContext()
+    )
     parser = RequestParser()
     parser.feed(
         b"GET /mirror?scope=global HTTP/1.1\r\nHost: "
@@ -1277,10 +1339,6 @@ def test_a_resolver_thread_that_cannot_start_is_the_fixed_internal_error(
     )
     assert parser.done and not parser.malformed
 
-    def refuse_start(self):
-        raise RuntimeError("can't start new thread")
-
-    monkeypatch.setattr(threading.Thread, "start", refuse_start)
     page = server._decide(parser, time.monotonic() + 30.0)
     assert page is not None
     assert page.outcome == "internal_error"

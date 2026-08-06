@@ -4,9 +4,9 @@ This module owns only the transport half of serving: which bind is admitted,
 §30 rule 10's connection admission, rule 9's parsing through `view_http`,
 rule 7's ordered pre-state refusals — authority, method, declared body — and
 §14.17's absolute receive, processing, emit, and drain deadlines. Every
-state-dependent decision is `services.views.resolve`, run in a one-shot
-worker thread the connection can abandon, so a connection thread never blocks
-without a deadline.
+state-dependent decision is `services.views.resolve`, run in a one-shot child
+process the connection can terminate, so a connection thread never blocks
+without a deadline and expired filesystem work cannot outlive its slot.
 
 Deadlines are absolute values on one injected monotonic clock and are never
 paused, restarted, or extended; under an interruption drain every phase wait
@@ -26,6 +26,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+import multiprocessing
+from multiprocessing.connection import Connection, wait as wait_for_connections
+from multiprocessing.context import BaseContext
 from pathlib import Path
 import queue
 import socket
@@ -95,6 +98,7 @@ ServeResult = Literal["drained", "expired", "interrupted"]
 # and slot release, so a stalled reporter holds no socket, slot, or drain
 # time — only its own finished daemon thread.
 ReportLine = Callable[[str, str | None], None]
+ReportItem = tuple[Callable[..., None], tuple[object, ...], bool]
 
 
 def _check_bind(host: str, port: int) -> None:
@@ -287,6 +291,47 @@ class _WorkerHandle:
         self.done.set()
 
 
+class _ProcessHandle:
+    def __init__(self, process) -> None:
+        self.process = process
+        self._lock = threading.Lock()
+
+    def wake(self) -> None:
+        with self._lock:
+            with suppress(AssertionError, OSError, ValueError):
+                if self.process.is_alive():
+                    self.process.kill()
+
+    def finish(self) -> None:
+        self.wake()
+        self.process.join()
+
+
+def _run_resolver_process(
+    sender: Connection,
+    resolver: Callable[..., views.ViewPage],
+    workspace: Path,
+    request: ParsedRequest,
+    deadline: float,
+    busy_timeout_ms: int,
+) -> None:
+    try:
+        try:
+            page = resolver(
+                workspace,
+                request.path,
+                request.query,
+                deadline=deadline,
+                busy_timeout_ms=busy_timeout_ms,
+            )
+        except BaseException:
+            page = views.internal_error_page()
+        with suppress(BrokenPipeError, EOFError, OSError):
+            sender.send(page)
+    finally:
+        sender.close()
+
+
 class ViewServer:
     """One bound loopback listener serving §30's closed route set.
 
@@ -305,6 +350,8 @@ class ViewServer:
         _clock: Callable[[], float] = time.monotonic,
         _timeouts: Timeouts | None = None,
         _resolver: Callable[..., views.ViewPage] = views.resolve,
+        _isolate_resolver: bool | None = None,
+        _process_context: BaseContext | None = None,
         _busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     ) -> None:
         self._workspace = workspace
@@ -313,6 +360,14 @@ class ViewServer:
         self._clock = _clock
         self._timeouts = _timeouts if _timeouts is not None else default_timeouts()
         self._resolver = _resolver
+        self._isolate_resolver = (
+            _resolver is views.resolve if _isolate_resolver is None else _isolate_resolver
+        )
+        self._process_context = (
+            multiprocessing.get_context("spawn")
+            if _process_context is None
+            else _process_context
+        )
         self._busy_timeout_ms = _busy_timeout_ms
         self._authority = bind.authority.encode("ascii")
         self._origin = bind.origin.encode("ascii")
@@ -323,7 +378,7 @@ class ViewServer:
         # starting the drain.
         self._state_lock = threading.RLock()
         self._sockets: set[socket.socket] = set()
-        self._handles: set[_WorkerHandle] = set()
+        self._handles: set[_WorkerHandle | _ProcessHandle] = set()
         # Admitted requests still holding their slot. The drain waits on this
         # count, never on connection threads, so a thread outliving its
         # released request — a stalled reporter — cannot consume the drain.
@@ -336,29 +391,24 @@ class ViewServer:
         # One dedicated reporter thread behind a bounded queue: a blocked
         # stderr can then stall only this one thread and drop excess progress
         # lines, never accumulate a blocked thread per completed connection.
-        self._report_queue: queue.Queue[tuple[str, str | None] | None] = queue.Queue(
-            maxsize=REPORT_QUEUE_LIMIT + 1
+        self._report_queue: queue.Queue[ReportItem | None] = queue.Queue(
+            maxsize=REPORT_QUEUE_LIMIT + 3
         )
         self._report_slots = threading.Semaphore(REPORT_QUEUE_LIMIT)
         self._report_thread: threading.Thread | None = None
 
     def advertise(self, announce: Callable[[str], None]) -> None:
-        """Hand §14.17's two startup URLs out while they are still usable.
-
-        Only a live listener has them: `open` declines to bind once an
-        interruption has already arrived, and `interrupt` closes what `open`
-        published. Announcing outside the state lock would let either land
-        between the check and the write, so the owner would be given two
-        addresses nothing is listening on. `interrupt` samples its drain
-        deadline before taking this lock, so waiting behind two short writes
-        spends the drain allowance rather than extending it.
-        """
+        """Queue §14.17's two startup URLs while the listener is usable."""
 
         with self._state_lock:
             if self._listener is None or self._draining.is_set():
                 return
+            if not self._start_reporter():
+                return
             for url in bound_urls(self.bind_address):
-                announce(url)
+                if self._draining.is_set():
+                    return
+                self._report_queue.put_nowait((announce, (url,), False))
 
     def open(self) -> None:
         """Bind exactly the validated address, or fail without another try.
@@ -469,6 +519,27 @@ class ViewServer:
         finally:
             self._stop_reporter()
 
+    def _start_reporter(self) -> bool:
+        if self._report_thread is not None:
+            return True
+        reporter = threading.Thread(
+            target=self._report_loop, name="view-report", daemon=True
+        )
+        try:
+            reporter.start()
+        except RuntimeError:
+            with self._state_lock:
+                listener = self._listener
+                self._listener = None
+            if listener is not None:
+                with suppress(OSError):
+                    listener.close()
+            if self._draining.is_set():
+                return False
+            raise
+        self._report_thread = reporter
+        return True
+
     def _serve(self) -> ServeResult:
         if self._listener is None:
             if self._draining.is_set():
@@ -487,29 +558,12 @@ class ViewServer:
             # produce a progress line; starting the optional reporter would
             # create new work whose queue can only remain empty.
             return self._drain()
-        if self._report is not None and self._report_thread is None:
-            reporter = threading.Thread(
-                target=self._report_loop, name="view-report", daemon=True
-            )
-            try:
-                reporter.start()
-            except RuntimeError:
-                # Unless cancellation became visible during the refused
-                # start, this failure belongs to the caller — but the bound
-                # listener must not outlive it, or the port stays taken and
-                # no retry can rebind. The reporter slot stays empty so a
-                # retry starts one rather than serving silently.
-                self._listener = None
-                with suppress(OSError):
-                    listener.close()
-                if self._draining.is_set():
-                    # Cancellation that became visible during the refused
-                    # start still owns the command result. No reporter exists
-                    # and no request was admitted, so the existing drain is
-                    # the complete cleanup path.
-                    return self._drain()
-                raise
-            self._report_thread = reporter
+        if (
+            self._report is not None
+            and self._report_thread is None
+            and not self._start_reporter()
+        ):
+            return self._drain()
         try:
             while not self._draining.is_set():
                 try:
@@ -712,7 +766,7 @@ class ViewServer:
             return
         if not self._report_slots.acquire(blocking=False):
             return
-        self._report_queue.put_nowait(line)
+        self._report_queue.put_nowait((self._report, line, True))
 
     def _release_admission(self, connection: socket.socket) -> None:
         """Give back everything one admission took, in the one safe order.
@@ -734,14 +788,14 @@ class ViewServer:
 
     def _report_loop(self) -> None:
         while True:
-            line = self._report_queue.get()
-            if line is None:
+            item = self._report_queue.get()
+            if item is None:
                 return
-            self._report_slots.release()
+            callback, arguments, releases_slot = item
+            if releases_slot:
+                self._report_slots.release()
             with suppress(Exception):
-                report = self._report
-                if report is not None:
-                    report(*line)
+                callback(*arguments)
 
     def _stop_reporter(self) -> None:
         """Retire the reporter once serving is over, whatever it reported.
@@ -909,6 +963,77 @@ class ViewServer:
         return views.processing_timeout_page()
 
     def _resolve_abandonable(
+        self, request: ParsedRequest, deadline: float
+    ) -> views.ViewPage | None:
+        if self._isolate_resolver:
+            return self._resolve_in_process(request, deadline)
+        return self._resolve_in_thread(request, deadline)
+
+    def _resolve_in_process(
+        self, request: ParsedRequest, deadline: float
+    ) -> views.ViewPage | None:
+        try:
+            receiver, sender = self._process_context.Pipe(duplex=False)
+        except Exception:
+            return self._within(views.internal_error_page(), deadline)
+        try:
+            process = self._process_context.Process(
+                target=_run_resolver_process,
+                args=(
+                    sender,
+                    self._resolver,
+                    self._workspace,
+                    request,
+                    deadline,
+                    self._busy_timeout_ms,
+                ),
+                daemon=True,
+            )
+        except Exception:
+            receiver.close()
+            sender.close()
+            return self._within(views.internal_error_page(), deadline)
+        try:
+            try:
+                process.start()
+            except Exception:
+                return self._within(views.internal_error_page(), deadline)
+            finally:
+                sender.close()
+
+            handle = _ProcessHandle(process)
+            with self._state_lock:
+                self._handles.add(handle)
+                forced = self._immediate.is_set()
+            try:
+                if forced or self._drain_expired():
+                    handle.wake()
+                    return None
+                ready = wait_for_connections(
+                    (receiver, process.sentinel),
+                    max(0.0, self._phase_deadline(deadline) - self._clock()),
+                )
+                if self._immediate.is_set():
+                    handle.wake()
+                    return None
+                if self._drain_expired():
+                    handle.wake()
+                    return None
+                if receiver not in ready:
+                    handle.wake()
+                    return views.processing_timeout_page()
+                try:
+                    return receiver.recv()
+                except (EOFError, OSError):
+                    return self._within(views.internal_error_page(), deadline)
+            finally:
+                handle.finish()
+                with self._state_lock:
+                    self._handles.discard(handle)
+        finally:
+            receiver.close()
+
+    def _resolve_in_thread(
         self, request: ParsedRequest, deadline: float
     ) -> views.ViewPage | None:
         """Resolve in a one-shot worker the connection thread can abandon.

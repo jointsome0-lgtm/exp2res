@@ -426,6 +426,43 @@ def test_an_interrupt_after_the_bind_advertises_no_unreachable_url(
     assert nothing_listens("127.0.0.1", port)
 
 
+def test_wedged_startup_stderr_cannot_prevent_the_cancelled_envelope(
+    workspace: Path, monkeypatch
+) -> None:
+    port = free_port()
+    entered = threading.Event()
+    release = threading.Event()
+    previous = signal.getsignal(signal.SIGINT)
+    real_echo = cli.typer.echo
+
+    def blocking_echo(message=None, *args, **kwargs):
+        if isinstance(message, str) and message.startswith("http://"):
+            entered.set()
+            release.wait(4.0)
+        return real_echo(message, *args, **kwargs)
+
+    def interrupt_blocked_write() -> None:
+        assert entered.wait(30.0)
+        handler = installed_handler(previous)
+        handler(signal.SIGINT, None)
+        handler(signal.SIGINT, None)
+
+    monkeypatch.setattr(cli.typer, "echo", blocking_echo)
+    interrupter = threading.Thread(target=interrupt_blocked_write, daemon=True)
+    interrupter.start()
+    started = time.monotonic()
+    try:
+        result = invoke(workspace, "--port", str(port), controls=("--json",))
+    finally:
+        elapsed = time.monotonic() - started
+        release.set()
+        interrupter.join(10.0)
+
+    assert elapsed < 2.0
+    assert result.exit_code == 9
+    assert envelope(result)["status"] == "cancelled"
+
+
 def test_a_second_interrupt_during_the_envelope_still_reports_class_nine(
     workspace: Path, monkeypatch, serving: threading.Event
 ) -> None:

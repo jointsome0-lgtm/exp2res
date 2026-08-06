@@ -2559,7 +2559,8 @@ def view_serve(
         server = ViewServer(workspace, bind, report=report)
         cancellation.adopt(server)
         server.open()
-        server.advertise(lambda url: typer.echo(url, err=True))
+        stream = sys.stderr
+        server.advertise(lambda url: typer.echo(url, file=stream))
         server.serve()
         return Outcome(exit_code=9, diagnostic_class="cancelled")
 
