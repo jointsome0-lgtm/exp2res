@@ -419,11 +419,21 @@ def test_an_interruption_during_reporter_start_stops_the_unused_reporter(
         real_start(thread)
 
     monkeypatch.setattr(threading.Thread, "start", interrupt_then_start)
+    reporters: list[threading.Thread] = []
+    real_thread_init = threading.Thread.__init__
+
+    def record(self, *args, **kwargs):
+        real_thread_init(self, *args, **kwargs)
+        if kwargs.get("name") == "view-report":
+            reporters.append(self)
+
+    monkeypatch.setattr(threading.Thread, "__init__", record)
     assert server.serve() == "drained"
-    reporter = server._report_thread
-    assert reporter is not None
-    reporter.join(10.0)
-    assert not reporter.is_alive()
+    # `serve` releases its handle on the reporter, so the thread is captured
+    # as it is constructed rather than read back off the server afterwards.
+    assert len(reporters) == 1
+    reporters[0].join(10.0)
+    assert not reporters[0].is_alive()
 
 
 def test_a_refused_reporter_start_does_not_override_cancellation(
@@ -1394,6 +1404,36 @@ def test_blocked_reporter_never_accumulates_threads(tmp_path):
             assert reporter_thread_count() == before + 1
     finally:
         gate.set()
+
+
+def test_a_finished_run_retires_its_reporter_after_serving_requests(tmp_path):
+    """Serving ends the reporter, so an embedding process accumulates none.
+
+    A process that serves once and exits would never notice, but a long-lived
+    one — a test session, an embedding host — would otherwise leave one
+    blocked thread and one live callback per serve-and-interrupt cycle.
+    """
+
+    delivered: list[tuple[str, str | None]] = []
+
+    def reporter(outcome, route):
+        delivered.append((outcome, route))
+
+    def reporter_threads() -> list[threading.Thread]:
+        return [thread for thread in threading.enumerate() if thread.name == "view-report"]
+
+    before = len(reporter_threads())
+    with running_server(tmp_path, report=reporter) as rig:
+        assert status_of(rig.exchange(rig.request_bytes())) == 200
+    rig.thread.join(30.0)
+    assert not rig.thread.is_alive()
+
+    for thread in reporter_threads():
+        thread.join(30.0)
+    assert len(reporter_threads()) == before
+    # The retirement is a stop, not a silencing: the completed request's own
+    # line still reached the callback.
+    assert delivered == [("served", "/mirror")]
 
 
 class DrainWhileReceivingClock:

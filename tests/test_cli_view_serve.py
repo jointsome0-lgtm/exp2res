@@ -362,3 +362,33 @@ def test_the_default_sigint_handler_is_restored(workspace: Path) -> None:
 
     assert result.exit_code == 9
     assert signal.getsignal(signal.SIGINT) is before
+
+
+def test_serving_off_the_main_thread_is_refused_before_any_bind(
+    workspace: Path,
+) -> None:
+    """Only the main thread can install the handler that ends serving.
+
+    Elsewhere the command would block on `accept` with no path to §14.14
+    rule 6's class-9 envelope at all, so it refuses before a socket exists
+    rather than serving something nothing can stop.
+    """
+
+    port = free_port()
+    outcome: dict[str, object] = {}
+
+    def run() -> None:
+        result = invoke(workspace, "--port", str(port), controls=("--json",))
+        outcome["exit_code"] = result.exit_code
+        outcome["stdout"] = result.stdout
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join(30.0)
+
+    assert not thread.is_alive()
+    assert outcome["exit_code"] == 1
+    body = json.loads(outcome["stdout"].strip())
+    assert body["diagnostic_class"] == "internal_error"
+    assert body["result"] is None
+    assert nothing_listens("127.0.0.1", port)

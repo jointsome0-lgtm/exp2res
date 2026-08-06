@@ -663,6 +663,7 @@ nodes = [
   "tests/test_view_end_to_end.py::test_an_ambient_cookie_is_ignored_and_no_cross_origin_read_is_granted",
   "tests/test_cli_view_serve.py::test_a_successful_bind_reports_exactly_two_urls_then_cancels[127.0.0.1]",
   "tests/test_cli_view_serve.py::test_json_stdout_carries_exactly_one_cancelled_envelope",
+  "tests/test_cli_view_serve.py::test_quiet_keeps_the_urls_and_drops_the_request_lines",
 ]
 phase = "3"
 note = "The §14.17 command form now lands the last piece: tests/test_view_end_to_end.py serves the published Vera Example set over real loopback HTTP — both routes by both selector forms, byte-identical mirror members, the ignored ambient cookie against the refused foreign origin, the answer/re-export invalidation cycle on one unrestarted server, the ::1 bind, and the empty question projection — while tests/test_cli_view_serve.py pins the bind admission, the two startup URLs, and the class-9 envelope. tests/test_view_resolution.py keeps the offline state-dependent half and tests/test_view_http.py with tests/test_view_transport.py keep the rule 9 grammar and caps, rule 2 framing, rule 1 authority, rule 10 admission, and the receive/processing/drain deadlines"

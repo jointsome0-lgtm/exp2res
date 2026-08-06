@@ -10,6 +10,7 @@ from pathlib import Path
 import shlex
 import signal
 import sys
+import threading
 from typing import Callable, Iterator, cast
 
 import typer
@@ -2398,24 +2399,41 @@ def _interruption_drains(server: ViewServer) -> Iterator[None]:
     the first call drains, the second forces the close, and both keep the
     §14.14 rule 6 class-9 envelope this command returns either way.
 
-    Only the main thread may install a handler. Elsewhere — an embedding test
-    runner, for instance — the default behavior stands: the interrupt reaches
-    `_run_command`'s own class-9 path, after `serve` releases every admitted
-    request on its way out.
+    `_require_interruptible` has already refused the one case this cannot
+    cover, so the installation here never fails.
     """
 
     def handle(_signum: int, _frame: object) -> None:
         server.interrupt()
 
-    try:
-        previous = signal.signal(signal.SIGINT, handle)
-    except ValueError:
-        yield
-        return
+    previous = signal.signal(signal.SIGINT, handle)
     try:
         yield
     finally:
         signal.signal(signal.SIGINT, previous)
+
+
+def _require_interruptible() -> None:
+    """Refuse to serve where no interrupt could ever end it.
+
+    Python delivers every signal handler on the main thread, and only the
+    main thread may install one. Serving from any other thread would
+    therefore block on `accept` with no path to §14.14 rule 6's class-9
+    envelope at all: the interrupt would reach the main thread, which is
+    somewhere else entirely. This runs before the bind, so the refusal costs
+    no socket — it is a defect in the embedding caller, not owner input, and
+    it takes the ordinary internal class rather than an invented one.
+    """
+
+    if threading.current_thread() is not threading.main_thread():
+        error = Exp2ResError()
+        error.exit_code = 1
+        error.diagnostic_class = "internal_error"
+        error.public_message = (
+            "view serve must run on the main thread, which is the only place "
+            "an interrupt can end it."
+        )
+        raise error
 
 
 @view_app.command("serve")
@@ -2425,9 +2443,10 @@ def view_serve(
     port: int = typer.Option(DEFAULT_PORT, "--port"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
-        # §14.17: the bind is admitted and the §12.14 compatibility gate
-        # applied before a socket exists, so a refused bind and an
-        # incompatible workspace both fail closed with nothing served.
+        # §14.17: the bind is admitted, the §12.14 compatibility gate
+        # applied, and the interruption path proved available before a socket
+        # exists, so every one of those refusals leaves nothing served.
+        _require_interruptible()
         bind = validate_bind(host, port)
         require_compatible(workspace)
 

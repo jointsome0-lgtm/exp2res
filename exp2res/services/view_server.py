@@ -327,9 +327,6 @@ class ViewServer:
         # count, never on connection threads, so a thread outliving its
         # released request — a stalled reporter — cannot consume the drain.
         self._active = 0
-        # Distinguishes the reporter-start cancellation window from a normal
-        # drain whose completed requests may already have queued diagnostics.
-        self._ever_admitted = False
         self._idle = threading.Condition(self._state_lock)
         self._draining = threading.Event()
         self._immediate = threading.Event()
@@ -431,6 +428,16 @@ class ViewServer:
     def serve(self) -> ServeResult:
         """Accept until interrupted, then drain; returns the termination class."""
 
+        try:
+            return self._serve()
+        finally:
+            # Every exit retires the reporter — drained, expired, forced, or
+            # a failure that never reached a drain at all. A process that
+            # serves once and exits would not notice, but an embedding one
+            # would accumulate a blocked thread and a live callback per run.
+            self._stop_reporter()
+
+    def _serve(self) -> ServeResult:
         if self._listener is None:
             if self._draining.is_set():
                 # `interrupt` is callable at any instant, including before
@@ -509,7 +516,6 @@ class ViewServer:
                     if admitted:
                         self._sockets.add(connection)
                         self._active += 1
-                        self._ever_admitted = True
                 if not admitted:
                     self._slots.release()
                     with suppress(OSError):
@@ -568,7 +574,6 @@ class ViewServer:
                 self._idle.wait(remaining)
         if expired and not self._immediate.is_set():
             self._force_close()
-        self._stop_reporter_if_unused()
         if self._immediate.is_set():
             return "interrupted"
         if expired:
@@ -685,18 +690,30 @@ class ViewServer:
                 if report is not None:
                     report(*line)
 
-    def _stop_reporter_if_unused(self) -> None:
-        """Wake a reporter that cancellation left with no possible line.
+    def _stop_reporter(self) -> None:
+        """Retire the reporter once serving is over, whatever it reported.
 
-        This path is deliberately limited to a server that never admitted a
-        connection. Its queue is therefore empty, so the sentinel is
-        non-blocking and cannot overtake or discard a request diagnostic.
+        Ordering is what makes this safe rather than timing: the sentinel
+        goes to the back of one FIFO queue, so the thread delivers every line
+        already queued and then returns on its own. A line a connection
+        thread enqueues in the window after its own slot release may arrive
+        behind the sentinel and go undelivered — the same bounded-queue
+        contract that already drops a line under a slow reporter.
+
+        Nothing is joined or waited for. §14.17's cancellation may not wait
+        on a reporter, and a wedged one is a daemon thread holding no socket,
+        slot, or transaction; it stops when its own write completes rather
+        than when the envelope needs it to. The guarantee this method does
+        give is termination: no serving run leaves a reporter that will
+        never be told to stop.
         """
 
         with self._state_lock:
-            unused = not self._ever_admitted
             reporter = self._report_thread
-        if unused and reporter is not None:
+            self._report_thread = None
+        if reporter is None:
+            return
+        with suppress(queue.Full):
             self._report_queue.put_nowait(None)
 
     def _receive(
