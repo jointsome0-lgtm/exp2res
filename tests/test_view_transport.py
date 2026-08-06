@@ -394,6 +394,60 @@ def test_an_interruption_after_open_starts_no_reporter(tmp_path, monkeypatch):
     assert server._report_thread is None
 
 
+def test_an_interruption_during_reporter_start_stops_the_unused_reporter(
+    tmp_path, monkeypatch
+):
+    """A reporter started as cancellation becomes visible exits cleanly.
+
+    The interruption can land after `serve` checks the drain flag but inside
+    `Thread.start`. No request can then be admitted, so the post-start path
+    must wake the otherwise-empty reporter instead of leaving its daemon
+    blocked on the queue forever.
+    """
+
+    server = ViewServer(
+        tmp_path,
+        free_bind(),
+        report=lambda outcome, route: None,
+        _timeouts=GENEROUS,
+    )
+    server.open()
+    real_start = threading.Thread.start
+
+    def interrupt_then_start(thread):
+        server.interrupt()
+        real_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", interrupt_then_start)
+    assert server.serve() == "drained"
+    reporter = server._report_thread
+    assert reporter is not None
+    reporter.join(10.0)
+    assert not reporter.is_alive()
+
+
+def test_a_refused_reporter_start_does_not_override_cancellation(
+    tmp_path, monkeypatch
+):
+    """Cancellation that wins during startup remains the serve result."""
+
+    server = ViewServer(
+        tmp_path,
+        free_bind(),
+        report=lambda outcome, route: None,
+        _timeouts=GENEROUS,
+    )
+    server.open()
+
+    def interrupt_then_refuse(thread):
+        server.interrupt()
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", interrupt_then_refuse)
+    assert server.serve() == "drained"
+    assert server._report_thread is None
+
+
 def test_a_reporter_thread_the_os_refuses_gives_the_port_back(
     tmp_path, monkeypatch
 ):

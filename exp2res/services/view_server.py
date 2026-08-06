@@ -305,6 +305,9 @@ class ViewServer:
         # count, never on connection threads, so a thread outliving its
         # released request — a stalled reporter — cannot consume the drain.
         self._active = 0
+        # Distinguishes the reporter-start cancellation window from a normal
+        # drain whose completed requests may already have queued diagnostics.
+        self._ever_admitted = False
         self._idle = threading.Condition(self._state_lock)
         self._draining = threading.Event()
         self._immediate = threading.Event()
@@ -313,7 +316,7 @@ class ViewServer:
         # One dedicated reporter thread behind a bounded queue: a blocked
         # stderr can then stall only this one thread and drop excess progress
         # lines, never accumulate a blocked thread per completed connection.
-        self._report_queue: queue.Queue[tuple[str, str | None]] = queue.Queue(
+        self._report_queue: queue.Queue[tuple[str, str | None] | None] = queue.Queue(
             maxsize=REPORT_QUEUE_LIMIT
         )
         self._report_thread: threading.Thread | None = None
@@ -430,14 +433,20 @@ class ViewServer:
             try:
                 reporter.start()
             except RuntimeError:
-                # Nothing has been served yet, so this failure belongs to the
-                # caller — but the bound listener must not outlive it, or the
-                # port stays taken and no retry can rebind. The reporter slot
-                # is left empty so a retry starts one rather than serving
-                # silently with no progress output.
+                # Unless cancellation became visible during the refused
+                # start, this failure belongs to the caller — but the bound
+                # listener must not outlive it, or the port stays taken and
+                # no retry can rebind. The reporter slot stays empty so a
+                # retry starts one rather than serving silently.
                 self._listener = None
                 with suppress(OSError):
                     listener.close()
+                if self._draining.is_set():
+                    # Cancellation that became visible during the refused
+                    # start still owns the command result. No reporter exists
+                    # and no request was admitted, so the existing drain is
+                    # the complete cleanup path.
+                    return self._drain()
                 raise
             self._report_thread = reporter
         try:
@@ -478,6 +487,7 @@ class ViewServer:
                     if admitted:
                         self._sockets.add(connection)
                         self._active += 1
+                        self._ever_admitted = True
                 if not admitted:
                     self._slots.release()
                     with suppress(OSError):
@@ -536,6 +546,7 @@ class ViewServer:
                 self._idle.wait(remaining)
         if expired and not self._immediate.is_set():
             self._force_close()
+        self._stop_reporter_if_unused()
         if self._immediate.is_set():
             return "interrupted"
         if expired:
@@ -645,10 +656,26 @@ class ViewServer:
     def _report_loop(self) -> None:
         while True:
             line = self._report_queue.get()
+            if line is None:
+                return
             with suppress(Exception):
                 report = self._report
                 if report is not None:
                     report(*line)
+
+    def _stop_reporter_if_unused(self) -> None:
+        """Wake a reporter that cancellation left with no possible line.
+
+        This path is deliberately limited to a server that never admitted a
+        connection. Its queue is therefore empty, so the sentinel is
+        non-blocking and cannot overtake or discard a request diagnostic.
+        """
+
+        with self._state_lock:
+            unused = not self._ever_admitted
+            reporter = self._report_thread
+        if unused and reporter is not None:
+            self._report_queue.put_nowait(None)
 
     def _receive(
         self, connection: socket.socket, admitted_at: float
