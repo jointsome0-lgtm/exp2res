@@ -31,6 +31,7 @@ from multiprocessing.connection import Connection, wait as wait_for_connections
 from multiprocessing.context import BaseContext
 from pathlib import Path
 import queue
+import signal
 import socket
 import sqlite3
 import threading
@@ -302,9 +303,43 @@ class _ProcessHandle:
                 if self.process.is_alive():
                     self.process.kill()
 
-    def finish(self) -> None:
+    def finish(self) -> bool:
         self.wake()
+        self.process.join(timeout=0)
+        finished = not self.process.is_alive()
+        if finished:
+            self.process.close()
+        return finished
+
+    def reap(self) -> None:
         self.process.join()
+        self.process.close()
+
+
+class _AdmissionLease:
+    def __init__(self, semaphore: threading.Semaphore) -> None:
+        self._semaphore = semaphore
+        self._lock = threading.Lock()
+        self._deferred = False
+        self._released = False
+
+    def defer(self) -> None:
+        with self._lock:
+            self._deferred = True
+
+    def release(self) -> None:
+        with self._lock:
+            if self._released or self._deferred:
+                return
+            self._released = True
+        self._semaphore.release()
+
+    def release_deferred(self) -> None:
+        with self._lock:
+            if self._released:
+                return
+            self._released = True
+        self._semaphore.release()
 
 
 def _run_resolver_process(
@@ -316,6 +351,7 @@ def _run_resolver_process(
     busy_timeout_ms: int,
 ) -> None:
     try:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         try:
             page = resolver(
                 workspace,
@@ -710,6 +746,7 @@ class ViewServer:
 
     def _serve_connection(self, connection: socket.socket, admitted_at: float) -> None:
         line: tuple[str, str | None] | None = None
+        lease = _AdmissionLease(self._slots)
         try:
             try:
                 received = self._receive(connection, admitted_at)
@@ -724,7 +761,7 @@ class ViewServer:
                 # — the timestamp `_receive` captured, so a scheduling stall
                 # after completion spends the budget rather than extending it.
                 deadline = completed_at + self._timeouts.processing
-                page = self._decide(parser, deadline)
+                page = self._decide(parser, deadline, lease)
                 if page is None:
                     return
                 head = not parser.malformed and parser.request.method == b"HEAD"
@@ -739,7 +776,7 @@ class ViewServer:
                 pass
         finally:
             self._enqueue_report(line)
-            self._release_admission(connection)
+            self._release_admission(connection, lease)
 
     def _enqueue_report(self, line: tuple[str, str | None] | None) -> None:
         """Hand one completed request's line to the reporter, or drop it.
@@ -768,7 +805,9 @@ class ViewServer:
             return
         self._report_queue.put_nowait((self._report, line, True))
 
-    def _release_admission(self, connection: socket.socket) -> None:
+    def _release_admission(
+        self, connection: socket.socket, lease: _AdmissionLease | None = None
+    ) -> None:
         """Give back everything one admission took, in the one safe order.
 
         Close before deregistering: a forced close arriving in between must
@@ -781,7 +820,10 @@ class ViewServer:
             connection.close()
         with self._state_lock:
             self._sockets.discard(connection)
-        self._slots.release()
+        if lease is None:
+            self._slots.release()
+        else:
+            lease.release()
         with self._idle:
             self._active -= 1
             self._idle.notify_all()
@@ -925,7 +967,10 @@ class ViewServer:
         return parser, completed_at
 
     def _decide(
-        self, parser: RequestParser, deadline: float
+        self,
+        parser: RequestParser,
+        deadline: float,
+        lease: _AdmissionLease | None = None,
     ) -> views.ViewPage | None:
         """Run §30 rule 7's ordered pre-state refusals, then the resolver.
 
@@ -947,7 +992,7 @@ class ViewServer:
             return self._within(views.method_not_allowed_page(), deadline)
         if request.framing == "declared_body":
             return self._within(views.malformed_request_page(), deadline)
-        return self._resolve_abandonable(request, deadline)
+        return self._resolve_abandonable(request, deadline, lease)
 
     def _within(self, page: views.ViewPage, deadline: float) -> views.ViewPage:
         """The processing deadline is an outer boundary over every check.
@@ -963,14 +1008,20 @@ class ViewServer:
         return views.processing_timeout_page()
 
     def _resolve_abandonable(
-        self, request: ParsedRequest, deadline: float
+        self,
+        request: ParsedRequest,
+        deadline: float,
+        lease: _AdmissionLease | None = None,
     ) -> views.ViewPage | None:
         if self._isolate_resolver:
-            return self._resolve_in_process(request, deadline)
+            return self._resolve_in_process(request, deadline, lease)
         return self._resolve_in_thread(request, deadline)
 
     def _resolve_in_process(
-        self, request: ParsedRequest, deadline: float
+        self,
+        request: ParsedRequest,
+        deadline: float,
+        lease: _AdmissionLease | None,
     ) -> views.ViewPage | None:
         try:
             receiver, sender = self._process_context.Pipe(duplex=False)
@@ -1027,11 +1078,28 @@ class ViewServer:
                 except (EOFError, OSError):
                     return self._within(views.internal_error_page(), deadline)
             finally:
-                handle.finish()
+                if not handle.finish():
+                    if lease is not None:
+                        lease.defer()
+                    self._reap_process(handle, lease)
                 with self._state_lock:
                     self._handles.discard(handle)
         finally:
             receiver.close()
+
+    def _reap_process(
+        self, handle: _ProcessHandle, lease: _AdmissionLease | None
+    ) -> None:
+        def reap() -> None:
+            handle.reap()
+            if lease is not None:
+                lease.release_deferred()
+
+        reaper = threading.Thread(
+            target=reap, name="view-resolver-reap", daemon=True
+        )
+        with suppress(RuntimeError):
+            reaper.start()
 
     def _resolve_in_thread(
         self, request: ParsedRequest, deadline: float

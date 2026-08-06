@@ -12,6 +12,7 @@ from contextlib import contextmanager
 import multiprocessing
 import os
 from pathlib import Path
+import signal
 import socket
 import sqlite3
 import threading
@@ -30,6 +31,8 @@ from exp2res.services import view_server
 from exp2res.services.view_http import ParsedRequest, RequestParser
 from exp2res.services.view_server import (
     _AbandonedError,
+    _AdmissionLease,
+    _ProcessHandle,
     _WorkerHandle,
     BindAddress,
     MAX_CONNECTIONS,
@@ -65,6 +68,18 @@ class IsolatedResolverProbe:
             self.pid.value = os.getpid()
             self.entered.set()
             time.sleep(30.0)
+        return MARKER_PAGE
+
+
+class SignalResolverProbe:
+    def __init__(self, context) -> None:
+        self.entered = context.Event()
+        self.pid = context.Value("i", 0)
+
+    def __call__(self, workspace, route, query, **_kwargs):
+        self.pid.value = os.getpid()
+        self.entered.set()
+        time.sleep(0.5)
         return MARKER_PAGE
 
 
@@ -1179,10 +1194,70 @@ def test_processing_expiry_terminates_isolated_work_before_reusing_the_slot(
 
         worker_pid = resolver.pid.value
         assert worker_pid > 0
-        with pytest.raises(ProcessLookupError):
-            os.kill(worker_pid, 0)
+        limit = time.monotonic() + 5.0
+        while time.monotonic() < limit:
+            try:
+                os.kill(worker_pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("the expired resolver process was not reaped")
 
         assert status_of(rig.exchange(rig.request_bytes())) == 200
+
+
+def test_resolver_child_ignores_terminal_sigint(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    resolver = SignalResolverProbe(context)
+    timeouts = Timeouts(receive=30.0, processing=5.0, emit=30.0, drain=30.0)
+
+    with running_server(
+        tmp_path,
+        resolver=resolver,
+        timeouts=timeouts,
+        isolate_resolver=True,
+        process_context=context,
+    ) as rig:
+        with rig.connect() as client:
+            client.sendall(rig.request_bytes())
+            assert resolver.entered.wait(10.0)
+            os.kill(resolver.pid.value, signal.SIGINT)
+            response = read_to_close(client)
+
+    assert status_of(response) == 200
+    assert outcome_of(response) == b"served"
+
+
+def test_resolver_process_finish_never_waits_for_uninterruptible_work():
+    class UninterruptibleProcess:
+        def is_alive(self):
+            return True
+
+        def kill(self):
+            pass
+
+        def join(self, timeout=None):
+            if timeout is None:
+                time.sleep(4.0)
+
+    handle = _ProcessHandle(UninterruptibleProcess())
+    started = time.monotonic()
+
+    assert handle.finish() is False
+    assert time.monotonic() - started < 1.0
+
+
+def test_deferred_admission_is_not_reused_until_the_process_is_reaped():
+    slots = threading.Semaphore(0)
+    lease = _AdmissionLease(slots)
+
+    lease.defer()
+    lease.release()
+    assert not slots.acquire(blocking=False)
+
+    lease.release_deferred()
+    assert slots.acquire(blocking=False)
 
 
 def test_processing_expiry_interrupts_a_wedged_sqlite_reader(workspace):
@@ -1732,8 +1807,8 @@ def test_a_completed_line_is_queued_before_the_drain_can_return(tmp_path):
     real_release = server._release_admission
     shut_down = threading.Event()
 
-    def release_then_shut_down(connection):
-        real_release(connection)
+    def release_then_shut_down(connection, lease=None):
+        real_release(connection, lease)
         # The slot is back and the drain count is zero: this is the exact
         # instant `_drain` may return and stop the reporter.
         server.interrupt()
