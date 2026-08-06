@@ -718,6 +718,24 @@ def test_processing_expiry_during_composition_composes_the_503(tmp_path):
     assert status_of(response) == 503
     assert outcome_of(response) == b"processing_timeout"
 
+    server_drained = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+    # §30 rule 7: an expiring drain may truncate delivery after the outcome
+    # is composed, but it never creates a second outcome. Only the ordinary
+    # processing deadline — still far away here — can relabel a composed page.
+    server_drained.interrupt()
+    with server_drained._state_lock:
+        server_drained._drain_deadline = time.monotonic() - 1.0
+    ours, theirs = socket.socketpair()
+    with ours, theirs:
+        emitted = server_drained._emit(
+            ours, MARKER_PAGE, time.monotonic() + 30.0, head=False
+        )
+        ours.close()
+        response = read_to_close(theirs)
+    assert emitted.outcome == "served"
+    # Delivery is what the expired drain truncates: no bytes, same outcome.
+    assert response == b""
+
     server_fresh = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
     ours, theirs = socket.socketpair()
     with ours, theirs:

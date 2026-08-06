@@ -221,7 +221,11 @@ class _WorkerHandle:
             if self._abandoned:
                 return
             self.page = page
-        self.done.set()
+            # Completion is published inside the lock, with the page itself.
+            # The connection thread classifies a timeout from this event, so
+            # a page assigned while the event still looked unset would be
+            # discarded as expired even though it was composed in budget.
+            self.done.set()
 
     def abandon(self) -> None:
         with self._lock:
@@ -724,16 +728,24 @@ class ViewServer:
         """Compose inside the processing budget, then send under the emit one.
 
         §14.17 places response composition inside processing: serialization
-        that outlives the processing deadline turns the outcome into the
-        fixed `processing_timeout` page, which is what gets the ordinary emit
-        allowance. The emit deadline starts before the first byte, after the
+        that outlives the ordinary processing deadline turns the outcome into
+        the fixed `processing_timeout` page, which is what gets the ordinary
+        emit allowance. An expiring drain is not that deadline — it shortens
+        every send below but never rewrites a composed outcome. The emit
+        deadline starts before the first byte, after the
         outcome was composed. Expiry or a transport failure closes without
         retry — a partial response is acceptable and never changes the
         computed outcome. Returns the page actually emitted.
         """
 
         payload = compose_response(page, head=head)
-        if self._clock() >= self._phase_deadline(processing_deadline):
+        if self._clock() >= processing_deadline:
+            # The ordinary processing deadline alone, never `min(phase,
+            # drain)`: §30 rule 7 lets drain expiry truncate delivery after
+            # the outcome is composed, but neither creates a second outcome
+            # nor emits an alternate response, so a drain that expires during
+            # serialization closes this connection with the page it already
+            # computed rather than relabelling it a timeout.
             page = views.processing_timeout_page()
             payload = compose_response(page, head=head)
         deadline = self._clock() + self._timeouts.emit
