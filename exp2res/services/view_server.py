@@ -88,6 +88,7 @@ REPORT_QUEUE_LIMIT = 64
 # second interruption. Not an allowance of its own: it only bounds how long
 # either one goes unnoticed.
 _FLUSH_POLL_SECONDS = 0.05
+_PROCESS_REAP_POLL_SECONDS = 0.05
 _RESULT_LENGTH = struct.Struct("!Q")
 
 _SAFE_METHODS = (b"GET", b"HEAD")
@@ -297,27 +298,64 @@ class _WorkerHandle:
 
 
 class _ProcessHandle:
-    def __init__(self, process) -> None:
+    def __init__(self, process, *, starting: bool = False) -> None:
         self.process = process
         self._lock = threading.Lock()
+        self._start_done = threading.Event()
+        self._started = not starting
+        self._start_failed = False
+        self._cancelled = False
+        if not starting:
+            self._start_done.set()
+
+    def complete_start(self, *, failed: bool) -> None:
+        with self._lock:
+            self._started = not failed
+            self._start_failed = failed
+            cancelled = self._cancelled
+        if cancelled and not failed:
+            self._kill()
+        self._start_done.set()
+
+    def wait_started(self, timeout: float) -> bool:
+        return self._start_done.wait(timeout)
+
+    @property
+    def start_failed(self) -> bool:
+        with self._lock:
+            return self._start_failed
 
     def wake(self) -> None:
         with self._lock:
-            with suppress(AssertionError, OSError, ValueError):
-                if self.process.is_alive():
-                    self.process.kill()
+            self._cancelled = True
+            started = self._started
+        if started:
+            self._kill()
+
+    def _kill(self) -> None:
+        with suppress(AssertionError, OSError, ValueError):
+            if self.process.is_alive():
+                self.process.kill()
 
     def finish(self) -> bool:
         self.wake()
-        self.process.join(timeout=0)
-        finished = not self.process.is_alive()
+        if not self._start_done.is_set():
+            return False
+        with self._lock:
+            started = self._started
+        if not started:
+            with suppress(AttributeError, ValueError):
+                self.process.close()
+            return True
+        try:
+            self.process.join(timeout=0)
+            finished = not self.process.is_alive()
+        except (AssertionError, OSError, ValueError):
+            return False
         if finished:
-            self.process.close()
+            with suppress(ValueError):
+                self.process.close()
         return finished
-
-    def reap(self) -> None:
-        self.process.join()
-        self.process.close()
 
 
 class _AdmissionLease:
@@ -436,9 +474,9 @@ class ViewServer:
         self._state_lock = threading.RLock()
         self._sockets: set[socket.socket] = set()
         self._handles: set[_WorkerHandle | _ProcessHandle] = set()
-        # Admitted requests still holding their slot. The drain waits on this
-        # count, never on connection threads, so a thread outliving its
-        # released request — a stalled reporter — cannot consume the drain.
+        # Admitted connections not yet terminally closed. The drain waits on
+        # this count, never on connection threads, so a stalled reporter
+        # cannot consume the drain after its connection has been released.
         self._active = 0
         self._idle = threading.Condition(self._state_lock)
         self._draining = threading.Event()
@@ -453,10 +491,16 @@ class ViewServer:
         )
         self._report_slots = threading.Semaphore(REPORT_QUEUE_LIMIT)
         self._report_thread: threading.Thread | None = None
+        self._reap_queue: queue.Queue[
+            tuple[_ProcessHandle, _AdmissionLease | None]
+        ] = queue.Queue()
+        self._reap_stop = threading.Event()
+        self._reap_thread: threading.Thread | None = None
 
     def advertise(self, announce: Callable[[str], None]) -> None:
         """Queue §14.17's two startup URLs while the listener is usable."""
 
+        completions: list[threading.Event] = []
         with self._state_lock:
             if self._listener is None or self._draining.is_set():
                 return
@@ -465,7 +509,34 @@ class ViewServer:
             for url in bound_urls(self.bind_address):
                 if self._draining.is_set():
                     return
-                self._report_queue.put_nowait((announce, (url,), False))
+                complete = threading.Event()
+                completions.append(complete)
+                self._report_queue.put_nowait(
+                    (self._announce_if_live, (announce, url, complete), False)
+                )
+        for complete in completions:
+            while not complete.wait(_FLUSH_POLL_SECONDS):
+                if self._draining.is_set() or self._immediate.is_set():
+                    return
+
+    def _announce_if_live(
+        self,
+        announce: Callable[[str], None],
+        url: str,
+        complete: threading.Event,
+    ) -> None:
+        try:
+            with self._state_lock:
+                listener = self._listener
+                live = (
+                    listener is not None
+                    and listener.fileno() >= 0
+                    and not self._draining.is_set()
+                )
+            if live:
+                announce(url)
+        finally:
+            complete.set()
 
     def open(self) -> None:
         """Bind exactly the validated address, or fail without another try.
@@ -575,6 +646,7 @@ class ViewServer:
             return self._serve()
         finally:
             self._stop_reporter()
+            self._stop_process_reaper()
 
     def _start_reporter(self) -> bool:
         if self._report_thread is not None:
@@ -1044,6 +1116,8 @@ class ViewServer:
         deadline: float,
         lease: _AdmissionLease | None,
     ) -> views.ViewPage | None:
+        if not self._ensure_process_reaper():
+            return self._within(views.internal_error_page(), deadline)
         try:
             receiver, sender = self._process_context.Pipe(duplex=False)
         except Exception:
@@ -1065,22 +1139,26 @@ class ViewServer:
             receiver.close()
             sender.close()
             return self._within(views.internal_error_page(), deadline)
+        handle = _ProcessHandle(process, starting=True)
+        with self._state_lock:
+            self._handles.add(handle)
+            forced = self._immediate.is_set()
         try:
             try:
-                self._start_resolver_process(process)
-            except Exception:
-                return self._within(views.internal_error_page(), deadline)
-            finally:
-                sender.close()
-
-            handle = _ProcessHandle(process)
-            with self._state_lock:
-                self._handles.add(handle)
-                forced = self._immediate.is_set()
-            try:
+                if not self._begin_process_start(handle, sender):
+                    return self._within(views.internal_error_page(), deadline)
                 if forced or self._drain_expired():
                     handle.wake()
                     return None
+                remaining = self._phase_deadline(deadline) - self._clock()
+                if remaining <= 0 or not handle.wait_started(remaining):
+                    handle.wake()
+                    return views.processing_timeout_page()
+                if self._immediate.is_set() or self._drain_expired():
+                    handle.wake()
+                    return None
+                if handle.start_failed:
+                    return self._within(views.internal_error_page(), deadline)
                 return self._receive_process_result(receiver, process, deadline)
             finally:
                 if not handle.finish():
@@ -1091,6 +1169,30 @@ class ViewServer:
                     self._handles.discard(handle)
         finally:
             receiver.close()
+
+    def _begin_process_start(
+        self, handle: _ProcessHandle, sender: Connection
+    ) -> bool:
+        def start() -> None:
+            failed = False
+            try:
+                self._start_resolver_process(handle.process)
+            except BaseException:
+                failed = True
+            finally:
+                sender.close()
+                handle.complete_start(failed=failed)
+
+        starter = threading.Thread(
+            target=start, name="view-resolver-start", daemon=True
+        )
+        try:
+            starter.start()
+        except RuntimeError:
+            sender.close()
+            handle.complete_start(failed=True)
+            return False
+        return True
 
     def _start_resolver_process(self, process) -> None:
         try:
@@ -1163,16 +1265,50 @@ class ViewServer:
     def _reap_process(
         self, handle: _ProcessHandle, lease: _AdmissionLease | None
     ) -> None:
-        def reap() -> None:
-            handle.reap()
-            if lease is not None:
-                lease.release_deferred()
+        self._reap_queue.put_nowait((handle, lease))
 
-        reaper = threading.Thread(
-            target=reap, name="view-resolver-reap", daemon=True
-        )
-        with suppress(RuntimeError):
-            reaper.start()
+    def _ensure_process_reaper(self) -> bool:
+        with self._state_lock:
+            if self._reap_thread is not None:
+                return self._reap_thread.is_alive()
+            if self._reap_stop.is_set():
+                return False
+            reaper = threading.Thread(
+                target=self._process_reap_loop,
+                name="view-resolver-reap",
+                daemon=True,
+            )
+            try:
+                reaper.start()
+            except RuntimeError:
+                return False
+            self._reap_thread = reaper
+        return True
+
+    def _process_reap_loop(self) -> None:
+        pending: list[tuple[_ProcessHandle, _AdmissionLease | None]] = []
+        while True:
+            try:
+                pending.append(
+                    self._reap_queue.get(timeout=_PROCESS_REAP_POLL_SECONDS)
+                )
+            except queue.Empty:
+                pass
+            retained = []
+            for handle, lease in pending:
+                if handle.finish():
+                    if lease is not None:
+                        lease.release_deferred()
+                else:
+                    retained.append((handle, lease))
+            pending = retained
+            if self._reap_stop.is_set() and not pending:
+                with self._state_lock:
+                    if self._active == 0 and self._reap_queue.empty():
+                        return
+
+    def _stop_process_reaper(self) -> None:
+        self._reap_stop.set()
 
     def _resolve_in_thread(
         self, request: ParsedRequest, deadline: float

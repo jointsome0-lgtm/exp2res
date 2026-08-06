@@ -601,6 +601,37 @@ def test_an_interruption_between_listen_and_publication_closes_the_socket(
     assert server.serve() == "drained"
 
 
+def test_queued_startup_urls_are_discarded_after_interruption(tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+    announced: list[str] = []
+    server = ViewServer(tmp_path, free_bind(), _timeouts=GENEROUS)
+    server.open()
+    assert server._start_reporter()
+
+    def block_reporter() -> None:
+        entered.set()
+        release.wait(30.0)
+
+    server._report_queue.put_nowait((block_reporter, (), False))
+    assert entered.wait(10.0)
+    advertiser = threading.Thread(
+        target=server.advertise, args=(announced.append,), daemon=True
+    )
+    advertiser.start()
+    deadline = time.monotonic() + 10.0
+    while server._report_queue.qsize() < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server._report_queue.qsize() == 2
+    server.interrupt()
+    release.set()
+    advertiser.join(10.0)
+
+    assert not advertiser.is_alive()
+    assert server.serve() == "drained"
+    assert announced == []
+
+
 def test_a_refused_reporter_start_does_not_override_cancellation(
     tmp_path, monkeypatch
 ):
@@ -1503,10 +1534,86 @@ def test_a_resolver_process_that_cannot_start_is_the_fixed_internal_error(tmp_pa
     )
     assert parser.done and not parser.malformed
 
+    try:
+        page = server._decide(parser, time.monotonic() + 30.0)
+        assert page is not None
+        assert page.outcome == "internal_error"
+        assert page.status == 500
+    finally:
+        server._stop_process_reaper()
+
+
+def test_a_refused_reaper_starts_no_resolver_process(tmp_path, monkeypatch):
+    bind = free_bind()
+    process_resources: list[bool] = []
+
+    class UnusedContext:
+        def Pipe(self, *, duplex):
+            process_resources.append(True)
+            raise AssertionError("no process resources may be created")
+
+    server = ViewServer(
+        tmp_path, bind, _timeouts=GENEROUS, _process_context=UnusedContext()
+    )
+    parser = RequestParser()
+    parser.feed(
+        b"GET /mirror?scope=global HTTP/1.1\r\nHost: "
+        + bind.authority.encode("ascii")
+        + b"\r\n\r\n"
+    )
+
+    def refuse_start(_thread):
+        raise RuntimeError("can't start reaper")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse_start)
     page = server._decide(parser, time.monotonic() + 30.0)
+
     assert page is not None
     assert page.outcome == "internal_error"
-    assert page.status == 500
+    assert process_resources == []
+
+
+def test_resolver_process_startup_obeys_the_processing_deadline(tmp_path):
+    bind = free_bind()
+    slots = threading.Semaphore(0)
+    lease = _AdmissionLease(slots)
+
+    class StalledProcess:
+        def start(self):
+            time.sleep(2.0)
+            raise RuntimeError("process creation stalled")
+
+        def close(self):
+            pass
+
+    class StalledContext:
+        def Pipe(self, *, duplex):
+            return multiprocessing.get_context("spawn").Pipe(duplex=duplex)
+
+        def Process(self, **_kwargs):
+            return StalledProcess()
+
+    server = ViewServer(
+        tmp_path, bind, _timeouts=GENEROUS, _process_context=StalledContext()
+    )
+    parser = RequestParser()
+    parser.feed(
+        b"GET /mirror?scope=global HTTP/1.1\r\nHost: "
+        + bind.authority.encode("ascii")
+        + b"\r\n\r\n"
+    )
+    started = time.monotonic()
+    try:
+        page = server._decide(parser, started + 0.2, lease)
+        elapsed = time.monotonic() - started
+        lease.release()
+        assert not slots.acquire(blocking=False)
+        assert slots.acquire(timeout=5.0)
+    finally:
+        server._stop_process_reaper()
+
+    assert page is not None and page.outcome == "processing_timeout"
+    assert elapsed < 1.0
 
 
 def test_processing_expiry_during_composition_composes_the_503(tmp_path):
