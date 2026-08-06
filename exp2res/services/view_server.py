@@ -394,7 +394,17 @@ class ViewServer:
         except OSError as error:
             listener.close()
             raise ViewBindFailedError() from error
-        self._listener = listener
+        with self._state_lock:
+            # Publication and the drain check are one atomic step. An
+            # interruption that arrived while this socket was still local
+            # found no listener to close, and `serve` would return through the
+            # early drain without reaching the close in its own `finally` —
+            # leaving the port held for the life of an embedding process.
+            # Whichever side takes the lock first owns the close.
+            if not self._draining.is_set():
+                self._listener = listener
+                return
+        listener.close()
 
     def interrupt(self) -> None:
         """First call drains; a second forces the close. Never raises.

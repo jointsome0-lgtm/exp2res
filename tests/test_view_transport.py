@@ -450,6 +450,37 @@ def test_an_interruption_during_reporter_start_stops_the_unused_reporter(
     assert not reporters[0].is_alive()
 
 
+def test_an_interruption_between_listen_and_publication_closes_the_socket(
+    tmp_path, monkeypatch
+):
+    """The interruption that found no listener still frees the port.
+
+    `interrupt` closes whatever `open` has published, and `serve` closes what
+    it accepted through. A socket interrupted in the window between the two
+    belongs to neither, and an embedding process would hold the address for
+    its whole life while the command reported an orderly cancellation.
+    """
+
+    bind = free_bind()
+    server = ViewServer(tmp_path, bind, _timeouts=GENEROUS)
+    original = socket.socket.listen
+    listeners: list[socket.socket] = []
+
+    def listen(self, backlog):
+        original(self, backlog)
+        listeners.append(self)
+        server.interrupt()
+
+    monkeypatch.setattr(socket.socket, "listen", listen)
+    server.open()
+    monkeypatch.undo()
+
+    assert not server.bound
+    assert len(listeners) == 1
+    assert listeners[0].fileno() == -1
+    assert server.serve() == "drained"
+
+
 def test_a_refused_reporter_start_does_not_override_cancellation(
     tmp_path, monkeypatch
 ):
