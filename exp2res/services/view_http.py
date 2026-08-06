@@ -62,11 +62,31 @@ _TARGET = frozenset(
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     b"abcdefghijklmnopqrstuvwxyz"
 )
+_HEXDIG = frozenset(b"0123456789abcdefABCDEF")
 _OWS = b" \t"
 _CR = 0x0D
 _LF = 0x0A
 
 Framing = Literal["bodyless", "declared_body"]
+
+
+def _complete_escapes(target: bytes) -> bool:
+    """Every `%` in the target opens a full `%` HEXDIG HEXDIG triplet.
+
+    The byte set alone accepts `%` anywhere, so `/mirror%` and `/mirror%GG`
+    would parse and reach a route. They are not origin-form targets, and
+    nothing downstream decodes them into one — rule 6 splits the query on
+    literal bytes — so the escape is checked here, where §30 rule 9 puts it.
+    Work stays bounded by the request line's own cap.
+    """
+
+    index = target.find(b"%")
+    while index >= 0:
+        escape = target[index + 1 : index + 3]
+        if len(escape) != 2 or any(byte not in _HEXDIG for byte in escape):
+            return False
+        index = target.find(b"%", index + 3)
+    return True
 
 
 @dataclass(frozen=True)
@@ -208,13 +228,16 @@ class RequestParser:
         if not method or any(byte not in _TCHAR for byte in method):
             self._fail()
             return
-        # §30 rule 9 puts transport parsing first, so a target carrying any
-        # byte outside origin-form's grammar — a raw `#` opening a fragment,
-        # a `\` or `"` no absolute path or query may contain — is
-        # `malformed_request` here rather than a later `route_not_found` or
-        # `invalid_selector` reached by normalizing it into a route.
-        if not target.startswith(b"/") or any(
-            byte not in _TARGET for byte in target
+        # §30 rule 9 puts transport parsing first, so a target that is not a
+        # well-formed origin-form — a raw `#` opening a fragment, a `\` or `"`
+        # no absolute path or query may contain, a `%` that is not a complete
+        # escape — is `malformed_request` here rather than a later
+        # `route_not_found` or `invalid_selector` reached by normalizing it
+        # into a route.
+        if (
+            not target.startswith(b"/")
+            or any(byte not in _TARGET for byte in target)
+            or not _complete_escapes(target)
         ):
             self._fail()
             return

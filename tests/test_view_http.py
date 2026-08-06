@@ -73,11 +73,12 @@ def test_the_full_origin_form_byte_set_still_reaches_route_and_selector():
     # sub-delim, `:`, `@`, and a percent-encoded octet all stay parseable,
     # so the refusal they earn is the route's or the selector's, not the
     # parser's.
-    target = b"/a-b._~!$&'()*+,;=:@%2f?x=1&y=a:b@c,d;e=(f)*+$!'~"
+    # Both hex cases, and adjacent triplets, are complete escapes.
+    target = b"/a-b._~!$&'()*+,;=:@%2f%A0%3D?x=1&y=a:b@c,d;e=(f)*+$!'~%7e"
     request = parse(raw_request(line=b"GET " + target + b" HTTP/1.1")).request
     assert request is not None
-    assert request.path == b"/a-b._~!$&'()*+,;=:@%2f"
-    assert request.query == b"x=1&y=a:b@c,d;e=(f)*+$!'~"
+    assert request.path == b"/a-b._~!$&'()*+,;=:@%2f%A0%3D"
+    assert request.query == b"x=1&y=a:b@c,d;e=(f)*+$!'~%7e"
 
 
 @pytest.mark.parametrize(
@@ -113,6 +114,13 @@ def test_the_full_origin_form_byte_set_still_reaches_route_and_selector():
         b"GET /mirror|pipe HTTP/1.1",
         b"GET /mirror^caret HTTP/1.1",
         b"GET /mirror?scope=glo\\bal HTTP/1.1",
+        # `%` opens a triplet or it is not an origin-form target. Nothing
+        # downstream decodes one, so rule 9 is where it has to be caught.
+        b"GET /mirror% HTTP/1.1",
+        b"GET /mirror%4 HTTP/1.1",
+        b"GET /mirror%GG HTTP/1.1",
+        b"GET /mirror%%41 HTTP/1.1",
+        b"GET /mirror?scope=glo%zzbal HTTP/1.1",
     ],
 )
 def test_request_line_outside_the_closed_shape_is_malformed(line):
