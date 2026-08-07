@@ -459,9 +459,10 @@ The exact assessment snapshot selected under §14.10 is mandatory, must be curre
 
 Each bullet's `source_self_claim_ids` is the duplicate-free set of `supported` snapshot-member self-claims the writer cites as having guided that bullet's selection or wording, empty when none did (§15.6, §15.11). The Stage 10 transaction rejects any member outside the supplied `supported` set or outside the branch snapshot.
 
-Stage 10 calls the §15.6 writer exactly once for the whole pack, and that one invocation returns the complete typed bullet array.
+Stage 10 calls the §15.6 writer exactly once for the whole pack, and that one invocation returns the complete non-empty typed bullet array. A run whose supplied context supports no bullet completes as a §14.14 class-10 `blocked` result, persisting neither branch nor bullet.
 
-- The invocation contains the selected facts, their linked evidence context serialized under §13.3 rule 10, the `supported` snapshot-member self-claims, explicit branch context, and the typed selected job description.
+- The selected facts are exactly the complete current `ExperienceFact` set, ordered by fact ID ascending. Batching removes the per-bullet input partition that made a narrower service-side relevance selection meaningful, so the service performs no relevance filtering and every implementation sends the same set; relevance judgment belongs to the writer, which grounds each bullet in the facts it cites.
+- The invocation contains those facts, their linked evidence context serialized under §13.3 rule 10, the `supported` snapshot-member self-claims, explicit branch context, and the typed selected job description.
 - The required descriptor substitution and displaced-`RawLog` omission preserve provenance without supplying displaced prose.
 - Stage 10 plans exactly one invocation, so the run's §12.15 telemetry carries one call row (§15.10 rule 7) and no per-bullet plan index exists.
 
