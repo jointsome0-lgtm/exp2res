@@ -38,13 +38,42 @@ def test_companion_encoding_has_canonical_key_order_utc_datetime_and_one_lf() ->
     assert (
         b"Current evidence suggests you deliver deterministic local tools." in encoded
     )
-    assert json.loads(encoded)["schema_version"] == 1
+    assert json.loads(encoded)["schema_version"] == 2
 
     evidence = companion_bytes(build_evidence_map_document(graph))
     assert evidence.startswith(b'{"claim_links":')
     assert json.loads(evidence)["rendered_claim_ids"] == sorted(
         json.loads(evidence)["rendered_claim_ids"], key=lambda value: value.encode()
     )
+
+
+def test_companions_record_the_claim_counter_split() -> None:
+    # §13.12/§11.6: §15.4's patterns are transport-only, so the claim's own
+    # counter members are the whole durable record of contrary support —
+    # both companions carry the split the §17 report renders as a suffix.
+    graph = assessment_graph(all_sections=True)
+    claims = json.loads(companion_bytes(build_self_claims_document(graph)))
+    pattern = next(
+        item for item in claims["claims"] if item["claim_kind"] == "pattern_signal"
+    )
+    assert pattern["source_fact_ids"] == [
+        "fact_vera_export_0001",
+        "fact_vera_export_0002",
+    ]
+    assert pattern["counter_fact_ids"] == ["fact_vera_export_0002"]
+
+    evidence = json.loads(companion_bytes(build_evidence_map_document(graph)))
+    link = next(
+        item
+        for item in evidence["claim_links"]
+        if item["claim_id"] == pattern["id"]
+    )
+    assert link["source_fact_ids"] == pattern["source_fact_ids"]
+    assert link["counter_fact_ids"] == pattern["counter_fact_ids"]
+    others = [
+        item for item in evidence["claim_links"] if item["claim_id"] != pattern["id"]
+    ]
+    assert others and all(item["counter_fact_ids"] == [] for item in others)
 
 
 @pytest.mark.parametrize(

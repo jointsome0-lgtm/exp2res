@@ -23,7 +23,6 @@ from .enums import (
     GapPriority,
     GapTrigger,
     OwnershipLevel,
-    SignalType,
     SelfClaimDimension,
     SourceType,
     TemporalConfidence,
@@ -338,49 +337,6 @@ class ExperienceFact(StrictModel):
         return validate_metadata(value)
 
 
-class SelfSignal(StrictModel):
-    id: str
-    created_at: datetime
-    superseded_at: Optional[datetime] = None
-    signal_type: SignalType
-    statement: str
-    supporting_fact_ids: list[str] = Field(max_length=1_000)
-    counter_fact_ids: list[str] = Field(default_factory=list, max_length=1_000)
-    confidence: Confidence
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("id")
-    @classmethod
-    def structural_id(cls, value: str) -> str:
-        return validate_structural(value)
-
-    @field_validator("created_at", "superseded_at")
-    @classmethod
-    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("datetime must carry an offset")
-        return value
-
-    @field_validator("statement")
-    @classmethod
-    def statement_policy(cls, value: str) -> str:
-        return validate_free_text(value, nonempty=True)
-
-    @field_validator("supporting_fact_ids", "counter_fact_ids")
-    @classmethod
-    def fact_id_list_policy(cls, value: list[str]) -> list[str]:
-        for member in value:
-            validate_structural(member)
-        if len(value) != len(set(value)):
-            raise ValueError("duplicate typed ID")
-        return value
-
-    @field_validator("metadata")
-    @classmethod
-    def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
-        return validate_metadata(value)
-
-
 class CounterevidenceItem(StrictModel):
     statement: str
     source_ref_type: CounterevidenceRefType
@@ -405,8 +361,8 @@ class SelfClaim(StrictModel):
     claim: str
     claim_kind: ClaimKind
     dimension: SelfClaimDimension
-    source_signal_ids: list[str] = Field(max_length=1_000)
     source_fact_ids: list[str] = Field(max_length=1_000)
+    counter_fact_ids: list[str] = Field(default_factory=list, max_length=1_000)
     confidence: Confidence
     verification_status: VerificationStatus
     counterevidence: list[CounterevidenceItem] = Field(
@@ -437,7 +393,7 @@ class SelfClaim(StrictModel):
     def uncertainty_policy(cls, value: Optional[str]) -> Optional[str]:
         return None if value is None else validate_free_text(value, nonempty=True)
 
-    @field_validator("source_signal_ids", "source_fact_ids")
+    @field_validator("source_fact_ids", "counter_fact_ids")
     @classmethod
     def typed_id_list_policy(cls, value: list[str]) -> list[str]:
         for member in value:
@@ -445,6 +401,12 @@ class SelfClaim(StrictModel):
         if len(value) != len(set(value)):
             raise ValueError("duplicate typed ID")
         return value
+
+    @model_validator(mode="after")
+    def counter_facts_are_sources(self) -> "SelfClaim":
+        if not set(self.counter_fact_ids).issubset(self.source_fact_ids):
+            raise ValueError("counter fact is not a source fact")
+        return self
 
     @field_validator("counterevidence")
     @classmethod

@@ -60,7 +60,6 @@ def new_id(kind: str) -> str:
         "fact": "fact",
         "gap": "gap",
         "contradiction": "contradiction",
-        "signal": "signal",
         "snapshot": "snapshot",
         "claim": "claim",
         "finding": "finding",

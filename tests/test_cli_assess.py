@@ -24,7 +24,7 @@ from exp2res.storage.workspace import read_database
 from fakes import FakeContractRunner
 from test_stage3_extraction import SELECTION, budgets, fact_response
 from test_stage4_detection import detector_response
-from test_stage5_signals import prepare_facts, run_stage5, signal_response, SignalIds
+from assessment_helpers import VeraIds, prepare_facts
 from test_stage6_assessment import assessment_response
 from test_stage7_verification import verifier_response
 
@@ -71,19 +71,14 @@ def invoke_json(workspace: Path, arguments: list[str]):
     return result, json.loads(result.stdout)
 
 
-def prepare_graph(workspace: Path):
-    ids = SignalIds()
-    facts = prepare_facts(workspace, ids)
-    signals = run_stage5(
-        workspace, FakeContractRunner([signal_response(list(facts))]), ids
-    ).current_signals
-    return facts, tuple(item.id for item in signals)
+def prepare_graph(workspace: Path) -> tuple[str, ...]:
+    return prepare_facts(workspace, VeraIds())
 
 
 def generate_snapshot(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
-    facts, signals = prepare_graph(workspace)
+) -> tuple[str, tuple[str, ...]]:
+    facts = prepare_graph(workspace)
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
@@ -91,7 +86,7 @@ def generate_snapshot(
             SELECTION,
             budgets(),
             FakeContractRunner(
-                [assessment_response(fact_ids=list(facts), signal_ids=list(signals))]
+                [assessment_response(fact_ids=list(facts))]
             ),
         ),
     )
@@ -99,7 +94,7 @@ def generate_snapshot(
         workspace, ["--yes", "assess", "generate"]
     )
     assert result.exit_code == 0, (result.stderr, envelope)
-    return envelope["affected_ids"]["created"][0]["ids"][0], facts, signals
+    return envelope["affected_ids"]["created"][0]["ids"][0], facts
 
 
 @pytest.mark.parametrize(
@@ -149,7 +144,7 @@ def test_consent_decline_precedes_adapter_construction(
 def test_verify_noninteractive_and_declined_consent_precede_adapter(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
 
     def refuse_build(_workspace: Path):
         raise AssertionError("adapter construction ran before Vera Example consent")
@@ -198,8 +193,8 @@ def test_verify_missing_selector_precedes_consent_and_adapter(
 def test_verify_superseded_selector_precedes_consent_and_adapter(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    facts, signals = prepare_graph(workspace)
-    response = assessment_response(fact_ids=list(facts), signal_ids=list(signals))
+    facts = prepare_graph(workspace)
+    response = assessment_response(fact_ids=list(facts))
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
@@ -228,7 +223,7 @@ def test_verify_superseded_selector_precedes_consent_and_adapter(
 def test_verify_happy_envelope_and_complete_human_rewrite_presentation(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    snapshot_id, facts, _signals = generate_snapshot(workspace, monkeypatch)
+    snapshot_id, facts = generate_snapshot(workspace, monkeypatch)
     counterevidence = [
         {
             "statement": "The supplied counterevidence narrows the claim.",
@@ -314,7 +309,7 @@ def test_verify_happy_envelope_and_complete_human_rewrite_presentation(
 def test_verify_blocked_is_completed_semantic_result(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
@@ -355,7 +350,7 @@ def test_repair_envelope_requires_no_consent_and_reports_the_swap(
 ) -> None:
     """§14.9/§14.14 rule 5: `assess repair` is promptless with a null result."""
 
-    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
 
     # Precondition surface: an unverified snapshot fails closed in class 2.
     early, early_envelope = invoke_json(
@@ -435,7 +430,7 @@ def test_repeated_repair_human_result_counts_only_current_adoptions(
 ) -> None:
     """§14.14: retained repair provenance does not inflate this swap's count."""
 
-    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
@@ -506,7 +501,7 @@ def test_run_creation_commit_interrupt_reports_and_finalizes_the_run(
 ) -> None:
     """§12.13/§14.14: an ambiguous run-row commit is discovered and cancelled."""
 
-    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
@@ -552,7 +547,7 @@ def test_business_commit_interrupt_reports_the_committed_swap(
 ) -> None:
     """§14.14: an ambiguous swap commit carries its exact durable result."""
 
-    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
@@ -606,7 +601,7 @@ def test_failed_run_finalization_interrupt_still_reports_the_run(
 ) -> None:
     """§12.13/§14.14: cancellation during failed-run commit keeps its ID."""
 
-    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
@@ -661,7 +656,7 @@ def test_repair_post_commit_interrupt_reports_the_committed_swap(
 ) -> None:
     """§14.14 rules 5/6: a cleanup interrupt keeps the repair envelope full."""
 
-    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
@@ -720,7 +715,7 @@ def test_repair_post_commit_interrupt_reports_the_committed_swap(
 def test_verify_invalid_after_retry_reports_failed_run(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    snapshot_id, _facts, _signals = generate_snapshot(workspace, monkeypatch)
+    snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     invalid = verifier_response(include_reason=False)
     monkeypatch.setattr(
         assessment_service,
@@ -749,8 +744,8 @@ def test_verify_invalid_after_retry_reports_failed_run(
 def test_generate_list_show_and_current_only_replacement(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    facts, signals = prepare_graph(workspace)
-    response = assessment_response(fact_ids=list(facts), signal_ids=list(signals))
+    facts = prepare_graph(workspace)
+    response = assessment_response(fact_ids=list(facts))
     fake = FakeContractRunner([response, response])
     monkeypatch.setattr(
         assessment_service,
@@ -810,9 +805,9 @@ def test_generate_list_show_and_current_only_replacement(
 def test_project_selector_persists_canonical_prefold_value(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    facts, signals = prepare_graph(workspace)
+    facts = prepare_graph(workspace)
     fake = FakeContractRunner(
-        [assessment_response(fact_ids=list(facts), signal_ids=list(signals))]
+        [assessment_response(fact_ids=list(facts))]
     )
     monkeypatch.setattr(
         assessment_service,
@@ -850,9 +845,9 @@ def test_validate_assessment_selection_canonicalizes_for_direct_callers() -> Non
 def test_logs_delete_reports_purged_assessment_groups_and_view(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    facts, signals = prepare_graph(workspace)
+    facts = prepare_graph(workspace)
     fake = FakeContractRunner(
-        [assessment_response(fact_ids=list(facts), signal_ids=list(signals))]
+        [assessment_response(fact_ids=list(facts))]
     )
     monkeypatch.setattr(
         assessment_service,
@@ -883,9 +878,9 @@ def test_logs_delete_reports_purged_assessment_groups_and_view(
 def test_extract_envelope_reports_invalidated_assessment_view(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    facts, signals = prepare_graph(workspace)
+    facts = prepare_graph(workspace)
     assessment_runner = FakeContractRunner(
-        [assessment_response(fact_ids=list(facts), signal_ids=list(signals))]
+        [assessment_response(fact_ids=list(facts))]
     )
     monkeypatch.setattr(
         assessment_service,
@@ -918,9 +913,9 @@ def test_extract_envelope_reports_invalidated_assessment_view(
 def test_detection_replacement_envelope_reports_invalidated_view(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    facts, signals = prepare_graph(workspace)
+    facts = prepare_graph(workspace)
     assessment_runner = FakeContractRunner(
-        [assessment_response(fact_ids=list(facts), signal_ids=list(signals))]
+        [assessment_response(fact_ids=list(facts))]
     )
     monkeypatch.setattr(
         assessment_service,

@@ -26,7 +26,6 @@ from exp2res.domain.models import (
     ExperienceFact,
     OccurredAt,
     SelfClaim,
-    SelfSignal,
     VerificationFinding,
 )
 from exp2res.domain.results import (
@@ -51,7 +50,6 @@ from exp2res.domain.results import (
     SchemaProjection,
     SchemaResult,
     SelectedLogProjection,
-    SignalsListResult,
     SnapshotListItem,
 )
 from exp2res.errors import (
@@ -113,7 +111,6 @@ from exp2res.services.lifecycle import (
     record_cancelled_lifecycle,
     run_recompute,
 )
-from exp2res.services.signals import list_current_signals, run_signals_generate
 from exp2res.services.view_server import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -154,7 +151,6 @@ gaps_app = typer.Typer(help="Inspect and answer current gap questions.")
 contradictions_app = typer.Typer(
     help="Inspect current contradictions and immutable contradiction history."
 )
-signals_app = typer.Typer(help="Generate and inspect current self-signals.")
 assess_app = typer.Typer(help="Generate and inspect self-assessment views.")
 export_app = typer.Typer(help="Publish deterministic managed exports.")
 workspace_app = typer.Typer(help="Manage the whole initialized workspace.")
@@ -167,7 +163,6 @@ app.add_typer(facts_app, name="facts")
 app.add_typer(detections_app, name="detections")
 app.add_typer(gaps_app, name="gaps")
 app.add_typer(contradictions_app, name="contradictions")
-app.add_typer(signals_app, name="signals")
 app.add_typer(assess_app, name="assess")
 app.add_typer(export_app, name="export")
 app.add_typer(workspace_app, name="workspace")
@@ -204,7 +199,6 @@ class Outcome:
         | DetectionsGenerateResult
         | GapsListResult
         | ContradictionsResult
-        | SignalsListResult
         | AssessListResult
         | AssessShowResult
         | AssessmentExportResult
@@ -760,7 +754,6 @@ def _correction_affected(captured: CorrectionOutcome) -> AffectedIds:
         "experience_fact": captured.superseded_fact_ids,
         "gap_question": captured.superseded_gap_ids,
         "self_claim": captured.superseded_claim_ids,
-        "self_signal": captured.superseded_signal_ids,
     }
     return AffectedIds(
         created=[
@@ -1361,13 +1354,6 @@ def _stage3_outcome(extracted: Stage3Result) -> Outcome:
                 ids=list(extracted.superseded_contradiction_ids),
             )
         )
-    if extracted.superseded_signal_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="self_signal",
-                ids=list(extracted.superseded_signal_ids),
-            )
-        )
     if extracted.superseded_claim_ids:
         superseded_groups.append(
             EntityIdGroup(
@@ -1508,13 +1494,6 @@ def detections_generate(context: typer.Context) -> None:
         superseded_groups = _detection_groups(
             superseded_gap_ids, superseded_contradiction_ids
         )
-        if generated.superseded_signal_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="self_signal",
-                    ids=list(generated.superseded_signal_ids),
-                )
-            )
         if generated.superseded_claim_ids:
             superseded_groups.append(
                 EntityIdGroup(
@@ -1603,118 +1582,6 @@ def detections_generate(context: typer.Context) -> None:
         )
 
     _run_command(context, "detections generate", operation)
-
-
-def _signal_human_line(signal: SelfSignal) -> str:
-    return f"{signal.id}\t{signal.signal_type}\t{signal.confidence}"
-
-
-def _signal_human_block(signal: SelfSignal) -> list[str]:
-    """§14.8's produced-set rendering: the content `signals list` would show."""
-
-    return [
-        "",
-        f"Signal {signal.id}",
-        f"Type: {signal.signal_type}",
-        f"Confidence: {signal.confidence}",
-        f"Statement: {signal.statement}",
-        "Supporting facts: " + (", ".join(signal.supporting_fact_ids) or "none"),
-        "Counter facts: " + (", ".join(signal.counter_fact_ids) or "none"),
-    ]
-
-
-@signals_app.command("generate")
-def signals_generate(context: typer.Context) -> None:
-    def operation(workspace: Path, controls: Controls) -> Outcome:
-        require_compatible(workspace)
-        if not controls.yes:
-            if _noninteractive(controls):
-                raise NonInteractiveInputRequired()
-            if not typer.confirm(
-                "Replace the complete current signal generation using the "
-                "configured model provider?",
-                err=True,
-            ):
-                return Outcome(exit_code=9, diagnostic_class="cancelled")
-        generated = run_signals_generate(workspace)
-        created = list(generated.created_signal_ids)
-        superseded = list(generated.superseded_signal_ids)
-        created_groups = (
-            [EntityIdGroup(entity_type="self_signal", ids=created)]
-            if created
-            else []
-        )
-        superseded_groups = (
-            [EntityIdGroup(entity_type="self_signal", ids=superseded)]
-            if superseded
-            else []
-        )
-        if generated.superseded_claim_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="self_claim",
-                    ids=list(generated.superseded_claim_ids),
-                )
-            )
-        if generated.superseded_snapshot_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="assessment_snapshot",
-                    ids=list(generated.superseded_snapshot_ids),
-                )
-            )
-        invalidated_views = list(generated.invalidated_views)
-        return Outcome(
-            affected_ids=AffectedIds(
-                created=created_groups,
-                superseded=superseded_groups,
-                deleted=[],
-            ),
-            generation_ids=sorted(
-                {
-                    *(
-                        [generated.generation_id]
-                        if generated.generation_id is not None
-                        else []
-                    ),
-                    *generated.superseded_generation_ids,
-                },
-                key=lambda value: value.encode("utf-8"),
-            ),
-            run_ids=[generated.run_id],
-            invalidated_views=invalidated_views,
-            residual_paths=list(generated.residual_paths),
-            warnings=list(generated.warnings),
-            # §14.8: envelope version 1 keeps `result = null` here; the
-            # complete produced set reaches the owner through human mode.
-            result=None,
-            human_result="\n".join(
-                [
-                    f"Replaced the current signal generation: created "
-                    f"{len(created)}, superseded {len(superseded)}.",
-                    *(
-                        line
-                        for signal in generated.current_signals
-                        for line in _signal_human_block(signal)
-                    ),
-                ]
-            ),
-        )
-
-    _run_command(context, "signals generate", operation)
-
-
-@signals_app.command("list")
-def signals_list(context: typer.Context) -> None:
-    def operation(workspace: Path, _controls: Controls) -> Outcome:
-        signals = list(list_current_signals(workspace))
-        human = "\n".join(_signal_human_line(signal) for signal in signals)
-        return Outcome(
-            result=SignalsListResult(signals=signals),
-            human_result=human or "No current signals.",
-        )
-
-    _run_command(context, "signals list", operation)
 
 
 def _claim_human_line(claim: SelfClaim) -> str:
@@ -2285,7 +2152,6 @@ def _delete_affected(deleted: DeleteOutcome) -> AffectedIds:
         ("experience_fact", deleted.purged_fact_ids),
         ("gap_question", deleted.purged_gap_ids),
         ("contradiction", deleted.purged_contradiction_ids),
-        ("self_signal", deleted.purged_signal_ids),
         ("verification_finding", deleted.purged_finding_ids),
         ("self_claim", deleted.purged_claim_ids),
         ("assessment_snapshot", deleted.purged_snapshot_ids),

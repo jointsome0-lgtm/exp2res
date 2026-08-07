@@ -38,7 +38,7 @@ from exp2res.storage.workspace import (
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
 from test_stage4_detection import run_stage4
-from test_stage5_signals import SignalIds, prepare_facts, run_stage5, signal_response
+from assessment_helpers import VeraIds, prepare_facts
 from test_stage6_assessment import AssessmentIds, assessment_response, run_stage6
 from test_stage7_verification import run_stage7, verifier_response
 
@@ -83,22 +83,14 @@ def gap_detection(fact_ids: list[str]) -> bytes:
 def exported_workspace(workspace: Path) -> str:
     """One current, export-eligible, published global assessment view."""
 
-    ids = SignalIds()
+    ids = VeraIds()
     facts = prepare_facts(workspace, ids, count=2)
-    # Stage 4 first: a later detection generation supersedes signals and
-    # claims, so the gaps this snapshot copies must already exist.
+    # Stage 4 first: a later detection generation supersedes claims, so the
+    # gaps this snapshot copies must already exist.
     run_stage4(workspace, FakeContractRunner([gap_detection(list(facts))]), ids)
-    signals = tuple(
-        item.id
-        for item in run_stage5(
-            workspace, FakeContractRunner([signal_response(list(facts))]), ids
-        ).current_signals
-    )
     generated = run_stage6(
         workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=list(facts), signal_ids=list(signals))]
-        ),
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
         ids,
     )
     assert generated.snapshot_id is not None
@@ -122,15 +114,9 @@ def project_snapshot(workspace: Path) -> str:
                 "SELECT id FROM experience_facts WHERE superseded_at IS NULL"
             )
         ]
-        signals = [
-            row[0]
-            for row in connection.execute(
-                "SELECT id FROM self_signals WHERE superseded_at IS NULL"
-            )
-        ]
     generated = run_stage6(
         workspace,
-        FakeContractRunner([assessment_response(fact_ids=facts, signal_ids=signals)]),
+        FakeContractRunner([assessment_response(fact_ids=facts)]),
         AssessmentIds(),
         scope="project",
         target="Vera Example Project",

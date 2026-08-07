@@ -12,18 +12,16 @@ import exp2res.services.assessment as assessment_service
 import exp2res.services.capture as capture_service
 import exp2res.services.detection as detection_service
 import exp2res.services.extraction as extraction_service
-import exp2res.services.signals as signals_service
 from exp2res.pipeline.stage3 import run_fact_extraction
 from exp2res.pipeline.stage4 import run_detection_generation
-from exp2res.pipeline.stage5 import run_signal_generation
 from exp2res.pipeline.stage6 import run_assessment_generation
 from exp2res.pipeline.stage7 import run_assessment_verification
 from exp2res.services.capture import capture_daily
 
 from conftest import FIXED_NOW, REPOSITORY_ROOT, VERA_CORPUS
 from fakes import FakeContractRunner
+from assessment_helpers import VeraIds
 from test_stage3_extraction import SELECTION, budgets, fact_response
-from test_stage5_signals import SignalIds, signal_response
 from test_stage6_assessment import assessment_response
 from test_stage7_verification import verifier_response
 from test_vera_replay_assess import invoke_json
@@ -72,7 +70,6 @@ def _run_cli_stage(
     stage_name = {
         extraction_service: "run_fact_extraction",
         detection_service: "run_detection_generation",
-        signals_service: "run_signal_generation",
         assessment_service: (
             "run_assessment_verification"
             if real_stage is run_assessment_verification
@@ -88,7 +85,7 @@ def _run_cli_stage(
 def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ids = SignalIds()
+    ids = VeraIds()
     monkeypatch.setattr(capture_service, "new_id", ids)
     captured = capture_daily(
         workspace,
@@ -138,23 +135,12 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
     )
     gap_id = detected["result"]["gaps"][0]["id"]
 
-    generated_signals = _run_cli_stage(
-        monkeypatch,
-        signals_service,
-        run_signal_generation,
-        ids,
-        [signal_response([fact_id])],
-        workspace,
-        ["signals", "generate"],
-    )
-    signal_id = generated_signals["affected_ids"]["created"][0]["ids"][0]
-
     generated = _run_cli_stage(
         monkeypatch,
         assessment_service,
         run_assessment_generation,
         ids,
-        [assessment_response(fact_ids=[fact_id], signal_ids=[signal_id])],
+        [assessment_response(fact_ids=[fact_id])],
         workspace,
         ["assess", "generate"],
     )
@@ -187,7 +173,7 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
     final_set = workspace / "out" / "assessment" / snapshot_id
     first_bytes = {name: (final_set / name).read_bytes() for name in MEMBERS}
     first_manifest = json.loads((final_set / "manifest.json").read_text())
-    assert first_manifest["manifest_version"] == 4
+    assert first_manifest["manifest_version"] == 5
 
 
     second_result, second = invoke_json(
@@ -241,19 +227,32 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
         }
     ]
 
+    # §13.4: a replacement detection set supersedes the current snapshot,
+    # so the published set it backed is invalidated and never republished.
+    replacement_payload = json.dumps(
+        {
+            "gap_questions": [
+                {
+                    "target_type": "experience_fact",
+                    "target_id": fact_id,
+                    "question": "Which environment did you validate in?",
+                    "reason": "missing_context",
+                    "priority": "medium",
+                }
+            ],
+            "contradictions": [],
+            "warnings": [],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
     replaced = _run_cli_stage(
         monkeypatch,
-        signals_service,
-        run_signal_generation,
+        detection_service,
+        run_detection_generation,
         ids,
-        [
-            signal_response(
-                [fact_id],
-                statement="You changed the provenance-aware direction.",
-            )
-        ],
+        [replacement_payload],
         workspace,
-        ["signals", "generate"],
+        ["detections", "generate"],
     )
     assert replaced["invalidated_views"][0]["snapshot_id"] == snapshot_id
     assert not final_set.exists()

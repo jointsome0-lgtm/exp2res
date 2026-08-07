@@ -15,17 +15,6 @@ TemporalPrecision = Literal[
 TemporalConfidence = Literal["low", "medium", "high", "unknown"]
 Confidence = Literal["low", "medium", "high", "unknown"]
 
-SignalType = Literal[
-    "skill_signal",
-    "interest_signal",
-    "direction_signal",
-    "execution_pattern",
-    "avoidance_pattern",
-    "constraint_signal",
-    "capacity_signal",
-    "contradiction_signal",
-]
-
 AssessmentScope = Literal["global", "project"]
 
 SelfClaimDimension = Literal[
@@ -55,7 +44,6 @@ CounterevidenceRefType = Literal[
     "raw_log",
     "evidence_item",
     "experience_fact",
-    "self_signal",
 ]
 
 VerificationTargetRefType = Literal[

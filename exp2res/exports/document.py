@@ -13,7 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Literal, Union
 
-from exp2res.domain.models import SelfClaim, SelfSignal
+from exp2res.domain.models import SelfClaim
 from exp2res.errors import IntegrityFailureError
 
 from .graph import AssessmentExportGraph, id_key
@@ -127,33 +127,20 @@ def _id_segments(values) -> list[Segment]:
     return segments
 
 
-def _sources_line(claim: SelfClaim, signals_by_id: dict[str, SelfSignal]) -> Line:
+def _sources_line(claim: SelfClaim) -> Line:
     # §17: the claim-level trail is the report's inline provenance; the
-    # record-level closure stays in the evidence_map.json companion.
+    # record-level closure stays in the evidence_map.json companion. Each
+    # member the claim marks contrary carries the fixed ` (counter)` suffix,
+    # the durable trace of the discarded §15.4 patterns' counter facts.
+    counter = set(claim.counter_fact_ids)
     segments: list[Segment] = [Key("Sources")]
-    written = False
-    for signal_id in sorted(claim.source_signal_ids, key=id_key):
-        signal = signals_by_id[signal_id]
-        if written:
-            segments.append(Lit("; "))
-        segments.extend((Val(signal_id, "token"), Lit(" (")))
-        fanout = False
-        if signal.supporting_fact_ids:
-            segments.append(Lit("facts "))
-            segments.extend(_id_segments(signal.supporting_fact_ids))
-            fanout = True
-        if signal.counter_fact_ids:
-            segments.append(Lit("; counter " if fanout else "counter "))
-            segments.extend(_id_segments(signal.counter_fact_ids))
-        segments.append(Lit(")"))
-        written = True
-    if claim.source_fact_ids:
-        if written:
-            segments.append(Lit("; "))
-        segments.append(Lit("facts "))
-        segments.extend(_id_segments(claim.source_fact_ids))
-        written = True
-    if not written:
+    for position, fact_id in enumerate(sorted(claim.source_fact_ids, key=id_key)):
+        if position:
+            segments.append(Lit(", "))
+        segments.append(Val(fact_id, "token"))
+        if fact_id in counter:
+            segments.append(Lit(" (counter)"))
+    if not claim.source_fact_ids:
         raise IntegrityFailureError("claim_sources_trail_empty")
     return tuple(segments)
 
@@ -186,14 +173,14 @@ def _counterevidence_children(claim: SelfClaim) -> tuple[Block, ...]:
     return tuple(children)
 
 
-def _claim_block(claim: SelfClaim, signals_by_id: dict[str, SelfSignal]) -> Block:
+def _claim_block(claim: SelfClaim) -> Block:
     fields: list[Line] = [
         (Key("Claim ID"), Val(claim.id, "token")),
         (Key("Status"), Val(claim.verification_status, "status")),
     ]
     if claim.uncertainty is not None:
         fields.append((Key("Uncertainty"), Val(claim.uncertainty)))
-    fields.append(_sources_line(claim, signals_by_id))
+    fields.append(_sources_line(claim))
     return Block(
         lead=(Val(claim.claim),),
         fields=tuple(fields),
@@ -203,17 +190,14 @@ def _claim_block(claim: SelfClaim, signals_by_id: dict[str, SelfSignal]) -> Bloc
 
 def _strong_fact_blocks(graph: AssessmentExportGraph) -> tuple[Block, ...]:
     facts = {item.value.id: item.value for item in graph.facts}
-    signals = {item.value.id: item.value for item in graph.signals}
     supporting: dict[str, set[str]] = defaultdict(set)
     for stored in graph.claims:
         claim = stored.value
         if claim.verification_status != "supported":
             continue
-        reached = set(claim.source_fact_ids)
-        for signal_id in claim.source_signal_ids:
-            signal = signals[signal_id]
-            reached.update(signal.supporting_fact_ids)
-            reached.update(signal.counter_fact_ids)
+        # §17: only a supporting membership reaches this section, so a fact
+        # the claim marks contrary never renders as one of its strengths.
+        reached = set(claim.source_fact_ids) - set(claim.counter_fact_ids)
         for fact_id in reached:
             if facts[fact_id].confidence == "high":
                 supporting[fact_id].add(claim.id)
@@ -295,11 +279,10 @@ def build_assessment_document(graph: AssessmentExportGraph) -> ReportDocument:
     """Project one loaded export graph into the deterministic §17 document."""
 
     snapshot = graph.snapshot.value
-    signals_by_id = {item.value.id: item.value for item in graph.signals}
     blocks: dict[int, list[Block]] = {number: [] for number in range(1, 10)}
     for stored in graph.claims:
         claim = stored.value
-        blocks[claim_section(claim)].append(_claim_block(claim, signals_by_id))
+        blocks[claim_section(claim)].append(_claim_block(claim))
     blocks[2] = list(_strong_fact_blocks(graph))
     blocks[7].extend(_contradiction_blocks(graph))
     blocks[9].extend(_gap_blocks(graph))

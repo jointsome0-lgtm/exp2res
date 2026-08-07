@@ -21,8 +21,10 @@ from exp2res.storage.repository import (
 )
 from exp2res.storage.workspace import read_database, writer_database
 
+from assessment_helpers import VeraIds, prepare_facts
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
+from test_stage6_assessment import assessment_response, run_stage6
 from test_stage7_verification import (
     generated_snapshot,
     run_stage7,
@@ -49,7 +51,7 @@ pytestmark = [pytest.mark.contract, pytest.mark.lifecycle]
 def test_assessment_export_gate_matrix_all_eight_statuses(
     workspace: Path, status: str, passes: bool
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     if status != "unverified":
         responses = [verifier_response(status) for _ in generated.claims]
         run_stage7(
@@ -85,7 +87,7 @@ def test_selector_errors_precede_export_and_superseded_is_class_two(
     with pytest.raises(SelectorNotFoundError):
         export_assessment(workspace, snapshot_id="snapshot_vera_missing")
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -107,7 +109,7 @@ def test_selector_errors_precede_export_and_superseded_is_class_two(
 def test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity(
     workspace: Path,
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -140,7 +142,7 @@ def test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity(
 def test_non_derived_snapshot_title_fails_export(workspace: Path) -> None:
     """§13.6: service-owned title remains derived from persisted view identity."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -166,7 +168,7 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
     set, or a current unanswered gap it does not reference, is an
     inconsistent input and fails export before publication."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -378,100 +380,11 @@ def test_stale_detection_sets_fail_export_closed(workspace: Path) -> None:
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
 
-def test_cited_signal_without_fact_chain_fails_export(workspace: Path) -> None:
-    """§16.1: a cited signal with empty supporting and counter fact lists has
-    no fact path for its evidence-map entry and fails export closed."""
-
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
-    run_stage7(
-        workspace,
-        FakeContractRunner([verifier_response() for _ in generated.claims]),
-        ids,
-        generated.snapshot_id,
-    )
-    with writer_database(workspace, owner_delete=True) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
-            "UPDATE self_signals SET supporting_fact_ids_json = '[]', "
-            "counter_fact_ids_json = '[]' WHERE superseded_at IS NULL"
-        )
-        connection.commit()
-    with pytest.raises(IntegrityFailureError, match="claim_signal_chain_empty"):
-        export_assessment(workspace, snapshot_id=generated.snapshot_id)
-
-
-def test_chainless_supplemental_signal_fails_export(workspace: Path) -> None:
-    """§16.1: an out-of-closure counterevidence signal with empty fact lists
-    contributes no chain and fails export closed like a claim-cited one."""
-
-    from test_stage5_signals import (
-        SignalIds,
-        prepare_facts,
-        run_stage5,
-        signal_response,
-    )
-    from test_stage6_assessment import assessment_response, run_stage6
-
-    ids = SignalIds()
-    cited_fact = prepare_facts(workspace, ids)[0]
-    signal_result = run_stage5(
-        workspace,
-        FakeContractRunner([signal_response([cited_fact])]),
-        ids,
-    )
-    signal_ids = [item.id for item in signal_result.current_signals]
-    generated = run_stage6(
-        workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=[cited_fact], signal_ids=signal_ids)]
-        ),
-        ids,
-    )
-    with read_database(workspace) as connection:
-        run_id = connection.execute(
-            "SELECT id FROM processing_runs LIMIT 1"
-        ).fetchone()[0]
-    with writer_database(workspace, owner_delete=True) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
-            "INSERT INTO self_signals (id, created_at, signal_type, statement, "
-            "supporting_fact_ids_json, counter_fact_ids_json, confidence, "
-            "produced_by_run_id, generation_id) VALUES "
-            "('signal_vera_chainless', '2026-07-15T12:00:00+00:00', "
-            "'execution_pattern', 'A chainless signal statement.', "
-            "'[]', '[]', 'low', ?, 'generation_vera_chainless')",
-            (run_id,),
-        )
-        connection.commit()
-    counterevidence = [
-        {
-            "statement": "A recorded signal disputes the claim.",
-            "source_ref_type": "self_signal",
-            "source_ref_id": "signal_vera_chainless",
-        }
-    ]
-    run_stage7(
-        workspace,
-        FakeContractRunner(
-            [
-                verifier_response("contradicted", counterevidence=counterevidence),
-                *(verifier_response() for _ in generated.claims[1:]),
-            ]
-        ),
-        ids,
-        generated.snapshot_id,
-    )
-    with pytest.raises(
-        IntegrityFailureError, match="export_source_reference_invalid"
-    ):
-        export_assessment(workspace, snapshot_id=generated.snapshot_id)
-
-
 def test_displaced_counterevidence_raw_log_fails_export(workspace: Path) -> None:
     """§13.3: verifier-cited raw-log counterevidence displaced by a correction
     is not a current source and fails export closed."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     with read_database(workspace) as connection:
         raw_log_id = connection.execute(
             "SELECT id FROM raw_logs LIMIT 1"
@@ -516,7 +429,7 @@ def test_displaced_detection_targets_fail_export(workspace: Path) -> None:
     """§13.3: a listed contradiction referencing a raw log displaced by a
     correction is not a current detection target and fails export closed."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -576,7 +489,7 @@ def test_claim_from_another_generation_fails_export_as_mixed_graph(
     """§12 rule 13 / #97: a member claim whose production provenance differs
     from the snapshot's is a mixed Stage 6 graph and fails export closed."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -606,27 +519,11 @@ def test_out_of_chain_counterevidence_target_joins_manifest_sources_only(
 
     import json
 
-    from test_stage5_signals import (
-        SignalIds,
-        prepare_facts,
-        run_stage5,
-        signal_response,
-    )
-    from test_stage6_assessment import assessment_response, run_stage6
-
-    ids = SignalIds()
+    ids = VeraIds()
     cited_fact, scope_fact = prepare_facts(workspace, ids, count=2)
-    signal_result = run_stage5(
-        workspace,
-        FakeContractRunner([signal_response([cited_fact])]),
-        ids,
-    )
-    signal_ids = [item.id for item in signal_result.current_signals]
     generated = run_stage6(
         workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=[cited_fact], signal_ids=signal_ids)]
-        ),
+        FakeContractRunner([assessment_response(fact_ids=[cited_fact])]),
         ids,
     )
     counterevidence = [
@@ -715,31 +612,11 @@ def test_displaced_selected_fact_source_fails_export(
 ) -> None:
     """§13.3: main and supplemental facts rerun retained-source selection."""
 
-    from test_stage5_signals import (
-        SignalIds,
-        prepare_facts,
-        run_stage5,
-        signal_response,
-    )
-    from test_stage6_assessment import assessment_response, run_stage6
-
-    ids = SignalIds()
+    ids = VeraIds()
     cited_fact, scope_fact = prepare_facts(workspace, ids, count=2)
-    signal_result = run_stage5(
-        workspace,
-        FakeContractRunner([signal_response([cited_fact])]),
-        ids,
-    )
     generated = run_stage6(
         workspace,
-        FakeContractRunner(
-            [
-                assessment_response(
-                    fact_ids=[cited_fact],
-                    signal_ids=[item.id for item in signal_result.current_signals],
-                )
-            ]
-        ),
+        FakeContractRunner([assessment_response(fact_ids=[cited_fact])]),
         ids,
     )
     run_stage7(
@@ -788,64 +665,31 @@ def test_displaced_selected_fact_source_fails_export(
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
 
 
-def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
+def test_out_of_chain_counterevidence_grounding_fact_stays_current(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A grounding signal outside the closure resolves signal → facts →
-    evidence → raw logs; every read row joins source_ids while the closed
-    evidence-map link projection stays claim-closure-only."""
+    """§16.1: a grounding fact outside the claim closure carries the same
+    closure and lifecycle obligations as a cited one.
 
-    import json
+    Until issue #76 a persisted signal could stand between the verifier's
+    counterevidence and its facts, so this pair of gates was reached through
+    the signal fan-out. §15.4's patterns are transport-only, so the verifier
+    now names the grounding fact directly and each gate is exercised at the
+    fact itself.
+    """
 
-    from test_stage5_signals import SignalIds, prepare_facts, run_stage5
-    from test_stage6_assessment import assessment_response, run_stage6
-
-    ids = SignalIds()
+    ids = VeraIds()
     cited_fact, scope_fact = prepare_facts(workspace, ids, count=2)
-    two_signals = json.dumps(
-        {
-            "signals": [
-                {
-                    "signal_type": "execution_pattern",
-                    "statement": "The claim repeatedly cites the first fact.",
-                    "supporting_fact_ids": [cited_fact],
-                    "counter_fact_ids": [],
-                    "confidence": "medium",
-                },
-                {
-                    "signal_type": "execution_pattern",
-                    "statement": "An uncited contrary pattern exists.",
-                    "supporting_fact_ids": [scope_fact],
-                    "counter_fact_ids": [],
-                    "confidence": "medium",
-                },
-            ],
-            "warnings": [],
-        },
-        separators=(",", ":"),
-    ).encode("utf-8")
-    signal_result = run_stage5(workspace, FakeContractRunner([two_signals]), ids)
-    by_statement = {
-        item.statement: item.id for item in signal_result.current_signals
-    }
-    cited_signal = by_statement["The claim repeatedly cites the first fact."]
-    uncited_signal = by_statement["An uncited contrary pattern exists."]
     generated = run_stage6(
         workspace,
-        FakeContractRunner(
-            [
-                assessment_response(
-                    fact_ids=[cited_fact], signal_ids=[cited_signal]
-                )
-            ]
-        ),
+        FakeContractRunner([assessment_response(fact_ids=[cited_fact])]),
         ids,
     )
     counterevidence = [
         {
-            "statement": "A contrary recurring pattern exists.",
-            "source_ref_type": "self_signal",
-            "source_ref_id": uncited_signal,
+            "statement": "A contrary recorded fact exists outside the closure.",
+            "source_ref_type": "experience_fact",
+            "source_ref_id": scope_fact,
         }
     ]
     run_stage7(
@@ -859,32 +703,6 @@ def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
         ids,
         generated.snapshot_id,
     )
-    result = export_assessment(
-        workspace, snapshot_id=generated.snapshot_id, clock=lambda: FIXED_NOW
-    )
-    manifest = json.loads(Path(result.manifest_path).read_bytes())
-    assert uncited_signal in manifest["source_ids"]["self_signal_ids"]
-    assert scope_fact in manifest["source_ids"]["experience_fact_ids"]
-    with read_database(workspace) as connection:
-        chain = connection.execute(
-            "SELECT fs.evidence_item_id, ei.raw_log_id FROM fact_sources fs "
-            "JOIN evidence_items ei ON ei.id = fs.evidence_item_id "
-            "WHERE fs.fact_id = ?",
-            (scope_fact,),
-        ).fetchall()
-    assert chain
-    for evidence_id, raw_log_id in chain:
-        assert evidence_id in manifest["source_ids"]["evidence_item_ids"]
-        assert raw_log_id in manifest["source_ids"]["raw_log_ids"]
-    evidence_map = json.loads(
-        (Path(result.manifest_path).parent / "evidence_map.json").read_bytes()
-    )
-    assert uncited_signal not in [
-        link["signal_id"] for link in evidence_map["signal_links"]
-    ]
-    assert scope_fact not in [
-        link["fact_id"] for link in evidence_map["fact_links"]
-    ]
 
     # Doped hydration on the grounding fact only: a stored raw-log set that
     # disagrees with its evidence-derived chain fails export closed.
@@ -911,7 +729,7 @@ def test_out_of_chain_counterevidence_signal_cascades_its_fact_chain(
         export_assessment(workspace, snapshot_id=generated.snapshot_id)
     monkeypatch.setattr(graph_module, "get_experience_fact", real_get)
 
-    # A corrupted graph — the grounding signal's fact superseded without the
+    # A corrupted graph — the grounding fact superseded without the
     # lifecycle supersession of the snapshot — fails export closed.
     with writer_database(workspace, owner_delete=True) as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -936,15 +754,8 @@ def test_out_of_closure_detection_references_join_manifest_sources(
     import json
 
     from test_stage4_detection import detector_response, run_stage4
-    from test_stage5_signals import (
-        SignalIds,
-        prepare_facts,
-        run_stage5,
-        signal_response,
-    )
-    from test_stage6_assessment import assessment_response, run_stage6
 
-    ids = SignalIds()
+    ids = VeraIds()
     cited_fact, detected_fact = prepare_facts(workspace, ids, count=2)
     run_stage4(
         workspace,
@@ -959,15 +770,9 @@ def test_out_of_closure_detection_references_join_manifest_sources(
         ),
         ids,
     )
-    signal_result = run_stage5(
-        workspace, FakeContractRunner([signal_response([cited_fact])]), ids
-    )
-    signal_ids = [item.id for item in signal_result.current_signals]
     generated = run_stage6(
         workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=[cited_fact], signal_ids=signal_ids)]
-        ),
+        FakeContractRunner([assessment_response(fact_ids=[cited_fact])]),
         ids,
     )
     run_stage7(
@@ -1032,7 +837,7 @@ def test_fact_provenance_disagreement_fails_export_closure(
 
     import exp2res.exports.graph as graph_module
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -1073,7 +878,7 @@ def test_fact_provenance_disagreement_fails_export_closure(
 def test_repeated_service_export_keeps_fixed_members_identical_and_writes_no_rows(
     workspace: Path,
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -1088,7 +893,6 @@ def test_repeated_service_export_keeps_fixed_members_identical_and_writes_no_row
                 "raw_logs",
                 "evidence_items",
                 "experience_facts",
-                "self_signals",
                 "self_claims",
                 "assessment_snapshots",
             )
@@ -1120,7 +924,7 @@ def test_repeated_service_export_keeps_fixed_members_identical_and_writes_no_row
 def test_unreconciled_preamble_residual_stops_before_rendering(
     workspace: Path,
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),

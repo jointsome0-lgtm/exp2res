@@ -21,7 +21,6 @@ from exp2res.domain.models import (
     ExperienceFact,
     RawLog,
     SelfClaim,
-    SelfSignal,
     VerificationFinding,
 )
 from exp2res.domain.verification import aggregate_verification_status
@@ -50,7 +49,6 @@ from exp2res.storage.repository import (
     list_contradictions,
     list_experience_facts,
     list_self_claims_for_snapshot,
-    list_self_signals,
     list_verification_findings,
     update_assessment_snapshot_verification,
     update_self_claim_verification,
@@ -169,29 +167,12 @@ def _build_bundle(
     claim: SelfClaim,
     snapshot: AssessmentSnapshot,
     current_facts: dict[str, ExperienceFact],
-    current_signals: dict[str, SelfSignal],
     scope_facts: tuple[ExperienceFact, ...],
-    scope_signals: tuple[SelfSignal, ...],
     contradictions: tuple[Contradiction, ...],
 ) -> _ClaimBundle:
-    try:
-        source_signals = tuple(
-            sorted(
-                (current_signals[item] for item in claim.source_signal_ids),
-                key=lambda item: _id_key(item.id),
-            )
-        )
-    except KeyError as error:
-        raise IntegrityFailureError("assessment_bundle_signal_invalid") from error
-
-    fact_ids = {
-        *claim.source_fact_ids,
-        *(
-            fact_id
-            for signal in source_signals
-            for fact_id in (*signal.supporting_fact_ids, *signal.counter_fact_ids)
-        ),
-    }
+    # §15.5: the closure is exactly the claim's `source_fact_ids`, whose
+    # counter members the claim's own `counter_fact_ids` already mark.
+    fact_ids = set(claim.source_fact_ids)
     try:
         source_facts = tuple(
             sorted(
@@ -222,8 +203,6 @@ def _build_bundle(
         self_claim=claim,
         scope=snapshot.scope,
         scope_target=snapshot.scope_target,
-        source_signals=list(source_signals),
-        scope_signals=list(scope_signals),
         scope_facts=list(scope_facts),
         source_facts=list(source_facts),
         source_evidence_items=list(source_evidence),
@@ -232,8 +211,6 @@ def _build_bundle(
     )
     bundle_refs = frozenset(
         {
-            *(("self_signal", item.id) for item in source_signals),
-            *(("self_signal", item.id) for item in scope_signals),
             *(("experience_fact", item.id) for item in source_facts),
             *(("experience_fact", item.id) for item in scope_facts),
             *(("evidence_item", item.id) for item in source_evidence),
@@ -368,15 +345,10 @@ def run_assessment_verification(
         view = select_assessment_view(
             connection, scope=snapshot.scope, scope_target=snapshot.scope_target
         )
-        scope_facts = tuple(
-            sorted(
-                {item.id: item for item in (*view.facts, *view.context_facts)}.values(),
-                key=lambda item: _id_key(item.id),
-            )
-        )
-        scope_signals = tuple(sorted(view.signals, key=lambda item: _id_key(item.id)))
+        # §13.5's context facts were the signal layer's own widening; the
+        # view now selects one ID-ordered subject set, which is the scope.
+        scope_facts = view.facts
         current_facts = {item.id: item for item in list_experience_facts(connection)}
-        current_signals = {item.id: item for item in list_self_signals(connection)}
         # §13.7/§15.5: the snapshot's complete current contradiction set —
         # integrity-checked against snapshot.contradiction_ids above — is view
         # context for check 14; it deepens into no evidence closure.
@@ -389,9 +361,7 @@ def run_assessment_verification(
                 claim=claim,
                 snapshot=snapshot,
                 current_facts=current_facts,
-                current_signals=current_signals,
                 scope_facts=scope_facts,
-                scope_signals=scope_signals,
                 contradictions=current_contradictions,
             )
             for claim in claims

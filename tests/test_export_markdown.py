@@ -282,9 +282,12 @@ def test_renderer_is_byte_deterministic_and_uses_closed_order_and_empty_headings
     assert "**Status:** supported" in text
     assert "**Fact ID:** fact_vera_export_0001" in text
     assert "**Raw log IDs:** log_vera_export_0001" in text
+    # §17: the claim trail is fact IDs alone, and a closure member the claim
+    # marks contrary carries the fixed suffix (#76).
+    assert "**Sources:** fact_vera_export_0001\n" in text
     assert (
-        "**Sources:** signal_vera_export_0001 (facts fact_vera_export_0001); "
-        "facts fact_vera_export_0001" in text
+        "**Sources:** fact_vera_export_0001, fact_vera_export_0002 (counter)\n"
+        in text
     )
     assert "\\" not in text
 
@@ -368,8 +371,7 @@ def test_claim_section_is_total_over_exportable_statuses(
             claim="You show a bounded characteristic.",
             claim_kind=kind,
             dimension=dimension,
-            source_signal_ids=["signal_vera_total_0001"],
-            source_fact_ids=[],
+            source_fact_ids=["fact_vera_total_0001"],
             confidence="medium",
             verification_status=status,
         )

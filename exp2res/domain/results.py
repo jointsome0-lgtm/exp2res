@@ -24,7 +24,6 @@ from .models import (
     ExperienceFact,
     GapQuestion,
     OccurredAt,
-    SelfSignal,
     SelfClaim,
     StrictModel,
     VerificationFinding,
@@ -46,8 +45,6 @@ CommandPath = Literal[
     "facts list",
     "facts show",
     "detections generate",
-    "signals generate",
-    "signals list",
     "assess generate",
     "assess repair",
     "assess verify",
@@ -145,10 +142,6 @@ class ContradictionsResult(StrictModel):
     contradictions: list[Contradiction]
 
 
-class SignalsListResult(StrictModel):
-    signals: list[SelfSignal]
-
-
 class InvalidatedView(StrictModel):
     scope: AssessmentScope
     scope_target: str | None
@@ -204,7 +197,6 @@ ResultPayload = (
     | DetectionsGenerateResult
     | GapsListResult
     | ContradictionsResult
-    | SignalsListResult
     | AssessListResult
     | AssessShowResult
     | AssessmentExportResult

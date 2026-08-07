@@ -15,7 +15,6 @@ from exp2res.domain.models import (
     OccurredAt,
     RawLog,
     SelfClaim,
-    SelfSignal,
 )
 from exp2res.exports.graph import (
     AssessmentExportGraph,
@@ -73,13 +72,26 @@ def assessment_graph(
         evidence_item_ids=[evidence.id],
         confidence="high",
     )
-    signal = SelfSignal(
-        id="signal_vera_export_0001",
+    # §11.6/§15.4: the contrary member of a pattern claim's closure. It is an
+    # ordinary fact — only the citing claim's `counter_fact_ids` marks it —
+    # so the graph carries it with its own evidence like any other source.
+    counter_evidence = EvidenceItem(
+        id="evidence_vera_export_0002",
         created_at=EXPORT_TIME,
-        signal_type="execution_pattern",
-        statement="You repeat deterministic delivery.",
-        supporting_fact_ids=[fact.id],
-        counter_fact_ids=[],
+        raw_log_id=raw.id,
+        summary="Vera Example synthetic contrary evidence summary.",
+        strength="manual_claim",
+    )
+    counter_fact = ExperienceFact(
+        id="fact_vera_export_0002",
+        created_at=EXPORT_TIME,
+        claim="Shipped one release without a deterministic check.",
+        claim_kind="observed_fact",
+        context="independent_project",
+        ownership_level="built",
+        occurred=raw.occurred,
+        source_log_ids=[raw.id],
+        evidence_item_ids=[counter_evidence.id],
         confidence="high",
     )
     gap = GapQuestion(
@@ -136,6 +148,7 @@ def assessment_graph(
                     source_ref_id=fact.id,
                 )
             ]
+        pattern_claim = kind == "pattern_signal"
         claim = SelfClaim(
             id=claim_id,
             created_at=EXPORT_TIME,
@@ -143,8 +156,10 @@ def assessment_graph(
             claim=prose,
             claim_kind=kind,
             dimension=dimension,
-            source_signal_ids=[signal.id],
-            source_fact_ids=[fact.id],
+            source_fact_ids=(
+                [fact.id, counter_fact.id] if pattern_claim else [fact.id]
+            ),
+            counter_fact_ids=[counter_fact.id] if pattern_claim else [],
             confidence="high",
             verification_status=status,
             counterevidence=counterevidence,
@@ -176,9 +191,8 @@ def assessment_graph(
         snapshot=stored(snapshot, "snapshot"),
         snapshot_created_at_text="2026-07-20T10:00:00+02:00",
         claims=tuple(claims),
-        signals=(stored(signal, "signal"),),
-        facts=(stored(fact, "fact"),),
-        evidence_items=(evidence,),
+        facts=(stored(fact, "fact"), stored(counter_fact, "counter_fact")),
+        evidence_items=(evidence, counter_evidence),
         raw_logs=(raw,),
         gaps=(stored(gap, "gap"),),
         contradictions=(stored(contradiction, "contradiction"),),
@@ -186,6 +200,11 @@ def assessment_graph(
             FactSourceRecord(
                 fact_id=fact.id,
                 evidence_item_id=evidence.id,
+                support_type="direct",
+            ),
+            FactSourceRecord(
+                fact_id=counter_fact.id,
+                evidence_item_id=counter_evidence.id,
                 support_type="direct",
             ),
         ),

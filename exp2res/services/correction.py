@@ -41,13 +41,11 @@ from exp2res.storage.repository import (
     list_contradictions,
     list_gap_questions,
     list_self_claims_for_snapshot,
-    list_self_signals,
     mark_assessment_snapshots_superseded,
     mark_contradictions_superseded,
     mark_facts_superseded,
     mark_gap_questions_superseded,
     mark_self_claims_superseded,
-    mark_self_signals_superseded,
 )
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
@@ -69,7 +67,6 @@ class CorrectionOutcome:
     superseded_fact_ids: tuple[str, ...]
     superseded_gap_ids: tuple[str, ...]
     superseded_contradiction_ids: tuple[str, ...]
-    superseded_signal_ids: tuple[str, ...]
     superseded_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
     superseded_generation_ids: tuple[str, ...]
@@ -196,11 +193,9 @@ def capture_correction(
             superseded_fact_ids = _current_fact_ids(connection, context.member_ids)
             gaps = list_gap_questions(connection)
             contradictions = list_contradictions(connection)
-            signals = list_self_signals(connection)
             snapshots = list_assessment_snapshots(connection)
             superseded_gap_ids = tuple(item.id for item in gaps)
             superseded_contradiction_ids = tuple(item.id for item in contradictions)
-            superseded_signal_ids = tuple(item.id for item in signals)
             superseded_snapshot_ids = tuple(item.id for item in snapshots)
             superseded_claim_ids = tuple(
                 claim.id
@@ -221,7 +216,6 @@ def capture_correction(
                     ("experience_facts", superseded_fact_ids),
                     ("gap_questions", superseded_gap_ids),
                     ("contradictions", superseded_contradiction_ids),
-                    ("self_signals", superseded_signal_ids),
                     ("self_claims", superseded_claim_ids),
                     ("assessment_snapshots", superseded_snapshot_ids),
                 ),
@@ -277,7 +271,6 @@ def capture_correction(
             mark_contradictions_superseded(
                 connection, superseded_contradiction_ids, now
             )
-            mark_self_signals_superseded(connection, superseded_signal_ids, now)
             mark_self_claims_superseded(connection, superseded_claim_ids, now)
             mark_assessment_snapshots_superseded(
                 connection, superseded_snapshot_ids, now
@@ -313,9 +306,6 @@ def capture_correction(
                 superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
                 superseded_contradiction_ids=tuple(
                     sorted(superseded_contradiction_ids, key=_id_key)
-                ),
-                superseded_signal_ids=tuple(
-                    sorted(superseded_signal_ids, key=_id_key)
                 ),
                 superseded_claim_ids=tuple(
                     sorted(superseded_claim_ids, key=_id_key)

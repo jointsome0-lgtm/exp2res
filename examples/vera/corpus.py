@@ -619,29 +619,29 @@ DEMO_RESPONSES = {
         }],
         "warnings": [],
     },
-    "demo-signals.json": {
-        "signals": [{
-            "signal_type": "execution_pattern",
-            "statement": "Vera Example checks documentation claims against stored evidence and corrects premature completion reports.",
-            "supporting_fact_ids": ["fact_demo_0001", "fact_demo_0003"],
-            "counter_fact_ids": ["fact_demo_0002"], "confidence": "medium",
-        }],
-        "warnings": [],
-    },
     "demo-assessment-act1.json": {
+        # §15.4: the pattern is transport-only scratch work — it is never
+        # persisted, and its whole fact set becomes the citing claim's
+        # closure, with the contrary member marked on the claim.
+        "patterns": [{
+            "label": "evidence-checked documentation",
+            "supporting_fact_ids": ["fact_demo_0001", "fact_demo_0003"],
+            "counter_fact_ids": ["fact_demo_0002"],
+        }],
         "self_claims": [
             {
                 "claim": "Vera Example currently shows an evidence-checking documentation pattern.",
                 "claim_kind": "pattern_signal", "dimension": "working_style",
-                "source_signal_ids": ["signal_demo_0001"],
-                "source_fact_ids": ["fact_demo_0001", "fact_demo_0003"],
+                "source_pattern_labels": ["evidence-checked documentation"],
+                "source_fact_ids": [
+                    "fact_demo_0001", "fact_demo_0002", "fact_demo_0003",
+                ],
                 "confidence": "medium",
                 "uncertainty": "The invented evidence covers one small documentation project.",
             },
             {
                 "claim": "Current evidence suggests Vera Example validates claims and retains visible uncertainty.",
                 "claim_kind": "narrative_summary", "dimension": "trajectory",
-                "source_signal_ids": ["signal_demo_0001"],
                 "source_fact_ids": ["fact_demo_0001", "fact_demo_0002", "fact_demo_0003"],
                 "confidence": "medium",
                 "uncertainty": "No external outcome is established by the Vera Example corpus.",
@@ -655,18 +655,22 @@ DEMO_RESPONSES = {
         "unsupported_phrases": [], "counterevidence": [], "suggested_rewrite": None,
     },
     "demo-assessment-act2-overclaim.json": {
+        "patterns": [{
+            "label": "production Kubernetes operation",
+            "supporting_fact_ids": ["fact_demo_0001"],
+            "counter_fact_ids": [],
+        }],
         "self_claims": [
             {
                 "claim": "Vera Example operated production Kubernetes systems for ten years.",
                 "claim_kind": "pattern_signal", "dimension": "technical_skill",
-                "source_signal_ids": ["signal_demo_0001"],
+                "source_pattern_labels": ["production Kubernetes operation"],
                 "source_fact_ids": ["fact_demo_0001"], "confidence": "medium",
                 "uncertainty": None,
             },
             {
                 "claim": "Current evidence proves Vera Example is a senior production Kubernetes expert.",
                 "claim_kind": "narrative_summary", "dimension": "trajectory",
-                "source_signal_ids": ["signal_demo_0001"],
                 "source_fact_ids": ["fact_demo_0001"], "confidence": "medium",
                 "uncertainty": None,
             },
@@ -817,8 +821,6 @@ def replay() -> dict:
          "expect": {"status": "ok",
                     "contradiction_between": ["logs/daily-2026-06-25.md",
                                               "logs/daily-2026-07-02.md"]}},
-        {"step": "E3", "kind": "signals", "clock": "2026-07-11T10:10:00+02:00",
-         "expect": {"status": "ok"}},
         {"step": "E4", "kind": "assess", "scope": "global",
          "clock": "2026-07-11T10:15:00+02:00", "expect": {"status": "ok"}},
         {"step": "E5", "kind": "assess_verify", "snapshot_step": "E4",

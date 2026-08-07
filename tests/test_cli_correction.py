@@ -25,7 +25,6 @@ from exp2res.storage.repository import (
     list_contradictions,
     list_experience_facts,
     list_gap_questions,
-    list_self_signals,
 )
 from exp2res.storage.workspace import read_database
 
@@ -40,8 +39,8 @@ from test_stage3_extraction import (
     fact_response,
     run_stage3,
 )
+from assessment_helpers import VeraIds
 from test_stage4_detection import detector_response, run_stage4
-from test_stage5_signals import SignalIds, run_stage5, signal_response
 from test_stage6_assessment import assessment_response, run_stage6
 from test_stage7_verification import run_stage7, verifier_response
 
@@ -64,11 +63,8 @@ def _lifecycle_response(call: PreparedCall) -> RawResult:
     if call.contract_id == "fact-extractor":
         evidence_ids = [item["id"] for item in payload["evidence_items"]]
         return _raw(fact_response(evidence_ids))
-    if call.contract_id == "gap-contradiction-detector":
-        return _raw(b'{"gap_questions":[],"contradictions":[],"warnings":[]}')
-    assert call.contract_id == "self-signal-extractor"
-    fact_ids = [item["id"] for item in payload["facts"]]
-    return _raw(signal_response(fact_ids))
+    assert call.contract_id == "gap-contradiction-detector"
+    return _raw(b'{"gap_questions":[],"contradictions":[],"warnings":[]}')
 
 
 def _install_lifecycle_runner(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -98,7 +94,7 @@ def _prepare_full_graph(
     assessment_scope: str = "global",
     assessment_target: str | None = None,
 ):
-    ids = SignalIds()
+    ids = VeraIds()
     target, target_items = add_log(
         workspace,
         log_id="log_vera_correction_target",
@@ -143,22 +139,14 @@ def _prepare_full_graph(
         ),
         ids,  # type: ignore[arg-type]
     )
-    signaled = run_stage5(
-        workspace,
-        FakeContractRunner([signal_response([target_fact.id])]),
-        ids,
-    )
     fact_ids = (
         [target_fact.id]
         if assessment_scope == "project"
         else [item.id for item in list_experience_facts_for(workspace)]
     )
-    signal_ids = [item.id for item in signaled.current_signals]
     assessed = run_stage6(
         workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=fact_ids, signal_ids=signal_ids)]
-        ),
+        FakeContractRunner([assessment_response(fact_ids=fact_ids)]),
         ids,
         scope=assessment_scope,
         target=assessment_target,
@@ -173,7 +161,7 @@ def _prepare_full_graph(
     exported = export_assessment(
         workspace, snapshot_id=assessed.snapshot_id, clock=lambda: FIXED_NOW
     )
-    return target, other, target_fact, detected, signaled, assessed, Path(exported.manifest_path).parent
+    return target, other, target_fact, detected, assessed, Path(exported.manifest_path).parent
 
 
 def list_experience_facts_for(workspace: Path):
@@ -184,7 +172,7 @@ def list_experience_facts_for(workspace: Path):
 def test_correction_rebuilds_through_artifacts_and_preserves_history(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    target, other, old_fact, detected, signaled, assessed, export_dir = _prepare_full_graph(
+    target, other, old_fact, detected, assessed, export_dir = _prepare_full_graph(
         workspace
     )
     _install_lifecycle_runner(monkeypatch)
@@ -204,7 +192,7 @@ def test_correction_rebuilds_through_artifacts_and_preserves_history(
         input="Vera Example corrected and fully restated the workflow.\n\n\n",
     )
     assert result.exit_code == 0, result.stderr
-    assert len(envelope["run_ids"]) == 4
+    assert len(envelope["run_ids"]) == 3
     correction_id = next(
         group["ids"][0]
         for group in envelope["affected_ids"]["created"]
@@ -252,7 +240,6 @@ def test_correction_rebuilds_through_artifacts_and_preserves_history(
             for table, entity_id in (
                 ("gap_questions", detected.created_gap_ids[0]),
                 ("contradictions", detected.created_contradiction_ids[0]),
-                ("self_signals", signaled.created_signal_ids[0]),
                 ("assessment_snapshots", assessed.snapshot_id),
             )
         )
@@ -266,19 +253,13 @@ def test_correction_rebuilds_through_artifacts_and_preserves_history(
         assert by_id[envelope["run_ids"][0]][1:] == ("13.13", None, "completed")
         assert [by_id[item][2] for item in envelope["run_ids"][1:]] == [
             envelope["run_ids"][0]
-        ] * 3
+        ] * 2
 
     current_facts = list_experience_facts_for(workspace)
-    current_signals = list_self_signals_for(workspace)
     regenerated = run_stage6(
         workspace,
         FakeContractRunner(
-            [
-                assessment_response(
-                    fact_ids=[item.id for item in current_facts],
-                    signal_ids=[item.id for item in current_signals],
-                )
-            ]
+            [assessment_response(fact_ids=[item.id for item in current_facts])]
         ),
         new_id,
     )
@@ -291,7 +272,7 @@ def test_correction_rebuilds_through_artifacts_and_preserves_history(
 def test_correction_human_output_includes_captured_project_view_command(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    target, _other, _fact, _detected, _signaled, assessed, _export_dir = (
+    target, _other, _fact, _detected, assessed, _export_dir = (
         _prepare_full_graph(
             workspace,
             assessment_scope="project",
@@ -321,11 +302,6 @@ def test_correction_human_output_includes_captured_project_view_command(
         "(project: Vera Example Project); regenerate with: "
         "exp2res assess generate --scope project --project 'Vera Example Project'"
     ) in result.stdout
-
-
-def list_self_signals_for(workspace: Path):
-    with read_database(workspace) as connection:
-        return list_self_signals(connection)
 
 
 def test_correction_copy_and_explicit_temporal_project_replacement(
@@ -564,7 +540,7 @@ def test_failed_correction_stays_committed_and_selected_recompute_repairs(
     old = run_stage3(
         workspace,
         FakeContractRunner([fact_response([items[0].id])]),
-        SignalIds(),  # type: ignore[arg-type]
+        VeraIds(),  # type: ignore[arg-type]
     )
     monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
     monkeypatch.setattr(
@@ -607,10 +583,9 @@ def test_failed_correction_stays_committed_and_selected_recompute_repairs(
         ["--yes", "recompute", "--log-id", correction_id],
     )
     assert repaired_result.exit_code == 0
-    assert len(repaired["run_ids"]) == 4
+    assert len(repaired["run_ids"]) == 3
     with read_database(workspace) as connection:
         assert len(list_experience_facts(connection)) == 1
-        assert len(list_self_signals(connection)) == 1
 
 
 def test_lifecycle_failure_prints_retry_in_human_mode(
@@ -664,7 +639,7 @@ def test_failed_lifecycle_still_reports_the_invalidated_view(
     it only by trying to export.
     """
 
-    target, _other, _fact, _detected, _signaled, assessed, export_dir = (
+    target, _other, _fact, _detected, assessed, export_dir = (
         _prepare_full_graph(workspace)
     )
     assert export_dir.is_dir()
@@ -734,7 +709,7 @@ def test_delete_rebuild_success_failure_zero_survivor_and_bare_recompute(
                 fact_response([survivor_items[0].id]),
             ]
         ),
-        SignalIds(),  # type: ignore[arg-type]
+        VeraIds(),  # type: ignore[arg-type]
     )
     _install_lifecycle_runner(monkeypatch)
     deleted_result, deleted = _invoke_json(
@@ -742,19 +717,18 @@ def test_delete_rebuild_success_failure_zero_survivor_and_bare_recompute(
         ["--yes", "logs", "delete", "--log-id", selected.id],
     )
     assert deleted_result.exit_code == 0, deleted_result.stderr
-    assert len(deleted["run_ids"]) == 4
+    assert len(deleted["run_ids"]) == 3
     with read_database(workspace) as connection:
         assert get_raw_log(connection, selected.id) is None
         assert get_raw_log(connection, survivor.id) is not None
         facts = list_experience_facts(connection)
         assert len(facts) == 1 and survivor.id in facts[0].source_log_ids
-        assert len(list_self_signals(connection)) == 1
         assert list_assessment_snapshots(connection) == ()
 
     _install_lifecycle_runner(monkeypatch)
     bare_result, bare = _invoke_json(workspace, ["--yes", "recompute"])
     assert bare_result.exit_code == 0
-    assert len(bare["run_ids"]) == 4
+    assert len(bare["run_ids"]) == 3
     assert bare["warnings"] == [
         {
             "type": "assessment_view_regeneration_required",
@@ -779,7 +753,7 @@ def test_delete_rebuild_success_failure_zero_survivor_and_bare_recompute(
         ["--yes", "logs", "delete", "--log-id", only_survivor],
     )
     assert zero_result.exit_code == 0
-    assert len(zero["run_ids"]) == 4
+    assert len(zero["run_ids"]) == 3
     assert zero["warnings"][0]["type"] == "assessment_view_regeneration_required"
 
 
@@ -829,7 +803,7 @@ def test_interrupted_delete_checkpoint_reports_committed_purge(
 ) -> None:
     import exp2res.services.logs as logs_service
 
-    target, _other, _fact, _detected, _signaled, assessed, _export_dir = (
+    target, _other, _fact, _detected, assessed, _export_dir = (
         _prepare_full_graph(workspace)
     )
 
@@ -878,7 +852,6 @@ def test_recompute_holds_one_writer_authority_across_stages(
     # let another business writer interleave between the stage swaps.
     import exp2res.pipeline.stage3 as stage3_module
     import exp2res.pipeline.stage4 as stage4_module
-    import exp2res.pipeline.stage5 as stage5_module
 
     add_log(
         workspace,
@@ -893,11 +866,11 @@ def test_recompute_holds_one_writer_authority_across_stages(
     def refuse_stage_lock(*_args, **_kwargs):
         raise AssertionError("a stage acquired its own writer authority")
 
-    for module in (stage3_module, stage4_module, stage5_module):
+    for module in (stage3_module, stage4_module):
         monkeypatch.setattr(module, "writer_database", refuse_stage_lock)
     result, envelope = _invoke_json(workspace, ["--yes", "recompute"])
     assert result.exit_code == 0, result.output
-    assert len(envelope["run_ids"]) == 4
+    assert len(envelope["run_ids"]) == 3
 
 
 def test_interrupt_between_stages_reports_committed_progress(
@@ -1023,7 +996,7 @@ def test_final_view_check_failure_reports_committed_progress(
     assert result.exit_code == exit_code
     assert envelope["status"] == status
     assert envelope["diagnostic_class"] == diagnostic_class
-    assert len(envelope["run_ids"]) == 4
+    assert len(envelope["run_ids"]) == 3
     assert "experience_fact" in {
         group["entity_type"] for group in envelope["affected_ids"]["created"]
     }

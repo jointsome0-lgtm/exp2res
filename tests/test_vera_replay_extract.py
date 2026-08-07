@@ -51,7 +51,6 @@ class ReplayIds:
             "fact": "fact",
             "gap": "gap",
             "contradiction": "contradiction",
-            "signal": "signal",
             "run": "run",
             "gen": "gen",
         }[kind]

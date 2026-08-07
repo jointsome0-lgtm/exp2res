@@ -1,4 +1,13 @@
 {
+  "patterns": [
+    {
+      "counter_fact_ids": [],
+      "label": "production Kubernetes operation",
+      "supporting_fact_ids": [
+        "fact_demo_0001"
+      ]
+    }
+  ],
   "self_claims": [
     {
       "claim": "Vera Example operated production Kubernetes systems for ten years.",
@@ -8,8 +17,8 @@
       "source_fact_ids": [
         "fact_demo_0001"
       ],
-      "source_signal_ids": [
-        "signal_demo_0001"
+      "source_pattern_labels": [
+        "production Kubernetes operation"
       ],
       "uncertainty": null
     },
@@ -20,9 +29,6 @@
       "dimension": "trajectory",
       "source_fact_ids": [
         "fact_demo_0001"
-      ],
-      "source_signal_ids": [
-        "signal_demo_0001"
       ],
       "uncertainty": null
     }

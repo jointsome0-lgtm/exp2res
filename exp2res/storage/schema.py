@@ -856,6 +856,33 @@ SCHEMA_V8_SQL = SCHEMA_V7_SQL.replace(
     EXPERIENCE_FACTS_SQL, EXPERIENCE_FACTS_V8_SQL, 1
 )
 
+# §11.6/§13.5-removal (issue #76): schema v9 retires the whole `self_signals`
+# table and replaces the claim's signal citation with the service-derived
+# contrary-role marking §15.4's discarded patterns leave behind.
+SELF_CLAIMS_V9_SQL = SELF_CLAIMS_SQL.replace(
+    "    source_signal_ids_json TEXT NOT NULL DEFAULT '[]',\n"
+    "    source_fact_ids_json TEXT NOT NULL DEFAULT '[]',",
+    "    source_fact_ids_json TEXT NOT NULL DEFAULT '[]',\n"
+    "    counter_fact_ids_json TEXT NOT NULL DEFAULT '[]',",
+    1,
+)
+
+SELF_CLAIMS_V9_UPDATE_GUARD_SQL = SELF_CLAIMS_UPDATE_GUARD_SQL.replace(
+    "    AND NEW.source_signal_ids_json IS OLD.source_signal_ids_json\n"
+    "    AND NEW.source_fact_ids_json IS OLD.source_fact_ids_json",
+    "    AND NEW.source_fact_ids_json IS OLD.source_fact_ids_json\n"
+    "    AND NEW.counter_fact_ids_json IS OLD.counter_fact_ids_json",
+    1,
+)
+
+SCHEMA_V9_SQL = (
+    SCHEMA_V8_SQL.replace(SELF_SIGNALS_SQL + "\n", "", 1)
+    .replace(SELF_SIGNALS_UPDATE_GUARD_SQL + "\n", "", 1)
+    .replace(SELF_SIGNALS_DELETE_GUARD_SQL + "\n", "", 1)
+    .replace(SELF_CLAIMS_SQL, SELF_CLAIMS_V9_SQL, 1)
+    .replace(SELF_CLAIMS_UPDATE_GUARD_SQL, SELF_CLAIMS_V9_UPDATE_GUARD_SQL, 1)
+)
+
 # §14.16 owns one complete, referentially ordered whole-workspace purge.
 # Keeping the inventory beside the current schema makes a newly added table a
 # deliberate compile-time/test-time lifecycle decision instead of a silent
@@ -866,7 +893,6 @@ PURGE_TABLE_ORDER = (
     "assessment_snapshots",
     "gap_questions",
     "contradictions",
-    "self_signals",
     "fact_sources",
     "experience_facts",
     "evidence_items",
@@ -883,7 +909,6 @@ PURGE_ENTITY_TABLES = (
     ("experience_facts", "experience_fact"),
     ("gap_questions", "gap_question"),
     ("contradictions", "contradiction"),
-    ("self_signals", "self_signal"),
     ("assessment_snapshots", "assessment_snapshot"),
     ("self_claims", "self_claim"),
     ("verification_findings", "verification_finding"),
@@ -894,9 +919,9 @@ PURGE_ENTITY_TABLES = (
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    if version != 8:
-        raise ValueError("fresh workspaces must use schema version 8")
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V8_SQL)
+    if version != 9:
+        raise ValueError("fresh workspaces must use schema version 9")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V9_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
@@ -1070,5 +1095,45 @@ def apply_migration_7_to_8(connection: Connection) -> None:
     for statement in (
         EXPERIENCE_FACTS_UPDATE_GUARD_SQL,
         EXPERIENCE_FACTS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+
+def apply_migration_8_to_9(connection: Connection) -> None:
+    """Delete the signal layer and every row derived from it (§12.14).
+
+    This is the registered whole-layer deletion §12.14 defines as issue #76's
+    deterministic transform: every retained row of those layers was produced
+    under the retired signal-consuming contracts, so no per-row rewrite
+    exists. Dropping the three derived tables rather than deleting from them
+    both discards the rows and rebuilds `self_claims` in its v9 shape in one
+    step, and it retires the lifecycle guards with their tables instead of
+    fighting the delete guards this connection cannot satisfy. Raw logs,
+    evidence items, experience facts, detection sets, and run telemetry are
+    untouched.
+    """
+
+    # Foreign keys are suspended for this rebuild step, but the drop order
+    # still follows the references so `PRAGMA foreign_key_check` has nothing
+    # transient to see: findings and claims before the snapshots they name.
+    for table in (
+        "verification_findings",
+        "self_claims",
+        "assessment_snapshots",
+        "self_signals",
+    ):
+        connection.execute(f"DROP TABLE {table}")
+    for statement in (
+        ASSESSMENT_SNAPSHOTS_SQL,
+        SELF_CLAIMS_V9_SQL,
+        SELF_CLAIMS_SNAPSHOT_INDEX_SQL,
+        SELF_CLAIMS_V9_UPDATE_GUARD_SQL,
+        ASSESSMENT_SNAPSHOTS_UPDATE_GUARD_SQL,
+        SELF_CLAIMS_DELETE_GUARD_SQL,
+        ASSESSMENT_SNAPSHOTS_DELETE_GUARD_SQL,
+        VERIFICATION_FINDINGS_SQL,
+        VERIFICATION_FINDINGS_TARGET_INDEX_SQL,
+        VERIFICATION_FINDINGS_UPDATE_GUARD_SQL,
+        VERIFICATION_FINDINGS_DELETE_GUARD_SQL,
     ):
         connection.execute(statement)

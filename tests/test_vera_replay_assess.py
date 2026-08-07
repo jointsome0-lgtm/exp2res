@@ -9,14 +9,15 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.services.assessment as assessment_service
-import exp2res.services.signals as signals_service
+import exp2res.services.detection as detection_service
 from exp2res.cli import app
 from exp2res.storage.repository import list_assessment_snapshots
 from exp2res.storage.workspace import read_database
 
 from fakes import FakeContractRunner
 from test_stage3_extraction import SELECTION, budgets
-from test_stage5_signals import SignalIds, prepare_facts, run_stage5, signal_response
+from test_stage4_detection import detector_response
+from assessment_helpers import VeraIds, prepare_facts
 from test_stage6_assessment import assessment_response
 
 
@@ -29,24 +30,13 @@ def invoke_json(workspace: Path, arguments: list[str]):
     return result, json.loads(result.stdout)
 
 
-def test_vera_e4_cli_assessment_is_navigable_then_signal_replacement_invalidates(
+def test_vera_e4_cli_assessment_is_navigable_then_regeneration_invalidates(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ids = SignalIds()
+    ids = VeraIds()
     fact_ids = prepare_facts(workspace, ids, count=2)
-    signal_result = run_stage5(
-        workspace,
-        FakeContractRunner([signal_response(list(fact_ids), confidence="low")]),
-        ids,
-    )
-    signal_ids = [item.id for item in signal_result.current_signals]
-
     assessment_runner = FakeContractRunner(
-        [
-            assessment_response(
-                fact_ids=list(fact_ids), signal_ids=signal_ids, confidence="low"
-            )
-        ]
+        [assessment_response(fact_ids=list(fact_ids), confidence="low")]
     )
     monkeypatch.setattr(
         assessment_service,
@@ -74,22 +64,25 @@ def test_vera_e4_cli_assessment_is_navigable_then_signal_replacement_invalidates
     with read_database(workspace) as connection:
         assert len(list_assessment_snapshots(connection)) == 1
 
+    # §13.4: with the signal layer gone, the detection set is the upstream
+    # replacement that reaches the synthesis — a new generation supersedes
+    # the current snapshot and its claims, and names the stale view.
     replacement_runner = FakeContractRunner(
         [
-            signal_response(
-                list(fact_ids),
-                confidence="low",
-                statement="You changed direction after the replacement evidence.",
+            detector_response(
+                target_id=fact_ids[0],
+                left=("experience_fact", fact_ids[0]),
+                right=("experience_fact", fact_ids[1]),
             )
         ]
     )
     monkeypatch.setattr(
-        signals_service,
+        detection_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), replacement_runner),
     )
     replaced_result, replaced = invoke_json(
-        workspace, ["--yes", "signals", "generate"]
+        workspace, ["--yes", "detections", "generate"]
     )
     assert replaced_result.exit_code == 0
     assert replaced["invalidated_views"] == [

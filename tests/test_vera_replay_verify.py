@@ -16,7 +16,7 @@ from exp2res.storage.workspace import read_database
 
 from fakes import FakeContractRunner
 from test_stage3_extraction import SELECTION, budgets
-from test_stage5_signals import SignalIds, prepare_facts, run_stage5, signal_response
+from assessment_helpers import VeraIds, prepare_facts
 from test_stage6_assessment import assessment_response
 from test_stage7_verification import verifier_response
 from test_vera_replay_assess import invoke_json
@@ -34,14 +34,8 @@ def _canonical_bytes(value: object) -> bytes:
 def test_vera_e5_cli_reverification_preserves_complete_finding_history(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ids = SignalIds()
+    ids = VeraIds()
     fact_ids = prepare_facts(workspace, ids, count=2)
-    signal_result = run_stage5(
-        workspace,
-        FakeContractRunner([signal_response(list(fact_ids), confidence="low")]),
-        ids,
-    )
-    signal_ids = [item.id for item in signal_result.current_signals]
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
@@ -51,9 +45,7 @@ def test_vera_e5_cli_reverification_preserves_complete_finding_history(
             FakeContractRunner(
                 [
                     assessment_response(
-                        fact_ids=list(fact_ids),
-                        signal_ids=signal_ids,
-                        confidence="low",
+                        fact_ids=list(fact_ids), confidence="low"
                     )
                 ]
             ),

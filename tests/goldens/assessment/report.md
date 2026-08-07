@@ -7,7 +7,7 @@ Scope: global
 - Current evidence suggests provenance-aware pattern 1.
   **Claim ID:** claim_vera_0002
   **Status:** supported
-  **Sources:** signal_vera_0001 (facts fact_vera_0001); facts fact_vera_0001
+  **Sources:** fact_vera_0001
 
 ## 2. Strongly Supported Facts
 
@@ -16,7 +16,7 @@ Scope: global
   **Claim ID:** claim_vera_0001
   **Status:** supported
   **Uncertainty:** Evidence remains limited to the supplied records.
-  **Sources:** signal_vera_0001 (facts fact_vera_0001); facts fact_vera_0001
+  **Sources:** fact_vera_0001
 
 ## 4. Current Strengths
 

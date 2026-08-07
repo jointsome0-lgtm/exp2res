@@ -18,7 +18,6 @@ from exp2res.domain.models import (
     GapQuestion,
     RawLog,
     SelfClaim,
-    SelfSignal,
     StrictModel,
 )
 from exp2res.domain.verification import aggregate_verification_status
@@ -35,7 +34,6 @@ from exp2res.storage.repository import (
     hydrate_gap_question,
     hydrate_raw_log,
     hydrate_self_claim,
-    hydrate_self_signal,
     validate_detection_reference,
     validate_experience_fact_sources,
 )
@@ -70,7 +68,6 @@ class AssessmentExportGraph:
     snapshot: StoredRecord[AssessmentSnapshot]
     snapshot_created_at_text: str
     claims: tuple[StoredRecord[SelfClaim], ...]
-    signals: tuple[StoredRecord[SelfSignal], ...]
     facts: tuple[StoredRecord[ExperienceFact], ...]
     evidence_items: tuple[EvidenceItem, ...]
     raw_logs: tuple[RawLog, ...]
@@ -83,7 +80,6 @@ class AssessmentExportGraph:
     # into source_ids and the render-input bundle, while the closed §13.12
     # evidence-map and report projections keep consuming only the closure
     # fields above.
-    supplemental_signals: tuple[StoredRecord[SelfSignal], ...] = ()
     supplemental_facts: tuple[StoredRecord[ExperienceFact], ...] = ()
     supplemental_fact_sources: tuple[FactSourceRecord, ...] = ()
     supplemental_evidence_items: tuple[EvidenceItem, ...] = ()
@@ -100,10 +96,6 @@ class AssessmentExportGraph:
 
         return {
             "self_claim_ids": [item.value.id for item in self.claims],
-            "self_signal_ids": merged(
-                [item.value.id for item in self.signals],
-                [item.value.id for item in self.supplemental_signals],
-            ),
             "experience_fact_ids": merged(
                 [item.value.id for item in self.facts],
                 [item.value.id for item in self.supplemental_facts],
@@ -143,12 +135,6 @@ class ClaimRenderEntry(_BundleModel):
     produced_by_run_id: str
 
 
-class SignalRenderEntry(_BundleModel):
-    value: SelfSignal
-    generation_id: str
-    produced_by_run_id: str
-
-
 class FactRenderEntry(_BundleModel):
     value: ExperienceFact
     generation_id: str
@@ -182,11 +168,10 @@ class FactSourceRenderEntry(_BundleModel):
 
 
 class AssessmentRenderInputBundle(_BundleModel):
-    manifest_version: Literal[4] = 4
+    manifest_version: Literal[5] = 5
     output_kind: Literal["assessment"] = "assessment"
     assessment_snapshots: list[SnapshotRenderEntry]
     self_claims: list[ClaimRenderEntry]
-    self_signals: list[SignalRenderEntry]
     experience_facts: list[FactRenderEntry]
     evidence_items: list[EvidenceRenderEntry]
     raw_logs: list[RawLogRenderEntry]
@@ -202,7 +187,6 @@ def _merged_stored(
 
 
 def render_input_bundle(graph: AssessmentExportGraph) -> AssessmentRenderInputBundle:
-    bundle_signals = _merged_stored(graph.signals, graph.supplemental_signals)
     bundle_facts = _merged_stored(graph.facts, graph.supplemental_facts)
     bundle_evidence = sorted(
         (*graph.evidence_items, *graph.supplemental_evidence_items),
@@ -232,14 +216,6 @@ def render_input_bundle(graph: AssessmentExportGraph) -> AssessmentRenderInputBu
                 produced_by_run_id=item.produced_by_run_id,
             )
             for item in graph.claims
-        ],
-        self_signals=[
-            SignalRenderEntry(
-                value=item.value,
-                generation_id=item.generation_id,
-                produced_by_run_id=item.produced_by_run_id,
-            )
-            for item in bundle_signals
         ],
         experience_facts=[
             FactRenderEntry(
@@ -309,13 +285,6 @@ def load_current_snapshot(
 def _require_reference(
     connection: sqlite3.Connection, ref_type: str, ref_id: str, diagnostic: str
 ) -> None:
-    if ref_type == "self_signal":
-        row = connection.execute(
-            "SELECT superseded_at FROM self_signals WHERE id = ?", (ref_id,)
-        ).fetchone()
-        if row is None or row[0] is not None:
-            raise IntegrityFailureError(diagnostic)
-        return
     # §13.3: detection targets exclude displaced records and their linked
     # items, so export reuses Stage 4 insertion's reference validation.
     try:
@@ -525,33 +494,9 @@ def load_assessment_graph(
         omitted_gap_records.append(_stored(row, gap))
     omitted_gap_records.sort(key=lambda item: id_key(item.value.id))
 
-    signal_ids = sorted(
-        {signal_id for item in claims for signal_id in item.value.source_signal_ids},
-        key=id_key,
-    )
-    signal_records: list[StoredRecord[SelfSignal]] = []
-    for signal_id in signal_ids:
-        row = connection.execute(
-            "SELECT * FROM self_signals WHERE id = ?", (signal_id,)
-        ).fetchone()
-        if row is None:
-            raise IntegrityFailureError("claim_signal_missing")
-        signal = hydrate_self_signal(row)
-        if signal.superseded_at is not None:
-            raise IntegrityFailureError("claim_signal_superseded")
-        # §16.1: a cited signal must ground in at least one fact, or its
-        # evidence-map signal_links entry would carry no fact path.
-        if not signal.supporting_fact_ids and not signal.counter_fact_ids:
-            raise IntegrityFailureError("claim_signal_chain_empty")
-        signal_records.append(_stored(row, signal))
-    signals_by_id = {item.value.id: item.value for item in signal_records}
-
     fact_ids = {
         fact_id for item in claims for fact_id in item.value.source_fact_ids
     }
-    for signal in signal_records:
-        fact_ids.update(signal.value.supporting_fact_ids)
-        fact_ids.update(signal.value.counter_fact_ids)
 
     fact_records: list[StoredRecord[ExperienceFact]] = []
     fact_source_records: list[FactSourceRecord] = []
@@ -590,11 +535,10 @@ def load_assessment_graph(
 
     for claim_record in claims:
         claim = claim_record.value
+        # §16.1 asks for a complete current chain through the claim's own
+        # closure; §15.4's equality rule makes `source_fact_ids` that whole
+        # closure, so the former signal cascade has nothing left to reach.
         reached = set(claim.source_fact_ids)
-        for signal_id in claim.source_signal_ids:
-            signal = signals_by_id[signal_id]
-            reached.update(signal.supporting_fact_ids)
-            reached.update(signal.counter_fact_ids)
         if not reached or not (reached & direct_fact_ids):
             raise IntegrityFailureError("claim_direct_chain_missing")
         for counterevidence in claim.counterevidence:
@@ -658,9 +602,8 @@ def load_assessment_graph(
     # §16.1: a supplemental row entering export — counterevidence grounding,
     # gap target, gap answer log, contradiction reference — resolves its own
     # complete current chain, so out-of-closure targets cascade one level —
-    # signal → facts → fact_sources/evidence → raw logs — and every row read
-    # here joins the manifest source lists and the render-input bundle.
-    ce_signals: list[StoredRecord[SelfSignal]] = []
+    # facts → fact_sources/evidence → raw logs — and every row read here
+    # joins the manifest source lists and the render-input bundle.
     ce_facts: list[StoredRecord[ExperienceFact]] = []
     ce_fact_sources: list[FactSourceRecord] = []
     ce_evidence: list[EvidenceItem] = []
@@ -669,24 +612,6 @@ def load_assessment_graph(
     ce_fact_ids: set[str] = set(
         supplemental_refs.get("experience_fact", set()) - fact_ids
     )
-    for signal_id in sorted(
-        supplemental_refs.get("self_signal", set()) - set(signals_by_id), key=id_key
-    ):
-        row = connection.execute(
-            "SELECT * FROM self_signals WHERE id = ?", (signal_id,)
-        ).fetchone()
-        if row is None:
-            raise IntegrityFailureError(invalid)
-        signal = hydrate_self_signal(row)
-        if signal.superseded_at is not None:
-            raise IntegrityFailureError(invalid)
-        # §16.1: a supplemental signal is subject to the same complete-chain
-        # requirement as a claim-cited one.
-        if not signal.supporting_fact_ids and not signal.counter_fact_ids:
-            raise IntegrityFailureError(invalid)
-        ce_signals.append(_stored(row, signal))
-        ce_fact_ids.update(set(signal.supporting_fact_ids) - fact_ids)
-        ce_fact_ids.update(set(signal.counter_fact_ids) - fact_ids)
     ce_evidence_ids: set[str] = set(
         supplemental_refs.get("evidence_item", set()) - set(evidence_ids)
     )
@@ -768,7 +693,6 @@ def load_assessment_graph(
         except IntegrityFailureError as error:
             raise IntegrityFailureError("fact_source_selection_invalid") from error
     unknown_types = set(supplemental_refs) - {
-        "self_signal",
         "experience_fact",
         "evidence_item",
         "raw_log",
@@ -780,14 +704,12 @@ def load_assessment_graph(
         snapshot=snapshot_record,
         snapshot_created_at_text=snapshot_row["created_at"],
         claims=tuple(claims),
-        signals=tuple(signal_records),
         facts=tuple(fact_records),
         evidence_items=tuple(evidence_items),
         raw_logs=tuple(raw_logs),
         gaps=tuple(gap_records),
         contradictions=tuple(contradiction_records),
         fact_sources=tuple(fact_source_records),
-        supplemental_signals=tuple(ce_signals),
         supplemental_facts=tuple(ce_facts),
         supplemental_fact_sources=tuple(ce_fact_sources),
         supplemental_evidence_items=tuple(ce_evidence),
