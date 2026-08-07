@@ -85,7 +85,7 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
     raw_text: at most 1 MiB (1,048,576 UTF-8 bytes) for one source document or payload read into the field
     GapQuestion.question: at most 1,024 UTF-8 bytes
     every other string field: at most 16 KiB (16,384 UTF-8 bytes)
-    each list field: at most 1,000 items
+    each list field: at most 1,000 items, except §15.6's `selected_facts`, which the service assembles from the complete current fact set (§13.10) and which carries no item cap
     each payload: at most 10,000 total objects, except the §15.6 and §15.7 whole-pack payloads, which carry no total-object cap
     JSON nesting: at most 32 levels
     each warnings list and each findings list: at most 100 entries, except the §15.7 whole-pack `findings` array, which carries one entry per supplied bullet and is bounded only by the list-field limit above

@@ -169,10 +169,10 @@ V1 is acceptable when:
     - Declared settings resolve explicit flag over documented `EXP2RES_*` variable over selected-workspace config over a built-in default when one exists; unresolved required settings fail closed; and invocation consent/control flags and §29 credentials remain outside that chain.
     - Non-TTY stdin or `--no-input` never prompts or blocks: missing prompt input fails, and every irreversible action requires `--yes`; TTY execution confirms exactly the deletion, purge, and migration surfaces and no cost-bearing call.
     - Exit codes are stable and configuration-independent:
-      - 0 success/no-op, 1 internal, 2 usage/input, 3 workspace, 4 schema, 5 `workspace_busy`, 6 provider/transport, 7 validation/integrity, 8 incomplete cleanup/deletion, 9 cancellation, and 10 a completed semantic-negative verifier or §16.11 gate result.
+      - 0 success/no-op, 1 internal, 2 usage/input, 3 workspace, 4 schema, 5 `workspace_busy`, 6 provider/transport, 7 validation/integrity, 8 incomplete cleanup/deletion, 9 cancellation, and 10 a completed semantic-negative result: a verifier verdict, a §16.11 gate refusal, or a `bullets generate` run that produces no bullet.
       - `CLIResultStatus` maps 0 to `ok`, 1–8 to `failed`, 9 to `cancelled`, and 10 to `blocked`.
       - Code 9 takes precedence when cancellation also leaves incomplete cleanup.
-      - Code 10 retains complete findings and a completed verifier run rather than manufacturing an operational failure.
+      - Code 10 completes its run rather than manufacturing an operational failure, retaining complete findings wherever the outcome is a verifier or gate result.
     - Under `--json`, stdout is exactly one strict extra-forbid version-2 envelope whose process-matching exit code, stable diagnostic, nullable canonical command/workspace, typed affected IDs, run/generation IDs, complete structured invalidated views/branches and findings, residual paths, warnings, documented retry, and closed command-discriminated primary result are deterministic.
     - List/show, detection, deletion, and export results use only the §14.14 projections and never include `RawLog.raw_text`, `JobDescription.raw_text`, or a free-form object.
     - Primary human results alone may otherwise use stdout, diagnostics/progress use stderr in both modes, and no public or retained diagnostic exposes secrets, prompt text, raw source text, or undeclared source content.

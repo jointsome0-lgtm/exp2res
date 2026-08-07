@@ -8,7 +8,7 @@
 - Imported source identifiers — each source contract's own record identity and GitHub `commit_sha`/`repo` — remain provenance values in `RawLog.external_ref` or `RawLog.metadata`.
 - Those imported source identifiers must never become local entity `id` values.
 - Every local `path` or `file:` URI value carried by an import payload, including Atlas `path`, is governed by §29.4's POSIX-only acquisition and pre-serialization rules.
-- The JSON objects in §19.1–§19.3 are the complete accepted record shapes: each importer accepts its own source's typed record directly, with no wrapping envelope, shared version field, or cross-source discriminator.
+- The JSON objects in §19.1–§19.3 are the complete accepted record shapes: each importer accepts its own source's typed record directly, with no wrapping envelope, no shared version field, and no envelope-level discriminator. Each record still carries its own `source` literal inside the closed shape (§19.4 rule 1).
 - Each source subsection owns its record shape and names the field that carries its stable source identity; §19.4 owns only what every importer shares — identity comparison, duplicate handling, per-record processing, and result reporting.
 
 ## §19.1 Activity-Domain Evidence Contract

@@ -285,7 +285,7 @@ This contract binds every command-specific form above and every later §14 addit
      - **8 — `failed`.** Incomplete managed-output cleanup or privacy deletion at non-cancelled completion, including `deletion_incomplete` and any reported residual path.
      - **9 — `cancelled`.** User interruption under §15.10/§13.13.
      - **10 — `blocked`.** A completed semantic result whose verifier or consumer gate does not pass: non-passing `assess verify` or `bullets verify` findings, export refused by a §16.11 allowlist, or a `bullets generate` run whose supplied context supports no bullet (§13.10).
-   - Code 10 is a successful semantic computation, not an operational-failure class: its complete findings are retained and its completed verifier `processing_runs` row is not marked failed.
+   - Code 10 is a successful semantic computation, not an operational-failure class: its completed `processing_runs` row is not marked failed, and a verifier or gate outcome retains its complete findings. A no-bullet `bullets generate` run has no findings and no verifier run; its completed generation run carries the same non-failed status.
    - A handled user interrupt takes code 9 precedence over every simultaneously observed class, including incomplete cleanup after an already committed deletion; committed effects and every known `residual_path` remain reported in the cancelled envelope.
    - Code 8 applies when the command reaches a non-cancelled completion with required cleanup incomplete.
    - Exit codes are configuration-independent; a recognized class never collapses into code 1.
@@ -350,7 +350,7 @@ This contract binds every command-specific form above and every later §14 addit
      - `view serve` (§14.17) — `null`. Each served request completes in its own §30 rule 7 outcome, so the command reaches no completed primary result of its own; its envelope reports the termination of serving.
    - Subject to rule 4's cancellation precedence, a complete §19.4 import result with `counts.rejected > 0` uses existing exit class 2, and an accepted/duplicate-only result uses exit class 0.
    - Except for a schema entry that explicitly declares `null` as its complete success schema, a command with an object result uses `result = null` only when it fails or is cancelled before a complete primary result exists; it never emits a partial result object.
-   - A nonzero completed report such as incompatible `db status` or a fully classified atomic import rejection still carries its complete typed result.
+   - A nonzero completed report such as incompatible `db status` or a fully classified per-record import result with rejections still carries its complete typed result.
    - Every unlisted V1 command uses `result = null`: its primary result is already complete in `affected_ids`, `generation_ids`, `run_ids`, invalidation reports, `findings`, `residual_paths`, `warnings`, and `retry`.
    - Adding or renaming a command requires a schema entry declaring its closed object or `null` success schema; widening an object projection requires declaring the change in §14 and incrementing `envelope_version` when the current version is already implemented.
    - IDs, entity groups, paths, findings, views, branches, and result records are duplicate-free and deterministically ordered by their stable class and identity; §19.4 import records use their input `record_number` as that identity, so repeated source identities remain distinct report entries.
