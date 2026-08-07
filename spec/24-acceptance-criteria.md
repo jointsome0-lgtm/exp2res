@@ -78,7 +78,7 @@ V1 is acceptable when:
     - A source excerpt remains exempt only with a typed source reference and byte-for-byte value/substring validation.
     - Structural validation applies everywhere.
     - Mixed-origin rendering preserves segment boundaries.
-29. Assessment snapshots replace by assessment-view identity, and V1 declares exactly one view — `global` — so exactly one snapshot is current:
+29. Assessment snapshots replace by assessment-view identity, and V1 declares exactly one view — `global` — so at most one snapshot is current, exactly one after a successful Stage 6 swap:
     - Snapshot unknowns are the complete typed current unanswered `GapQuestion` set, with answered rows excluded.
     - §17 renders those unknowns plus every claim's typed bundle-grounded counterevidence.
     - That rendering creates no independent prose input, alters no §16.11 aggregation, and bypasses no Stage 10 gate.
@@ -188,7 +188,7 @@ V1 is acceptable when:
       - A non-English generated fact fails §16.13 voice validation and does not persist.
       - §16.6 rejects an unsupported English production claim from Russian evidence exactly as it would from English evidence.
     - Source-named entities keep their source-script spelling inside generated prose, and §15.1 response validation applies §16.13's deterministic mixed-script tripwire: a mixed Latin/Cyrillic token in any model-authored response string that does not equal, complete and under NFC, a mixed-script token carried by that call's serialized input fails as invalid structured output with a content-free diagnostic naming the field location and a stable code but never the token bytes, while §12 hydration and stored content are never evaluated by the tripwire.
-    - NFC plus locale-independent Unicode Default Case Folding collapses case or normalization variants only at the named project-label, assessment-view, and branch identities, independent of process locale; the same strings remain distinct everywhere no owning rule names normalization or folding.
+    - NFC plus locale-independent Unicode Default Case Folding collapses case or normalization variants only at the named project-label and branch identities, independent of process locale; the same strings remain distinct everywhere no owning rule names normalization or folding.
     - V1 local locators use POSIX Linux/macOS semantics: Windows drive-letter, UNC, backslash-separated, and non-POSIX `file:` forms fail without reinterpretation at acquisition and at the pre-serialization re-check, while on a case-insensitive volume every case-variant spelling of one file receives one deterministic mandatory-deny and user-ignore decision — the comparisons additionally apply under the locale-independent case fold there, so a case variant of a denied name is denied even when canonicalization preserves the supplied spelling.
 46. Each planned LLM invocation owns exactly one `llm_calls` row, and within each initial or §15.1 validation-retry request round only §15.10's enumerated retryable transport failures may retry:
     - Every permitted retry increments `transport_retries` on that row before the next attempt, remains synchronous inside the same foreground §14 action with bounded jittered backoff, and observes that round's configured total-transport-attempt cap including its initial attempt.

@@ -261,7 +261,7 @@ class AssessmentSnapshot(BaseModel):
 
 A snapshot's member claims are exactly the `self_claims` rows whose `snapshot_id` names it (§11.6); the snapshot persists no claim list, and member selection orders by claim ID under §11.6's ordering rule.
 
-`scope` is the assessment view and the snapshot replacement identity under §13.6. V1 declares exactly one view, `global` (§10), so exactly one assessment snapshot is current at a time. `title` is service-derived under §13.6's deterministic rule.
+`scope` is the assessment view and the snapshot replacement identity under §13.6. V1 declares exactly one view, `global` (§10), so at most one assessment snapshot is current at a time — exactly one after a successful Stage 6 swap, and none before the first one or after §13.13 supersedes the sole view (§30's `no_current_view`). `title` is service-derived under §13.6's deterministic rule.
 
 `gap_question_ids` is service-populated under §13.6's exact unanswered-set rule. The field carries references only: the stored unknown content remains the referenced current `GapQuestion.question`, `reason`, `priority`, and target; known-gap assertions belong to §13.6's status-bearing claim output. At the Stage 6 transaction boundary, missing, duplicate, superseded, answered, or omitted gap references fail under §12 rule 10 and the Stage 6 transaction checks.
 
