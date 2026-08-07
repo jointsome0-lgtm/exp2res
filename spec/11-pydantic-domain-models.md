@@ -53,7 +53,7 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
     - Model-authored values are exactly the fields declared by the applicable §15 output shape.
     - Importer-authored values are exactly the mappings declared by the applicable §19 contract.
     - Owner-authored values include `raw_text`, correction and answer text, and configuration.
-    - Service-owned persisted fields include IDs, timestamps, lifecycle fields, production provenance, paths, entity `metadata`, and the deterministic post-response copies and derivations §15.11's ownership matrix assigns to a producing stage — for example fact `project` and `source_log_ids`, snapshot `summary` and `gap_question_ids`, and bullet `source_log_ids` and `source_self_claim_ids`.
+    - Service-owned persisted fields include IDs, timestamps, lifecycle fields, production provenance, paths, entity `metadata`, and the deterministic post-response copies and derivations §15.11's ownership matrix assigns to a producing stage — for example fact `project` and `source_log_ids`, snapshot `summary` and `gap_question_ids`, and bullet `source_log_ids`. Bullet `source_self_claim_ids` is not among them: §15.11 assigns it to the model as a semantic selection.
 20. A declared verifier `status`, `counterevidence`, `unsupported_phrases`, or `reason` is a model-authored transition result, not direct assignment to the same-named or mapped persisted lifecycle field; the owning service alone validates and applies that result.
 21. Authorship follows the declared shape and operation, not matching key spelling.
 22. A model response that sets a service-owned persisted field outside its declared transition result or sets any undeclared field is invalid structured output.
@@ -88,7 +88,7 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
     each list field: at most 1,000 items
     each payload: at most 10,000 total objects
     JSON nesting: at most 32 levels
-    each warnings list and each findings list: at most 100 entries
+    each warnings list and each findings list: at most 100 entries, except the §15.7 whole-pack `findings` array, which carries one entry per supplied bullet and is bounded only by the list-field limit above
     typed ID lists: duplicate-free under their existing rules
     each string-list member: non-empty
     ```

@@ -1399,7 +1399,7 @@ Then the repeated identity is rejected on its own while the otherwise-insertable
 And the retained record is not mutated or reinterpreted
 And the complete result reports the first record as accepted with its created raw_log_id, the repeated identity as rejected, and exits through §14.14 class 2
 
-Given two valid records have the same source system and identical content but different source identities
+Given two valid records have the same source system and identical content apart from their differing source identities
 When they are imported in one file
 Then both records are accepted in file order
 And two independent RawLog/EvidenceItem pairs with distinct local IDs persist
@@ -1865,7 +1865,7 @@ case = '''
 Given a current assessment snapshot that passes the §16.11 export gate
 When the assessment set is published twice from unchanged state
 Then the published set contains exactly report.md, report.html, self_claims.json, evidence_map.json, and manifest.json
-And manifest.json declares manifest_version 5 and lists report.html with its exact member hash
+And manifest.json declares manifest_version 6 and lists report.html with its exact member hash
 And report.html matches its pinned golden bytes on both runs, is UTF-8 with LF line endings and exactly one final LF, and contains no export wall-clock value, nonce, workspace path, or host name
 
 Given the same published snapshot
@@ -2149,7 +2149,7 @@ When the command reports its bound URLs, receives an owner interruption with no 
 Then standard error reports exactly `http://127.0.0.1:<selected-port>/mirror?scope=global` and `http://127.0.0.1:<selected-port>/questions?scope=global`, once each in that order, and every progress event appears only there
 And an IPv6 bind reports the same ordered paths and selectors under `http://[::1]:<selected-port>` with its exact selected port
 And neither bind reports a selectorless base route, template, snapshot or project selector, trailing path, fragment, or additional query parameter
-And standard output is exactly one UTF-8 §14.14 envelope, optionally followed by one final newline, with envelope_version 1, command `view serve`, status cancelled, exit_code 9, result null, and every other required field present with its §14.14 cancelled value
+And standard output is exactly one UTF-8 §14.14 envelope, optionally followed by one final newline, with envelope_version 2, command `view serve`, status cancelled, exit_code 9, result null, and every other required field present with its §14.14 cancelled value
 And the process exit status is 9
 And standard output contains no URL, banner, progress text, diagnostic outside the envelope, or additional JSON value
 

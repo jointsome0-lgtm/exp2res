@@ -252,7 +252,7 @@ extract only narrow source-supported implementation facts
    - `RawLog.external_ref` retains only its source-provenance role.
    - Re-importing the same identity with the same content hash is an idempotent duplicate no-op: it creates no `RawLog`, `EvidenceItem`, or other row and is reported as `duplicate`.
    - The same identity with a different content hash is a plain rejected record — there is no separate conflict class — and the retained raw and evidence rows are not mutated.
-   - The same content hash under a different identity creates an independent record.
+   - Identity is the sole duplicate key: two records with different identities are always independent records, and the content hash is only ever compared within one identity. Because rule 3 hashes the whole validated record, including its identity fields, equal hashes across identities are not constructible.
    - Corrected upstream content must therefore arrive under a new identity or be rejected.
    - Corrected upstream content never updates the original raw record in place, and the owner's §14.4 correction flow remains the only reinterpretation channel (§5.3).
 
