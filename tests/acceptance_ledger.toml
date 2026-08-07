@@ -403,11 +403,11 @@ issues = ["#159", "#171"]
 note = "Covered eval 21.51 proves every owner-capture command surface, ordered atomic persistence and logs-show projection, strict byte-preserving remote URI validation, slash-prefixed drive rejection, shared current-policy prompt reauthorization for captured and imported local paths without row mutation, directory-independent reauthorization of canonically persisted locators captured through relative spellings, remote non-resolution, and both unchanged §9.4 calibration outcomes."
 
 ["24.56"]
-status = "met"
+status = "partial"
 phases = ["0"]
 evals = ["21.52"]
 issues = ["#161", "#163", "#171", "#180"]
-note = "Covered eval 21.52 proves uniform explicit affirmation before acquisition, bounded byte-identical multiline file/stdin capture with unchanged classifications and artifact composition, canonical-real-path external_ref for a relative --file source, the unknown-precision prompt and typed-value carve-outs, and — for corrections — copy-unless-replaced placement and project, whole-typed-set replacement, mutually exclusive project flags, non-prompt-only flag scoping, affirmation kept separate from the rebuild consent, and a copied placement needing no workspace timezone where an explicit replacement still does."
+note = "Eval 21.52 proves bounded byte-identical multiline file/stdin capture with unchanged classifications and artifact composition, canonical-real-path external_ref for a relative --file source, the unknown-precision prompt and typed-value carve-outs, and — for corrections — copy-unless-replaced placement and project, whole-typed-set replacement, mutually exclusive project flags, non-prompt-only flag scoping, and a copied placement needing no workspace timezone where an explicit replacement still does. Partial until A6's CLI change lands: no test yet proves that a non-prompt capture succeeds with no affirmation flag and no confirmation."
 
 ["24.57"]
 status = "met"

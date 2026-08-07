@@ -563,12 +563,9 @@ nodes = [
 ]
 
 ["21.52"]
-status = "covered"
+status = "partial"
 nodes = [
   "tests/test_capture_noninteractive.py::test_multiline_file_and_stdin_capture_round_trip_with_unchanged_classes",
-  "tests/test_capture_noninteractive.py::test_missing_owner_authorship_fails_before_every_nonprompt_source_read[daily-yes-is-not-affirmation]",
-  "tests/test_capture_noninteractive.py::test_missing_owner_authorship_fails_before_every_nonprompt_source_read[retro]",
-  "tests/test_capture_noninteractive.py::test_missing_owner_authorship_fails_before_every_nonprompt_source_read[gap-answer]",
   "tests/test_capture_noninteractive.py::test_interactive_unknown_precision_skips_period_and_stores_null_bounds",
   "tests/test_capture_noninteractive.py::test_noninteractive_retro_rejects_unknown_period_and_missing_typed_values",
   "tests/test_capture_noninteractive.py::test_stdin_capture_is_bounded_utf8_and_atomic[oversize]",
@@ -580,8 +577,6 @@ nodes = [
   "tests/test_correction_nonprompt.py::test_explicit_replacements_take_effect_exactly[temporal-set]",
   "tests/test_correction_nonprompt.py::test_explicit_replacements_take_effect_exactly[project-replacement]",
   "tests/test_correction_nonprompt.py::test_explicit_replacements_take_effect_exactly[project-cleared]",
-  "tests/test_correction_nonprompt.py::test_missing_affirmation_fails_before_acquisition[bare]",
-  "tests/test_correction_nonprompt.py::test_missing_affirmation_fails_before_acquisition[with-replacement-flags]",
   "tests/test_correction_nonprompt.py::test_replacement_flags_without_file_are_invalid_usage[temporal]",
   "tests/test_correction_nonprompt.py::test_replacement_flags_without_file_are_invalid_usage[project]",
   "tests/test_correction_nonprompt.py::test_replacement_flags_without_file_are_invalid_usage[clear-project]",
@@ -589,13 +584,11 @@ nodes = [
   "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[partial-set]",
   "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[unknown-with-period]",
   "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[missing-period]",
-  "tests/test_correction_nonprompt.py::test_affirmation_does_not_supply_the_rebuild_consent",
-  "tests/test_correction_nonprompt.py::test_missing_consent_fails_before_the_source_is_read",
   "tests/test_correction_nonprompt.py::test_copied_placement_needs_no_workspace_timezone",
   "tests/test_correction_nonprompt.py::test_explicit_temporal_replacement_still_requires_the_timezone",
 ]
 phase = "1"
-note = "All four non-prompt capture forms prove explicit pre-acquisition affirmation, multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate; correction proves copy-unless-replaced placement and project, the whole-typed-set replacement rules, mutually exclusive project flags, non-prompt-only flag scoping, and affirmation separate from rebuild consent."
+note = "All four non-prompt capture forms prove multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate; correction proves copy-unless-replaced placement and project, the whole-typed-set replacement rules, mutually exclusive project flags, and non-prompt-only flag scoping. Partial until A6's CLI change lands: the shipped affirmation and rebuild-consent tests asserted the removed prerequisites and left with the flag, so flagless-success coverage is still missing."
 
 ["21.53"]
 status = "covered"

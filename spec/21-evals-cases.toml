@@ -1792,7 +1792,6 @@ Given any of --precision, --period, --confidence, --project, or --clear-project 
 When the command evaluates the candidate
 Then the flag without --file fails as invalid usage in exit class 2
 And it fails before opening the source, writing a row, displaying a prompt, or invoking any provider
-And no capture flag implies the §13.13 rebuild consent, which the non-prompt form still requires under §14.14 rule 3
 '''
 
 ["21.53"]
