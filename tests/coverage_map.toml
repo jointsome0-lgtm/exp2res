@@ -641,7 +641,7 @@ nodes = [
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
 phase = "3"
-note = "The published set's fourth member is pinned by golden bytes and its manifest hash at §13.14's manifest_version 6, both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"
+note = "The published set's fourth member is pinned by golden bytes and its manifest hash — still at the shipped manifest_version 5, so §21.55's revised version-6 requirement stays uncovered until the queued implementation and its goldens land — both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"
 
 ["21.56"]
 status = "partial"
