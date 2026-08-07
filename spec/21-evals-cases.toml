@@ -157,8 +157,8 @@ And the purged assessment views are reported with executable §14.9 regeneration
 And a rebuild failure does not restore log_001 or any purged derived content
 And a managed output that cannot be removed is reported as a residual path while database deletion remains committed
 
-Given a purged project view whose subject facts all derived from the deleted log
-When the owner re-runs assess generate for that view
+Given the purged global view whose subject facts all derived from the deleted log
+When the owner re-runs assess generate
 Then the run fails before any provider call under §13.6's empty-subject rule
 '''
 
@@ -602,22 +602,20 @@ Then the run fails before any provider call and no snapshot is persisted
 ["21.34"]
 title = "Managed Exports Are ID-Keyed and Manifest-Identified"
 case = '''
-Given a current global snapshot G and a current project snapshot P for target "Exp2Res"
+Given the current global snapshot G and a current resume branch B anchored to it
 When each is exported under §13.12 through §13.14
-Then their complete sets land only in out/assessment/<G.id>/ and out/assessment/<P.id>/
-And G.id and P.id are the exact bounded lowercase-ASCII path-key forms allocated by the service, never encodings of scope or target text
-And each valid matching manifest carries its snapshot ID, exact assessment-view identity, and §13.14 render-input hash while no scope or scope-target string contributes a path component
-And exporting P neither overwrites nor removes G's set
+Then their complete sets land only in out/assessment/<G.id>/ and out/branch/<B.id>/
+And G.id and B.id are the exact bounded lowercase-ASCII path-key forms allocated by the service, never encodings of scope, branch name, or job-description text
+And each valid matching manifest carries its entity ID, exact §13.14 identity object, and render-input hash while no scope or name string contributes a path component
+And exporting B neither overwrites nor removes G's set
 
-Given re-verification or gaps answer changes state read by P's renderer while P's entity ID, generation ID, and source IDs remain unchanged
+Given re-verification changes state read by G's renderer while G's entity ID, generation ID, and source IDs remain unchanged
 Then the prior manifest's recomputed render-input hash differs and that set is no longer current
-And invalidation targets exactly P's snapshot-ID directory and the out/branch/<branch-id>/ sets of branches dependent on P
-And G's directory is untouched
+And invalidation targets exactly G's snapshot-ID directory and the out/branch/<branch-id>/ sets of branches dependent on G
 
-Given two project targets that differ only in case or surrounding whitespace
-When the later generation replaces the earlier view and its snapshot is exported
-Then they canonicalize to one assessment-view identity while the two snapshots retain distinct never-reused IDs
-And publication uses the later snapshot ID and removes or reports every prior manifest-valid assessment directory naming that same view without touching another view
+Given a later Stage 6 generation replaces the current global view and its snapshot is exported
+Then the two snapshots share one assessment-view identity while retaining distinct never-reused IDs
+And publication uses the later snapshot ID and removes or reports every prior manifest-valid assessment directory naming that same view without touching any branch set
 
 Given bullets generate receives a non-blank §11-valid display name such as assessment, assessment., "assessment ", or assessment/global
 When the branch is generated and exported
@@ -1027,16 +1025,16 @@ Then it has no invocation-control effect
 Given stdin is piped or --no-input is present and a §14.3 capture lacks prompt-supplied values
 When the command runs
 Then it exits 2 before blocking and emits no prompt
-Given any destructive or cost-bearing command has non-TTY stdin and lacks --yes
-Then it exits 2 before a destructive step or provider call
+Given any §14.14 rule 3 confirmation-set command has non-TTY stdin and lacks --yes
+Then it exits 2 before its irreversible step
 Given all required declared inputs plus --yes are present
 Then the same command may proceed without reading stdin
 Given TTY stdin and no --yes
-Then only the §14.14 confirmation set may prompt before destruction or provider cost
+Then only that confirmation set may prompt, and a command whose only consequence is provider cost proceeds unprompted
 
 Given table-driven command fixtures for exit 0, every operational failure class 1 through 8, cancellation 9, and semantic blocking 10
 When each runs with --json
-Then stdout is exactly one parseable version-1 envelope plus at most its final newline
+Then stdout is exactly one parseable version-2 envelope plus at most its final newline
 And every required field is present with no undeclared outer or nested field
 And exit_code equals the process exit status
 And status is ok for 0, failed for 1 through 8, cancelled for 9, and blocked for 10
@@ -1637,7 +1635,7 @@ Given separate §15.6 and §15.7 fixtures carry evidence or self-claim text sayi
 And the supplied facts support only a strict subset of the selected job description's typed requirements and identify the coursework as learning rather than employment
 When Stage 10 invokes the resume writer and Stage 11 invokes the resume verifier over their one-bullet pack
 Then Stage 10's matched_jd_requirements list remains a duplicate-free supported subset of the supplied ParsedJD rather than widening to every requirement
-And its provenance remains typed and inside the supplied context, with source_log_ids and source_self_claim_ids retaining §15.6's exact-set rules and §18's provenance gates
+And its provenance remains typed and inside the supplied context, with source_log_ids retaining §15.6's service-derived exact-set rule, source_self_claim_ids a duplicate-free subset of the supplied supported claims, and §18's provenance gates unchanged
 And Stage 10 does not render the coursework as employment, while a candidate that does so receives the §16.8 non-passing verifier result and cannot pass export
 And every generated segment, including a supplied self-claim, remains within §16.13's V1 language scope while any underlying instruction-like source remains byte-exact source voice
 
