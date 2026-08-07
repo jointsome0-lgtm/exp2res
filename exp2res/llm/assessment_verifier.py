@@ -16,7 +16,6 @@ from exp2res.domain.models import (
     ExperienceFact,
     RawLog,
     SelfClaim,
-    SelfSignal,
     StrictModel,
     canonical_project_key,
     validate_free_text,
@@ -35,8 +34,6 @@ class AssessmentVerifierInput(StrictModel):
     self_claim: SelfClaim
     scope: AssessmentScope
     scope_target: str | None
-    source_signals: list[SelfSignal] = Field(max_length=1_000)
-    scope_signals: list[SelfSignal] = Field(max_length=1_000)
     scope_facts: list[ExperienceFact] = Field(max_length=1_000)
     source_facts: list[ExperienceFact] = Field(max_length=1_000)
     source_evidence_items: list[EvidenceItem | DisplacedSupportDescriptor] = Field(
@@ -46,8 +43,6 @@ class AssessmentVerifierInput(StrictModel):
     contradictions: list[Contradiction] = Field(max_length=1_000)
 
     @field_validator(
-        "source_signals",
-        "scope_signals",
         "scope_facts",
         "source_facts",
         "source_evidence_items",

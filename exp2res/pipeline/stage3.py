@@ -40,13 +40,11 @@ from exp2res.storage.repository import (
     list_assessment_snapshots,
     list_contradictions,
     list_gap_questions,
-    list_self_signals,
     list_self_claims_for_snapshot,
     mark_assessment_snapshots_superseded,
     mark_contradictions_superseded,
     mark_facts_superseded,
     mark_gap_questions_superseded,
-    mark_self_signals_superseded,
     mark_self_claims_superseded,
 )
 from exp2res.storage.workspace import (
@@ -72,7 +70,6 @@ class Stage3Result:
     superseded_generation_ids: tuple[str, ...]
     superseded_gap_ids: tuple[str, ...]
     superseded_contradiction_ids: tuple[str, ...]
-    superseded_signal_ids: tuple[str, ...]
     superseded_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
@@ -407,7 +404,6 @@ def run_fact_extraction(
         superseded_ids: list[str] = []
         superseded_gap_ids: list[str] = []
         superseded_contradiction_ids: list[str] = []
-        superseded_signal_ids: list[str] = []
         superseded_claim_ids: list[str] = []
         superseded_snapshot_ids: list[str] = []
         invalidated_views: list[InvalidatedView] = []
@@ -450,13 +446,11 @@ def run_fact_extraction(
             if created_ids or superseded_ids:
                 current_gaps = list_gap_questions(held)
                 current_contradictions = list_contradictions(held)
-                current_signals = list_self_signals(held)
                 current_snapshots = list_assessment_snapshots(held)
                 superseded_gap_ids.extend(gap.id for gap in current_gaps)
                 superseded_contradiction_ids.extend(
                     contradiction.id for contradiction in current_contradictions
                 )
-                superseded_signal_ids.extend(signal.id for signal in current_signals)
                 superseded_snapshot_ids.extend(item.id for item in current_snapshots)
                 for snapshot in current_snapshots:
                     superseded_claim_ids.extend(
@@ -472,7 +466,6 @@ def run_fact_extraction(
                 for table, ids in (
                     ("gap_questions", superseded_gap_ids),
                     ("contradictions", superseded_contradiction_ids),
-                    ("self_signals", superseded_signal_ids),
                     ("self_claims", superseded_claim_ids),
                     ("assessment_snapshots", superseded_snapshot_ids),
                 ):
@@ -491,9 +484,6 @@ def run_fact_extraction(
                 )
                 mark_contradictions_superseded(
                     held, superseded_contradiction_ids, swap_time
-                )
-                mark_self_signals_superseded(
-                    held, superseded_signal_ids, swap_time
                 )
                 mark_self_claims_superseded(held, superseded_claim_ids, swap_time)
                 mark_assessment_snapshots_superseded(
@@ -562,9 +552,6 @@ def run_fact_extraction(
                 superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
                 superseded_contradiction_ids=tuple(
                     sorted(superseded_contradiction_ids, key=_id_key)
-                ),
-                superseded_signal_ids=tuple(
-                    sorted(superseded_signal_ids, key=_id_key)
                 ),
                 superseded_claim_ids=tuple(
                     sorted(superseded_claim_ids, key=_id_key)

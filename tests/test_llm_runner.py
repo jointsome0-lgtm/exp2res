@@ -203,12 +203,10 @@ def test_shipped_contract_schemas_declare_every_property_required() -> None:
     from exp2res.llm.assessment_writer import ASSESSMENT_WRITER_CONTRACT
     from exp2res.llm.detector import DETECTOR_CONTRACT
     from exp2res.llm.fact_extractor import FACT_EXTRACTOR_CONTRACT
-    from exp2res.llm.signal_extractor import SIGNAL_EXTRACTOR_CONTRACT
 
     shipped = (
         FACT_EXTRACTOR_CONTRACT,
         DETECTOR_CONTRACT,
-        SIGNAL_EXTRACTOR_CONTRACT,
         ASSESSMENT_WRITER_CONTRACT,
         ASSESSMENT_VERIFIER_CONTRACT,
     )

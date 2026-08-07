@@ -1,4 +1,4 @@
-"""Schema v1→v2→v3→v4→v5→v6→v7→v8 migration and rollback tests."""
+"""Schema v1→v2→…→v8→v9 migration and rollback tests."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from exp2res.storage.schema import (
     SCHEMA_V5_SQL,
     SCHEMA_V6_SQL,
     SCHEMA_V7_SQL,
+    SCHEMA_V8_SQL,
 )
 from exp2res.storage.workspace import (
     inspect_workspace,
@@ -242,6 +243,158 @@ def v7_workspace(tmp_path: Path, *, name: str = "v7-workspace") -> Path:
     return root
 
 
+
+def v8_workspace(tmp_path: Path, *, name: str = "v8-workspace") -> Path:
+    """A v8 workspace holding one raw lineage and a full derived layer."""
+
+    root = tmp_path / name
+    root.mkdir()
+    (root / ".exp2res").mkdir(mode=0o700)
+    (root / ".exp2res" / "lock").touch(mode=0o600)
+    (root / "out").mkdir(mode=0o700)
+    configure_timezone(root)
+    database = root / ".exp2res" / "exp2res.sqlite"
+    stamp = FIXED_NOW.isoformat()
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.executescript(SCHEMA_V8_SQL)
+        connection.executemany(
+            "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
+            tuple(
+                (version, stamp, f"0.1.0-v{version}-fixture")
+                for version in range(1, 9)
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO raw_logs(
+                id, recorded_at, entry_type, source_type, occurred_start,
+                occurred_end, temporal_precision, temporal_confidence, raw_text,
+                project, project_key, external_ref, corrects_log_id, metadata_json
+            ) VALUES (
+                'log_vera_v8', ?, 'manual_daily', 'manual_entry', ?, NULL,
+                'exact_day', 'high', 'Vera Example retained raw record.',
+                NULL, NULL, NULL, NULL, '{}'
+            )
+            """,
+            (stamp, stamp),
+        )
+        connection.execute(
+            """
+            INSERT INTO evidence_items(
+                id, created_at, raw_log_id, title, summary, uri, path,
+                strength, metadata_json
+            ) VALUES (
+                'evi_vera_v8', ?, 'log_vera_v8', NULL,
+                'Vera Example retained support.', NULL, NULL,
+                'manual_claim', '{}'
+            )
+            """,
+            (stamp,),
+        )
+        connection.execute(
+            """
+            INSERT INTO processing_runs(
+                id, stage, started_at, status, input_ids_json, output_ids_json,
+                metadata_json
+            ) VALUES (
+                'run_vera_v8', '13.6', ?, 'completed', '[]', '[]', '{}'
+            )
+            """,
+            (stamp,),
+        )
+        connection.execute(
+            """
+            INSERT INTO experience_facts(
+                id, created_at, superseded_at, claim, claim_kind, project,
+                project_key, role, company, context, ownership_level, action,
+                object, outcome, skills_json, technologies_json, themes_json,
+                occurred_start, occurred_end, temporal_precision,
+                temporal_confidence, confidence, metadata_json,
+                produced_by_run_id, generation_id
+            ) VALUES (
+                'fact_vera_v8', ?, NULL, 'Vera Example retained fact.',
+                'observed_fact', NULL, NULL, NULL, NULL,
+                'independent_project', 'built', 'built', 'a fixture', NULL,
+                '[]', '[]', '[]', ?, NULL, 'exact_day', 'high', 'medium', '{}',
+                'run_vera_v8', 'gen_vera_v8'
+            )
+            """,
+            (stamp, stamp),
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_sources(fact_id, evidence_item_id, support_type)
+            VALUES ('fact_vera_v8', 'evi_vera_v8', 'direct')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO self_signals(
+                id, created_at, superseded_at, signal_type, statement,
+                supporting_fact_ids_json, counter_fact_ids_json, confidence,
+                metadata_json, produced_by_run_id, generation_id
+            ) VALUES (
+                'signal_vera_v8', ?, NULL, 'execution_pattern',
+                'Vera Example repeats a provenance-aware workflow.',
+                '["fact_vera_v8"]', '[]', 'medium', '{}',
+                'run_vera_v8', 'gen_vera_v8'
+            )
+            """,
+            (stamp,),
+        )
+        connection.execute(
+            """
+            INSERT INTO assessment_snapshots(
+                id, created_at, superseded_at, scope, scope_target, title,
+                summary, gap_question_ids_json, contradiction_ids_json,
+                verification_status, metadata_json, produced_by_run_id,
+                generation_id
+            ) VALUES (
+                'snapshot_vera_v8', ?, NULL, 'global', NULL,
+                'Self-Assessment — Global',
+                'Current evidence suggests a provenance-aware workflow.',
+                '[]', '[]', 'supported', '{}', 'run_vera_v8', 'gen_vera_v8'
+            )
+            """,
+            (stamp,),
+        )
+        connection.execute(
+            """
+            INSERT INTO self_claims(
+                id, created_at, superseded_at, snapshot_id, claim, claim_kind,
+                dimension, source_signal_ids_json, source_fact_ids_json,
+                confidence, verification_status, counterevidence_json,
+                uncertainty, metadata_json, produced_by_run_id, generation_id
+            ) VALUES (
+                'claim_vera_v8', ?, NULL, 'snapshot_vera_v8',
+                'Current evidence suggests a provenance-aware workflow.',
+                'narrative_summary', 'trajectory', '["signal_vera_v8"]',
+                '["fact_vera_v8"]', 'medium', 'supported', '[]', NULL, '{}',
+                'run_vera_v8', 'gen_vera_v8'
+            )
+            """,
+            (stamp,),
+        )
+        connection.execute(
+            """
+            INSERT INTO verification_findings(
+                id, created_at, produced_by_run_id, target_type, target_id,
+                status, reason, unsupported_phrases_json, suggested_rewrite,
+                counterevidence_json
+            ) VALUES (
+                'finding_vera_v8', ?, 'run_vera_v8', 'self_claim',
+                'claim_vera_v8', 'supported',
+                'The supplied evidence supports the claim.', '[]', NULL, '[]'
+            )
+            """,
+            (stamp,),
+        )
+    database.chmod(0o600)
+    return root
+
+
 def sqlite_master_shape(database: Path) -> list[tuple[object, ...]]:
     with sqlite3.connect(database) as connection:
         return sorted(
@@ -302,7 +455,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     assert result.exit_code == 0, result.stderr
     envelope = json.loads(result.stdout)
     schema = envelope["result"]["schema"]
-    assert schema["stored_version"] == 8
+    assert schema["stored_version"] == 9
     assert schema["compatible"] is True
     backup = Path(schema["managed_backup_path"])
     assert backup.is_file()
@@ -320,7 +473,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     with sqlite3.connect(database) as connection:
         assert [
             row[0] for row in connection.execute("SELECT version FROM schema_meta ORDER BY version")
-        ] == [1, 2, 3, 4, 5, 6, 7, 8]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
         tables = {
             row[0]
             for row in connection.execute(
@@ -334,7 +487,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
         "fact_sources",
         "gap_questions",
         "contradictions",
-        "self_signals",
+        "self_claims",
     }.issubset(tables)
     assert show_log(workspace, log_id=log_id).raw_log.raw_text == raw_text
 
@@ -355,7 +508,7 @@ def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 8
+    assert migrated.stored_version == 9
     backup = Path(migrated.managed_backup_path or "")
     assert backup.is_file()
     assert "exp2res-v2-" in backup.name
@@ -373,22 +526,92 @@ def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
         ]
         assert connection.execute(
             "SELECT version FROM schema_meta ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,)]
 
 
-def test_fresh_v8_and_migrated_v7_to_v8_have_identical_sqlite_master_shape(
+def test_fresh_and_migrated_workspaces_have_identical_sqlite_master_shape(
     tmp_path: Path,
 ) -> None:
-    """§12.14: fresh and rebuilt-v8 table/trigger SQL has exact parity."""
+    """§12.14: fresh and migrated table/trigger SQL has exact parity."""
 
     migrated = v7_workspace(tmp_path)
     migrate_workspace(migrated, clock=lambda: FIXED_NOW.replace(day=16))
-    fresh = tmp_path / "fresh-v8"
+    fresh = tmp_path / "fresh-current"
     fresh.mkdir()
     initialize_workspace(fresh, clock=lambda: FIXED_NOW.replace(day=16))
     assert sqlite_master_shape(
         migrated / ".exp2res" / "exp2res.sqlite"
     ) == sqlite_master_shape(fresh / ".exp2res" / "exp2res.sqlite")
+
+
+def test_v8_to_v9_deletes_the_derived_layer_and_its_published_sets(
+    tmp_path: Path,
+) -> None:
+    """§12.14/issue #76: the registered whole-layer deletion, out/ included."""
+
+    workspace = v8_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    published = workspace / "out" / "assessment" / "snapshot_vera_v8"
+    published.mkdir(mode=0o700, parents=True)
+    (published / "report.md").write_text("stale", encoding="utf-8")
+    (published / "manifest.json").write_text("{}", encoding="utf-8")
+
+    migrated = migrate_workspace(
+        workspace, clock=lambda: FIXED_NOW.replace(day=16)
+    )
+    assert migrated.stored_version == 9
+    assert migrated.compatible is True
+    # The published set is regenerable output over rows the step deletes, so
+    # it goes with them rather than outliving its own database provenance.
+    assert not published.exists()
+
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert "self_signals" not in tables
+        assert not any("self_signals" in row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('index', 'trigger')"
+        ))
+        for table in ("assessment_snapshots", "self_claims", "verification_findings"):
+            assert connection.execute(
+                f"SELECT COUNT(*) FROM {table}"
+            ).fetchone()[0] == 0
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(self_claims)")}
+        assert "counter_fact_ids_json" in columns
+        assert "source_signal_ids_json" not in columns
+        # The raw and fact layers are untouched: only the derived layer the
+        # signal removal invalidates is rebuilt from empty.
+        assert connection.execute(
+            "SELECT raw_text FROM raw_logs WHERE id = 'log_vera_v8'"
+        ).fetchone()[0] == "Vera Example retained raw record."
+        assert connection.execute(
+            "SELECT COUNT(*) FROM experience_facts"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM fact_sources"
+        ).fetchone()[0] == 1
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute(
+            "SELECT version FROM schema_meta ORDER BY version"
+        ).fetchall() == [(index,) for index in range(1, 10)]
+        # The rebuilt tables keep their §11 lifecycle guards, so the empty
+        # derived layer is protected exactly like a populated one.
+        assert {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        } >= {
+            "self_claims_lifecycle_update_guard",
+            "self_claims_owner_delete_guard",
+            "assessment_snapshots_lifecycle_update_guard",
+            "verification_findings_update_guard",
+        }
 
 
 def test_v7_to_v8_rebuild_preserves_rows_guards_indexes_and_admits_open_ranges(
@@ -512,17 +735,25 @@ def test_v7_to_v8_rebuild_preserves_rows_guards_indexes_and_admits_open_ranges(
                 "fact_sources",
             )
         }
-        indexes_before = connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name"
-        ).fetchall()
-        triggers_before = connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
-        ).fetchall()
+        # The v9 step legitimately drops the signal layer's own objects, so
+        # the parity this test owns is over everything else (issue #76).
+        indexes_before = [
+            row for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name"
+            ).fetchall()
+            if "self_signals" not in row[0]
+        ]
+        triggers_before = [
+            row for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
+            ).fetchall()
+            if "self_signals" not in row[0]
+        ]
 
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 8
+    assert migrated.stored_version == 9
     with sqlite3.connect(database) as connection:
         connection.create_function("exp2res_owner_delete", 0, lambda: 0)
         retained_after = {
@@ -861,7 +1092,7 @@ def test_post_commit_interrupt_reports_backup_and_leaves_durable_v8(
     assert len(backups) == 1
     assert interrupt_info.value.managed_backup_path == str(backups[0])
     after = inspect_workspace(workspace)
-    assert after.stored_version == 8
+    assert after.stored_version == 9
     assert after.compatible is True
 
 
@@ -891,7 +1122,7 @@ def test_cli_post_commit_interrupt_envelope_reports_durable_v8_and_backup(
     assert result.exit_code == 9
     envelope = json.loads(result.stdout)
     assert envelope["status"] == "cancelled"
-    assert envelope["result"]["schema"]["stored_version"] == 8
+    assert envelope["result"]["schema"]["stored_version"] == 9
     assert envelope["result"]["schema"]["compatible"] is True
     backup = Path(envelope["result"]["schema"]["managed_backup_path"])
     assert backup.is_file()
@@ -1086,6 +1317,6 @@ def test_exact_shape_preexisting_telemetry_table_migrates(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
 
-    assert migrated.stored_version == 8
+    assert migrated.stored_version == 9
     assert migrated.compatible is True
     assert table_shape(database, table) == expected_shape

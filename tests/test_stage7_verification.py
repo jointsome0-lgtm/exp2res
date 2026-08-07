@@ -30,13 +30,7 @@ from conftest import FIXED_NOW, REPOSITORY_ROOT
 from fakes import FakeContractRunner
 from test_stage3_extraction import SELECTION, budgets
 from test_stage4_detection import detector_response, run_stage4
-from test_stage5_signals import (
-    SignalIds,
-    prepare_facts,
-    prepare_high_facts,
-    run_stage5,
-    signal_response,
-)
+from assessment_helpers import VeraIds, prepare_facts, prepare_high_facts
 from test_stage6_assessment import (
     assessment_response,
     prepare_graph,
@@ -91,16 +85,14 @@ def run_stage7(workspace: Path, fake: FakeContractRunner, ids, snapshot_id: str)
 
 
 def generated_snapshot(workspace: Path):
-    ids, facts, signals = prepare_graph(workspace)
+    ids, facts = prepare_graph(workspace)
     generated = run_stage6(
         workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=list(facts), signal_ids=list(signals))]
-        ),
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
         ids,
     )
     assert generated.snapshot_id is not None
-    return ids, facts, signals, generated
+    return ids, facts, generated
 
 
 @pytest.mark.parametrize(
@@ -114,7 +106,7 @@ def generated_snapshot(workspace: Path):
 def test_mixed_verdicts_commit_findings_and_precedence(
     workspace: Path, statuses: tuple[str, str], aggregate: str
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     fake = FakeContractRunner([verifier_response(item) for item in statuses])
     result = run_stage7(workspace, fake, ids, generated.snapshot_id)
     assert result.snapshot_status == aggregate
@@ -131,7 +123,7 @@ def test_mixed_verdicts_commit_findings_and_precedence(
 def test_pass_changes_only_verification_fields_and_claim_prose_trigger_holds(
     workspace: Path,
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     with read_database(workspace) as connection:
         before = {
             row["id"]: dict(row)
@@ -165,7 +157,7 @@ def test_pass_changes_only_verification_fields_and_claim_prose_trigger_holds(
 
 
 def test_valid_negative_verdict_consumes_no_schema_retry(workspace: Path) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     result = run_stage7(
         workspace,
         FakeContractRunner(
@@ -185,7 +177,7 @@ def test_valid_negative_verdict_consumes_no_schema_retry(workspace: Path) -> Non
 def test_schema_invalid_first_response_retries_once_then_commits(
     workspace: Path,
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     invalid = verifier_response(include_reason=False)
     fake = FakeContractRunner([invalid, verifier_response(), verifier_response()])
     result = run_stage7(workspace, fake, ids, generated.snapshot_id)
@@ -203,7 +195,7 @@ def test_schema_invalid_first_response_retries_once_then_commits(
 def test_invalid_after_retry_keeps_prior_complete_pass_and_records_failed_run(
     workspace: Path,
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     prior = run_stage7(
         workspace,
         FakeContractRunner([verifier_response(), verifier_response()]),
@@ -237,7 +229,7 @@ def test_invalid_after_retry_keeps_prior_complete_pass_and_records_failed_run(
 def test_invalid_counterevidence_retries_then_fails(
     workspace: Path, mode: str
 ) -> None:
-    ids, facts, signals, generated = generated_snapshot(workspace)
+    ids, facts, generated = generated_snapshot(workspace)
     if mode == "out_of_bundle":
         entries = [
             {
@@ -247,18 +239,20 @@ def test_invalid_counterevidence_retries_then_fails(
             }
         ]
     elif mode == "wrong_type":
+        # The ID is in the bundle, but under `experience_fact`; a reference
+        # is the type-and-ID pair, so the wrong type reaches nothing.
         entries = [
             {
                 "statement": "The contrary source uses the wrong type.",
-                "source_ref_type": "self_signal",
+                "source_ref_type": "raw_log",
                 "source_ref_id": facts[0],
             }
         ]
     else:
         entry = {
             "statement": "The contrary source is duplicated.",
-            "source_ref_type": "self_signal",
-            "source_ref_id": signals[0],
+            "source_ref_type": "experience_fact",
+            "source_ref_id": facts[0],
         }
         entries = [entry, dict(entry)]
     invalid = verifier_response("unsupported", counterevidence=entries)
@@ -270,38 +264,22 @@ def test_invalid_counterevidence_retries_then_fails(
         assert list_verification_findings(connection) == ()
 
 
-def _sourceless_snapshot(workspace: Path):
-    # Stage 6's existing gap-only path is represented directly by a writer output
-    # after preparing a non-empty graph whose claims deliberately cite no source.
-    ids, _facts, _signals = prepare_graph(workspace)
-    source_free = json.dumps(
-        {
-            "self_claims": [
-                {
-                    "claim": "Current evidence leaves this conclusion without a source.",
-                    "claim_kind": "narrative_summary",
-                    "dimension": "gap",
-                    "source_signal_ids": [],
-                    "source_fact_ids": [],
-                    "confidence": "unknown",
-                    "uncertainty": "Evidence is absent for this claim.",
-                }
-            ],
-            "warnings": [],
-        },
-        separators=(",", ":"),
-    ).encode("utf-8")
-    generated = run_stage6(
-        workspace, FakeContractRunner([source_free]), ids
-    )
-    assert generated.snapshot_id is not None
-    return ids, generated
-
-
 def test_chainless_supported_retries_then_fails_but_rejected_commits(
-    workspace: Path,
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ids, generated = _sourceless_snapshot(workspace)
+    """§13.7 check 8 / §16.1: no chain, no passing or presentable verdict.
+
+    Until issue #76 a source-free claim carried this state into Stage 7.
+    §15.4 now forbids an empty closure, every hydrated fact holds at least
+    one `direct` source row, and a superseded source fails the bundle
+    earlier — so the gate is exercised at its own seam, with the chain
+    probe forced to report absence over an otherwise ordinary snapshot.
+    """
+
+    ids, _facts, generated = generated_snapshot(workspace)
+    monkeypatch.setattr(
+        "exp2res.pipeline.stage7._has_direct_chain", lambda *_args: False
+    )
     invalid = verifier_response("supported")
     with pytest.raises(LLMInvocationError):
         run_stage7(
@@ -312,7 +290,7 @@ def test_chainless_supported_retries_then_fails_but_rejected_commits(
         )
     committed = run_stage7(
         workspace,
-        FakeContractRunner([verifier_response("rejected")]),
+        FakeContractRunner([verifier_response("rejected")] * 2),
         ids,
         generated.snapshot_id,
     )
@@ -321,7 +299,7 @@ def test_chainless_supported_retries_then_fails_but_rejected_commits(
 
 
 def test_narrative_gate_fails_before_provider_or_run(workspace: Path) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     with writer_database(workspace, owner_delete=True) as connection:
         connection.execute(
             "UPDATE assessment_snapshots SET summary = ? WHERE id = ?",
@@ -340,7 +318,7 @@ def test_narrative_gate_fails_before_provider_or_run(workspace: Path) -> None:
 def test_stale_contradiction_set_fails_before_provider_or_run(
     workspace: Path,
 ) -> None:
-    ids = SignalIds()
+    ids = VeraIds()
     facts = prepare_high_facts(workspace, ids)[0]
     detected = run_stage4(
         workspace,
@@ -355,13 +333,10 @@ def test_stale_contradiction_set_fails_before_provider_or_run(
         ),
         ids,
     )
-    signals = run_stage5(
-        workspace, FakeContractRunner([signal_response(list(facts), confidence="low")]), ids
-    ).current_signals
     generated = run_stage6(
         workspace,
         FakeContractRunner(
-            [assessment_response(fact_ids=list(facts), signal_ids=[signals[0].id])]
+            [assessment_response(fact_ids=list(facts), confidence="low")]
         ),
         ids,
     )
@@ -386,7 +361,7 @@ def test_verifier_input_supplies_the_current_contradiction_set(
 ) -> None:
     # §13.7 check 14 / §15.5: the snapshot's contradiction set is view
     # context, so a restated detection stays visible to the verifier.
-    ids = SignalIds()
+    ids = VeraIds()
     facts = prepare_high_facts(workspace, ids)[0]
     detected = run_stage4(
         workspace,
@@ -401,13 +376,10 @@ def test_verifier_input_supplies_the_current_contradiction_set(
         ),
         ids,
     )
-    signals = run_stage5(
-        workspace, FakeContractRunner([signal_response(list(facts), confidence="low")]), ids
-    ).current_signals
     generated = run_stage6(
         workspace,
         FakeContractRunner(
-            [assessment_response(fact_ids=list(facts), signal_ids=[signals[0].id])]
+            [assessment_response(fact_ids=list(facts), confidence="low")]
         ),
         ids,
     )
@@ -429,12 +401,10 @@ def test_verifier_input_supplies_the_current_contradiction_set(
 
 
 def test_superseded_snapshot_selector_is_distinct(workspace: Path) -> None:
-    ids, facts, signals, first = generated_snapshot(workspace)
+    ids, facts, first = generated_snapshot(workspace)
     second = run_stage6(
         workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=list(facts), signal_ids=list(signals))]
-        ),
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
         ids,
     )
     assert second.snapshot_id != first.snapshot_id
@@ -447,25 +417,18 @@ def test_superseded_snapshot_selector_is_distinct(workspace: Path) -> None:
 def test_exact_closure_is_ordered_and_projects_displaced_support(
     workspace: Path,
 ) -> None:
-    ids = SignalIds()
+    ids = VeraIds()
     fact_ids, displaced_item_id, current_item_id = prepare_high_facts(workspace, ids)
-    signals = run_stage5(
+    generated = run_stage6(
         workspace,
         FakeContractRunner(
             [
-                signal_response(
-                    list(reversed(fact_ids)),
+                assessment_response(
+                    fact_ids=list(reversed(fact_ids)),
                     counter_fact_ids=[fact_ids[0]],
                     confidence="low",
                 )
             ]
-        ),
-        ids,
-    ).current_signals
-    generated = run_stage6(
-        workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=[], signal_ids=[signals[0].id], confidence="low")]
         ),
         ids,
     )
@@ -475,8 +438,6 @@ def test_exact_closure_is_ordered_and_projects_displaced_support(
     payload = json.loads(fake.calls[0].serialized_input)
     assert payload["contradictions"] == []
     for field in (
-        "source_signals",
-        "scope_signals",
         "scope_facts",
         "source_facts",
         "source_evidence_items",
@@ -489,8 +450,6 @@ def test_exact_closure_is_ordered_and_projects_displaced_support(
     assert [item["id"] for item in payload["source_facts"]] == sorted(fact_ids)
     assert len(payload["source_facts"]) == len(set(fact_ids))
     assert [item["id"] for item in payload["scope_facts"]] == sorted(fact_ids)
-    assert [item["id"] for item in payload["source_signals"]] == [signals[0].id]
-    assert [item["id"] for item in payload["scope_signals"]] == [signals[0].id]
     items = {item["id"]: item for item in payload["source_evidence_items"]}
     assert set(items) == {displaced_item_id, current_item_id}
     assert set(items[displaced_item_id]) == {
@@ -505,13 +464,15 @@ def test_exact_closure_is_ordered_and_projects_displaced_support(
     assert [item["id"] for item in payload["source_logs"]] == [
         "log_vera_signal_correction"
     ]
-    assert payload["source_signals"][0]["counter_fact_ids"] == [fact_ids[0]]
+    # §15.4's patterns are transport-only, so the claim's own counter set is
+    # the whole durable trace of the contrary support the verifier must see.
+    assert payload["self_claim"]["counter_fact_ids"] == [fact_ids[0]]
 
 
 def test_reverification_appends_history_and_overwrites_current_state(
     workspace: Path,
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     first = run_stage7(
         workspace,
         FakeContractRunner([verifier_response(), verifier_response()]),
@@ -537,7 +498,7 @@ def test_reverification_appends_history_and_overwrites_current_state(
 
 
 def test_findings_are_append_only_until_owner_purge(workspace: Path) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     result = run_stage7(
         workspace,
         FakeContractRunner([verifier_response(), verifier_response()]),
@@ -573,7 +534,7 @@ def test_findings_are_append_only_until_owner_purge(workspace: Path) -> None:
 
 
 def test_raw_log_reset_purges_verification_findings(workspace: Path) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     result = run_stage7(
         workspace,
         FakeContractRunner([verifier_response(), verifier_response()]),
@@ -633,21 +594,13 @@ def _export_eligible(status: str) -> bool:
 def _two_source_graph(workspace: Path, ids):
     """Two independent owner records, so a pattern claim has real support."""
 
-    facts = prepare_facts(workspace, ids, count=2)
-    signals = run_stage5(
-        workspace,
-        FakeContractRunner([signal_response(list(facts))]),
-        ids,
-    ).current_signals
-    return facts, tuple(item.id for item in signals)
+    return prepare_facts(workspace, ids, count=2)
 
 
-def _snapshot_with_claim(workspace: Path, ids, facts, signals, claim: str):
+def _snapshot_with_claim(workspace: Path, ids, facts, claim: str):
     """Generate one snapshot whose single non-summary claim carries `claim`."""
 
-    payload = json.loads(
-        assessment_response(fact_ids=list(facts), signal_ids=list(signals))
-    )
+    payload = json.loads(assessment_response(fact_ids=list(facts)))
     payload["self_claims"][0]["claim"] = claim
     generated = run_stage6(
         workspace,
@@ -692,13 +645,13 @@ def test_live_verifier_accepts_the_second_person_owner_reference(
     runner = ADAPTER_REGISTRY[selection.adapter].build_runner(
         config, REPOSITORY_ROOT
     )
-    ids = SignalIds()
-    facts, signals = _two_source_graph(workspace, ids)
+    ids = VeraIds()
+    facts = _two_source_graph(workspace, ids)
 
     def verify(claim: str) -> dict[str, tuple[str, str, tuple[str, ...]]]:
         """Verify one snapshot live; return each claim's finding by its prose."""
 
-        generated = _snapshot_with_claim(workspace, ids, facts, signals, claim)
+        generated = _snapshot_with_claim(workspace, ids, facts, claim)
         with read_database(workspace) as connection:
             prose_by_id = {
                 row["id"]: row["claim"]

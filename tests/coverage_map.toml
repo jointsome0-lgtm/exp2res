@@ -220,9 +220,14 @@ phase = "4"
 status = "partial"
 nodes = [
   "tests/test_stage3_extraction.py::test_confidence_ceiling_and_independent_displaced_support",
+  "tests/test_stage6_assessment.py::test_claim_confidence_above_strongest_supplied_source_retries_then_fails",
+  "tests/test_stage6_assessment.py::test_high_pattern_claim_needs_two_supporting_facts_across_two_logs",
+  "tests/test_stage6_assessment.py::test_high_pattern_claim_from_one_raw_log_retries_then_fails",
+  "tests/test_stage6_assessment.py::test_counter_fact_caps_a_pattern_claim_at_medium",
+  "tests/test_stage6_assessment.py::test_pattern_claim_source_facts_must_equal_its_cited_patterns",
 ]
 phase = "3"
-note = "The registered node proves Stage 3 fact ceilings at structured output and commit; the Stage 6 claim source-maximum cap, the §9.4 pattern-generalization caps, and the §15.4 equality rule await the #76 follow-up, and Stage 7 semantic breadth remains pending"
+note = "The registered nodes prove Stage 3 fact ceilings at structured output and commit, the Stage 6 claim source-maximum cap, the §9.4 pattern-generalization caps in both directions, and §15.4's equality rule between a pattern-citing claim and its cited patterns; Stage 7 semantic breadth remains pending"
 
 ["21.32"]
 status = "partial"
@@ -231,16 +236,17 @@ nodes = [
   "tests/test_stage7_verification.py::test_verifier_input_supplies_the_current_contradiction_set",
 ]
 phase = "3"
-note = "The registered closure tests prove the retired signal-bearing §15.5 bundle; the fact-only bundle with §15.4's equality rule lands with the #76 follow-up"
+note = "The registered closure tests prove the fact-only §15.5 bundle — the exact duplicate-free ID-ordered closure, its displaced-support projection, the claim's own counter marking, and the current contradiction set as view context"
 
 ["21.33"]
 status = "partial"
 nodes = [
   "tests/test_stage6_assessment.py::test_folded_project_view_replacement_preserves_other_views",
+  "tests/test_stage6_assessment.py::test_project_input_uses_stored_key_and_supplies_no_cross_project_context",
   "tests/test_cli_correction.py::test_correction_copy_and_explicit_temporal_project_replacement",
 ]
 phase = "3"
-note = "Stage 6 proves stored-key subject selection and folded view replacement identity; correction add now proves exact project and temporal copy plus explicit replacement before selected-lineage re-extraction; the context-free subject supply of the signal-free §13.6 lands with the #76 follow-up, and broader multi-view coverage remains"
+note = "Stage 6 proves stored-key subject selection, folded view replacement identity, and the context-free subject supply of the signal-free §13.6 — a project view carries exactly its own subject facts; correction add proves exact project and temporal copy plus explicit replacement before selected-lineage re-extraction, and broader multi-view coverage remains"
 
 ["21.34"]
 status = "partial"
@@ -450,6 +456,7 @@ nodes = [
   "tests/test_export_markdown.py::test_unmatched_non_summary_claim_fails_closed",
   "tests/test_export_companions.py::test_companion_encoding_has_canonical_key_order_utc_datetime_and_one_lf",
   "tests/test_export_companions.py::test_closed_companion_models_reject_extra_missing_and_wrong_version[SelfClaimsDocument-payload0]",
+  "tests/test_export_companions.py::test_companions_record_the_claim_counter_split",
   "tests/test_export_companions.py::test_render_input_hash_covers_gap_lifecycle_and_verification_at_same_ids",
   "tests/test_export_service.py::test_assessment_export_gate_matrix_all_eight_statuses[contradicted-True]",
   "tests/test_export_service.py::test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity",
@@ -459,7 +466,7 @@ nodes = [
   "tests/test_demo.py::test_vera_first_mirror_demo_is_closed_current_blocking_and_deterministic",
 ]
 phase = "4"
-note = "The assessment half proves deterministic §17 Markdown, strict companions at the superseded version-1 shape (the §13.12 version-2 signal-free companions land with the #76 follow-up), complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; every bullet-pack member remains"
+note = "The assessment half proves deterministic §17 Markdown, strict §13.12 version-2 companions carrying each claim's source/counter split, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; every bullet-pack member remains"
 
 ["21.49"]
 status = "pending"
@@ -641,7 +648,7 @@ nodes = [
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
 phase = "3"
-note = "The published set's fourth member is pinned by golden bytes and its manifest hash at manifest_version 4 (§13.14 now specifies version 5; golden regeneration lands with the #76 follow-up), both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"
+note = "The published set's fourth member is pinned by golden bytes and its manifest hash at §13.14's manifest_version 5, both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"
 
 ["21.56"]
 status = "partial"
@@ -785,9 +792,10 @@ nodes = [
   "tests/test_stage4_detection.py::test_answered_gap_forces_key_equal_replacement_and_resets_answer_state",
   "tests/test_stage6_assessment.py::test_stage4_retention_preserves_view_but_changed_generation_invalidates_it",
   "tests/test_cli_detections.py::test_generate_replaces_then_retains_complete_sets_and_standard_fields",
+  "tests/test_vera_replay_assess.py::test_vera_e4_cli_assessment_is_navigable_then_regeneration_invalidates",
 ]
 phase = "2"
-note = "Offline tests prove the free identical-input rerun with zero llm_calls rows, every named disqualifier, per-set retention with per-swap generations, and the §14.7 per-set envelope; either-set replacement superseding claims and snapshots lands with the #76 follow-up, and resume branch/bullet supersession stays with the later Stage 10 phase"
+note = "Offline tests prove the free identical-input rerun with zero llm_calls rows, every named disqualifier, per-set retention with per-swap generations, the §14.7 per-set envelope, and either-set replacement superseding the current claims and snapshots and naming the invalidated view; resume branch/bullet supersession stays with the later Stage 10 phase"
 
 ["21.59"]
 status = "partial"

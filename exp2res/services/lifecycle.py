@@ -1,4 +1,4 @@
-"""Shared §13.13 Stage 3-5 lifecycle orchestration."""
+"""Shared §13.13 Stage 3-4 lifecycle orchestration."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from exp2res.errors import Exp2ResError, LLMCancelledError, LLMInvocationError
 from exp2res.llm.contracts import ContractWarning
 from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
 from exp2res.pipeline.stage4 import Stage4Result, run_detection_generation
-from exp2res.pipeline.stage5 import Stage5Result, run_signal_generation
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import build_llm_execution
 from exp2res.storage.telemetry import create_processing_run, finish_processing_run
@@ -28,14 +27,13 @@ class LifecycleResult:
     orchestration_run_id: str
     stage3: Stage3Result | None = None
     stage4: Stage4Result | None = None
-    stage5: Stage5Result | None = None
     no_current_assessment_view: bool = False
 
     @property
     def run_ids(self) -> tuple[str, ...]:
         return (
             self.orchestration_run_id,
-            *(result.run_id for result in (self.stage3, self.stage4, self.stage5) if result),
+            *(result.run_id for result in (self.stage3, self.stage4) if result),
         )
 
     @property
@@ -48,16 +46,12 @@ class LifecycleResult:
             if self.stage4.generation_id is not None:
                 values.add(self.stage4.generation_id)
             values.update(self.stage4.superseded_generation_ids)
-        if self.stage5:
-            if self.stage5.generation_id is not None:
-                values.add(self.stage5.generation_id)
-            values.update(self.stage5.superseded_generation_ids)
         return tuple(sorted(values, key=lambda value: value.encode("utf-8")))
 
     @property
     def invalidated_views(self) -> tuple[InvalidatedView, ...]:
         by_id: dict[str, InvalidatedView] = {}
-        for result in (self.stage3, self.stage4, self.stage5):
+        for result in (self.stage3, self.stage4):
             if result:
                 by_id.update((item.snapshot_id, item) for item in result.invalidated_views)
         return tuple(by_id[key] for key in sorted(by_id, key=lambda value: value.encode("utf-8")))
@@ -66,7 +60,7 @@ class LifecycleResult:
     def residual_paths(self) -> tuple[str, ...]:
         values = {
             path
-            for result in (self.stage3, self.stage4, self.stage5)
+            for result in (self.stage3, self.stage4)
             if result
             for path in result.residual_paths
         }
@@ -78,7 +72,7 @@ class LifecycleResult:
     def warnings(self) -> tuple[ContractWarning, ...]:
         values = [
             warning
-            for result in (self.stage3, self.stage4, self.stage5)
+            for result in (self.stage3, self.stage4)
             if result
             for warning in result.warnings
         ]
@@ -108,7 +102,6 @@ class LifecycleResult:
             add(superseded, "experience_fact", self.stage3.superseded)
             add(superseded, "gap_question", self.stage3.superseded_gap_ids)
             add(superseded, "contradiction", self.stage3.superseded_contradiction_ids)
-            add(superseded, "self_signal", self.stage3.superseded_signal_ids)
             add(superseded, "self_claim", self.stage3.superseded_claim_ids)
             add(superseded, "assessment_snapshot", self.stage3.superseded_snapshot_ids)
         if self.stage4:
@@ -116,14 +109,8 @@ class LifecycleResult:
             add(created, "contradiction", self.stage4.created_contradiction_ids)
             add(superseded, "gap_question", self.stage4.superseded_gap_ids)
             add(superseded, "contradiction", self.stage4.superseded_contradiction_ids)
-            add(superseded, "self_signal", self.stage4.superseded_signal_ids)
             add(superseded, "self_claim", self.stage4.superseded_claim_ids)
             add(superseded, "assessment_snapshot", self.stage4.superseded_snapshot_ids)
-        if self.stage5:
-            add(created, "self_signal", self.stage5.created_signal_ids)
-            add(superseded, "self_signal", self.stage5.superseded_signal_ids)
-            add(superseded, "self_claim", self.stage5.superseded_claim_ids)
-            add(superseded, "assessment_snapshot", self.stage5.superseded_snapshot_ids)
 
         def groups(values: dict[str, set[str]]) -> list[EntityIdGroup]:
             return [
@@ -235,7 +222,6 @@ def run_recompute(
 
     stage3: Stage3Result | None = None
     stage4: Stage4Result | None = None
-    stage5: Stage5Result | None = None
 
     def tracking_ids(kind: str) -> str:
         value = ids(kind)
@@ -243,7 +229,7 @@ def run_recompute(
             allocated_runs.append(value)
         return value
 
-    # §8.1: the whole Stage 3-5 lifecycle runs under one held writer
+    # §8.1: the whole Stage 3-4 lifecycle runs under one held writer
     # authority — no other business writer can interleave between the
     # orchestration row, the stage swaps, and the terminal transition. A
     # correction or deletion command passes the authority it already holds
@@ -302,21 +288,10 @@ def run_recompute(
                 clock=now,
                 cli_version=__version__,
             )
-            stage5 = run_signal_generation(
-                workspace,
-                selection=selection,
-                budgets=budgets,
-                runner=runner,
-                id_factory=tracking_ids,
-                parent_run_id=orchestration_run_id,
-                connection=connection,
-                clock=now,
-                cli_version=__version__,
-            )
-            partial = LifecycleResult(orchestration_run_id, stage3, stage4, stage5)
+            partial = LifecycleResult(orchestration_run_id, stage3, stage4)
             # This read is part of the lifecycle result, not an unprotected
             # output tail: a late interrupt or storage failure must still
-            # carry every Stage 3-5 effect that already committed.
+            # carry every Stage 3-4 effect that already committed.
             has_current_view = _has_current_assessment_view(connection)
             _held_transaction(
                 connection,
@@ -363,9 +338,7 @@ def run_recompute(
                 stage3 = carried
             elif isinstance(carried, Stage4Result) and stage4 is None:
                 stage4 = carried
-            elif isinstance(carried, Stage5Result) and stage5 is None:
-                stage5 = carried
-            progress = LifecycleResult(orchestration_run_id, stage3, stage4, stage5)
+            progress = LifecycleResult(orchestration_run_id, stage3, stage4)
             if isinstance(error, KeyboardInterrupt):
                 # §14.14 rule 6: an interrupt between committed stage swaps
                 # still reports every committed effect and run — a raw
@@ -401,7 +374,6 @@ def run_recompute(
         orchestration_run_id,
         stage3,
         stage4,
-        stage5,
         no_current_assessment_view=(
             not has_current_view and not partial.invalidated_views
         ),

@@ -10,13 +10,13 @@ from .enums import Confidence
 _CONFIDENCE_ORDER = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
 
 
-def signal_confidence_cap(
+def pattern_generalization_cap(
     *,
     supporting_confidences: Iterable[Confidence],
     distinct_source_log_count: int,
     has_counter_facts: bool,
 ) -> str:
-    """Return the total structural cap for one self-signal candidate."""
+    """Return §9.4's pattern-generalization cap for one pattern-citing claim."""
 
     confidences = tuple(supporting_confidences)
     cap = max(confidences, key=_CONFIDENCE_ORDER.__getitem__, default="unknown")

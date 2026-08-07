@@ -10,12 +10,11 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
-import exp2res.pipeline.stage5 as stage5_module
+import exp2res.pipeline.stage6 as stage6_module
 import exp2res.pipeline.stage7 as stage7_module
 import exp2res.services.assessment as assessment_service
 import exp2res.services.capture as capture_service
 import exp2res.services.lifecycle as lifecycle_service
-import exp2res.services.signals as signals_service
 from exp2res.cli import app
 from exp2res.errors import ManagedOutputIncompleteError
 from exp2res.storage.repository import list_raw_logs
@@ -25,7 +24,7 @@ from conftest import VERA_CORPUS
 from fakes import FakeContractRunner
 from test_stage7_verification import generated_snapshot, run_stage7, verifier_response
 from test_stage3_extraction import SELECTION, budgets, fact_response
-from test_stage5_signals import signal_response
+from test_stage6_assessment import assessment_response
 
 
 runner = CliRunner()
@@ -38,7 +37,7 @@ def invoke_json(workspace: Path, arguments: list[str]):
 
 
 def verified_snapshot(workspace: Path) -> str:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -82,7 +81,7 @@ def test_export_assessment_selector_blocked_and_residual_classes(
     assert missing_envelope["diagnostic_class"] == "selector_not_found"
     assert missing_envelope["result"] is None
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     blocked, blocked_envelope = invoke_json(
         workspace,
         ["export", "assessment", "--snapshot", generated.snapshot_id],
@@ -194,7 +193,6 @@ def test_logs_delete_clears_a_preamble_residual_it_later_removed(
                 [
                     fact_response([surviving_evidence]),
                     b'{"gap_questions":[],"contradictions":[],"warnings":[]}',
-                    b'{"signals":[],"warnings":[]}',
                 ]
             ),
         ),
@@ -213,7 +211,7 @@ def test_unverified_snapshot_is_blocked_before_the_writer_path(
     # §16.11 refusal on a current-but-ineligible snapshot is class 10 even
     # when an unreconciliable residual would stop publication with class 8:
     # the gate applies read-only before the writer preamble runs.
-    _ids, _facts, _signals, generated = generated_snapshot(workspace)
+    _ids, _facts, generated = generated_snapshot(workspace)
     assessment = workspace / "out" / "assessment"
     assessment.mkdir(mode=0o700, parents=True, exist_ok=True)
     target = workspace.parent / "Vera Example blocked target"
@@ -236,7 +234,7 @@ def test_unverified_snapshot_is_blocked_before_the_writer_path(
 def test_interrupted_invalidation_reports_the_stale_set_in_the_cancelled_envelope(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -365,7 +363,7 @@ def test_interrupt_after_committed_stage_replacement_keeps_the_stale_report(
     # An interrupt can land after the stage transaction durably committed but
     # before the stage returns; the pre-commit pending report must survive
     # into the cancelled envelope because the published set really is stale.
-    ids, facts, _signals, generated = generated_snapshot(workspace)
+    ids, facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),
@@ -378,24 +376,23 @@ def test_interrupt_after_committed_stage_replacement_keeps_the_stale_report(
     assert exported.exit_code == 0
     final_set = workspace / "out" / "assessment" / generated.snapshot_id
 
-    fact_id = list(facts)[0]
     monkeypatch.setattr(
-        signals_service,
+        assessment_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
             budgets(),
-            FakeContractRunner([signal_response([fact_id])]),
+            FakeContractRunner([assessment_response(fact_ids=list(facts))]),
         ),
     )
-    real_run = stage5_module.run_complete_stage
+    real_run = stage6_module.run_complete_stage
 
     def interrupt_after_commit(*args, **kwargs):
         real_run(*args, **kwargs)
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(stage5_module, "run_complete_stage", interrupt_after_commit)
-    result, envelope = invoke_json(workspace, ["--yes", "signals", "generate"])
+    monkeypatch.setattr(stage6_module, "run_complete_stage", interrupt_after_commit)
+    result, envelope = invoke_json(workspace, ["--yes", "assess", "generate"])
     assert result.exit_code == 9
     assert envelope["diagnostic_class"] == "cancelled"
     assert envelope["residual_paths"] == [str(final_set)]
@@ -469,7 +466,7 @@ def test_non_export_writer_commits_but_preamble_residual_forces_class_8(
 def test_reverification_cleanup_residual_takes_class_8_over_blocked_findings(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner([verifier_response() for _ in generated.claims]),

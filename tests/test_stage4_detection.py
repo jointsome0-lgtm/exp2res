@@ -657,7 +657,7 @@ def test_identical_rerun_short_circuits_without_a_provider_call(
     assert rerun.retained_gap_set is rerun.retained_contradiction_set is True
     assert rerun.generation_id is None
     assert rerun.superseded_gap_ids == rerun.superseded_contradiction_ids == ()
-    assert rerun.superseded_signal_ids == rerun.superseded_snapshot_ids == ()
+    assert rerun.superseded_claim_ids == rerun.superseded_snapshot_ids == ()
     assert rerun.invalidated_views == ()
     assert fake.calls == []
     assert current_rows(workspace) == before

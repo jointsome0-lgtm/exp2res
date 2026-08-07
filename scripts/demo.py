@@ -25,7 +25,6 @@ import exp2res.services.assessment as assessment_service
 import exp2res.services.capture as capture_service
 import exp2res.services.detection as detection_service
 import exp2res.services.extraction as extraction_service
-import exp2res.services.signals as signals_service
 from exp2res.cli import app
 from exp2res.exports.companions import (
     AssessmentEvidenceMapDocument,
@@ -41,7 +40,6 @@ from exp2res.llm.runner import (
 )
 from exp2res.pipeline.stage3 import run_fact_extraction
 from exp2res.pipeline.stage4 import run_detection_generation
-from exp2res.pipeline.stage5 import run_signal_generation
 from exp2res.pipeline.stage6 import run_assessment_generation
 from exp2res.pipeline.stage7 import run_assessment_verification
 from exp2res.services.export import export_assessment as real_export_assessment
@@ -84,7 +82,7 @@ class DemoIds:
     def __call__(self, kind: str) -> str:
         prefixes = {
             "raw_log": "log", "evidence_item": "evi", "fact": "fact",
-            "gap": "gap", "contradiction": "contradiction", "signal": "signal",
+            "gap": "gap", "contradiction": "contradiction",
             "snapshot": "snapshot", "claim": "claim", "finding": "finding",
             "run": "run", "gen": "gen",
         }
@@ -401,13 +399,6 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     )
     invoke(transcript, workspace, ["gaps", "list"])
     invoke(transcript, workspace, ["contradictions", "show", "--contradiction-id", "contradiction_demo_0001"])
-    clock.set("2026-07-11T10:10:00+02:00")
-    _stage_command(
-        transcript, workspace, ids, clock,
-        service=signals_service, stage_name="run_signal_generation",
-        real_stage=run_signal_generation, response_names=["demo-signals.json"],
-        arguments=["--yes", "signals", "generate"],
-    )
     clock.set("2026-07-11T10:15:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
@@ -544,18 +535,15 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
             raise AssertionError("Vera Example blocked Act 2 export was published")
 
         claim_links = {item.claim_id: item for item in evidence_map.claim_links}
-        signal_links = {item.signal_id: item for item in evidence_map.signal_links}
         fact_links = {item.fact_id: item for item in evidence_map.fact_links}
         evidence_links = {
             item.evidence_item_id: item for item in evidence_map.evidence_links
         }
         for claim_id in evidence_map.rendered_claim_ids:
             claim = claim_links[claim_id]
+            # §15.4: the claim's own closure is the whole fact set the
+            # discarded patterns cited, contrary members included.
             reached_facts = set(claim.source_fact_ids)
-            for signal_id in claim.source_signal_ids:
-                signal = signal_links[signal_id]
-                reached_facts.update(signal.supporting_fact_ids)
-                reached_facts.update(signal.counter_fact_ids)
             if not reached_facts:
                 raise AssertionError(f"Vera Example rendered claim has no fact closure: {claim_id}")
             for fact_id in reached_facts:

@@ -27,7 +27,7 @@ class BlankProjectLabelError(InvalidInputError):
 
 class EmptyAssessmentViewError(InvalidInputError):
     diagnostic_class = "empty_assessment_view"
-    public_message = "The selected assessment view has no facts or signals."
+    public_message = "The selected assessment view has no facts."
 
 
 class NonInteractiveInputRequired(InvalidInputError):

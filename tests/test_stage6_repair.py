@@ -69,7 +69,7 @@ def test_repair_adopts_latest_rewrite_and_supersedes_the_view(
 ) -> None:
     """§13.6/§11.14: one swap adopts the rewrite into a new unverified set."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(
@@ -126,7 +126,6 @@ def test_repair_adopts_latest_rewrite_and_supersedes_the_view(
     assert adopted.claim == REWRITE
     assert adopted.claim_kind == rejected_prior.claim_kind
     assert adopted.dimension == rejected_prior.dimension
-    assert adopted.source_signal_ids == rejected_prior.source_signal_ids
     assert adopted.source_fact_ids == rejected_prior.source_fact_ids
     assert adopted.confidence == rejected_prior.confidence
     assert untouched.claim == supported_prior.claim
@@ -168,7 +167,7 @@ def test_repaired_snapshot_takes_an_ordinary_full_reverification(
 ) -> None:
     """§13.6/§13.7: repair pre-authorizes nothing; Stage 7 judges afresh."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(
@@ -195,7 +194,7 @@ def test_latest_finding_wins_when_history_holds_two_attempts(
 ) -> None:
     """§13.6: the adopted text is the latest (created_at, ID) finding's."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(
@@ -232,7 +231,7 @@ def test_repair_ignores_newer_bullet_finding_with_colliding_target_id(
 ) -> None:
     """§13.6/§11.14: claim repair reads only self-claim finding history."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(
@@ -287,7 +286,7 @@ def test_repeated_repair_preserves_and_refreshes_claim_metadata(
 ) -> None:
     """§13.6: copied metadata survives; a new adoption refreshes only its key."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(
@@ -356,7 +355,7 @@ def test_repair_rejects_a_snapshot_with_duplicate_narrative_summaries(
 ) -> None:
     """§12/§13.6: repair never propagates a corrupt summary cardinality."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(
@@ -378,12 +377,12 @@ def test_repair_rejects_a_snapshot_with_duplicate_narrative_summaries(
             """
             INSERT INTO self_claims(
                 id, created_at, superseded_at, snapshot_id, claim, claim_kind,
-                dimension, source_signal_ids_json, source_fact_ids_json,
+                dimension, source_fact_ids_json, counter_fact_ids_json,
                 confidence, verification_status, counterevidence_json,
                 uncertainty, metadata_json, produced_by_run_id, generation_id
             )
             SELECT ?, created_at, NULL, snapshot_id, claim, 'narrative_summary',
-                   dimension, source_signal_ids_json, source_fact_ids_json,
+                   dimension, source_fact_ids_json, counter_fact_ids_json,
                    confidence, 'supported', counterevidence_json,
                    uncertainty, metadata_json, produced_by_run_id, generation_id
             FROM self_claims WHERE id = ?
@@ -410,7 +409,7 @@ def test_repair_rejects_a_snapshot_with_a_superseded_member(
 ) -> None:
     """§11/§13.6: snapshot membership is complete, never current-row filtered."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(
@@ -451,7 +450,7 @@ def test_repair_rejects_a_mismatched_snapshot_aggregate(
 ) -> None:
     """§16.11: repair cannot consume member statuses under a stale aggregate."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(
@@ -488,7 +487,7 @@ def test_precondition_failures_are_stable_and_change_nothing(
 ) -> None:
     """§13.6/§14.9: each violated precondition fails closed in class 2."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
 
     def snapshot_state():
         with read_database(workspace) as connection:
@@ -552,7 +551,7 @@ def test_precondition_failures_are_stable_and_change_nothing(
 def test_failed_swap_leaves_a_durable_failed_run(workspace: Path) -> None:
     """§12.13: a rolled-back candidate keeps the run as the failed attempt."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(
@@ -611,7 +610,7 @@ def test_post_commit_interrupt_carries_the_committed_result(
 ) -> None:
     """§14.14 rule 6: a cleanup interrupt still reports the committed swap."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(
@@ -653,7 +652,7 @@ def test_post_commit_interrupt_carries_the_committed_result(
 def test_superseded_snapshot_selector_is_not_repairable(workspace: Path) -> None:
     """§13.6: repair operates on the current snapshot only."""
 
-    ids, _facts, _signals, generated = generated_snapshot(workspace)
+    ids, _facts, generated = generated_snapshot(workspace)
     run_stage7(
         workspace,
         FakeContractRunner(

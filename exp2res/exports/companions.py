@@ -140,8 +140,8 @@ class SelfClaimExport(ExportDocument):
     confidence: Confidence
     verification_status: VerificationStatus
     uncertainty: str | None
-    source_signal_ids: list[str]
     source_fact_ids: list[str]
+    counter_fact_ids: list[str]
     counterevidence: list[CounterevidenceExport]
 
     @field_validator("id")
@@ -159,10 +159,18 @@ class SelfClaimExport(ExportDocument):
     def normalized_uncertainty(cls, value: str | None) -> str | None:
         return None if value is None else _projected_text(value)
 
-    @field_validator("source_signal_ids", "source_fact_ids")
+    @field_validator("source_fact_ids", "counter_fact_ids")
     @classmethod
     def unique_ids(cls, value: list[str]) -> list[str]:
         return _require_unique(value)
+
+    @model_validator(mode="after")
+    def counter_facts_are_sources(self) -> "SelfClaimExport":
+        # §11.6: the contrary marking is a subset of the closure, so a
+        # consumer reading `source_fact_ids` never misses a counter member.
+        if not set(self.counter_fact_ids).issubset(self.source_fact_ids):
+            raise ValueError("counter fact is not a source fact")
+        return self
 
     @field_validator("counterevidence")
     @classmethod
@@ -178,7 +186,7 @@ class SelfClaimExport(ExportDocument):
 
 
 class SelfClaimsDocument(ExportDocument):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     snapshot: SnapshotExport
     claims: list[SelfClaimExport]
     unknowns: list[GapExport]
@@ -195,34 +203,26 @@ class SelfClaimsDocument(ExportDocument):
 
 class ClaimLink(ExportDocument):
     claim_id: str
-    source_signal_ids: list[str]
     source_fact_ids: list[str]
+    counter_fact_ids: list[str]
 
     @field_validator("claim_id")
     @classmethod
     def structural_id(cls, value: str) -> str:
         return validate_structural(value)
 
-    @field_validator("source_signal_ids", "source_fact_ids")
+    @field_validator("source_fact_ids", "counter_fact_ids")
     @classmethod
     def unique_ids(cls, value: list[str]) -> list[str]:
         return _require_unique(value)
 
-
-class SignalLink(ExportDocument):
-    signal_id: str
-    supporting_fact_ids: list[str]
-    counter_fact_ids: list[str]
-
-    @field_validator("signal_id")
-    @classmethod
-    def structural_id(cls, value: str) -> str:
-        return validate_structural(value)
-
-    @field_validator("supporting_fact_ids", "counter_fact_ids")
-    @classmethod
-    def unique_ids(cls, value: list[str]) -> list[str]:
-        return _require_unique(value)
+    @model_validator(mode="after")
+    def counter_facts_are_sources(self) -> "ClaimLink":
+        # §13.12: the contrary members are repeated inside the closure, so a
+        # consumer never reads a counter fact as support.
+        if not set(self.counter_fact_ids).issubset(self.source_fact_ids):
+            raise ValueError("counter fact is not a source fact")
+        return self
 
 
 class FactLink(ExportDocument):
@@ -252,12 +252,11 @@ class EvidenceLink(ExportDocument):
 
 
 class AssessmentEvidenceMapDocument(ExportDocument):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     output_kind: Literal["assessment"]
     entity_id: str
     rendered_claim_ids: list[str]
     claim_links: list[ClaimLink]
-    signal_links: list[SignalLink]
     fact_links: list[FactLink]
     evidence_links: list[EvidenceLink]
 
@@ -275,7 +274,6 @@ class AssessmentEvidenceMapDocument(ExportDocument):
     def complete_ordered_links(self) -> "AssessmentEvidenceMapDocument":
         grouped_ids = (
             [item.claim_id for item in self.claim_links],
-            [item.signal_id for item in self.signal_links],
             [item.fact_id for item in self.fact_links],
             [item.evidence_item_id for item in self.evidence_links],
         )
@@ -343,13 +341,13 @@ def build_self_claims_document(graph: AssessmentExportGraph) -> SelfClaimsDocume
                     if claim.uncertainty is None
                     else normalize_generated_text(claim.uncertainty)
                 ),
-                source_signal_ids=sorted(claim.source_signal_ids, key=id_key),
                 source_fact_ids=sorted(claim.source_fact_ids, key=id_key),
+                counter_fact_ids=sorted(claim.counter_fact_ids, key=id_key),
                 counterevidence=counterevidence,
             )
         )
     return SelfClaimsDocument(
-        schema_version=1,
+        schema_version=2,
         snapshot=SnapshotExport(
             id=snapshot.id,
             created_at=snapshot.created_at,
@@ -370,27 +368,17 @@ def build_evidence_map_document(
     graph: AssessmentExportGraph,
 ) -> AssessmentEvidenceMapDocument:
     return AssessmentEvidenceMapDocument(
-        schema_version=1,
+        schema_version=2,
         output_kind="assessment",
         entity_id=graph.snapshot.value.id,
         rendered_claim_ids=[item.value.id for item in graph.claims],
         claim_links=[
             ClaimLink(
                 claim_id=item.value.id,
-                source_signal_ids=sorted(item.value.source_signal_ids, key=id_key),
                 source_fact_ids=sorted(item.value.source_fact_ids, key=id_key),
-            )
-            for item in graph.claims
-        ],
-        signal_links=[
-            SignalLink(
-                signal_id=item.value.id,
-                supporting_fact_ids=sorted(
-                    item.value.supporting_fact_ids, key=id_key
-                ),
                 counter_fact_ids=sorted(item.value.counter_fact_ids, key=id_key),
             )
-            for item in graph.signals
+            for item in graph.claims
         ],
         fact_links=[
             FactLink(

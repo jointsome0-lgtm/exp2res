@@ -1,5 +1,5 @@
 Vera Example — deterministic first-mirror demo
-corpus=0.3.0 schema=8 envelope=1
+corpus=0.3.0 schema=9 envelope=1
 mode=no-cost offline canned responses; network/provider calls=0
 workspace=demo/workspace (external temporary workspace; display alias only)
 paths=stored locators are canonical real paths; this checkout root displays as . (display alias only)
@@ -7,7 +7,7 @@ paths=stored locators are canonical real paths; this checkout root displays as .
 == Setup and invented Vera corpus capture ==
 
 $ exp2res init
-Initialized schema version 8 at demo/workspace.
+Initialized schema version 9 at demo/workspace.
 
 Configured demo/workspace timezone: Europe/Berlin
 
@@ -33,16 +33,6 @@ gap_demo_0001	medium	missing_metric	false
 
 $ exp2res --workspace demo/workspace contradictions show --contradiction-id contradiction_demo_0001
 contradiction_demo_0001	Vera Example ingress completion conflict	2026-07-11T10:05:00+02:00
-
-$ exp2res --workspace demo/workspace --yes signals generate
-Replaced the current signal generation: created 1, superseded 0.
-
-Signal signal_demo_0001
-Type: execution_pattern
-Confidence: medium
-Statement: Vera Example checks documentation claims against stored evidence and corrects premature completion reports.
-Supporting facts: fact_demo_0001, fact_demo_0003
-Counter facts: fact_demo_0002
 
 $ exp2res --workspace demo/workspace --yes assess generate
 Created snapshot_demo_0001 — Self-Assessment — Global; 2 claims.

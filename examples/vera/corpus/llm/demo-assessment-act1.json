@@ -1,4 +1,16 @@
 {
+  "patterns": [
+    {
+      "counter_fact_ids": [
+        "fact_demo_0002"
+      ],
+      "label": "evidence-checked documentation",
+      "supporting_fact_ids": [
+        "fact_demo_0001",
+        "fact_demo_0003"
+      ]
+    }
+  ],
   "self_claims": [
     {
       "claim": "Vera Example currently shows an evidence-checking documentation pattern.",
@@ -7,10 +19,11 @@
       "dimension": "working_style",
       "source_fact_ids": [
         "fact_demo_0001",
+        "fact_demo_0002",
         "fact_demo_0003"
       ],
-      "source_signal_ids": [
-        "signal_demo_0001"
+      "source_pattern_labels": [
+        "evidence-checked documentation"
       ],
       "uncertainty": "The invented evidence covers one small documentation project."
     },
@@ -23,9 +36,6 @@
         "fact_demo_0001",
         "fact_demo_0002",
         "fact_demo_0003"
-      ],
-      "source_signal_ids": [
-        "signal_demo_0001"
       ],
       "uncertainty": "No external outcome is established by the Vera Example corpus."
     }

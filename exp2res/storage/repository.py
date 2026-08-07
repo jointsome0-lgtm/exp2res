@@ -10,7 +10,10 @@ from typing import Iterable
 
 from pydantic import ValidationError
 
-from exp2res.domain.calibration import claim_confidence_cap, signal_confidence_cap
+from exp2res.domain.calibration import (
+    claim_confidence_cap,
+    pattern_generalization_cap,
+)
 from exp2res.domain.enums import VerificationStatus, VerificationTargetRefType
 from exp2res.domain.models import (
     Contradiction,
@@ -21,7 +24,6 @@ from exp2res.domain.models import (
     OccurredAt,
     RawLog,
     SelfClaim,
-    SelfSignal,
     VerificationFinding,
     canonical_project_key,
 )
@@ -541,118 +543,6 @@ def mark_facts_superseded(
         raise IntegrityFailureError() from error
 
 
-def insert_self_signal(
-    connection: sqlite3.Connection,
-    signal: SelfSignal,
-    *,
-    produced_by_run_id: str,
-    generation_id: str,
-) -> None:
-    if not produced_by_run_id or not generation_id:
-        raise IntegrityFailureError("signal_production_identity_invalid")
-    if signal.superseded_at is not None:
-        raise IntegrityFailureError("signal_initial_lifecycle_invalid")
-
-    referenced: dict[str, sqlite3.Row] = {}
-    for fact_id in (*signal.supporting_fact_ids, *signal.counter_fact_ids):
-        if fact_id in referenced:
-            continue
-        row = connection.execute(
-            "SELECT confidence, superseded_at FROM experience_facts WHERE id = ?",
-            (fact_id,),
-        ).fetchone()
-        if row is None:
-            raise IntegrityFailureError("signal_fact_missing")
-        if row["superseded_at"] is not None:
-            raise IntegrityFailureError("signal_fact_superseded")
-        referenced[fact_id] = row
-
-    distinct_source_log_count = 0
-    if signal.supporting_fact_ids:
-        placeholders = ",".join("?" for _ in signal.supporting_fact_ids)
-        distinct_source_log_count = connection.execute(
-            "SELECT COUNT(DISTINCT ei.raw_log_id) "
-            "FROM fact_sources AS fs "
-            "JOIN evidence_items AS ei ON ei.id = fs.evidence_item_id "
-            f"WHERE fs.fact_id IN ({placeholders})",
-            signal.supporting_fact_ids,
-        ).fetchone()[0]
-    cap = signal_confidence_cap(
-        supporting_confidences=(
-            referenced[fact_id]["confidence"]
-            for fact_id in signal.supporting_fact_ids
-        ),
-        distinct_source_log_count=distinct_source_log_count,
-        has_counter_facts=bool(signal.counter_fact_ids),
-    )
-    if confidence_exceeds(signal.confidence, cap):
-        raise IntegrityFailureError("signal_confidence_above_cap")
-
-    try:
-        connection.execute(
-            """
-            INSERT INTO self_signals(
-                id, created_at, superseded_at, signal_type, statement,
-                supporting_fact_ids_json, counter_fact_ids_json, confidence,
-                metadata_json, produced_by_run_id, generation_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                signal.id,
-                _iso(signal.created_at),
-                _iso(signal.superseded_at),
-                signal.signal_type,
-                signal.statement,
-                _json(signal.supporting_fact_ids),
-                _json(signal.counter_fact_ids),
-                signal.confidence,
-                _json(signal.metadata),
-                produced_by_run_id,
-                generation_id,
-            ),
-        )
-    except sqlite3.IntegrityError as error:
-        if "self_signals.id" in str(error):
-            raise IdCollisionError() from error
-        raise IntegrityFailureError("signal_insert_failed") from error
-
-
-def hydrate_self_signal(row: sqlite3.Row) -> SelfSignal:
-    try:
-        supporting_fact_ids = json.loads(row["supporting_fact_ids_json"])
-        counter_fact_ids = json.loads(row["counter_fact_ids_json"])
-        metadata = json.loads(row["metadata_json"])
-    except (json.JSONDecodeError, IndexError, TypeError) as error:
-        raise HydrationFailureError() from error
-    payload = {
-        "id": row["id"],
-        "created_at": row["created_at"],
-        "superseded_at": row["superseded_at"],
-        "signal_type": row["signal_type"],
-        "statement": row["statement"],
-        "supporting_fact_ids": supporting_fact_ids,
-        "counter_fact_ids": counter_fact_ids,
-        "confidence": row["confidence"],
-        "metadata": metadata,
-    }
-    return _hydrate(SelfSignal, payload)
-
-
-def list_self_signals(
-    connection: sqlite3.Connection, *, current_only: bool = True
-) -> tuple[SelfSignal, ...]:
-    where = " WHERE superseded_at IS NULL" if current_only else ""
-    rows = connection.execute("SELECT * FROM self_signals" + where).fetchall()
-    signals = [hydrate_self_signal(row) for row in rows]
-    signals.sort(
-        key=lambda item: (
-            item.created_at.astimezone(timezone.utc),
-            item.id.encode("utf-8"),
-        )
-    )
-    return tuple(signals)
-
-
 def insert_assessment_snapshot(
     connection: sqlite3.Connection,
     snapshot: AssessmentSnapshot,
@@ -742,17 +632,14 @@ def insert_self_claim(
     if owner["superseded_at"] is not None:
         raise IntegrityFailureError("claim_snapshot_superseded")
 
+    # §13.6/§15.4: no claim reaches storage without a source fact — the
+    # closure is the whole provenance a chainless claim would lack (§16.1).
+    if not claim.source_fact_ids:
+        raise IntegrityFailureError("claim_source_facts_empty")
+
+    counter_fact_ids = set(claim.counter_fact_ids)
     confidences: list[str] = []
-    for signal_id in claim.source_signal_ids:
-        row = connection.execute(
-            "SELECT confidence, superseded_at FROM self_signals WHERE id = ?",
-            (signal_id,),
-        ).fetchone()
-        if row is None:
-            raise IntegrityFailureError("claim_signal_missing")
-        if row["superseded_at"] is not None:
-            raise IntegrityFailureError("claim_signal_superseded")
-        confidences.append(row["confidence"])
+    supporting_confidences: list[str] = []
     for fact_id in claim.source_fact_ids:
         row = connection.execute(
             "SELECT confidence, superseded_at FROM experience_facts WHERE id = ?",
@@ -763,7 +650,37 @@ def insert_self_claim(
         if row["superseded_at"] is not None:
             raise IntegrityFailureError("claim_fact_superseded")
         confidences.append(row["confidence"])
+        if fact_id not in counter_fact_ids:
+            supporting_confidences.append(row["confidence"])
     cap = claim_confidence_cap(source_confidences=confidences)
+    if claim.claim_kind == "pattern_signal":
+        # §9.4: the pattern-generalization caps stay re-checkable after §15.4's
+        # patterns are discarded, because the persisted split — the closure
+        # minus its contrary members — is exactly the supporting set the caps
+        # are computed over.
+        supporting_fact_ids = [
+            fact_id
+            for fact_id in claim.source_fact_ids
+            if fact_id not in counter_fact_ids
+        ]
+        distinct_source_log_count = 0
+        if supporting_fact_ids:
+            placeholders = ",".join("?" for _ in supporting_fact_ids)
+            distinct_source_log_count = connection.execute(
+                "SELECT COUNT(DISTINCT ei.raw_log_id) "
+                "FROM fact_sources AS fs "
+                "JOIN evidence_items AS ei ON ei.id = fs.evidence_item_id "
+                f"WHERE fs.fact_id IN ({placeholders})",
+                supporting_fact_ids,
+            ).fetchone()[0]
+        pattern_cap = pattern_generalization_cap(
+            supporting_confidences=supporting_confidences,
+            distinct_source_log_count=distinct_source_log_count,
+            has_counter_facts=bool(counter_fact_ids),
+        )
+        if confidence_exceeds(pattern_cap, cap):
+            pattern_cap = cap
+        cap = pattern_cap
     if confidence_exceeds(claim.confidence, cap):
         raise IntegrityFailureError("claim_confidence_above_cap")
     try:
@@ -771,7 +688,7 @@ def insert_self_claim(
             """
             INSERT INTO self_claims(
                 id, created_at, superseded_at, snapshot_id, claim, claim_kind,
-                dimension, source_signal_ids_json, source_fact_ids_json,
+                dimension, source_fact_ids_json, counter_fact_ids_json,
                 confidence, verification_status, counterevidence_json,
                 uncertainty, metadata_json, produced_by_run_id, generation_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -784,8 +701,8 @@ def insert_self_claim(
                 claim.claim,
                 claim.claim_kind,
                 claim.dimension,
-                _json(claim.source_signal_ids),
                 _json(claim.source_fact_ids),
+                _json(claim.counter_fact_ids),
                 claim.confidence,
                 claim.verification_status,
                 _json([item.model_dump(mode="json") for item in claim.counterevidence]),
@@ -828,8 +745,8 @@ def hydrate_assessment_snapshot(row: sqlite3.Row) -> AssessmentSnapshot:
 
 def hydrate_self_claim(row: sqlite3.Row) -> SelfClaim:
     try:
-        signal_ids = json.loads(row["source_signal_ids_json"])
         fact_ids = json.loads(row["source_fact_ids_json"])
+        counter_fact_ids = json.loads(row["counter_fact_ids_json"])
         counterevidence = json.loads(row["counterevidence_json"])
         metadata = json.loads(row["metadata_json"])
     except (json.JSONDecodeError, IndexError, TypeError) as error:
@@ -844,8 +761,8 @@ def hydrate_self_claim(row: sqlite3.Row) -> SelfClaim:
             "claim": row["claim"],
             "claim_kind": row["claim_kind"],
             "dimension": row["dimension"],
-            "source_signal_ids": signal_ids,
             "source_fact_ids": fact_ids,
+            "counter_fact_ids": counter_fact_ids,
             "confidence": row["confidence"],
             "verification_status": row["verification_status"],
             "counterevidence": counterevidence,
@@ -909,15 +826,6 @@ def _validate_verifier_reference(
             raise IntegrityFailureError("finding_counterevidence_fact_missing")
         if row["superseded_at"] is not None:
             raise IntegrityFailureError("finding_counterevidence_fact_superseded")
-        return
-    if ref_type == "self_signal":
-        row = connection.execute(
-            "SELECT superseded_at FROM self_signals WHERE id = ?", (ref_id,)
-        ).fetchone()
-        if row is None:
-            raise IntegrityFailureError("finding_counterevidence_signal_missing")
-        if row["superseded_at"] is not None:
-            raise IntegrityFailureError("finding_counterevidence_signal_superseded")
         return
     if ref_type == "evidence_item":
         row = connection.execute(
@@ -1426,19 +1334,6 @@ def mark_contradictions_superseded(
         connection,
         table="contradictions",
         ids=contradiction_ids,
-        superseded_at=superseded_at,
-    )
-
-
-def mark_self_signals_superseded(
-    connection: sqlite3.Connection,
-    signal_ids: Iterable[str],
-    superseded_at: datetime,
-) -> None:
-    _mark_rows_superseded(
-        connection,
-        table="self_signals",
-        ids=signal_ids,
         superseded_at=superseded_at,
     )
 

@@ -41,7 +41,6 @@ class DeleteOutcome:
     purged_fact_ids: tuple[str, ...]
     purged_gap_ids: tuple[str, ...]
     purged_contradiction_ids: tuple[str, ...]
-    purged_signal_ids: tuple[str, ...]
     purged_finding_ids: tuple[str, ...]
     purged_claim_ids: tuple[str, ...]
     purged_snapshot_ids: tuple[str, ...]
@@ -115,12 +114,6 @@ def delete_log(
                     "SELECT id FROM contradictions ORDER BY CAST(id AS BLOB)"
                 )
             )
-            purged_signal_ids = tuple(
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM self_signals ORDER BY CAST(id AS BLOB)"
-                )
-            )
             purged_finding_ids = tuple(
                 row[0]
                 for row in connection.execute(
@@ -159,7 +152,6 @@ def delete_log(
                             "experience_facts",
                             "gap_questions",
                             "contradictions",
-                            "self_signals",
                             "self_claims",
                             "assessment_snapshots",
                         )
@@ -175,7 +167,7 @@ def delete_log(
             # rollback, or other entry under both reserved managed parents
             # before the privacy purge; database deletion still commits.
             residual_paths.extend(remove_all_managed_output_entries(workspace))
-            # §13.13 rule 5: detections and signals are generated prose and
+            # §13.13 rule 5: detections and claims are generated prose and
             # leave with the facts; purging before the raw_logs delete keeps the
             # answer_log_id ON DELETE SET NULL action from firing into the
             # gap_questions answered-iff CHECK.
@@ -184,7 +176,6 @@ def delete_log(
             connection.execute("DELETE FROM assessment_snapshots")
             connection.execute("DELETE FROM gap_questions")
             connection.execute("DELETE FROM contradictions")
-            connection.execute("DELETE FROM self_signals")
             connection.execute("DELETE FROM experience_facts")
             connection.execute(
                 "UPDATE llm_calls SET input_hash = NULL, output_hash = NULL"
@@ -207,7 +198,6 @@ def delete_log(
                 purged_fact_ids=purged_fact_ids,
                 purged_gap_ids=purged_gap_ids,
                 purged_contradiction_ids=purged_contradiction_ids,
-                purged_signal_ids=purged_signal_ids,
                 purged_finding_ids=purged_finding_ids,
                 purged_claim_ids=purged_claim_ids,
                 purged_snapshot_ids=purged_snapshot_ids,

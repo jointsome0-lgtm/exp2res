@@ -12,12 +12,15 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 
 from pydantic import BaseModel, ValidationError
 
-from exp2res.domain.calibration import claim_confidence_cap
+from exp2res.domain.calibration import (
+    claim_confidence_cap,
+    pattern_generalization_cap,
+)
 from exp2res.domain.enums import AssessmentScope
 from exp2res.domain.models import (
     AssessmentSnapshot,
+    ExperienceFact,
     SelfClaim,
-    SelfSignal,
     canonical_project_key,
 )
 from exp2res.domain.temporal import confidence_exceeds
@@ -38,6 +41,8 @@ from exp2res.llm.assessment_writer import (
     ASSESSMENT_WRITER_CONTRACT,
     AssessmentWriterInput,
     AssessmentWriterOutput,
+    PatternClaimCandidate,
+    ScratchPattern,
 )
 from exp2res.llm.contracts import (
     ContractValidationError,
@@ -119,13 +124,54 @@ def assessment_view_key(
     )
 
 
+def claim_counter_fact_ids(
+    candidate: object, patterns: Sequence[ScratchPattern]
+) -> list[str]:
+    """Derive §11.6's contrary-role marking from the cited §15.4 patterns.
+
+    The duplicate-free union of the cited patterns' counter facts, empty for a
+    claim citing no patterns. §15.4's equality rule makes it a subset of the
+    candidate's `source_fact_ids`, so the split stays re-checkable after the
+    patterns are discarded at this boundary.
+    """
+
+    if not isinstance(candidate, PatternClaimCandidate):
+        return []
+    by_label = {item.label: item for item in patterns}
+    cited = frozenset().union(
+        *(
+            frozenset(by_label[label].counter_fact_ids)
+            for label in candidate.source_pattern_labels
+        )
+    )
+    return sorted(cited, key=_id_key)
+
+
+def _pattern_cap(
+    candidate: PatternClaimCandidate,
+    counter_fact_ids: Sequence[str],
+    fact_by_id: dict[str, ExperienceFact],
+) -> str:
+    """Compute §9.4's pattern-generalization cap from the persisted split."""
+
+    supporting = [
+        fact_by_id[fact_id]
+        for fact_id in candidate.source_fact_ids
+        if fact_id not in set(counter_fact_ids)
+    ]
+    return pattern_generalization_cap(
+        supporting_confidences=(fact.confidence for fact in supporting),
+        distinct_source_log_count=len(
+            {log_id for fact in supporting for log_id in fact.source_log_ids}
+        ),
+        has_counter_facts=bool(counter_fact_ids),
+    )
+
+
 def _enrich_for(
     input_payload: AssessmentWriterInput,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    signal_by_id = {signal.id: signal for signal in input_payload.signals}
-    fact_by_id = {
-        fact.id: fact for fact in (*input_payload.facts, *input_payload.context_facts)
-    }
+    fact_by_id = {fact.id: fact for fact in input_payload.facts}
 
     def enrich(decoded: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -146,17 +192,18 @@ def _enrich_for(
             errors.append(
                 {"loc": ("self_claims",), "type": "narrative_summary_count"}
             )
+        for index, pattern in enumerate(output.patterns):
+            for field in ("supporting_fact_ids", "counter_fact_ids"):
+                for member_index, fact_id in enumerate(getattr(pattern, field)):
+                    if fact_id not in fact_by_id:
+                        errors.append(
+                            {
+                                "loc": ("patterns", index, field, member_index),
+                                "type": "out_of_context_target",
+                            }
+                        )
         for index, candidate in enumerate(output.self_claims):
             missing = False
-            for member_index, signal_id in enumerate(candidate.source_signal_ids):
-                if signal_id not in signal_by_id:
-                    errors.append(
-                        {
-                            "loc": ("self_claims", index, "source_signal_ids", member_index),
-                            "type": "out_of_context_target",
-                        }
-                    )
-                    missing = True
             for member_index, fact_id in enumerate(candidate.source_fact_ids):
                 if fact_id not in fact_by_id:
                     errors.append(
@@ -170,13 +217,20 @@ def _enrich_for(
                 continue
             cap = claim_confidence_cap(
                 source_confidences=(
-                    *(
-                        signal_by_id[item].confidence
-                        for item in candidate.source_signal_ids
-                    ),
-                    *(fact_by_id[item].confidence for item in candidate.source_fact_ids),
+                    fact_by_id[item].confidence for item in candidate.source_fact_ids
                 )
             )
+            if isinstance(candidate, PatternClaimCandidate):
+                # The §9.4 pattern-generalization cap is never weaker than the
+                # source maximum, but taking the stricter of the two keeps the
+                # bound total whatever the split.
+                pattern_cap = _pattern_cap(
+                    candidate,
+                    claim_counter_fact_ids(candidate, output.patterns),
+                    fact_by_id,
+                )
+                if confidence_exceeds(cap, pattern_cap):
+                    cap = pattern_cap
             if confidence_exceeds(candidate.confidence, cap):
                 errors.append(
                     {
@@ -236,8 +290,8 @@ def _resolve_for(
                 claim=candidate.claim,
                 claim_kind=candidate.claim_kind,
                 dimension=candidate.dimension,
-                source_signal_ids=sorted(candidate.source_signal_ids, key=_id_key),
                 source_fact_ids=sorted(candidate.source_fact_ids, key=_id_key),
+                counter_fact_ids=claim_counter_fact_ids(candidate, output.patterns),
                 confidence=candidate.confidence,
                 verification_status="unverified",
                 counterevidence=[],
@@ -278,8 +332,6 @@ def run_assessment_generation(
             connection, scope=scope, scope_target=scope_target
         )
         facts = view.facts
-        signals = view.signals
-        context_facts = view.context_facts
 
         gaps = tuple(
             sorted(
@@ -291,21 +343,16 @@ def run_assessment_generation(
             sorted(list_contradictions(connection), key=lambda item: _id_key(item.id))
         )
 
-        # §13.6 defines the empty-subject failure for project views only. A global
-        # view may legitimately mirror open gaps/contradictions with no facts or
-        # signals yet; it fails only when the writer would receive zero supplied
-        # objects of any kind and could therefore only fabricate.
-        if scope == "project":
-            if not facts and not signals:
-                raise EmptyAssessmentViewError()
-        elif not (facts or signals or gaps or contradictions):
+        # §13.6 states the empty-subject failure for project views. Since §15.4
+        # rejects an empty `source_fact_ids` on every claim, a factless global
+        # view cannot produce even the required narrative summary, so it fails
+        # here rather than after a provider call that can only be invalid.
+        if not facts:
             raise EmptyAssessmentViewError()
         input_payload = AssessmentWriterInput(
             scope=scope,
             scope_target=scope_target,
-            signals=list(signals),
             facts=list(facts),
-            context_facts=list(context_facts),
             gaps=list(gaps),
             contradictions=list(contradictions),
         )
@@ -316,9 +363,7 @@ def run_assessment_generation(
                 input_ids=tuple(
                     sorted(
                         {
-                            *(item.id for item in signals),
                             *(item.id for item in facts),
-                            *(item.id for item in context_facts),
                             *(item.id for item in gaps),
                             *(item.id for item in contradictions),
                         },
@@ -756,8 +801,8 @@ def run_assessment_repair(
                     claim=rewrites.get(old.id, old.claim),
                     claim_kind=old.claim_kind,
                     dimension=old.dimension,
-                    source_signal_ids=list(old.source_signal_ids),
                     source_fact_ids=list(old.source_fact_ids),
+                    counter_fact_ids=list(old.counter_fact_ids),
                     confidence=old.confidence,
                     verification_status="unverified",
                     counterevidence=[],

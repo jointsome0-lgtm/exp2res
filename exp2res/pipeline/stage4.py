@@ -42,12 +42,10 @@ from exp2res.storage.repository import (
     list_contradictions,
     list_experience_facts,
     list_gap_questions,
-    list_self_signals,
     list_self_claims_for_snapshot,
     mark_assessment_snapshots_superseded,
     mark_contradictions_superseded,
     mark_gap_questions_superseded,
-    mark_self_signals_superseded,
     mark_self_claims_superseded,
     utc_instant,
 )
@@ -80,7 +78,6 @@ class Stage4Result:
     created_contradiction_ids: tuple[str, ...]
     superseded_gap_ids: tuple[str, ...]
     superseded_contradiction_ids: tuple[str, ...]
-    superseded_signal_ids: tuple[str, ...]
     superseded_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
@@ -406,7 +403,6 @@ def run_detection_generation(
         created_contradiction_ids: tuple[str, ...] = ()
         superseded_gap_ids: tuple[str, ...] = ()
         superseded_contradiction_ids: tuple[str, ...] = ()
-        superseded_signal_ids: tuple[str, ...] = ()
         superseded_claim_ids: tuple[str, ...] = ()
         superseded_snapshot_ids: tuple[str, ...] = ()
         invalidated_views: tuple[InvalidatedView, ...] = ()
@@ -419,7 +415,6 @@ def run_detection_generation(
             nonlocal retained, retained_gap_set, retained_contradiction_set
             nonlocal created_gap_ids, created_contradiction_ids
             nonlocal superseded_gap_ids, superseded_contradiction_ids
-            nonlocal superseded_signal_ids
             nonlocal superseded_claim_ids, superseded_snapshot_ids, invalidated_views
             nonlocal generation_id
 
@@ -455,12 +450,6 @@ def run_detection_generation(
                 superseded_contradiction_ids = tuple(
                     item.id for item in current_contradictions
                 )
-                # The contradiction set is §13.5 input, so its replacement
-                # supersedes signals; a gap-only replacement never does.
-                current_signals = list_self_signals(held)
-                superseded_signal_ids = tuple(
-                    item.id for item in current_signals
-                )
             current_snapshots = list_assessment_snapshots(held)
             superseded_snapshot_ids = tuple(item.id for item in current_snapshots)
             superseded_claim_ids = tuple(
@@ -479,7 +468,6 @@ def run_detection_generation(
             for table, ids in (
                 ("gap_questions", superseded_gap_ids),
                 ("contradictions", superseded_contradiction_ids),
-                ("self_signals", superseded_signal_ids),
                 ("self_claims", superseded_claim_ids),
                 ("assessment_snapshots", superseded_snapshot_ids),
             ):
@@ -496,9 +484,6 @@ def run_detection_generation(
             mark_gap_questions_superseded(held, superseded_gap_ids, swap_time)
             mark_contradictions_superseded(
                 held, superseded_contradiction_ids, swap_time
-            )
-            mark_self_signals_superseded(
-                held, superseded_signal_ids, swap_time
             )
             mark_self_claims_superseded(held, superseded_claim_ids, swap_time)
             mark_assessment_snapshots_superseded(
@@ -599,9 +584,6 @@ def run_detection_generation(
                 created_contradiction_ids=created_contradiction_ids,
                 superseded_gap_ids=superseded_gap_ids,
                 superseded_contradiction_ids=superseded_contradiction_ids,
-                superseded_signal_ids=tuple(
-                    sorted(superseded_signal_ids, key=_id_key)
-                ),
                 superseded_claim_ids=tuple(
                     sorted(superseded_claim_ids, key=_id_key)
                 ),

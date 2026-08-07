@@ -8,7 +8,7 @@ It turns owner-controlled experience evidence that automation cannot rewrite int
 
 ## Project stage: implementation-ready with controlled amendments
 
-SDD v0.3 is implementation-ready and remains the binding product contract. The manual-capture and private-workspace foundation is implemented, together with isolated Codex and Claude agent-backed runner substrates and the model-backed pipeline from fact extraction through gap/contradiction detection, self-signals, assessment, and verification; current work proceeds phase by phase along the approved dependency frontier summarized in [`AGENTS.md`](AGENTS.md). [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implemented and verified the global Mirror as a CLI-generated assessment export, and [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98) now serves that Mirror plus unanswered Gap Questions on loopback through `exp2res view serve`. This is not yet a verified bullet-pack or a resume product. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
+SDD v0.3 is implementation-ready and remains the binding product contract. The manual-capture and private-workspace foundation is implemented, together with isolated Codex and Claude agent-backed runner substrates and the model-backed pipeline from fact extraction through gap/contradiction detection, assessment, and verification; current work proceeds phase by phase along the approved dependency frontier summarized in [`AGENTS.md`](AGENTS.md). [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implemented and verified the global Mirror as a CLI-generated assessment export, and [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98) now serves that Mirror plus unanswered Gap Questions on loopback through `exp2res view serve`. This is not yet a verified bullet-pack or a resume product. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
 
 §22 phase status: Phases 0–3 complete, including the §14.17 view-serving slice; Phases 4–5 not yet implemented.
 
@@ -66,7 +66,7 @@ The value names a local program, never a credential; a missing or non-executable
 
 ## Demo
 
-The issue [#79](https://github.com/jointsome0-lgtm/exp2res/issues/79) first-mirror demo is a deliberately small subset of the eventual full [§23 walkthrough](spec/23-end-to-end-demo.md). It exercises capture → extraction → detection → signals → global assessment → verification → assessment export, then a separate project-scoped overclaim whose rejected verification blocks export. It does not claim to implement §23's later verified bullet-pack surface.
+The issue [#79](https://github.com/jointsome0-lgtm/exp2res/issues/79) first-mirror demo is a deliberately small subset of the eventual full [§23 walkthrough](spec/23-end-to-end-demo.md). It exercises capture → extraction → detection → global assessment → verification → assessment export, then a separate project-scoped overclaim whose rejected verification blocks export. It does not claim to implement §23's later verified bullet-pack surface.
 
 All records and all canned model responses are invented for **Vera Example**. The runner is explicitly no-cost and deterministic: it invokes the public Typer app in-process, injects manifest-pinned responses through the production contract-runner seam, fixes clocks and IDs, and performs no network or provider call. The actual SQLite workspace is a checkout-specific temporary directory outside the public repository; output presents it only as the stable relative alias `demo/workspace`.
 
@@ -80,7 +80,7 @@ make demo-verify
 
 `demo-verify` proves manifest hashes, evidence-map closure through real fact/evidence/log rows, current-generation integrity, the blocked export, the checked transcript, and byte-identical exported members and transcript across two clean reruns. The accessible textual walkthrough is [`demo/transcript.txt`](demo/transcript.txt).
 
-Version pin: Vera corpus `0.3.0`; SQLite schema `8`; CLI `envelope_version = 1`. After any incompatible corpus, schema, envelope, rendering, or command-flow change, regenerate with `python examples/vera/corpus.py generate`, rerun the three make targets, and replace the checked transcript and recording only with output from the new exact deterministic flow.
+Version pin: Vera corpus `0.3.0`; SQLite schema `9`; CLI `envelope_version = 1`. After any incompatible corpus, schema, envelope, rendering, or command-flow change, regenerate with `python examples/vera/corpus.py generate`, rerun the three make targets, and replace the checked transcript and recording only with output from the new exact deterministic flow.
 
 The checked recording is [`demo.cast`](demo.cast). Replay it locally with `asciinema play demo.cast`. Regenerate it after an incompatible demo change with the pinned 110×32 terminal shape:
 
