@@ -381,6 +381,7 @@ This contract binds every command-specific form above and every later §14 addit
    - `gaps list`;
    - `contradictions list` and `contradictions show`;
    - `assess list` and `assess show`;
+   - `jd list`;
    - `runs list` and `runs show`.
 
    Explicitly deferred read-only additions, which add no V1 mutation or decision surface:
