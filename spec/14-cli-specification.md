@@ -185,7 +185,7 @@ exp2res bullets verify --branch agent-engineer
 exp2res bullets export --branch agent-engineer
 ```
 
-`jd add` remains the Stage 8 creation command owned by this bullet-pack flow; §14.15 owns job-description deletion. The internal `ResumeBranch` and `ResumeBullet` entity names retain “resume” because a branch models targeting for a vacancy; renaming those persisted/internal contracts would be a §12.14 schema change, while the product-facing artifact and command group are the verified bullet pack and `bullets`.
+`jd add` remains the Stage 8 creation command owned by this bullet-pack flow; §14.15 owns job-description listing and deletion. The internal `ResumeBranch` and `ResumeBullet` entity names retain “resume” because a branch models targeting for a vacancy; renaming those persisted/internal contracts would be a §12.14 schema change, while the product-facing artifact and command group are the verified bullet pack and `bullets`.
 
 `--snapshot` is a required stored-record selector governed by §18's canonical snapshot-anchor rule.
 
@@ -333,6 +333,7 @@ This contract binds every command-specific form above and every later §14 addit
      - `contradictions list`, `contradictions show` — `{contradictions: list[Contradiction]}` using complete §11.9 values; a successful `show` result contains exactly one.
      - `assess list` — `{snapshots: list[{id, scope, verification_status, created_at}]}`, exactly the §14.9 discovery projection.
      - `assess show` — `{snapshot: AssessmentSnapshot, claims: list[SelfClaim], gaps: list[GapQuestion], contradictions: list[Contradiction]}` using the complete §11 values reached through the snapshot's claim membership (`SelfClaim.snapshot_id`, claim-ID order) and its typed gap/contradiction references.
+     - `jd list` (§14.15) — `{job_descriptions: list[{id, created_at, title, company}]}`, the discovery projection `jd delete` selects from; `JobDescription.raw_text` and `parsed` are absent.
      - `jd delete` (§14.15) — `{selected_job_description: {id, created_at, title, company}, purged_branches: list[{id, name}], removed_managed_paths: list[str]}`.
        - `purged_branches` contains every current and historical dependent branch captured before deletion.
        - Residual paths use the envelope's top-level `residual_paths`.
@@ -384,7 +385,7 @@ This contract binds every command-specific form above and every later §14 addit
 
    Explicitly deferred read-only additions, which add no V1 mutation or decision surface:
 
-   - job-description listing and per-record inspection;
+   - per-job-description inspection beyond `jd list`'s discovery fields;
    - evidence-item listing beyond `logs show`'s per-record linked items;
    - resume-branch or bullet listing;
    - historical-generation browsing beyond `runs show`;
@@ -401,10 +402,13 @@ This contract binds every command-specific form above and every later §14 addit
 ## §14.15 Manage Job Descriptions
 
 ```bash
+exp2res jd list
 exp2res jd delete --jd jd_001
 ```
 
-`jd delete` is the only §14.15 form in V1. Job-description read projections — listing and per-record inspection — are deferred under §14.14 rule 7; `jd delete` ships because per-vacancy deletion is a privacy requirement, not a convenience.
+`jd list` and `jd delete` are the §14.15 forms in V1. Per-record inspection defers under §14.14 rule 7. `jd delete` ships because per-vacancy deletion is a privacy requirement, not a convenience, and `jd list` ships with it because `JobDescription.id` is opaque and service-assigned: without a listing an owner who no longer has the `jd add` output cannot name the record to delete, which is exactly the case privacy deletion exists for.
+
+`jd list` is read-only local inspection over the §14.14 rule 5 projection. It never exposes `JobDescription.raw_text` or `parsed`, invokes no provider, and serializes nothing into a prompt.
 
 `jd delete` is the owner's per-job-description destructive privacy operation and uses §14.14 rule 3 confirmation semantics: `--yes` supplies consent, otherwise a TTY confirmation is required and non-interactive use fails closed. It invokes §13.13 rule 10's dependent purge. The command reports the selected deleted job description, every purged branch with its ID and name, and every removed managed path through the closed result in §14.14 rule 5. Any residual managed path is also reported in `residual_paths` with `deletion_incomplete`, never success; the database deletion remains committed under §13.13 rule 6.
 
