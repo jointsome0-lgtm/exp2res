@@ -65,12 +65,12 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
 28. A metadata key can never carry authority, control, selection, or lifecycle state unless one specification section names both its producer and its consumer, applying to keys the same producer-closure principle reflected in §10's enum domains.
 29. The V1 named keys are:
     - `question_text` and `question_reason` on a gap-answer `RawLog`, produced by §14.7 and consumed by §15.2;
-    - `source_system`, `source_record_id`, and `content_hash` on an imported `RawLog`, produced by a §19.4 importer and consumed only by §19.4's retained-identity duplicate/conflict check;
-    - `content_digest` on an imported `EvidenceItem`, produced by a §19.4 importer and consumed only by §19.4's integrity check at an explicitly authorized §29.4 dereference;
+    - `source_system`, `source_record_id`, and `content_hash` on an imported `RawLog`, produced by a §19 importer and consumed only by §19.4's retained-identity duplicate check;
+    - `content_digest` on an imported `EvidenceItem`, produced by a §19 importer and consumed only by §19.4's integrity check at an explicitly authorized §29.4 dereference;
     - `repaired_from_snapshot_id` on an `AssessmentSnapshot` plus `adopted_rewrite_of_claim_id` on a `SelfClaim`, produced only by §13.6's deterministic repair form and consumed by no V1 operation — inert repair provenance for inspection.
 30. The import identity keys are non-empty structural strings; `content_hash` and `content_digest` are exactly the lowercase SHA-256 hexadecimal forms defined by §19.4.
 31. The digest remains inert for authority, control, selection, and lifecycle purposes.
-32. A §19.4 source metadata object containing a reserved import key for the target entity is invalid rather than overwritten, and the final service-mapped metadata remains subject to the limits below.
+32. A §19 source metadata object containing a reserved import key for the target entity is invalid rather than overwritten, and the final service-mapped metadata remains subject to the limits below.
 33. The same key names from any other producer remain inert.
 34. Every object within entity metadata has at most 16 keys.
 35. A key is non-empty lowercase ASCII snake case matching `^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$` and is at most 64 characters.
@@ -247,7 +247,6 @@ class AssessmentSnapshot(BaseModel):
     created_at: datetime
     superseded_at: Optional[datetime] = None
     scope: AssessmentScope
-    scope_target: Optional[str] = None
     title: str
     summary: str
     gap_question_ids: list[str] = Field(default_factory=list)
@@ -260,7 +259,7 @@ class AssessmentSnapshot(BaseModel):
 
 A snapshot's member claims are exactly the `self_claims` rows whose `snapshot_id` names it (§11.6); the snapshot persists no claim list, and member selection orders by claim ID under §11.6's ordering rule.
 
-For `scope = "project"`, `scope_target` is required and is the canonical §14.9 `--project` value — Unicode NFC, leading/trailing whitespace trimmed, non-blank — persisted before case folding; the assessment writer cannot author or normalize it. For `global` it is `None`. A (`scope`, case-folded canonical `scope_target`) pair is an assessment view, the snapshot replacement identity under §13.6: one snapshot is current per view, and distinct views — `global` and each project target — are simultaneously current. The target remains a user-supplied scope label, not an entity reference; renaming a project starts a new view rather than migrating an old one. `title` is service-derived under §13.6's deterministic rule.
+`scope` is the assessment view and the snapshot replacement identity under §13.6. V1 declares exactly one view, `global` (§10), so exactly one assessment snapshot is current at a time. `title` is service-derived under §13.6's deterministic rule.
 
 `gap_question_ids` is service-populated under §13.6's exact unanswered-set rule. The field carries references only: the stored unknown content remains the referenced current `GapQuestion.question`, `reason`, `priority`, and target; known-gap assertions belong to §13.6's status-bearing claim output. At the Stage 6 transaction boundary, missing, duplicate, superseded, answered, or omitted gap references fail under §12 rule 10 and the Stage 6 transaction checks.
 
@@ -290,7 +289,7 @@ class ResumeBullet(BaseModel):
 
 The initial `verification_status` values, their owning verifier transitions, and all consumer permissions are defined in §13.10, §13.11, and §16.11.
 
-`source_self_claim_ids` follows the exact-use contract in §13.10/§15.6.
+`source_self_claim_ids` follows the citation contract in §13.10/§15.6.
 
 `matched_jd_requirements` production and validation follow §13.10 and §12 rule 10.
 

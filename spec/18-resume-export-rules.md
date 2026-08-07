@@ -1,6 +1,6 @@
 ## §18. Verified Bullet-Pack Export Rules
 
-The verified bullet pack remains useful, but secondary to the mirror. V1 exports selected, verified bullets plus the closed typed companions in §13.12; it does not claim a complete or styled resume document. A full resume document model is a named post-mirror iteration.
+The verified bullet pack remains useful, but secondary to the mirror. V1 exports selected, verified bullets plus the closed typed companions in §13.12 — `evidence_map.json`, `verification_report.json`, and the manifest; it does not claim a complete or styled resume document. A full resume document model is a named post-mirror iteration.
 
 The canonical snapshot-anchor rule is:
 
@@ -17,7 +17,7 @@ Pipeline:
 assessment snapshot
   + job description with typed ParsedJD requirements
   + facts and supported self-claims
-  -> isolated relevance-aware bullet generation
+  -> one relevance-aware bullet-generation call for the whole pack
      (selection and matching occur inside generation;
       relevance is persisted on each resume bullet)
   -> deterministic §13.10 planning and checks
@@ -53,7 +53,7 @@ snapshot, branch, bullet, fact, or self-claim is superseded
 snapshot status is outside the §16.11 Stage 10 anchor allowlist
 any required provenance ID does not resolve to a current retained entity
 bullet references a branch other than the exported branch
-bullet source_self_claim_ids is not the exact supported claim set supplied to its writer invocation (§13.10/§15.6), or contains a claim outside the branch snapshot
+bullet source_self_claim_ids names a claim that is not a supported member of the branch snapshot supplied to the writer (§13.10/§15.6)
 bullet source_log_ids differs from the raw logs reached through source_fact_ids
 bullet matched_jd_requirements contains a duplicate, missing, free-form, or wrong-job requirement ID
 no source fact reaches a direct fact_sources row, EvidenceItem, and retained RawLog
@@ -77,7 +77,7 @@ The branch's persisted job-description association and typed requirement resolut
 - Every factual sentence is inside the LF-newline- and NFC-normalized, escaped projection of one persisted `ResumeBullet.text`.
 - The renderer adds no factual bridge, summary, transition, filler, or inferred coherence prose.
 - The matching §13.12 `rendered_bullets` entry and complete typed evidence-map closure are mandatory for every bullet; that row grounds every sentence in its text through the same complete provenance sets.
-- §13.10's no-second-LLM-pass and isolation rules apply unchanged.
+- §13.10's no-second-LLM-pass rule applies unchanged.
 
 `ResumeBullet.text` and all system-authored export prose are generated voice under §16.12 and receive the full §16.2–§16.10 checks. Evidence-map excerpts follow §16.12's source-voice rules. §13.12 owns every companion field set and JSON byte rule. §17 owns the shared Markdown, empty-section, and repeated-render determinism rules, which apply unchanged here.
 

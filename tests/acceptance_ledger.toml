@@ -427,14 +427,14 @@ nodes = [
   "tests/test_managed_output.py::test_superseded_manifest_version_is_never_matching_or_overwritten",
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
-note = "The managed set publishes report.html beside report.md with golden-pinned deterministic bytes, one document behind both members, an inert self-contained page under a hash-pinned policy, and residual reporting for a superseded manifest version — all at §13.14's manifest_version 5; §24.59 tracks the §30 mirror view that serves those revalidated bytes, with only the project-scoped and JD-to-bullet-pack views deferred"
+note = "The managed set publishes report.html beside report.md with golden-pinned deterministic bytes, one document behind both members, an inert self-contained page under a hash-pinned policy, and residual reporting for a superseded manifest version — all at the §13.14 manifest_version the shipped build emits; §24.59 tracks the §30 mirror view that serves those revalidated bytes, with only the JD-to-bullet-pack view deferred"
 
 ["24.59"]
 status = "met"
 phases = ["3"]
 evals = ["21.57"]
 issues = ["#98", "PR #240", "PR #241"]
-note = "The three #98 pull requests complete the item: the §30 resolution service, the §14.17 loopback transport with its rule 9/10 bounds and receive/processing/emit/drain deadlines, and now the `view serve` command form — bind admission before any socket, the §12.14 gate before bind, exactly two startup URLs on stderr in both modes, route-and-outcome-only progress lines, and the class-9 cancelled envelope. §30's deferred project scope, JD-to-bullet-pack view, and provenance drill-down are outside this item"
+note = "The three #98 pull requests complete the item: the §30 resolution service, the §14.17 loopback transport with its rule 9/10 bounds and receive/processing/emit/drain deadlines, and now the `view serve` command form — bind admission before any socket, the §12.14 gate before bind, exactly two startup URLs on stderr in both modes, route-and-outcome-only progress lines, and the class-9 cancelled envelope. §30's deferred JD-to-bullet-pack view and provenance drill-down are outside this item"
 
 ["24.60"]
 status = "met"

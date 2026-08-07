@@ -76,7 +76,7 @@ Enforces §29.5.
 
 ## §21.32 Assessment Verifier Receives the Exact Provenance Closure
 
-## §21.33 Assessment Scope Selects Deterministically and Views Replace by Identity
+## §21.33 Assessment Subject Selects Deterministically and the View Replaces by Identity
 
 ## §21.34 Managed Exports Are ID-Keyed and Manifest-Identified
 
@@ -118,7 +118,7 @@ Enforces §8.1, §12 rule 13, §12.13, §12.15, §13.3, §13.7, §13.10–§13.1
 
 Enforces §8.1, §13.13 rules 5–6 and 10, §14.14–§14.16, and §29.2 and §29.6.
 
-## §21.45 Integration Imports Are Versioned, Idempotent, and Atomic
+## §21.45 Integration Imports Are Source-Local, Idempotent, and Per-Record
 
 Enforces §8.1, §10's `OwnerAttribution`, §11's Model validation policy, §13.1 rule 5, §14.5, §14.14 rule 5, §19.1–§19.4, and §29.4–§29.5; extends §21.39's boundary coverage.
 
@@ -146,7 +146,7 @@ Enforces §15.10 rule 4, §15.12, §15.13, §29.2, §29.4, and §29.6; extends �
 
 Enforces §9.4, §11's Model validation policy, §13.1, §13.3 rule 10, §14.2–§14.4, §14.7, §14.14 rules 4–5, and §29.4.
 
-## §21.52 Non-Prompt Owner Capture Is Affirmed, Lossless, and Uncertainty-Preserving
+## §21.52 Non-Prompt Owner Capture Is Lossless and Uncertainty-Preserving
 
 Enforces §5.2, §5.5, §11's Model validation policy and §11.1, §13.1, §13.3 rule 10, §14.2–§14.4, §14.7, §14.14 rules 2–4 and 8, and §29.4.
 

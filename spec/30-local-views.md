@@ -49,9 +49,9 @@
 3. **Mirror view.**
 
    - The mirror view presents the §17 report for one explicitly selected current `AssessmentSnapshot` as local HTML, preserving §16.11 status gates, uncertainty, contradictions, and source/generated-voice boundaries.
-   - The URL carries that selection explicitly in one of exactly two closed forms: the assessment-view identity — `scope`, plus its target for a project scope — or one exact `AssessmentSnapshot.id`.
+   - The URL carries that selection explicitly in one of exactly two closed forms: the assessment-view identity — `scope` — or one exact `AssessmentSnapshot.id`.
    - There is no default selector, no omitted-selector fallback, and no latest-of-several rule: an identity selector resolves only to the unique current snapshot of exactly that view, and both zero and more than one resolution are fail-closed outcomes rather than a choice.
-   - V1 serves the `global` identity; a project-scope selector is refused as the deferred slice it is rather than silently widened.
+   - `global` is the only `AssessmentScope` value (§10), so it is the only identity a `scope` selector names; any other value is an unknown selector under rule 7.
    - That HTML is exactly §17's `report.html` member: the view performs §13.14's complete current-output revalidation for the selected snapshot — rule 5's standard, not merely matching-manifest validation — and serves those published bytes.
    - It never renders a second version of the same projection, never re-renders around a failed revalidation, and never renders a partial claim set to work around a gate.
    - A missing, stale, or invalidated set is a fail-closed outcome that names the §14.9 export the owner must run.
@@ -69,14 +69,13 @@
    - The sole outbound question-of-the-day source is the gap-question view over the same explicitly selected set.
    - Exp2Res, never the shell, performs §13.14's complete current-output revalidation — not merely matching-manifest validation — validates the closed companion schema of that set's `out/assessment/<snapshot-id>/self_claims.json` from §13.12–§13.14, projects only `unknowns` entries with `answered = false`, and presents only their `question` values — §17's open-question set.
    - No other companion field, and no gap ID, target, reason, priority, claim, or contradiction, reaches the page, so a question stays readable without becoming an answer link-back token.
-   - The shell embeds one URL: it reads no companion file, manifest, or workspace path, inherits no companion schema, cannot bypass revalidation, and never constructs a path from the scope target.
+   - The shell embeds one URL: it reads no companion file, manifest, or workspace path, inherits no companion schema, cannot bypass revalidation, and never constructs a path from the selector.
    - A stale historical set, a set invalidated by a later gap answer, or a cleanup residual is never a handoff source.
    - Exp2Res receives no consumer identity or answer callback.
    - An answer returns only through ordinary diary/activity capture or import as a new `RawLog`. It carries no gap ID or link-back token, and §14.7's no-relink rule remains unchanged.
 6. **Closed route set and per-request revalidation.**
 
    - The served routes are exactly `/mirror` and `/questions`, each carrying rule 3's selection as exactly one query selector — `scope`, or `snapshot`.
-   - When the deferred project scope is implemented, `scope=project` takes its target in exactly one additional `project` parameter carrying the §14.9 canonical project label, and that pair is the whole of the identity form. V1 recognizes the shape only to refuse it as deferred.
    - Any other path, an absent, unknown, repeated, combined, or malformed selector, and any additional parameter are refused rather than interpreted.
    - Matching runs on one fixed representation, so identical request bytes always receive identical structural parsing and selector interpretation. Their state-dependent rule 7 outcome may change when the required per-request reads observe different workspace state.
    - Structure is matched literally and before any decoding: the path, the `?`, `&`, and `=` delimiters, and every parameter name are compared as the ASCII bytes received, so a percent-escape standing in a structural position — `/m%69rror`, `?%73cope=global` — is never decoded into a match and is refused as `route_not_found` or `invalid_selector`.
@@ -121,7 +120,7 @@
    |---|---|---|---:|
    | `served` | Revalidated content served. | — | 200 |
    | `malformed_request` | Any rule 9 transport-envelope overflow or transport parse failure — an unparseable request line, an invalid header section, or any framing form rule 2 rejects before the method check — and an otherwise accepted method carrying rule 2's one canonical positive `Content-Length`. | none: correct the request | 400 |
-   | `invalid_selector` | Absent, unknown, ambiguous, or malformed selector, or the deferred project-scope selector — named by `scope`, or reached through the ID of a project-scoped snapshot. | none: correct the request | 400 |
+   | `invalid_selector` | Absent, unknown, ambiguous, or malformed selector. | none: correct the request | 400 |
    | `assessment_blocked` | Completed semantic refusal: the selected snapshot fails §16.11's assessment-export allowlist. | the §14.9 verification for an unverified snapshot under either selector, because it updates that selected snapshot. For a completed negative verdict selected by identity, the §14.9 generation that replaces the rejected claims. For that verdict selected by exact ID, none as a repair of that URL — generation creates a new ID, so the page names only §14.14 rule 7's assessment listing for discovery | 403 |
    | `route_not_found` | A path outside the closed route set. | none: correct the request | 404 |
    | `no_current_view` | No current assessment view for the selected identity, or no current snapshot with the selected ID. | for an identity selector, the §14.9 generation. For an ID selector, only §14.14 rule 7's assessment listing, because no stored row names the view the requester meant | 404 |

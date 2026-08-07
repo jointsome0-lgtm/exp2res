@@ -25,7 +25,7 @@ Rule-ordinal stability: rule ordinals inside a §'s numbered lists (cited as `§
 - §3 Core Purpose — orientation, not impressiveness
 - §4 Goals and Non-Goals — product/cognitive goals, V1 verified-bullet-pack scope and closed companions, deferred full resume document model, and forbidden inflations
 - §5 Core Principles — truth over comfort; owner-controlled, automation-append-only raw records with owner deletion authority; recorded_at ≠ occurred_at; no precision/ownership inflation; contradictions first-class; no automatic semantic promotion
-- §6 System Boundaries — relations to Tick-like activity intake, Atlas knowledge-state snapshots, upstream-acquired GitHub commit envelopes, and the verified bullet-pack export projection
+- §6 System Boundaries — relations to Tick-like activity intake, Atlas knowledge-state snapshots, upstream-acquired GitHub commit records, and the verified bullet-pack export projection
 - §7 High-Level Architecture — pipeline diagram
 - §8 Runtime Architecture — Python, Typer, SQLite, Pydantic, CLI-first; §8.1 one-business-writer/many-reader workspace locking, WAL discipline, secure_delete; database compatibility and migration owned by §12.14
 - §9 Domain Model — ontology, raw-versus-derived lifecycle, claim kinds; §9.2 confidence layers, §9.3 evidence strength, §9.4 evidence-to-confidence calibration including the owner-locator trust position
@@ -38,7 +38,7 @@ Rule-ordinal stability: rule ordinals inside a §'s numbered lists (cited as `§
 - §16 Verification Rules — evidence, mirror, anti-flattery, ownership, metric, production, temporal, employment, identity, diagnostic; §16.11 status semantics and gates, §16.12 generated-voice boundary, §16.13 language scope, §16.14 owner reference
 - §17 Self-Assessment Report Format — the mirror report's fixed section model with deterministic claim selection and ordering, rendered as a byte-identical canonical Markdown member plus a self-contained inert HTML member, under closed escaping rules
 - §18 Verified Bullet-Pack Export Rules — persisted bullets plus §13.12 closed companions, required assessment anchoring, typed JD requirement references, status allowlists, export-fail conditions; full resume document model deferred
-- §19 Integration Contracts — activity-domain intake, Atlas knowledge-state snapshots, GitHub commits; §19.4 versioned envelopes with source-record identity, idempotent duplicates, fail-closed conflicts, atomic bounded batches
+- §19 Integration Contracts — activity-domain intake, Atlas knowledge-state snapshots, GitHub commits; §19.4 source-local records with per-source identity, idempotent duplicates, importer-computed hashes, independent per-record processing
 - §20 Suggested Repository Structure — placement principles + normative skeleton
 - §21 Evals — 60 behavioral Given/When/Then tests with stable `## §21.N` identities; each case body lives in the CI-validated authored canon artifact `spec/21-evals-cases.toml`
 - §22 Implementation Plan — Phases 0–5 with definitions of done naming offline test groups; the §15.12 agent-runner boundary lands in Phase 1, the verified bullet pack in Phase 4

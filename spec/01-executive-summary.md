@@ -16,7 +16,7 @@ The verified-bullet-pack pipeline remains in the system, but it is downstream:
 
 ```text
 Self-assessment core
-  -> isolated relevance-aware bullet generation for a job description
+  -> relevance-aware bullet generation for a job description
   -> single-pass verifier gate
   -> verified bullet-pack export
 ```

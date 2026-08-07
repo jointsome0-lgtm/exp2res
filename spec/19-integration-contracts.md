@@ -5,21 +5,20 @@
 - A payload's natural-language values remain system-of-record source voice under §16.12: §19.1 activity `text`, §19.2 snapshot `text` and `summary`, GitHub `message`, and local imported-document text are preserved and structure-only scanned at ingestion.
 - A voice rule may constrain a later Exp2Res-authored fact, claim, report sentence, or resume bullet that uses this material.
 - A voice rule may never reject, rewrite, or block the imported value itself because of its wording.
-- Imported source identifiers — the §19.4 envelope `source_record_id` and GitHub `commit_sha`/`repo` — remain provenance values in `RawLog.external_ref` or `RawLog.metadata`.
+- Imported source identifiers — each source contract's own record identity and GitHub `commit_sha`/`repo` — remain provenance values in `RawLog.external_ref` or `RawLog.metadata`.
 - Those imported source identifiers must never become local entity `id` values.
-- For GitHub, §19.3 defines how `repo` and `commit_sha` form the envelope's `source_record_id`, while §19.4 formalizes (`source_system`, `source_record_id`) as the stable import-idempotency identity; neither source value becomes a local entity ID.
-- §19.4 owns the common import identity, duplicate, conflict, and batch semantics; each source subsection owns its integration body; §19.3 owns any additional GitHub-specific acquisition rule.
 - Every local `path` or `file:` URI value carried by an import payload, including Atlas `path`, is governed by §29.4's POSIX-only acquisition and pre-serialization rules.
-- The JSON objects in §19.1–§19.3 are source-specific `body` shapes inside the one common §19.4 envelope.
-- Those JSON objects are never accepted as unwrapped payload records.
+- The JSON objects in §19.1–§19.3 are the complete accepted record shapes: each importer accepts its own source's typed record directly, with no wrapping envelope, shared version field, or cross-source discriminator.
+- Each source subsection owns its record shape and names the field that carries its stable source identity; §19.4 owns only what every importer shares — identity comparison, duplicate handling, per-record processing, and result reporting.
 
 ## §19.1 Activity-Domain Evidence Contract
 
-This source contract requires `source_system = "ephemeris"`, supports `contract_version = 1`, and declares the JSON object below as its closed §19.4 `body`. It is the source-agnostic activity-domain evidence intake Exp2Res accepts, not a Tick-like wire contract.
+This source contract declares the closed JSON object below as the complete record the `ephemeris` importer accepts. It is the source-agnostic activity-domain evidence intake Exp2Res accepts, not a Tick-like wire contract.
 
 ```json
 {
   "source": "ephemeris",
+  "record_id": "ephemeris:event:2026-07-03T10:00:00+02:00:verifier-gate",
   "domain": "activity",
   "occurred": {
     "start": "2026-07-03T10:00:00+02:00",
@@ -32,13 +31,14 @@ This source contract requires `source_system = "ephemeris"`, supports `contract_
 }
 ```
 
-- All five fields are required:
-  - `source` must equal the envelope source system.
+- All six fields are required:
+  - `source` must equal the literal `ephemeris`.
+  - `record_id` is this contract's §19.4 source identity: the adapter's stable, non-empty identifier for the source record.
   - `domain` must equal `activity`.
   - `occurred` is a complete §11.1 value.
   - `project` is a non-empty source project label.
   - `text` is non-empty source voice.
-- The body is closed and has no pass-through metadata or knowledge-state field.
+- The record is closed and has no pass-through metadata or knowledge-state field.
 - Diary/daily notes, verbal work notes, and focus/time aggregates may enter only when the source explicitly reports activity.
 - A plan or learning assertion does not establish completed activity merely by appearing in `text`.
 - A learning record's structured knowledge-state, trail, or evidence-reference payload is invalid here.
@@ -47,29 +47,30 @@ This source contract requires `source_system = "ephemeris"`, supports `contract_
 
 Adapter and time-field ownership:
 
-- The selfos-side adapter owns mapping Tick-like's events-replay records (`{timestamp, type, payload_version, payload}`) and calendar series into this body, including source-type interpretation and the §5.4 distinction between source recording time and described occurrence time.
-- The adapter maps the stable upstream identity to envelope `source_record_id`.
+- The selfos-side adapter owns mapping Tick-like's events-replay records (`{timestamp, type, payload_version, payload}`) and calendar series into this record, including source-type interpretation and the §5.4 distinction between source recording time and described occurrence time.
+- The adapter maps the stable upstream identity to `record_id`.
 - A source timestamp that records only capture/replay time never populates `occurred`.
 - A timestamp whose upstream semantics place the described activity may contribute to `occurred`.
-- Exp2Res assigns `RawLog.recorded_at` when the import enters the workspace, independently of body `occurred` and envelope `exported_at`.
+- Exp2Res assigns `RawLog.recorded_at` when the import enters the workspace, independently of `occurred`.
 - A source-only recording timestamp remains adapter-side provenance rather than being relabeled as either Exp2Res time field.
 - No field or accepted value in this contract depends on Tick-like's upstream schema.
 
 Import behavior:
 
 ```text
-create raw_log(entry_type=ephemeris_event, source_type=imported_event, occurred=body.occurred, raw_text=body.text, project=body.project)
+create raw_log(entry_type=ephemeris_event, source_type=imported_event, occurred=record.occurred, raw_text=record.text, project=record.project)
 create evidence_item(strength=imported_activity_event)
 import creates no fact; Stage 3 may extract only narrow source-supported facts
 ```
 
 ## §19.2 Knowledge-State Snapshot Contract
 
-This source contract requires `source_system = "atlas"`, supports `contract_version = 1`, and declares the JSON object below as its closed §19.4 `body`. It accepts one knowledge-state snapshot on Atlas's own scales, with its trail segments and source-owned evidence references; it does not accept a ready-made Exp2Res fact, claim, confidence, or ownership level.
+This source contract declares the closed JSON object below as the complete record the `atlas` importer accepts. It accepts one knowledge-state snapshot on Atlas's own scales, with its trail segments and source-owned evidence references; it does not accept a ready-made Exp2Res fact, claim, confidence, or ownership level.
 
 ```json
 {
   "source": "atlas",
+  "record_id": "atlas:snapshot:2026-07-14T20:00:00+02:00",
   "domain": "knowledge_state",
   "as_of": "2026-07-14T20:00:00+02:00",
   "occurred": {
@@ -110,7 +111,8 @@ This source contract requires `source_system = "atlas"`, supports `contract_vers
 
 Field requirements:
 
-- `source` must equal the envelope source system.
+- `source` must equal the literal `atlas`.
+- `record_id` is this contract's §19.4 source identity: the adapter's stable, non-empty identifier for the snapshot.
 - `domain` must equal `knowledge_state`.
 - `as_of` is an offset-aware source snapshot time.
 - `occurred` is the complete §11.1 placement of the experience represented by the snapshot.
@@ -134,7 +136,7 @@ Temporal and scale constraints:
 Source-text fidelity:
 
 - The adapter-supplied `text` is the authoritative complete source rendering of the same snapshot represented by the structured members and maps verbatim to `RawLog.raw_text`.
-- Exp2Res never constructs `text` by serializing, normalizing, summarizing, or translating the body.
+- Exp2Res never constructs `text` by serializing, normalizing, summarizing, or translating the record.
 - Before persistence, the importer requires each of the following to occur byte-exactly in `text`:
   - `summary`.
   - Every `knowledge_state` subject, scale, and value.
@@ -152,21 +154,21 @@ Referenced snapshot document:
 - The path identifies the single source snapshot document represented by the linked `EvidenceItem`, not one member of `evidence_references`.
 - Those `evidence_references` are inert logical source IDs and never path or fetch authority.
 - The path/digest pair follows §19.4 rule 6 and maps only to `EvidenceItem.path` and its named digest metadata.
-- Required nullable members give omission and explicit absence one body shape before §19.4 hashing.
+- Required nullable members give omission and explicit absence one record shape before §19.4 hashing.
 
 The `knowledge_state_snapshot` strength is high only within §9.4's stated knowledge-attribution scope.
 
 Import behavior:
 
 ```text
-create raw_log(entry_type=atlas_snapshot, source_type=imported_artifact, occurred=body.occurred, raw_text=body.text)
-create one evidence_item(strength=knowledge_state_snapshot, summary=body.summary, path=body.path, metadata.content_digest when non-null)
+create raw_log(entry_type=atlas_snapshot, source_type=imported_artifact, occurred=record.occurred, raw_text=record.text)
+create one evidence_item(strength=knowledge_state_snapshot, summary=record.summary, path=record.path, metadata.content_digest when non-null)
 derive facts and claims only through Stages 3, 4, and 6; import promotes none directly
 ```
 
 ## §19.3 GitHub Commit Contract
 
-This source contract requires `source_system = "github"`, supports `contract_version = 1`, and requires envelope `source_record_id` to equal the exact string `<repo>@<commit_sha>` formed from the validated body values below. The JSON object is the closed §19.4 `body`; its `source` discriminator must equal envelope `source_system` under §19.4 rule 1.
+This source contract declares the closed JSON object below as the complete record the `github` importer accepts. Its §19.4 source identity is not a separate field: the importer derives it as the exact string `<repo>@<commit_sha>` from the validated values below.
 
 ```json
 {
@@ -194,10 +196,11 @@ This source contract requires `source_system = "github"`, supports `contract_ver
 
 Repository and commit identity:
 
+- `source` must equal the literal `github`.
 - `repo` is the adapter-supplied `owner/name` repository identity.
 - `commit_sha` must match `^[0-9a-f]{40}$`; an abbreviated or uppercase SHA, or one containing any non-hexadecimal character, is invalid at acquisition.
-- The envelope `source_record_id` must match the exact, non-normalized concatenation required above or the record is invalid before §19.4 duplicate classification.
-- The §19.4 identity, idempotency, and conflict rules apply without a GitHub-specific exception.
+- The derived source identity is the exact, non-normalized concatenation `<repo>@<commit_sha>`; no adapter value may supply or override it.
+- The §19.4 identity and duplicate rules apply without a GitHub-specific exception.
 
 Identity objects and upstream times:
 
@@ -217,7 +220,7 @@ Source-reported locators:
 Owner attribution:
 
 - `owner_attribution` is typed by `OwnerAttribution` (§10).
-- When omitted, validation materializes `unknown` before §19.4 canonical body serialization and content-hash verification, so omission and an explicit `unknown` have one validated body.
+- When omitted, validation materializes `unknown` before §19.4 canonical serialization and content hashing, so omission and an explicit `unknown` have one validated record.
 - The field is an upstream-adapter or owner assertion that Exp2Res preserves but neither verifies nor infers from `author` or `committer` identity strings.
 - Only `owner_attribution = "owner"` creates `EvidenceItem(strength="commit_or_pr")`; every other canonical value creates `EvidenceItem(strength="artifact_reference")`.
 - This mapping establishes only the evidential scope in §9.4.
@@ -231,72 +234,50 @@ create evidence_item(strength from owner_attribution mapping above)
 extract only narrow source-supported implementation facts
 ```
 
-## §19.4 Integration Envelope and Batch Semantics
+## §19.4 Record Identity and Import Semantics
 
-1. **Envelope shape.** Every record supplied to the §14.5 `ephemeris`, `atlas`, or `github` importer is exactly one common envelope object with this closed typed shape; an unwrapped body or a body with undeclared fields is invalid:
-
-   ```text
-   IntegrationEnvelope {
-     contract_version: int
-     source_system: str
-     source_record_id: str
-     exported_at: datetime
-     content_hash: str
-     adapter_version: Optional[str] = None
-     body: the closed shape selected from §19.1–§19.3 by source_system
-   }
-   ```
+1. **Record shape.** Every record supplied to the §14.5 `ephemeris`, `atlas`, or `github` importer is exactly one closed source object declared by that importer's source contract in §19.1–§19.3; a wrapped record, a record carrying undeclared fields, and a record shaped for another source are invalid:
 
    - All fields follow §11's strict validation, boundary, and hygiene policy.
-   - `source_system`, `source_record_id`, and a supplied `adapter_version` are non-empty structural strings.
-   - `source_record_id` is the adapter's stable identifier for the source record.
-   - `exported_at` is the adapter/export timestamp and is offset-aware under §11.
-   - The selected §19 source contract fixes `source_system`, its supported `contract_version` values, and the exact `body` type.
-   - A body-level source discriminator, when that source contract declares one, must equal envelope `source_system`; a mismatch is invalid.
-   - External contract versions are integers beginning at 1.
-   - An unsupported future or retired version fails that record at acquisition and therefore fails its containing batch under rule 4.
-   - External payload versioning is solely an acquisition-boundary rule and never selects, implies, or substitutes for a §12.14 database migration.
+   - Each source contract names the field or derivation carrying its non-empty source identity string.
+   - A record's `source` discriminator must equal the invoked importer's source system; a mismatch is invalid.
+   - No record declares a contract version and no shared version field exists: a source contract changes only by a dated §19 spec decision.
+   - Record shape is solely an acquisition-boundary rule and never selects, implies, or substitutes for a §12.14 database migration.
 
-2. **Identity and idempotency.** Import identity is the exact, non-normalized pair (`source_system`, `source_record_id`).
+2. **Identity and idempotency.** Import identity is the exact, non-normalized pair (source system, source identity).
 
-   - While holding the §8.1 writer lock and inside the import transaction, the service compares that identity against retained imported `RawLog` rows and persists the envelope's `source_system`, `source_record_id`, and validated `content_hash` on each created `RawLog` as the §11 named metadata keys with those names.
-   - The three keys are reserved service mappings: a source `body.metadata` value containing one is invalid rather than overwritten.
+   - While holding the §8.1 writer lock, the service compares that identity against retained imported `RawLog` rows and persists the source system, the source identity, and the rule 3 content hash on each created `RawLog` as the §11 named metadata keys `source_system`, `source_record_id`, and `content_hash`.
+   - The three keys are reserved service mappings: a source `metadata` value containing one is invalid rather than overwritten.
    - The merged metadata object, including the three keys, must remain within §11's key-count and byte budgets.
    - `RawLog.external_ref` retains only its source-provenance role.
-   - Re-importing the same identity with the same `content_hash` is an idempotent duplicate no-op: it creates no `RawLog`, `EvidenceItem`, or other row and is reported as `duplicate`.
-   - The same identity with a different hash is a fail-closed `conflict`: the retained raw and evidence rows are not mutated.
-   - The same hash under a different identity creates an independent record.
-   - Corrected upstream content must therefore arrive under a new identity or report a conflict.
+   - Re-importing the same identity with the same content hash is an idempotent duplicate no-op: it creates no `RawLog`, `EvidenceItem`, or other row and is reported as `duplicate`.
+   - The same identity with a different content hash is a plain rejected record — there is no separate conflict class — and the retained raw and evidence rows are not mutated.
+   - The same content hash under a different identity creates an independent record.
+   - Corrected upstream content must therefore arrive under a new identity or be rejected.
    - Corrected upstream content never updates the original raw record in place, and the owner's §14.4 correction flow remains the only reinterpretation channel (§5.3).
 
-3. **Content hash.** `content_hash` is SHA-256 over the exact §11 canonical-serialization bytes of `body`, encoded as exactly 64 lowercase hexadecimal characters.
+3. **Content hash.** The importer computes the content hash itself: SHA-256 over the exact §11 canonical-serialization bytes of the validated record, encoded as exactly 64 lowercase hexadecimal characters.
 
-   - The importer recomputes and compares it before duplicate classification; a mismatch is an invalid record.
-   - Because §11 deliberately leaves float rendering unpinned, a float anywhere in an integration body, including pass-through source metadata, is invalid at acquisition rather than hashed implementation-dependently.
-   - Envelope fields outside `body`, including export time and adapter version, do not enter this hash.
+   - No record supplies, declares, or overrides it; a content-hash field in a record is an undeclared field under rule 1.
+   - Because §11 deliberately leaves float rendering unpinned, a float anywhere in an integration record, including pass-through source metadata, is invalid at acquisition rather than hashed implementation-dependently.
 
-4. **Batch semantics.** A multi-record payload or file — including an ephemeris JSONL file and any future batch source — is processed in file order within one §8.1 writer transaction.
+4. **Multi-record payloads.** A multi-record payload or file — including an ephemeris JSONL file and any future multi-record source — is processed record by record in file order under one §8.1 writer lock.
 
-   - §11's total-object-per-payload limit is also the maximum batch-size bound; this section introduces no second numeric cap.
-   - An exact duplicate of a retained record is a counted no-op and does not fail the batch.
-   - For repeated identities inside the file, the first occurrence participates normally.
-   - A later occurrence with the same hash is a counted intra-batch duplicate, while a later occurrence with a different hash is a conflict.
-   - Any conflict or invalid record aborts the entire transaction, so no candidate `RawLog`, linked `EvidenceItem`, metadata, or other business row from that file persists.
-   - The only retry unit is the same payload or file.
-   - If an interruption occurred before commit, rerunning imports it normally; if commit completed before the caller lost the result, rerunning converges as duplicates.
-   - An unchanged validation error or conflict fails again deterministically.
-   - No partial-resume cursor, per-record commit, or background continuation exists.
+   - §11's total-object-per-payload limit is also the maximum payload-size bound; this section introduces no second numeric cap.
+   - Each record is classified and persisted independently in its own transaction: a rejected record fails only itself and never withdraws, delays, or invalidates an accepted one.
+   - For repeated identities inside one payload, the first occurrence participates normally; a later occurrence with the same content hash is a counted duplicate, and one with a different content hash is rejected.
+   - The only retry unit is the same payload or file, and rerunning converges: already-persisted records report as `duplicate`, and an unchanged validation error fails again deterministically.
+   - No partial-resume cursor or background continuation exists.
 
-5. **Result reporting.** The §14.14 rule 5 command-discriminated result reports complete `accepted`, `duplicate`, `conflict`, and `rejected` counts and per-class record lists in input order.
+5. **Result reporting.** The §14.14 rule 5 command-discriminated result reports complete `accepted`, `duplicate`, and `rejected` counts and per-class record lists in input order.
 
    - Each established input record receives a one-based `record_number`.
-   - `source_record_id` is `null` only when that field itself is missing or invalid.
-   - `raw_log_id` is non-null only for an `accepted` record actually created by the committed transaction.
-   - Counts equal their list lengths, and the four lists partition every established input record exactly once.
-   - On an aborted batch, `accepted` is empty and every otherwise insertable record is `rejected`; exact duplicates remain `duplicate`, conflicting records remain `conflict`, and invalid records are `rejected`.
+   - `source_record_id` is `null` only when that record's source identity is itself missing or invalid.
+   - `raw_log_id` is non-null only for an `accepted` record actually created by a committed transaction.
+   - Counts equal their list lengths, and the three lists partition every established input record exactly once.
    - Thus no rolled-back candidate ID is reported as created.
    - A failure too early to establish input record boundaries has no complete primary result and uses `result = null` under §14.14.
-   - Every completed classification, including one that fails the batch, carries the full typed result.
+   - Every completed classification carries the full typed result.
 
 6. **Referenced artifacts.** A source contract may pair a local `path` or `file:` URI with an optional `content_digest`: SHA-256 over the referenced file's exact bytes, encoded as exactly 64 lowercase hexadecimal characters.
 

@@ -39,23 +39,23 @@ exp2res db migrate
 ```bash
 exp2res log today
 exp2res log today --project Exp2Res
-exp2res log today --file notes/today.md --owner-authored
-exp2res log today --file - --owner-authored
+exp2res log today --file notes/today.md
+exp2res log today --file -
 exp2res log today --artifact notes/demo.md --artifact https://example.invalid/demo
 ```
 
 Every form persists `RawLog(entry_type=manual_daily, source_type=manual_entry)` and a linked `EvidenceItem(strength=manual_claim)`. `--file` reads the supplied file into `RawLog.raw_text` and records in `RawLog.external_ref` the symlink-resolved canonical real path §29.4 authorized for that read — never the supplied spelling, so a path typed relative to the invocation directory is persisted in the same absolute POSIX form as an equivalent absolute one. That form is what makes the record's provenance name one filesystem object: §29.4's pre-serialization re-check re-resolves it against the same object whatever directory the later stage runs in. The database remains the persisted record; a canonical path that fails §11's POSIX path form is refused before the file is opened.
 
-The `--file` form is non-prompt capture and requires §14.14 rule 3's explicit `--owner-authored` affirmation. `--file -` reads the record from standard input and records no `RawLog.external_ref`; a path form remains governed by §29.4, while standard input selects no filesystem object and is not source acquisition. Both forms retain the accepted `raw_text` exactly under §11's bound and free-text hygiene.
+The `--file` form is non-prompt capture. `--file -` reads the record from standard input and records no `RawLog.external_ref`; a path form remains governed by §29.4, while standard input selects no filesystem object and is not source acquisition. Both forms retain the accepted `raw_text` exactly under §11's bound and free-text hygiene.
 
-The owner-authored capture forms `log today`, `log retro`, `correction add`, and `gaps answer` each accept repeatable `--artifact <locator>`, with at most 16 occurrences per captured record. A seventeenth occurrence or two occurrences whose §13.1 classifications yield the same stored field/value pair are invalid usage in exit class 2, with stable diagnostics `artifact_locator_limit` and `artifact_locator_duplicate` respectively. Section §13.1 owns the additional evidence-item fields, classification, order, and atomic persistence; §29.4 owns capture-time authorization and the never-dereferenced boundary; §9.4 owns their calibration consequence.
+The owner capture forms `log today`, `log retro`, `correction add`, and `gaps answer` each accept repeatable `--artifact <locator>`, with at most 16 occurrences per captured record. A seventeenth occurrence or two occurrences whose §13.1 classifications yield the same stored field/value pair are invalid usage in exit class 2, with stable diagnostics `artifact_locator_limit` and `artifact_locator_duplicate` respectively. Section §13.1 owns the additional evidence-item fields, classification, order, and atomic persistence; §29.4 owns capture-time authorization and the never-dereferenced boundary; §9.4 owns their calibration consequence.
 
 ## §14.3 Add Retrospective Log
 
 ```bash
 exp2res log retro
-exp2res log retro --file notes/retro.md --precision month --period 2026-07 --confidence medium --project Exp2Res --owner-authored
-exp2res log retro --file - --precision unknown --confidence low --owner-authored
+exp2res log retro --file notes/retro.md --precision month --period 2026-07 --confidence medium --project Exp2Res
+exp2res log retro --file - --precision unknown --confidence low
 exp2res log retro --precision approximate_range --period '2026-04-01/..' --confidence medium
 exp2res log retro --artifact file:notes/demo.md
 ```
@@ -72,7 +72,7 @@ Describe what you remember.
 
 Interactive capture asks precision first. For `unknown`, it does not ask for a period and stores `OccurredAt(start=null, end=null)`; otherwise it asks for the period after precision, then confidence, project, and text.
 
-The `--file` form is non-prompt capture and requires §14.14 rule 3's explicit `--owner-authored` affirmation plus `--precision` and `--confidence`. Every precision other than `unknown` also requires `--period`; `date_range` and `approximate_range` retain the `start/end` input form, and `start/..` is the open-ended form that stores §11.1's `end = None` for ongoing activity. Openness is always typed explicitly: an empty end segment (`start/`), a bare `..`, an open form at a non-range precision, and a range without a `/` separator are each invalid usage rather than a silent open period. `--precision unknown` with `--period` is invalid usage rather than silently discarding the supplied value. The interactive period prompt accepts the same forms. `--file -` has the same standard-input, `external_ref = null`, §11 byte-bound, and non-acquisition semantics as §14.2.
+The `--file` form is non-prompt capture and requires `--precision` and `--confidence`. Every precision other than `unknown` also requires `--period`; `date_range` and `approximate_range` retain the `start/end` input form, and `start/..` is the open-ended form that stores §11.1's `end = None` for ongoing activity. Openness is always typed explicitly: an empty end segment (`start/`), a bare `..`, an open form at a non-range precision, and a range without a `/` separator are each invalid usage rather than a silent open period. `--precision unknown` with `--period` is invalid usage rather than silently discarding the supplied value. The interactive period prompt accepts the same forms. `--file -` has the same standard-input, `external_ref = null`, §11 byte-bound, and non-acquisition semantics as §14.2.
 
 The command persists `RawLog(entry_type=manual_retro, source_type=user_memory)` and a linked `EvidenceItem(strength=manual_claim)`.
 
@@ -81,13 +81,13 @@ The command persists `RawLog(entry_type=manual_retro, source_type=user_memory)` 
 ```bash
 exp2res correction add --log-id log_001
 exp2res correction add --log-id log_001 --artifact notes/corrected-demo.md
-exp2res correction add --log-id log_001 --file notes/correction.md --owner-authored
-exp2res correction add --log-id log_001 --file - --owner-authored --precision month --period 2026-07 --confidence high --clear-project
+exp2res correction add --log-id log_001 --file notes/correction.md
+exp2res correction add --log-id log_001 --file - --precision month --period 2026-07 --confidence high --clear-project
 ```
 
-`--log-id` must resolve to an existing raw record. The command requires self-contained correction text. Under §13.3 rule 10, a correction displaces the target record's interpretation as a whole. Its text must therefore restate whatever from the target remains true, because displaced content it omits is not re-extracted; the copied `OccurredAt` and `project` mechanics below preserve placement and project provenance unless the owner explicitly changes them. Its temporal prompt starts from the target's `OccurredAt`; unless the owner explicitly replaces that placement, the correction copies it exactly, so every correction stores an effective temporal value without silently increasing precision. This is also how an open-ended period (§11.1) changes state: restating it unchanged re-attests it as of the correction's own `recorded_at`, and supplying an `end` closes it, in both cases through an owner-authored correction rather than any automatic decay. `project` follows the same capture rule: the prompt starts from the target's `project`, and unless the owner explicitly replaces or clears it, the correction copies it exactly — a text-only correction can never silently strip or change the label the §13.6 project views select by (§13.3 rule 13).
+`--log-id` must resolve to an existing raw record. The command requires self-contained correction text. Under §13.3 rule 10, a correction displaces the target record's interpretation as a whole. Its text must therefore restate whatever from the target remains true, because displaced content it omits is not re-extracted; the copied `OccurredAt` and `project` mechanics below preserve placement and project provenance unless the owner explicitly changes them. Its temporal prompt starts from the target's `OccurredAt`; unless the owner explicitly replaces that placement, the correction copies it exactly, so every correction stores an effective temporal value without silently increasing precision. This is also how an open-ended period (§11.1) changes state: restating it unchanged re-attests it as of the correction's own `recorded_at`, and supplying an `end` closes it, in both cases through an owner-authored correction rather than any automatic decay. `project` follows the same capture rule: the prompt starts from the target's `project`, and unless the owner explicitly replaces or clears it, the correction copies it exactly — a text-only correction can never silently strip or change the label §13.3 rule 13 copies onto every fact it governs.
 
-Because rule 10 makes the correction a whole-record restatement, its text is by construction at least as long as the record it displaces, so it gets the same non-prompt form as §14.2/§14.3: `--file <path>` and `--file -` under §14.14 rule 3's explicit `--owner-authored` affirmation, with §29.4 acquisition, canonical-real-path `external_ref` for the path form and none for standard input, and §11's byte bound, UTF-8 decoding, and free-text hygiene — the same rules, for the same reasons, as a `log retro --file` capture. The non-prompt form is where the copy-unless-replaced mechanics above become explicit flags rather than prompt defaults, because a flagless invocation must not silently mean something the owner never typed. Omitting `--precision`, `--period`, and `--confidence` copies the target's `OccurredAt` exactly, resolving no local time and so requiring no workspace timezone under §14.14 rule 8 — the copied placement is already offset-aware, exactly as the interactive form's copied default is; supplying any of them is the explicit replacement and requires the whole typed set on §14.3's rules — `--precision` and `--confidence` always, `--period` at every precision other than `unknown`, `--precision unknown` with `--period` invalid, and `start/..` the only open-ended form. Omitting both project flags copies the target's `project` exactly; `--project <label>` replaces it and `--clear-project` clears it, and supplying both is invalid usage. All five flags belong to the non-prompt form: supplying any of them without `--file` is invalid usage in exit class 2 rather than a silent partial answer to a prompt the command is about to ask anyway. Repeatable `--artifact` is unchanged, and consent for the §13.13 rebuild follows §14.14 rule 3 exactly as the interactive form does — `--owner-authored` never implies it.
+Because rule 10 makes the correction a whole-record restatement, its text is by construction at least as long as the record it displaces, so it gets the same non-prompt form as §14.2/§14.3: `--file <path>` and `--file -`, with §29.4 acquisition, canonical-real-path `external_ref` for the path form and none for standard input, and §11's byte bound, UTF-8 decoding, and free-text hygiene — the same rules, for the same reasons, as a `log retro --file` capture. The non-prompt form is where the copy-unless-replaced mechanics above become explicit flags rather than prompt defaults, because a flagless invocation must not silently mean something the owner never typed. Omitting `--precision`, `--period`, and `--confidence` copies the target's `OccurredAt` exactly, resolving no local time and so requiring no workspace timezone under §14.14 rule 8 — the copied placement is already offset-aware, exactly as the interactive form's copied default is; supplying any of them is the explicit replacement and requires the whole typed set on §14.3's rules — `--precision` and `--confidence` always, `--period` at every precision other than `unknown`, `--precision unknown` with `--period` invalid, and `start/..` the only open-ended form. Omitting both project flags copies the target's `project` exactly; `--project <label>` replaces it and `--clear-project` clears it, and supplying both is invalid usage. All five flags belong to the non-prompt form: supplying any of them without `--file` is invalid usage in exit class 2 rather than a silent partial answer to a prompt the command is about to ask anyway. Repeatable `--artifact` is unchanged.
 
 In one database transaction, the command stores `RawLog(entry_type=correction, source_type=manual_entry, corrects_log_id=log_001)` plus its linked `EvidenceItem(strength=manual_claim)` while invalidating the exact current layers listed in §13.13. Managed-export removal, the selected-lineage recompute, and invalidation reporting follow §13.13 rules 4 and 9 via §14.12. The target raw record remains unchanged as stored. If invalidation cleanup or recomputation fails, §13.13 rule 4's failure semantics apply, with the §14.12 `--log-id` form as the documented retry.
 
@@ -111,7 +111,7 @@ V1 mappings:
 
 Every importer consumes a user-supplied local payload or file. The `github` form reads one local §19.3 payload whose `repo` field identifies the repository; it does not fetch from GitHub or call any network. Remote acquisition is outside Exp2Res under §29.
 
-§19.4 owns the envelope, identity/idempotency, duplicate/conflict, and all-or-nothing batch semantics for the §19-backed `ephemeris`, `atlas`, and `github` forms (`import file` is not an envelope record); §14.14 rule 5 owns their closed result shape.
+Each §19 source contract owns its own record shape; §19.4 owns the shared identity, duplicate, and per-record processing semantics for the §19-backed `ephemeris`, `atlas`, and `github` forms (`import file` is not a §19 record). §14.14 rule 5 owns their closed result shape.
 
 `import file` rejects other local-file categories in V1 rather than guessing an entry type. It stores the document content in `RawLog.raw_text`, records the §29.4-authorized canonical real path of that document — not the supplied spelling, on §14.2's rule and for its reason — in both `RawLog.external_ref` and `EvidenceItem.path`, and does not create a managed source copy.
 
@@ -134,8 +134,8 @@ Stage 3 is where the owner's words become the system's typed claims, so `facts s
 exp2res detections generate
 exp2res gaps list
 exp2res gaps answer --gap-id gap_001
-exp2res gaps answer --gap-id gap_001 --file notes/answer.md --owner-authored
-exp2res gaps answer --gap-id gap_001 --file - --owner-authored
+exp2res gaps answer --gap-id gap_001 --file notes/answer.md
+exp2res gaps answer --gap-id gap_001 --file -
 exp2res gaps answer --gap-id gap_001 --artifact https://example.invalid/demo
 exp2res contradictions list
 exp2res contradictions show --contradiction-id contradiction_001
@@ -145,7 +145,7 @@ exp2res contradictions show --contradiction-id contradiction_001
 
 `gaps answer` persists `RawLog(entry_type=gap_answer, source_type=manual_entry)` plus a linked `EvidenceItem(strength=manual_claim)`, then assigns the new raw-log ID to `GapQuestion.answer_log_id` and sets `GapQuestion.answered = true` in the same transaction; `answered` is true iff `answer_log_id` is set. That transaction supersedes no current `AssessmentSnapshot`, branch, or bullet referencing the question: the answer is new raw evidence that reaches derived state only through extraction and regeneration (Stage 3, then the §14.12/Stage 4 rebuild so assessment synthesizes against current detector rows, then §13.6), while §17 renders the question's answered state on the still-current snapshot and §13.12 keeps that snapshot exportable. It is the gap-answer trigger of §13's stale-export invalidation rule: while any current snapshot references the answered question, the affected sets are that snapshot's `out/assessment/<snapshot-id>/` set and every `out/branch/<branch-id>/` set whose branch anchors it — with complete unfiltered gap sets, that is every current assessment view. The snapshot and branches stay immediately re-exportable with the answered-since-synthesis rendering.
 
-The `gaps answer --file` form is non-prompt capture and requires §14.14 rule 3's explicit `--owner-authored` affirmation. Its path and `--file -` standard-input behavior is the same as §14.2, including `external_ref = null` for standard input.
+The `gaps answer --file` form is non-prompt capture. Its path and `--file -` standard-input behavior is the same as §14.2, including `external_ref = null` for standard input.
 
 Gap answers are self-contained at capture, like corrections: the command copies the answered question's text and `GapQuestion.reason` into the answer's `RawLog.metadata` (`question_text`, `question_reason`). The answer therefore remains interpretable evidence if its question row is later superseded by a Stage 4 regeneration or purged by the §13.13 reset. Question-to-answer links are never re-created after regeneration: an uncertainty a stored answer resolves simply no longer fires its gap trigger against the current facts, and a gap that regenerates anyway is genuinely still open. The copied question text becomes part of the owner's raw record — owner-deletable on its own, never system-edited.
 
@@ -155,7 +155,6 @@ V1 gap and contradiction subcommands only inspect immutable Stage 4 detections o
 
 ```bash
 exp2res assess generate
-exp2res assess generate --scope project --project Exp2Res
 exp2res assess list
 exp2res assess show --snapshot snapshot_001
 exp2res assess verify --snapshot snapshot_001
@@ -163,13 +162,13 @@ exp2res assess repair --snapshot snapshot_001
 exp2res export assessment --snapshot snapshot_001
 ```
 
-`--scope` selects one canonical §10 `AssessmentScope` value and defaults to `global` when omitted. `--scope project` requires a `--project` value that is non-blank after canonicalization — Unicode NFC normalization plus leading/trailing whitespace trim. Stage 6 stores that canonical value as `AssessmentSnapshot.scope_target`; the LLM receives it as structural context but cannot author or normalize it further. Replacement identity and subject matching use its locale-independent case-folded form (§11.7, §13.6). `global` takes no target and persists `scope_target = None`. No scope value list is duplicated here; `AssessmentScope` in §10 is canonical, and a retired scope value returns only with its deterministic selection semantics.
+`assess generate` takes no scope selector: V1 declares exactly one assessment view, `global` (§10, §11.7), whose subject is every current fact (§13.6). A project-scoped view returns only with its own deterministic selection semantics.
 
-`assess list` reports every current snapshot — ID, scope, scope target, verification status, creation time — as the discovery surface for explicit `--snapshot` selectors across simultaneously current views; it generates nothing.
+`assess list` reports every current snapshot — ID, scope, verification status, creation time — as the discovery surface for explicit `--snapshot` selectors; it generates nothing.
 
 `assess verify` is required before assessment export: `export assessment` applies §16.11's assessment-export allowlist.
 
-On success, `export assessment` publishes the selected snapshot only at its §13.14 ID-keyed path and returns only the manifest-validated §14.14 export result. Scope and scope-target values remain identity and display data; neither becomes a path component.
+On success, `export assessment` publishes the selected snapshot only at its §13.14 ID-keyed path and returns only the manifest-validated §14.14 export result. The view identity remains manifest and display data and never becomes a path component.
 
 V1 defines no claim-confirm, dispute, or override command. `assess verify` is the system verifier gate defined by §5.10, not an owner verdict stored on a regenerated claim.
 
@@ -186,7 +185,7 @@ exp2res bullets verify --branch agent-engineer
 exp2res bullets export --branch agent-engineer
 ```
 
-`jd add` remains the Stage 8 creation command owned by this bullet-pack flow; §14.15 owns job-description inspection and deletion. The internal `ResumeBranch` and `ResumeBullet` entity names retain “resume” because a branch models targeting for a vacancy; renaming those persisted/internal contracts would be a §12.14 schema change, while the product-facing artifact and command group are the verified bullet pack and `bullets`.
+`jd add` remains the Stage 8 creation command owned by this bullet-pack flow; §14.15 owns job-description deletion. The internal `ResumeBranch` and `ResumeBullet` entity names retain “resume” because a branch models targeting for a vacancy; renaming those persisted/internal contracts would be a §12.14 schema change, while the product-facing artifact and command group are the verified bullet pack and `bullets`.
 
 `--snapshot` is a required stored-record selector governed by §18's canonical snapshot-anchor rule.
 
@@ -251,25 +250,22 @@ This contract binds every command-specific form above and every later §14 addit
      - then a built-in default when that setting declares one.
    - A representation, including a default, need not exist at every level; a required setting still unresolved after this chain fails closed.
    - An undocumented environment variable or ambient user, repository, provider, shell, or platform setting has no effect.
-   - `--workspace`, `--json`, `--yes`, `--no-input`, and the command-local `--owner-authored` affirmation are invocation controls rather than configuration values and are accepted only as explicit flags.
+   - `--workspace`, `--json`, `--yes`, and `--no-input` are invocation controls rather than configuration values and are accepted only as explicit flags.
    - Provider credentials are outside this precedence chain and remain transport-only adapter values resolved at the §29.2/§29.4 boundary.
-3. **Non-interactive behavior, consent, and owner affirmation.** Every command accepts the global `--json`, `--yes`, `--no-input`, `--workspace`, `--verbose`, and `--quiet` controls subject to the `init` exception above.
+3. **Non-interactive behavior and consent.** Every command accepts the global `--json`, `--yes`, `--no-input`, `--workspace`, `--verbose`, and `--quiet` controls subject to the `init` exception above.
    - `--no-input` forces non-interactive behavior regardless of the terminal; non-TTY stdin is non-interactive even without that flag.
-   - In either non-interactive case, a command that would prompt must receive every required value through its declared flags or fail closed with exit class 2 before blocking or performing the prompt-dependent operation. This applies to §14.3 capture, destructive confirmations, migration, and every foreground action that may invoke a cost-bearing LLM call.
-   - Record content supplied through `--file PATH` or `--file -` is a non-prompt owner capture and requires the command-local explicit `--owner-authored` flag.
-   - Missing affirmation fails before the source is opened and before any row is written, with exit class 2 and stable diagnostic `owner_authorship_required`.
-   - Neither configuration nor an environment variable can supply or imply affirmation.
-   - The `--owner-authored` flag affirms that the record content was authored by the owner; it does not supply consent, and `--yes` never supplies or implies affirmation.
+   - In either non-interactive case, a command that would prompt must receive every required value through its declared flags or fail closed with exit class 2 before blocking or performing the prompt-dependent operation. This applies to §14.3 capture, destructive confirmations, and migration.
+   - Record content supplied through `--file PATH` or `--file -` is a non-prompt owner capture and needs no separate affirmation flag: the owner typed the command that names the source.
    - Every non-prompt capture source reads at most §11's `raw_text` limit plus one byte, fails closed above that bound, decodes only valid UTF-8, and then applies §11's free-text hygiene without normalization, trimming, or line joining; accepted multiline content therefore round-trips byte-identically.
    - `--file -` reads standard input, records no `RawLog.external_ref`, and is not §29.4 acquisition because no filesystem object was selected.
    - `--file PATH` remains fully subject to §29.4 before it is opened.
    - No capture command accepts record content in an option value: local process arguments are readable by other host processes and commonly retained in shell history, so argv is not a private record-content channel.
-   - A destructive or cost-bearing action additionally requires explicit `--yes` in non-interactive mode; on TTY stdin it requires either `--yes` or an interactive confirmation before the destructive step or provider call. The confirmation set is:
+   - An irreversible action additionally requires explicit `--yes` in non-interactive mode; on TTY stdin it requires either `--yes` or an interactive confirmation before the irreversible step. The confirmation set is exactly:
      - `logs delete`;
      - `jd delete` (§14.15);
      - `workspace purge` (§14.16);
-     - `db migrate`;
-     - every command that can make a cost-bearing §15 call, including verification, parsing, extraction, detection, lifecycle, and generation commands.
+     - `db migrate`.
+   - No other command confirms. A command that makes a cost-bearing §15 call runs without a per-invocation prompt: the owner who typed it is the sole operator, and the accepted residual is a mistyped command spending provider money.
    - `--yes` supplies consent only; it never supplies missing capture or selector input.
    - Verbosity controls affect secret-safe diagnostics and progress only, never the result, exit class, or JSON shape.
 4. **Exit-code taxonomy.** The process exit status and the envelope's `exit_code` are the same stable small integer, and `CLIResultStatus` (§10) is a deterministic projection of it.
@@ -310,9 +306,9 @@ This contract binds every command-specific form above and every later §14 addit
        - Each of the three is a list of closed `{entity_type: str, ids: list[str]}` groups, so per-table IDs remain typed by class.
      - `generation_ids` — duplicate-free produced or invalidated §12 rule 13 generation IDs.
      - `run_ids` — duplicate-free §12.13 processing-run IDs created or directly inspected by the command.
-     - `invalidated_views` — complete list of closed `{scope: AssessmentScope, scope_target: str | null, snapshot_id: str, regeneration_command: str}` §13.13 rule 9 reports.
+     - `invalidated_views` — complete list of closed `{scope: AssessmentScope, snapshot_id: str, regeneration_command: str}` §13.13 rule 9 reports.
        - The `regeneration_command` value is executable and POSIX-shell-quoted.
-     - `invalidated_branches` — complete list of closed `{name: str, job_description_id: str, former_view: {scope: AssessmentScope, scope_target: str | null, snapshot_id: str}, regeneration_command_shape: str}` §13.13 rule 9 reports.
+     - `invalidated_branches` — complete list of closed `{name: str, job_description_id: str, former_view: {scope: AssessmentScope, snapshot_id: str}, regeneration_command_shape: str}` §13.13 rule 9 reports.
      - `findings` — complete §11.14 `VerificationFinding` values produced or directly inspected by the command; otherwise empty.
      - `residual_paths` — complete canonical managed paths whose required cleanup or deletion did not complete.
      - `warnings` — values using §15.1's closed `ContractWarning` shape.
@@ -322,9 +318,9 @@ This contract binds every command-specific form above and every later §14 addit
        - A free-form object is invalid.
    - The `command` value selects exactly one result schema; each entry below states that command's exact `result` payload, and every object and projection in it is closed and uses the referenced §10/§11/§12 field types:
      - `init`, `db status`, `db migrate` — `{schema: {stored_version: int | null, supported_version: int, recognized: bool, compatible: bool, migration_path_available: bool | null, managed_backup_path: str | null}}`.
-     - `import ephemeris`, `import atlas`, `import github` — `{counts: {accepted: int, duplicate: int, conflict: int, rejected: int}, records: {accepted: list[ImportRecordResult], duplicate: list[ImportRecordResult], conflict: list[ImportRecordResult], rejected: list[ImportRecordResult]}}`.
+     - `import ephemeris`, `import atlas`, `import github` — `{counts: {accepted: int, duplicate: int, rejected: int}, records: {accepted: list[ImportRecordResult], duplicate: list[ImportRecordResult], rejected: list[ImportRecordResult]}}`.
        - `ImportRecordResult` is the closed `{record_number: int, source_record_id: str | null, raw_log_id: str | null}` §19.4 projection.
-       - `raw_log_id` is non-null exactly for a record created by the committed import.
+       - `raw_log_id` is non-null exactly for a record the import committed.
      - `logs list` — `{logs: list[{id, recorded_at, entry_type, source_type, occurred, project, corrects_log_id}]}`, the `raw_text`-free §11.2 inspection projection.
        - `raw_text`, `metadata`, and `external_ref` are absent.
      - `logs show` — `{log: {id, recorded_at, entry_type, source_type, occurred, project, external_ref, corrects_log_id}, evidence_items: list[{id, created_at, raw_log_id, title, summary, uri, path, strength}]}`, the `logs delete` selected-record projection of one retained current or displaced record plus its complete linked §11.3 evidence-item projections.
@@ -335,10 +331,8 @@ This contract binds every command-specific form above and every later §14 addit
      - `detections generate` — `{gaps: list[GapQuestion], contradictions: list[Contradiction]}` containing both complete retained or replacement §14.7 result sets.
      - `gaps list` — `{gaps: list[GapQuestion]}` using complete §11.10 values.
      - `contradictions list`, `contradictions show` — `{contradictions: list[Contradiction]}` using complete §11.9 values; a successful `show` result contains exactly one.
-     - `assess list` — `{snapshots: list[{id, scope, scope_target, verification_status, created_at}]}`, exactly the §14.9 discovery projection.
+     - `assess list` — `{snapshots: list[{id, scope, verification_status, created_at}]}`, exactly the §14.9 discovery projection.
      - `assess show` — `{snapshot: AssessmentSnapshot, claims: list[SelfClaim], gaps: list[GapQuestion], contradictions: list[Contradiction]}` using the complete §11 values reached through the snapshot's claim membership (`SelfClaim.snapshot_id`, claim-ID order) and its typed gap/contradiction references.
-     - `jd list` (§14.15) — `{job_descriptions: list[{id, created_at, title, company}]}`.
-     - `jd show` (§14.15) — `{job_description: {id, created_at, title, company, parsed}}`, the §11.11 `raw_text`-free inspection projection; `raw_text` is absent and `parsed` is the complete §11.13 value.
      - `jd delete` (§14.15) — `{selected_job_description: {id, created_at, title, company}, purged_branches: list[{id, name}], removed_managed_paths: list[str]}`.
        - `purged_branches` contains every current and historical dependent branch captured before deletion.
        - Residual paths use the envelope's top-level `residual_paths`.
@@ -353,13 +347,13 @@ This contract binds every command-specific form above and every later §14 addit
        - `managed_paths` is the complete deterministic list containing that manifest and every fixed §13.12 member path.
        - The result is emitted only after §13.14 revalidates the matching manifest, exact member set, current render-input hash, source graph, and member hashes; a missing, invalid, stale, or mismatched manifest yields no partial result.
      - `view serve` (§14.17) — `null`. Each served request completes in its own §30 rule 7 outcome, so the command reaches no completed primary result of its own; its envelope reports the termination of serving.
-   - Subject to rule 4's cancellation precedence, a complete §19.4 import result with `counts.conflict > 0` uses existing exit class 7; otherwise `counts.rejected > 0` uses existing exit class 2; and an accepted/duplicate-only result uses exit class 0. Conflict takes precedence over acquisition rejection when one classified batch contains both, without adding an exit class.
+   - Subject to rule 4's cancellation precedence, a complete §19.4 import result with `counts.rejected > 0` uses existing exit class 2, and an accepted/duplicate-only result uses exit class 0.
    - Except for a schema entry that explicitly declares `null` as its complete success schema, a command with an object result uses `result = null` only when it fails or is cancelled before a complete primary result exists; it never emits a partial result object.
    - A nonzero completed report such as incompatible `db status` or a fully classified atomic import rejection still carries its complete typed result.
    - Every unlisted V1 command uses `result = null`: its primary result is already complete in `affected_ids`, `generation_ids`, `run_ids`, invalidation reports, `findings`, `residual_paths`, `warnings`, and `retry`.
    - Adding or renaming a command requires a schema entry declaring its closed object or `null` success schema; widening an object projection requires declaring the change in §14 and incrementing `envelope_version` when version 1 is already implemented.
    - IDs, entity groups, paths, findings, views, branches, and result records are duplicate-free and deterministically ordered by their stable class and identity; §19.4 import records use their input `record_number` as that identity, so repeated source identities remain distinct report entries.
-   - The `logs show` evidence projection for an owner-authored capture follows §13.1's creation/report order: `manual_claim` first, then artifact locators in their canonical stored-value order.
+   - The `logs show` evidence projection for an owner capture follows §13.1's creation/report order: `manual_claim` first, then artifact locators in their canonical stored-value order.
    - Completeness-required result lists — verifier `findings` for every current claim or bullet, §13.13 invalidation reports, §19.4 import classification lists, `affected_ids`, and residual paths — are never truncated:
      - envelope serialization to local stdout is not one of §11's bounded provider, acquisition, response, or hydration boundaries, so neither §11's general per-list cap nor its narrower findings/warnings cap applies to it;
      - a view or branch with more than 100 current claims or bullets, or an import with more than 100 established records, still receives its complete result;
@@ -367,7 +361,7 @@ This contract binds every command-specific form above and every later §14 addit
    - The envelope never contains a secret, credential, prompt, `raw_text`, or undeclared source content.
    - Content-bearing values are IDs and machine codes except for the closed command result projections, warnings, verifier findings, managed paths, and view/branch regeneration reports already surfaced by their owning §13/§14 contracts.
    - Human mode may format the primary result as text on stdout.
-   - Human mode additionally prints every `invalidated_views` entry as one line naming the invalidated view — scope, scope target when present, and snapshot ID — together with its executable §13.13 rule 9 regeneration command, and it does so on the success path and the nonzero path alike.
+   - Human mode additionally prints every `invalidated_views` entry as one line naming the invalidated view — scope and snapshot ID — together with its executable §13.13 rule 9 regeneration command, and it does so on the success path and the nonzero path alike.
      - That line is result content rather than a diagnostic: a lifecycle flow whose later stage fails still committed the supersession that made a published view stale, and the owner of a single-operator instance has no second consumer to notice it.
    - Human mode also prints every envelope `warnings` entry as one stderr line naming its type and message, on the success and nonzero paths alike, so a warning-carrying result — for example §13.3 rule 14's `displaced_support_unselected` trace — stays legible without `--json`.
    - One narrow human-mode carve-out exists: on the explicit single-record request `logs show --log-id`, human mode additionally prints the selected retained record's own complete stored `raw_text` after the projection fields — never any other record's content, and never in `--json` mode, whose envelope this rule's prohibition governs unchanged.
@@ -386,15 +380,15 @@ This contract binds every command-specific form above and every later §14 addit
    - `gaps list`;
    - `contradictions list` and `contradictions show`;
    - `assess list` and `assess show`;
-   - `jd list` and `jd show` (§14.15);
    - `runs list` and `runs show`.
 
    Explicitly deferred read-only additions, which add no V1 mutation or decision surface:
 
+   - job-description listing and per-record inspection;
    - evidence-item listing beyond `logs show`'s per-record linked items;
    - resume-branch or bullet listing;
    - historical-generation browsing beyond `runs show`;
-   - parsed-requirement dumps beyond `jd show`.
+   - parsed-requirement dumps.
 8. **Time input resolution.** The selected workspace's `[workspace].timezone` IANA name in `.exp2res/config.toml` (§29.2) is the sole authority for interpreting local time.
    - This setting has no CLI flag, `EXP2RES_*` environment variable, or built-in default representation, and no command reads the ambient OS timezone or locale when producing a persisted value.
    - A configured value is required at the first use of a local-time feature; a missing, empty, or unrecognized value fails that operation closed without a silent default.
@@ -407,12 +401,10 @@ This contract binds every command-specific form above and every later §14 addit
 ## §14.15 Manage Job Descriptions
 
 ```bash
-exp2res jd list
-exp2res jd show --jd jd_001
 exp2res jd delete --jd jd_001
 ```
 
-`jd list` and `jd show` are read-only local inspection. Their exact projections, which never expose `JobDescription.raw_text`, are §14.14 rule 5's rows. Neither command invokes a provider or serializes content into a prompt.
+`jd delete` is the only §14.15 form in V1. Job-description read projections — listing and per-record inspection — are deferred under §14.14 rule 7; `jd delete` ships because per-vacancy deletion is a privacy requirement, not a convenience.
 
 `jd delete` is the owner's per-job-description destructive privacy operation and uses §14.14 rule 3 confirmation semantics: `--yes` supplies consent, otherwise a TTY confirmation is required and non-interactive use fails closed. It invokes §13.13 rule 10's dependent purge. The command reports the selected deleted job description, every purged branch with its ID and name, and every removed managed path through the closed result in §14.14 rule 5. Any residual managed path is also reported in `residual_paths` with `deletion_incomplete`, never success; the database deletion remains committed under §13.13 rule 6.
 
