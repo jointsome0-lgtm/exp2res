@@ -656,11 +656,11 @@ When a later entity is allocated in that table
 Then that ID is never reassigned
 And the allocator uses a collision-resistant ID with a random component rather than row count, MAX + 1, or any other surviving-row-derived state
 
-Given two valid import records with identical body content proceed as record-creating imports under distinct §19.4 identities
+Given two valid import records with identical content apart from their §19.4 identities proceed as record-creating imports
 Then each receives distinct local RawLog and EvidenceItem IDs without collision failure
-And whether a repeated submission is accepted, deduplicated, or conflicted is owned by §19.4 and tested in §21.45
+And whether a repeated submission is accepted or deduplicated is owned by §19.4 and tested in §21.45
 
-Given an import carries §19.4 source_record_id and, for GitHub, commit_sha and repo
+Given an import carries its §19.4 source identity — record_id, or repo and commit_sha for GitHub
 Then each upstream identifier appears only in RawLog.external_ref or RawLog.metadata as provenance
 And none is used as any local entity ID
 '''
@@ -1586,7 +1586,7 @@ And a validated source-voice excerpt containing hostile Markdown remains byte-ex
 Given a Stage 10 candidate batch contains two text values that are byte-equal after §11 text hygiene and one semantically similar value that remains byte-distinct after the §13.12 projection
 When §13.10 planning applies its canonical sort and exact-duplicate rule
 Then it retains the first byte-equal candidate by that order, drops every later exact duplicate before persistence, and retains the byte-distinct value
-And it performs no semantic near-duplicate LLM pass, second coherence pass, sibling-bullet context widening, rewrite, or renderer deduplication
+And it performs no semantic near-duplicate LLM pass, second coherence pass, rewrite, or renderer deduplication beyond the single §15.6 batch that produced the candidates
 
 Given bullets generate, bullets verify --branch, and bullets export --branch run with --json
 When §14.14 emits their results
