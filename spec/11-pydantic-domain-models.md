@@ -86,12 +86,14 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
     GapQuestion.question: at most 1,024 UTF-8 bytes
     every other string field: at most 16 KiB (16,384 UTF-8 bytes)
     each list field: at most 1,000 items
-    each payload: at most 10,000 total objects, except the §15.6 and §15.7 whole-pack payloads, bounded at 100,000 — one batched call now carries the context the retired per-bullet calls carried across a whole pack, and the per-list limits above still bound it
+    each payload: at most 10,000 total objects, except the §15.6 and §15.7 whole-pack payloads, which carry no total-object cap
     JSON nesting: at most 32 levels
     each warnings list and each findings list: at most 100 entries, except the §15.7 whole-pack `findings` array, which carries one entry per supplied bullet and is bounded only by the list-field limit above
     typed ID lists: duplicate-free under their existing rules
     each string-list member: non-empty
     ```
+
+    The two whole-pack exceptions exist because Stage 10 and Stage 11 assemble their payload from the workspace's own current rows rather than from owner- or source-supplied input. The total-object cap bounds untrusted input; applying it to a service-assembled payload would make an otherwise admissible pack — its per-list limits all satisfied — fail structural preflight with no legal way to shrink it, because A1 leaves exactly one writer call. Provenance fan-out there is bounded by the per-list limits, the current-row selection in §13.10, and §15.10's transport and budget rules.
 
 39. Exceeding a limit is a deterministic local failure:
     - an input fails preflight before any provider call;
