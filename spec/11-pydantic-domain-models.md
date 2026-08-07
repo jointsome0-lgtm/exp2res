@@ -107,7 +107,7 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
 44. An inert metadata string follows free-text hygiene unless a named-key contract types it as structural.
 45. Accepted source text is never normalized or rewritten and retains the byte-for-byte preservation required by §16.12 and §19.
 46. Generated prose is stored as its validated Unicode code points; the service applies no Unicode normalization, and canonical hash bytes remain governed by the serialization rules above.
-47. Comparison identity uses Unicode NFC normalization followed by locale-independent Unicode Default Case Folding only at the named identity point of branch replacement and selection (§14.10, §11.12); A4 retired the scope-target and assessment-view matching point with the project-scoped view.
+47. Comparison identity uses Unicode NFC normalization followed by locale-independent Unicode Default Case Folding only at the named identity points: branch replacement and selection (§14.10, §11.12), and rule 49's stored `project_key` provenance identity (§12 rule 14). A4 retired the scope-target and assessment-view matching point with the project-scoped view.
 48. The separately named leading/trailing whitespace trim in §14.9 still applies.
 49. Project provenance remains copied exactly under §13.3 rule 13. Its comparison identity is computed once at persistence as the §12 rule 14 stored `project_key`. A non-null `project` value must remain non-blank after §14.9's canonicalization (Unicode NFC plus leading/trailing whitespace trim) — a label that canonicalizes to blank fails structural validation at every boundary.
 50. Managed-output path keys are opaque service IDs under §13.14 and never derive from these comparison identities.

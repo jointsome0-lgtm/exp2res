@@ -1087,8 +1087,8 @@ Then stdout, stderr, and retained internal diagnostics contain none of those val
 And the envelope contains only its declared IDs, codes, allowed findings, managed paths, warnings, lifecycle reports, and allowed closed command-result projections
 
 Given the V1 command registry
-Then the operable lifecycle inspection forms are exactly db status; logs list; facts list/show; gaps list; contradictions list/show; assess list/show; and runs list/show
-And evidence-item listing, branch/bullet listing, job-description listing and per-record inspection, historical-generation browsing beyond runs show, and parsed-requirement dumps remain absent as explicitly deferred read-only additions
+Then the operable lifecycle inspection forms are exactly db status; logs list; facts list/show; gaps list; contradictions list/show; assess list/show; jd list; and runs list/show
+And evidence-item listing, branch/bullet listing, per-job-description inspection beyond jd list's discovery fields, historical-generation browsing beyond runs show, and parsed-requirement dumps remain absent as explicitly deferred read-only additions
 '''
 
 ["21.42"]
@@ -1302,8 +1302,8 @@ enforces = "§8.1, §13.13 rules 5–6 and 10, §14.14–§14.16, and §29.2 and
 case = '''
 Given a retained job description has raw source text and a complete parsed value
 When the V1 command registry is enumerated
-Then no job-description listing or per-record inspection form exists, because §14.14 rule 7 defers both
-And jd delete is the only §14.15 form, because per-vacancy deletion is a privacy requirement
+Then jd list returns only id, created_at, title, and company, exposing neither raw_text nor parsed, because §14.14 rule 7 defers per-record inspection
+And jd list and jd delete are the §14.15 forms, because an opaque service-assigned ID is undiscoverable without the listing and per-vacancy deletion is a privacy requirement
 
 Given job description J has current and historical branches, their bullets and bullet findings, corresponding managed branch outputs, and managed migration backups
 And unrelated current assessment views plus current and historical snapshots, claims, and assessment findings exist
