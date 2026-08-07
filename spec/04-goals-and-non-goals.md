@@ -19,7 +19,7 @@ Exp2Res should:
 13. Parse job descriptions as optional external contexts.
 14. Generate verified bullet-pack exports only from supported evidence.
 15. Verify generated bullet-pack bullets phrase-by-phrase.
-16. Export deterministic Markdown reports and bullet packs with closed, versioned evidence, verification, gap, and contradiction companions; defer a full resume document model to a post-mirror iteration.
+16. Export deterministic Markdown reports and bullet packs with closed, versioned evidence and verification companions; defer a full resume document model to a post-mirror iteration.
 
 ## §4.2 Cognitive Goals
 
