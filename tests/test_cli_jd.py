@@ -1191,9 +1191,13 @@ def test_an_unreadable_database_anchor_refuses_the_purge(
     backup = backup_root / "schema-10.sqlite"
     backup.write_bytes(b"Vera Example migration backup")
     real_stat = jd_service.os.stat
+    # `jd_service.os` is the shared module, so the substitute refuses exactly
+    # one absolute path — the anchor stat under test — and delegates every
+    # other call, including the CLI's and the storage layer's own.
+    anchor = str(workspace / ".exp2res" / "exp2res.sqlite")
 
     def refusing_stat(path, **keywords):
-        if str(path).endswith("exp2res.sqlite"):
+        if str(path) == anchor:
             raise PermissionError(13, "Permission denied")
 
         return real_stat(path, **keywords)
