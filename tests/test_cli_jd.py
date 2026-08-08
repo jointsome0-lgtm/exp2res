@@ -1190,19 +1190,27 @@ def test_an_unreadable_database_anchor_refuses_the_purge(
     backup_root.mkdir(mode=0o700, exist_ok=True)
     backup = backup_root / "schema-10.sqlite"
     backup.write_bytes(b"Vera Example migration backup")
-    real_stat = jd_service.os.stat
-    # `jd_service.os` is the shared module, so the substitute refuses exactly
-    # one absolute path — the anchor stat under test — and delegates every
-    # other call, including the CLI's and the storage layer's own.
     anchor = str(workspace / ".exp2res" / "exp2res.sqlite")
 
-    def refusing_stat(path, **keywords):
-        if str(path) == anchor:
-            raise PermissionError(13, "Permission denied")
+    class RefusingOs:
+        """Stand in for one module's `os`, not the process-global module.
 
-        return real_stat(path, **keywords)
+        Rebinding `jd_service.os` keeps the substitution inside the service
+        under test: the CLI and the storage layer keep the real `os.stat`,
+        which a `setattr` on the shared module would have taken away from
+        them as well.
+        """
 
-    monkeypatch.setattr(jd_service.os, "stat", refusing_stat)
+        def __getattr__(self, name: str):
+            return getattr(os, name)
+
+        def stat(self, path, **keywords):
+            if str(path) == anchor:
+                raise PermissionError(13, "Permission denied")
+
+            return os.stat(path, **keywords)
+
+    monkeypatch.setattr(jd_service, "os", RefusingOs())
 
     result, envelope = invoke_json(
         workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
