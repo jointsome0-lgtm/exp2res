@@ -96,6 +96,16 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
                 removed.append(managed_path)
             except OSError:
                 refused.append(managed_path)
+        if removed:
+            # A removal is only durable once the directory entry itself is
+            # flushed: the database deletion commits right after this call, so
+            # a crash in between could otherwise leave a backup holding the
+            # purged vacancy while the envelope claims it was removed. A
+            # failed flush is reported rather than assumed (§13.13 rule 6).
+            try:
+                os.fsync(backup_fd)
+            except OSError:
+                refused.append(str(backup_root.absolute()))
         # POSIX unlinks by name, so no removal is atomic with the `stat` that
         # classified it: a concurrent rename or recreation can leave a file
         # under a name this pass already visited. Completeness is therefore

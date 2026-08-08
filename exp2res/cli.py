@@ -284,18 +284,40 @@ def _evidence_projection(item) -> EvidenceItemProjection:
     )
 
 
+def _render_text(value: str) -> str:
+    """Escape one source-derived string into an unambiguous single line.
+
+    The literal backslash is escaped first, so every escape this renderer
+    introduces stays injective: a control byte and a name that literally
+    spells its escape keep distinct rendered identities. Control characters
+    are then escaped because a legal name may hold a newline, a tab, or a
+    terminal escape sequence, and one record must stay one record in both
+    the envelope and the human rendering.
+    """
+
+    escaped = value.replace("\\", "\\\\")
+    return "".join(
+        character
+        if not (
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or 0x80 <= ord(character) <= 0x9F
+        )
+        else f"\\x{ord(character):02x}"
+        for character in escaped
+    )
+
+
 def _render_path(path: str) -> str:
     """Render one filesystem path so the envelope can carry it losslessly.
 
     Undecodable POSIX names surface as surrogate-escaped strings that neither
-    UTF-8 stdout nor the JSON envelope can encode. Escaping the byte into
-    `\\xNN` form would collide with a name that literally contains those
-    characters, so the literal backslash is escaped first and the rendering
-    stays injective: distinct paths keep distinct reported identities.
+    UTF-8 stdout nor the JSON envelope can encode, so they take the same
+    backslash form as every other escape `_render_text` applies.
     """
 
     return (
-        path.replace("\\", "\\\\")
+        _render_text(path)
         .encode("utf-8", "surrogateescape")
         .decode("utf-8", "backslashreplace")
     )
@@ -2298,8 +2320,10 @@ def jd_list(context: typer.Context) -> None:
                 (
                     item.id,
                     item.created_at.isoformat(),
-                    item.title or "-",
-                    item.company or "-",
+                    # §16.13 permits a tab or newline inside parsed source
+                    # text; unescaped, one record could pose as several.
+                    _render_text(item.title) if item.title else "-",
+                    _render_text(item.company) if item.company else "-",
                 )
             )
             for item in job_descriptions

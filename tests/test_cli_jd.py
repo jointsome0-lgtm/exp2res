@@ -11,6 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.services.job_descriptions as jd_service
+import exp2res.services.privacy as privacy_service
 import exp2res.exports.managed as managed_outputs
 from exp2res.cli import app
 from exp2res.errors import LLMInvocationError
@@ -860,3 +861,69 @@ def test_two_backup_names_that_differ_only_in_escaping_stay_distinct(
     assert str(backup_root / "pre-\\xff.sqlite") in removed
     assert not os.path.exists(undecodable)
     assert not literal.exists()
+
+
+def test_control_bytes_in_a_backup_name_are_escaped_in_both_modes(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legal newline in a managed name never fabricates a reported line."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    (backup_root / "pre\nmigration.sqlite").write_bytes(b"")
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 0
+    assert envelope["result"]["removed_managed_paths"] == [
+        str(backup_root / "pre") + "\\x0amigration.sqlite"
+    ]
+
+
+def test_human_listing_keeps_one_job_description_on_one_line(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§16.13 permits a newline in parsed text; the listing stays unambiguous."""
+
+    add_job_description(
+        workspace,
+        tmp_path,
+        monkeypatch,
+        text=VACANCY.replace(
+            "Agent Engineer", "Agent Engineer\njd_spoofed\t2026-01-01T00:00:00+00:00"
+        ),
+    )
+
+    result = runner.invoke(app, ["--workspace", str(workspace), "jd", "list"])
+
+    assert result.exit_code == 0
+    assert len(result.stdout.strip().splitlines()) == 1
+
+
+def test_a_backup_directory_flush_failure_is_reported_as_residual(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 6: an unproven durable removal is residual, not success."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    (backup_root / "pre-migration.sqlite").write_bytes(b"")
+
+    def failing_fsync(_descriptor: int) -> None:
+        raise OSError("flush refused")
+
+    monkeypatch.setattr(privacy_service.os, "fsync", failing_fsync)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str(backup_root.absolute())]
