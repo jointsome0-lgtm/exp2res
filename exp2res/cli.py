@@ -2506,6 +2506,7 @@ def _jd_delete_outcome(deleted: JobDescriptionDeleteOutcome) -> Outcome:
         exit_code=exit_code,
         diagnostic_class="deletion_incomplete" if exit_code else None,
         affected_ids=_jd_delete_affected(deleted),
+        generation_ids=list(deleted.purged_generation_ids),
         run_ids=[deleted.run_id],
         residual_paths=list(deleted.residual_paths),
         result=_jd_delete_result(deleted),
@@ -2638,6 +2639,7 @@ def jd_delete(
             # reported even when the interrupt lands in result assembly.
             cancelled = OperationCancelledError()
             cancelled.affected_ids = _jd_delete_affected(deleted)
+            cancelled.generation_ids = list(deleted.purged_generation_ids)
             cancelled.run_ids = [deleted.run_id]
             cancelled.residual_paths = list(deleted.residual_paths)
             cancelled.result = _jd_delete_result(deleted)

@@ -60,6 +60,7 @@ class JobDescriptionDeleteOutcome:
     purged_branches: tuple[PurgedBranch, ...]
     purged_bullet_ids: tuple[str, ...]
     purged_finding_ids: tuple[str, ...]
+    purged_generation_ids: tuple[str, ...]
     removed_managed_paths: tuple[str, ...]
     residual_paths: tuple[str, ...]
 
@@ -236,35 +237,56 @@ def _allocate_run_id(
     raise IdCollisionError()
 
 
-def _dependent_purge_targets(
-    connection: sqlite3.Connection, branch_ids: tuple[str, ...]
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Return the bullets of these branches and the findings targeting them."""
+# §13.13 rule 10's dependent set, always derived from the one vacancy ID.
+# Binding a placeholder per captured row would make a large branch exceed the
+# connection's SQLITE_LIMIT_VARIABLE_NUMBER, and a privacy operation that fails
+# on the size of its own input would leave the vacancy and every dependent
+# generated bullet in place.
+_DEPENDENT_BRANCHES = "SELECT id FROM resume_branches WHERE job_description_id = ?"
+_DEPENDENT_BULLETS = (
+    f"SELECT id FROM resume_bullets WHERE branch_id IN ({_DEPENDENT_BRANCHES})"
+)
 
-    if not branch_ids:
-        return (), ()
-    placeholders = ",".join("?" for _ in branch_ids)
+
+def _dependent_purge_targets(
+    connection: sqlite3.Connection, job_description_id: str
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Return this vacancy's dependent bullets, findings, and generation IDs."""
+
     bullet_ids = tuple(
         row[0]
         for row in connection.execute(
-            f"SELECT id FROM resume_bullets WHERE branch_id IN ({placeholders}) "
-            "ORDER BY CAST(id AS BLOB)",
-            branch_ids,
+            f"{_DEPENDENT_BULLETS} ORDER BY CAST(id AS BLOB)",
+            (job_description_id,),
         )
     )
-    if not bullet_ids:
-        return (), ()
-    bullet_placeholders = ",".join("?" for _ in bullet_ids)
     finding_ids = tuple(
         row[0]
         for row in connection.execute(
             "SELECT id FROM verification_findings "
             "WHERE target_type = 'resume_bullet' "
-            f"AND target_id IN ({bullet_placeholders}) ORDER BY CAST(id AS BLOB)",
-            bullet_ids,
+            f"AND target_id IN ({_DEPENDENT_BULLETS}) ORDER BY CAST(id AS BLOB)",
+            (job_description_id,),
         )
     )
-    return bullet_ids, finding_ids
+    # §14.14 rule 5 reports every invalidated generation ID, and §12 rule 13
+    # shares one ID across a branch and its bullets, so both tables are read.
+    generation_ids = tuple(
+        sorted(
+            {
+                row[0]
+                for statement in (
+                    "SELECT DISTINCT generation_id FROM resume_branches "
+                    "WHERE job_description_id = ?",
+                    "SELECT DISTINCT generation_id FROM resume_bullets "
+                    f"WHERE branch_id IN ({_DEPENDENT_BRANCHES})",
+                )
+                for row in connection.execute(statement, (job_description_id,))
+            },
+            key=lambda value: value.encode("utf-8"),
+        )
+    )
+    return bullet_ids, finding_ids, generation_ids
 
 
 def _committed_outcome(
@@ -274,6 +296,7 @@ def _committed_outcome(
     purged_branches: tuple[PurgedBranch, ...],
     purged_bullet_ids: tuple[str, ...],
     purged_finding_ids: tuple[str, ...],
+    purged_generation_ids: tuple[str, ...],
     removed_paths: Iterable[str],
     residuals: Iterable[str],
 ) -> JobDescriptionDeleteOutcome:
@@ -285,6 +308,7 @@ def _committed_outcome(
         purged_branches=purged_branches,
         purged_bullet_ids=purged_bullet_ids,
         purged_finding_ids=purged_finding_ids,
+        purged_generation_ids=purged_generation_ids,
         removed_managed_paths=tuple(sorted(set(removed_paths), key=_path_key)),
         residual_paths=tuple(sorted(set(residuals), key=_path_key)),
     )
@@ -393,9 +417,11 @@ def _delete_locked(
                 (job_description_id,),
             )
         )
-        purged_bullet_ids, purged_finding_ids = _dependent_purge_targets(
-            connection, tuple(branch.id for branch in purged_branches)
-        )
+        (
+            purged_bullet_ids,
+            purged_finding_ids,
+            purged_generation_ids,
+        ) = _dependent_purge_targets(connection, job_description_id)
         # The pass reports removals as it makes them, so an interrupt mid-pass
         # still names what it had already unlinked (§14.14 rule 6). What it
         # had yet to reach is unproven, which the root residual states.
@@ -449,6 +475,7 @@ def _delete_locked(
                 purged_branches=purged_branches,
                 purged_bullet_ids=purged_bullet_ids,
                 purged_finding_ids=purged_finding_ids,
+                purged_generation_ids=purged_generation_ids,
                 removed_paths=removed_paths,
                 residuals=residuals,
             )
@@ -479,30 +506,28 @@ def _delete_locked(
                 input_ids=(job_description_id,),
                 metadata={"mode": "job_description"},
             )
-            # §13.13 rule 10: findings, then bullets, then the captured
+            # §13.13 rule 10: findings, then bullets, then the dependent
             # branches, then the vacancy itself, so no foreign key ever blocks
-            # the privacy operation. Current assessment views and every
+            # the privacy operation. Each statement reaches its rows through
+            # the vacancy ID under the writer authority — the same set the
+            # capture above reported — rather than binding one parameter per
+            # captured row. Current assessment views and every
             # snapshot, claim, and claim finding are untouched: they do not
             # depend on a job description, and no recompute follows.
-            if purged_finding_ids:
-                placeholders = ",".join("?" for _ in purged_finding_ids)
-                connection.execute(
-                    f"DELETE FROM verification_findings WHERE id IN ({placeholders})",
-                    purged_finding_ids,
-                )
-            if purged_bullet_ids:
-                placeholders = ",".join("?" for _ in purged_bullet_ids)
-                connection.execute(
-                    f"DELETE FROM resume_bullets WHERE id IN ({placeholders})",
-                    purged_bullet_ids,
-                )
-            if purged_branches:
-                branch_ids = tuple(branch.id for branch in purged_branches)
-                placeholders = ",".join("?" for _ in branch_ids)
-                connection.execute(
-                    f"DELETE FROM resume_branches WHERE id IN ({placeholders})",
-                    branch_ids,
-                )
+            connection.execute(
+                "DELETE FROM verification_findings "
+                "WHERE target_type = 'resume_bullet' "
+                f"AND target_id IN ({_DEPENDENT_BULLETS})",
+                (job_description_id,),
+            )
+            connection.execute(
+                f"DELETE FROM resume_bullets WHERE branch_id IN ({_DEPENDENT_BRANCHES})",
+                (job_description_id,),
+            )
+            connection.execute(
+                "DELETE FROM resume_branches WHERE job_description_id = ?",
+                (job_description_id,),
+            )
             connection.execute(
                 "DELETE FROM job_descriptions WHERE id = ?", (job_description_id,)
             )

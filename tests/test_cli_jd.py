@@ -1371,6 +1371,9 @@ def test_delete_purges_dependent_branches_bullets_and_managed_sets(
     assert deleted["resume_branch"] == [branch_id]
     assert deleted["resume_bullet"] == [bullet_id]
     assert deleted["job_description"] == [job_description_id]
+    # §14.14 rule 5: the purge invalidates the branch generation, which §12
+    # rule 13 shares with its bullets, so the envelope names it once.
+    assert envelope["generation_ids"] == ["gen_vera_branch_0001"]
     assert not branch_set.exists()
 
     with read_database(workspace) as connection:

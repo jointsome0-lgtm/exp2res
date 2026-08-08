@@ -91,17 +91,18 @@ def supersede_branches(
 
     # §14.14 rule 5 reports produced OR invalidated generation IDs, and §12 rule
     # 13 shares one ID across a branch and its bullets, so both tables are read.
-    for table, ids in (("resume_bullets", bullet_ids), ("resume_branches", selected)):
-        if ids:
-            placeholders = ",".join("?" for _ in ids)
-            generation_ids.update(
-                row[0]
-                for row in connection.execute(
-                    f"SELECT DISTINCT generation_id FROM {table} "
-                    f"WHERE id IN ({placeholders})",
-                    ids,
-                )
+    # Each branch is read on its own: binding one parameter per bullet would
+    # make a large branch exceed the connection's SQLITE_LIMIT_VARIABLE_NUMBER.
+    for branch in branches:
+        generation_ids.update(
+            row[0]
+            for row in connection.execute(
+                "SELECT generation_id FROM resume_branches WHERE id = ? "
+                "UNION SELECT DISTINCT generation_id FROM resume_bullets "
+                "WHERE branch_id = ? AND superseded_at IS NULL",
+                (branch.id, branch.id),
             )
+        )
 
     mark_resume_bullets_superseded(connection, bullet_ids, superseded_at)
     mark_resume_branches_superseded(

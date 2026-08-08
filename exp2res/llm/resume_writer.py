@@ -106,7 +106,11 @@ class SelectedFact(StrictModel):
 class ResumeWriterInput(StrictModel):
     branch: BranchContext
     job_description: JobDescriptionContext
-    selected_facts: list[SelectedFact] = Field(max_length=1_000)
+    # §11 rule 38 exempts this list from the per-list item cap: §13.10 submits
+    # the exact complete current fact set, so a cap could only reject a pack
+    # the service itself assembled. §15.10 rule 5's context preflight is the
+    # bound that applies here.
+    selected_facts: list[SelectedFact]
     supported_self_claims: list[SelfClaim] = Field(max_length=1_000)
 
     @field_validator("selected_facts")
