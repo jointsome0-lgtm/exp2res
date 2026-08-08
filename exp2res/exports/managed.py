@@ -671,11 +671,15 @@ def _remove_managed_sets(
     except ManagedOutputIncompleteError as error:
         return error.residual_paths
     parent = out_root / parent_name
-    if _lstat(parent) is None:
-        return ()
     try:
+        if _lstat(parent) is None:
+            return ()
         _validate_existing_path(parent, out_root, directory=True)
     except OSError:
+        # Fail closed for the same reason as the per-entry probe below: a
+        # parent that turns unsearchable after the business commit is a
+        # §13.13 rule 6 residual, never an exception that would cost the
+        # caller the committed result it is holding for the envelope.
         return tuple(str(parent / entity_id) for entity_id in selected)
 
     residuals: set[str] = set()

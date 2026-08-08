@@ -349,6 +349,18 @@ def test_an_unstattable_set_is_a_residual_and_never_an_exception(
     assert residuals == (str(second),)
     assert not first.exists() and second.is_dir()
 
+    def refuse_the_parent(path: Path):
+        if path == second.parent:
+            raise PermissionError(13, "unsearchable")
+        return real_lstat(path)
+
+    monkeypatch.setattr(managed, "_lstat", refuse_the_parent)
+
+    assert managed.remove_branch_sets(workspace, ["branch_vera_0002"]) == (
+        str(second),
+    )
+    assert second.is_dir()
+
 
 def test_an_unflushed_removal_is_never_banked(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
