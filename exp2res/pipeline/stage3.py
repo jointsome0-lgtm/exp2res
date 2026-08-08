@@ -458,9 +458,7 @@ def run_fact_extraction(
                     )
                     invalidated_views.append(
                         invalidated_view(
-                            scope=snapshot.scope,
-                            scope_target=snapshot.scope_target,
-                            snapshot_id=snapshot.id,
+                            scope=snapshot.scope, snapshot_id=snapshot.id
                         )
                     )
                 for table, ids in (

@@ -21,7 +21,6 @@ from exp2res.domain.models import (
     AssessmentSnapshot,
     ExperienceFact,
     SelfClaim,
-    canonical_project_key,
 )
 from exp2res.domain.temporal import confidence_exceeds
 from exp2res.domain.verification import aggregate_verification_status
@@ -82,7 +81,6 @@ from .view_selection import select_assessment_view
 @dataclass(frozen=True)
 class ReplacedAssessmentView:
     scope: AssessmentScope
-    scope_target: str | None
     snapshot_id: str
 
 
@@ -111,17 +109,6 @@ class _ResolvedAssessment:
 
 def _id_key(value: str) -> bytes:
     return value.encode("utf-8")
-
-
-def assessment_view_key(
-    scope: AssessmentScope, scope_target: str | None
-) -> tuple[AssessmentScope, str | None]:
-    """Return the folded §11.7 replacement identity for a stored view."""
-
-    return (
-        scope,
-        canonical_project_key(scope_target) if scope == "project" and scope_target is not None else None,
-    )
 
 
 def claim_counter_fact_ids(
@@ -249,8 +236,6 @@ def _enrich_for(
 
 def _resolve_for(
     *,
-    scope: AssessmentScope,
-    scope_target: str | None,
     gaps: Sequence[object],
     contradictions: Sequence[object],
     id_factory: Callable[[str], str],
@@ -266,13 +251,8 @@ def _resolve_for(
             id=snapshot_id,
             created_at=clock(),
             superseded_at=None,
-            scope=scope,
-            scope_target=scope_target,
-            title=(
-                "Self-Assessment — Global"
-                if scope == "global"
-                else f"Self-Assessment — {scope_target}"
-            ),
+            scope="global",
+            title="Self-Assessment — Global",
             summary=narrative.claim,
             gap_question_ids=sorted((item.id for item in gaps), key=_id_key),  # type: ignore[attr-defined]
             contradiction_ids=sorted(
@@ -308,8 +288,6 @@ def _resolve_for(
 def run_assessment_generation(
     workspace: Path,
     *,
-    scope: AssessmentScope,
-    scope_target: str | None,
     selection: LLMSelection,
     budgets: CallBudgets,
     runner: ContractRunner,
@@ -328,10 +306,7 @@ def run_assessment_generation(
 
     now = clock or (lambda: datetime.now(timezone.utc))
     with writer_database(workspace, timeout_ms=timeout_ms, reconcile=True) as connection:
-        view = select_assessment_view(
-            connection, scope=scope, scope_target=scope_target
-        )
-        facts = view.facts
+        facts = select_assessment_view(connection)
 
         gaps = tuple(
             sorted(
@@ -343,15 +318,13 @@ def run_assessment_generation(
             sorted(list_contradictions(connection), key=lambda item: _id_key(item.id))
         )
 
-        # §13.6 states the empty-subject failure for project views. Since §15.4
-        # rejects an empty `source_fact_ids` on every claim, a factless global
-        # view cannot produce even the required narrative summary, so it fails
-        # here rather than after a provider call that can only be invalid.
+        # §15.4 rejects an empty `source_fact_ids` on every claim, so a
+        # factless view cannot produce even the required narrative summary. It
+        # fails here rather than after a provider call that can only be invalid.
         if not facts:
             raise EmptyAssessmentViewError()
         input_payload = AssessmentWriterInput(
-            scope=scope,
-            scope_target=scope_target,
+            scope="global",
             facts=list(facts),
             gaps=list(gaps),
             contradictions=list(contradictions),
@@ -372,8 +345,6 @@ def run_assessment_generation(
                 ),
                 enrich=_enrich_for(input_payload),
                 resolve=_resolve_for(
-                    scope=scope,
-                    scope_target=scope_target,
                     gaps=gaps,
                     contradictions=contradictions,
                     id_factory=id_factory,
@@ -394,24 +365,18 @@ def run_assessment_generation(
             nonlocal snapshot_id, created_claim_ids, superseded_snapshot_ids
             nonlocal superseded_claim_ids, generation_id, replaced_view
             candidate = cast(_ResolvedAssessment, resolved[0])
+            # §11.7: one declared view, so at most one snapshot is current
+            # and it is unconditionally the one this swap replaces.
             current = list_assessment_snapshots(held)
-            matching = tuple(
-                item
-                for item in current
-                if assessment_view_key(item.scope, item.scope_target)
-                == assessment_view_key(scope, scope_target)
-            )
-            if len(matching) > 1:
+            if len(current) > 1:
                 raise IntegrityFailureError("assessment_view_not_unique")
             swap_time = now()
-            if matching:
-                prior = matching[0]
+            if current:
+                prior = current[0]
                 prior_claims = list_self_claims_for_snapshot(held, prior.id)
                 superseded_snapshot_ids = (prior.id,)
                 superseded_claim_ids = tuple(item.id for item in prior_claims)
-                replaced_view = ReplacedAssessmentView(
-                    prior.scope, prior.scope_target, prior.id
-                )
+                replaced_view = ReplacedAssessmentView(prior.scope, prior.id)
                 for table, ids in (
                     ("assessment_snapshots", superseded_snapshot_ids),
                     ("self_claims", superseded_claim_ids),
@@ -448,9 +413,7 @@ def run_assessment_generation(
                     generation_id=generation_id,
                 )
 
-            current_after = list_assessment_snapshots(held)
-            keys = [assessment_view_key(item.scope, item.scope_target) for item in current_after]
-            if len(keys) != len(set(keys)):
+            if len(list_assessment_snapshots(held)) > 1:
                 raise IntegrityFailureError("assessment_view_not_unique")
             current_gap_ids = {
                 row[0]
@@ -633,9 +596,7 @@ def run_assessment_repair(
         superseded_snapshot_ids = (snapshot.id,)
         superseded_claim_ids = tuple(item.id for item in members)
         superseded_generation_ids: set[str] = set()
-        replaced_view = ReplacedAssessmentView(
-            snapshot.scope, snapshot.scope_target, snapshot.id
-        )
+        replaced_view = ReplacedAssessmentView(snapshot.scope, snapshot.id)
         pending_stale_paths: tuple[str, ...] = ()
 
         def finalize_durable_run(
@@ -826,7 +787,6 @@ def run_assessment_repair(
                 created_at=now(),
                 superseded_at=None,
                 scope=snapshot.scope,
-                scope_target=snapshot.scope_target,
                 title=snapshot.title,
                 summary=narrative.claim,
                 gap_question_ids=sorted(
@@ -877,12 +837,7 @@ def run_assessment_repair(
                     generation_id=generation_id,
                 )
             # The ordinary §12 Stage 6 transaction checks bind this swap too.
-            current_after = list_assessment_snapshots(connection)
-            keys = [
-                assessment_view_key(item.scope, item.scope_target)
-                for item in current_after
-            ]
-            if len(keys) != len(set(keys)):
+            if len(list_assessment_snapshots(connection)) > 1:
                 raise IntegrityFailureError("assessment_view_not_unique")
             orphan = connection.execute(
                 """

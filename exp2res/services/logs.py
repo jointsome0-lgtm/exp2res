@@ -121,15 +121,11 @@ def delete_log(
                 )
             )
             snapshot_rows = connection.execute(
-                "SELECT id, scope, scope_target FROM assessment_snapshots "
+                "SELECT id, scope FROM assessment_snapshots "
                 "WHERE superseded_at IS NULL ORDER BY CAST(id AS BLOB)"
             ).fetchall()
             invalidated_views = tuple(
-                invalidated_view(
-                    scope=row["scope"],
-                    scope_target=row["scope_target"],
-                    snapshot_id=row["id"],
-                )
+                invalidated_view(scope=row["scope"], snapshot_id=row["id"])
                 for row in snapshot_rows
             )
             purged_claim_ids = tuple(

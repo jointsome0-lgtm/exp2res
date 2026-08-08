@@ -17,7 +17,6 @@ from exp2res.domain.models import (
     RawLog,
     SelfClaim,
     StrictModel,
-    canonical_project_key,
     validate_free_text,
     validate_structural,
 )
@@ -33,7 +32,6 @@ def _id_key(value: str) -> bytes:
 class AssessmentVerifierInput(StrictModel):
     self_claim: SelfClaim
     scope: AssessmentScope
-    scope_target: str | None
     scope_facts: list[ExperienceFact] = Field(max_length=1_000)
     source_facts: list[ExperienceFact] = Field(max_length=1_000)
     source_evidence_items: list[EvidenceItem | DisplacedSupportDescriptor] = Field(
@@ -54,21 +52,6 @@ class AssessmentVerifierInput(StrictModel):
         if value != sorted(value, key=lambda item: _id_key(item.id)):  # type: ignore[attr-defined]
             raise ValueError("objects must be ordered by ID bytes")
         return value
-
-    @field_validator("scope_target")
-    @classmethod
-    def scope_target_policy(cls, value: str | None) -> str | None:
-        return None if value is None else validate_structural(value)
-
-    @model_validator(mode="after")
-    def valid_scope_shape(self) -> "AssessmentVerifierInput":
-        if (self.scope == "project") != (self.scope_target is not None):
-            raise ValueError("scope and scope target disagree")
-        if self.scope_target is not None and not canonical_project_key(
-            self.scope_target
-        ):
-            raise ValueError("scope target canonicalizes to blank")
-        return self
 
 
 class CounterevidenceCandidate(StrictModel):
@@ -136,9 +119,8 @@ ASSESSMENT_VERIFIER_INSTRUCTIONS = (
     "Reject or qualify resume-style overclaiming: ownership above explicit support, "
     "unsupported metrics, production/customer/scale/revenue/reliability impact, stronger "
     "temporal precision, or employment framing for independent, competition, research, "
-    "or learning work no record establishes as employment. A project claim generalizing "
-    "beyond scope and scope_target is "
-    "non-passing. The claim's dimension must name what the claim characterizes: "
+    "or learning work no record establishes as employment. A claim generalizing beyond "
+    "the subject the supplied facts establish is non-passing. The claim's dimension must name what the claim characterizes: "
     "technical_skill or execution_capacity for a demonstrated capability, "
     "domain_interest, working_style, trajectory, or identity_hypothesis for a "
     "recurring orientation, and constraint, risk, or gap for a limit, failure mode, "
@@ -210,7 +192,7 @@ ASSESSMENT_VERIFIER_CONTRACT = ContractDefinition(
     contract_id="assessment-verifier",
     output_model=AssessmentVerifierOutput,
     fixed_instructions=ASSESSMENT_VERIFIER_INSTRUCTIONS,
-    schema_revision="2",
+    schema_revision="3",
     service_owned_fields=frozenset(
         {
             "id",
@@ -218,7 +200,6 @@ ASSESSMENT_VERIFIER_CONTRACT = ContractDefinition(
             "superseded_at",
             "snapshot_id",
             "scope",
-            "scope_target",
             "verification_status",
             "metadata",
             "produced_by_run_id",

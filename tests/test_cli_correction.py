@@ -88,12 +88,7 @@ def _invoke_json(workspace: Path, arguments: list[str], *, input: str | None = N
     return result, json.loads(result.stdout.splitlines()[-1])
 
 
-def _prepare_full_graph(
-    workspace: Path,
-    *,
-    assessment_scope: str = "global",
-    assessment_target: str | None = None,
-):
+def _prepare_full_graph(workspace: Path):
     ids = VeraIds()
     target, target_items = add_log(
         workspace,
@@ -139,17 +134,11 @@ def _prepare_full_graph(
         ),
         ids,  # type: ignore[arg-type]
     )
-    fact_ids = (
-        [target_fact.id]
-        if assessment_scope == "project"
-        else [item.id for item in list_experience_facts_for(workspace)]
-    )
+    fact_ids = [item.id for item in list_experience_facts_for(workspace)]
     assessed = run_stage6(
         workspace,
         FakeContractRunner([assessment_response(fact_ids=fact_ids)]),
         ids,
-        scope=assessment_scope,
-        target=assessment_target,
     )
     assert assessed.snapshot_id is not None
     run_stage7(
@@ -269,15 +258,11 @@ def test_correction_rebuilds_through_artifacts_and_preserves_history(
         assert len(snapshots) == 1 and snapshots[0].scope == "global"
 
 
-def test_correction_human_output_includes_captured_project_view_command(
+def test_correction_human_output_includes_the_captured_view_command(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    target, _other, _fact, _detected, assessed, _export_dir = (
-        _prepare_full_graph(
-            workspace,
-            assessment_scope="project",
-            assessment_target="Vera Example Project",
-        )
+    target, _other, _fact, _detected, assessed, _export_dir = _prepare_full_graph(
+        workspace
     )
     _install_lifecycle_runner(monkeypatch)
     monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
@@ -299,8 +284,7 @@ def test_correction_human_output_includes_captured_project_view_command(
     assert result.exit_code == 0, result.output
     assert (
         f"Invalidated assessment view {assessed.snapshot_id} "
-        "(project: Vera Example Project); regenerate with: "
-        "exp2res assess generate --scope project --project 'Vera Example Project'"
+        "(global); regenerate with: exp2res assess generate"
     ) in result.stdout
 
 
@@ -657,7 +641,6 @@ def test_failed_lifecycle_still_reports_the_invalidated_view(
     text = "Vera Example correction whose rebuild fails.\n\n\n"
     reported = {
         "scope": "global",
-        "scope_target": None,
         "snapshot_id": assessed.snapshot_id,
         "regeneration_command": "exp2res assess generate",
     }

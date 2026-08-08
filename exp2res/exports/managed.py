@@ -11,7 +11,6 @@ import re
 import secrets
 import stat
 from typing import Literal
-import unicodedata
 
 from pydantic import ConfigDict, field_validator, model_validator
 
@@ -55,17 +54,11 @@ class _ManifestModel(StrictModel):
 class AssessmentIdentity(_ManifestModel):
     snapshot_title: str
     scope: AssessmentScope
-    scope_target: str | None
 
     @field_validator("snapshot_title")
     @classmethod
     def valid_title(cls, value: str) -> str:
         return validate_free_text(value, nonempty=True)
-
-    @field_validator("scope_target")
-    @classmethod
-    def valid_scope_target(cls, value: str | None) -> str | None:
-        return None if value is None else validate_structural(value)
 
 
 class AssessmentSourceIds(_ManifestModel):
@@ -101,7 +94,7 @@ class ManifestMember(_ManifestModel):
 
 
 class AssessmentManifest(_ManifestModel):
-    manifest_version: Literal[5]
+    manifest_version: Literal[6]
     output_kind: Literal["assessment"]
     entity_id: str
     generation_id: str
@@ -153,12 +146,7 @@ def validate_entity_id(value: str) -> None:
 
 def _validate_snapshot_title(graph: AssessmentExportGraph) -> None:
     snapshot = graph.snapshot.value
-    expected = (
-        "Self-Assessment — Global"
-        if snapshot.scope == "global"
-        else f"Self-Assessment — {snapshot.scope_target}"
-    )
-    if snapshot.title != expected:
+    if snapshot.title != "Self-Assessment — Global":
         raise IntegrityFailureError("snapshot_title_invalid")
 
 
@@ -190,16 +178,14 @@ def build_assessment_manifest(
     _validate_snapshot_title(graph)
     snapshot = graph.snapshot.value
     return AssessmentManifest(
-        manifest_version=5,
+        manifest_version=6,
         output_kind="assessment",
         entity_id=snapshot.id,
         generation_id=graph.snapshot.generation_id,
         produced_by_run_id=graph.snapshot.produced_by_run_id,
         created_at=created_at,
         identity=AssessmentIdentity(
-            snapshot_title=snapshot.title,
-            scope=snapshot.scope,
-            scope_target=snapshot.scope_target,
+            snapshot_title=snapshot.title, scope=snapshot.scope
         ),
         source_ids=AssessmentSourceIds(**graph.source_ids()),
         render_input_sha256=render_input_sha256(graph),
@@ -539,16 +525,6 @@ def _inspect_set(path: Path, parent: Path, out_root: Path) -> AssessmentManifest
         return manifest
     except (OSError, ValueError, TypeError):
         return None
-
-
-def _same_view(left: AssessmentIdentity, right: AssessmentIdentity) -> bool:
-    if left.scope != right.scope:
-        return False
-    if left.scope_target is None or right.scope_target is None:
-        return left.scope_target is right.scope_target
-    left_key = unicodedata.normalize("NFC", left.scope_target).strip().casefold()
-    right_key = unicodedata.normalize("NFC", right.scope_target).strip().casefold()
-    return left_key == right_key
 
 
 def _ensure_managed_parents(workspace: Path) -> tuple[Path, Path, Path]:
@@ -915,9 +891,7 @@ def _manifest_matches_prior(
         or manifest.produced_by_run_id != graph.snapshot.produced_by_run_id
         or manifest.identity
         != AssessmentIdentity(
-            snapshot_title=snapshot.title,
-            scope=snapshot.scope,
-            scope_target=snapshot.scope_target,
+            snapshot_title=snapshot.title, scope=snapshot.scope
         )
     )
 
@@ -961,6 +935,15 @@ def _remove_stale_same_view(
     out_root: Path,
     candidate_manifest: AssessmentManifest,
 ) -> None:
+    """Remove every prior assessment set §13.14 rule 5's identity replaces.
+
+    Rule 5 compares the manifest's exact `scope` identity, which `Assessment
+    Identity` types as the single-member `AssessmentScope`: a set whose stored
+    scope is anything else cannot parse into a manifest at all, so it is
+    already `None` below rather than a same-view candidate. Every prior set
+    that does parse therefore names this view.
+    """
+
     residuals: list[str] = []
     for name in _directory_names(parent, out_root):
         if name == candidate_manifest.entity_id or name.startswith(".exp2res-"):
@@ -974,8 +957,7 @@ def _remove_stale_same_view(
             continue
         if not ENTITY_ID.fullmatch(name):
             continue
-        prior = _inspect_set(path, parent, out_root)
-        if prior is None or not _same_view(prior.identity, candidate_manifest.identity):
+        if _inspect_set(path, parent, out_root) is None:
             continue
         if not _remove_tree(path, out_root):
             residuals.append(str(path))

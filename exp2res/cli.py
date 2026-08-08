@@ -89,7 +89,6 @@ from exp2res.services.assessment import (
     run_assess_repair,
     run_assess_verify,
     show_snapshot,
-    validate_assessment_selection,
 )
 from exp2res.services.detection import (
     list_current_contradictions,
@@ -275,15 +274,11 @@ def _invalidated_view_lines(views: list[InvalidatedView]) -> list[str]:
     later stage of the same lifecycle flow fails.
     """
 
-    lines: list[str] = []
-    for item in views:
-        target = "" if item.scope_target is None else f": {item.scope_target}"
-        lines.append(
-            f"Invalidated assessment view {item.snapshot_id} "
-            f"({item.scope}{target}); regenerate with: "
-            f"{item.regeneration_command}"
-        )
-    return lines
+    return [
+        f"Invalidated assessment view {item.snapshot_id} "
+        f"({item.scope}); regenerate with: {item.regeneration_command}"
+        for item in views
+    ]
 
 
 def _emit(envelope: CLIEnvelope, controls: Controls, human_result: str = "") -> None:
@@ -1563,19 +1558,10 @@ def _verification_human_result(
 
 
 @assess_app.command("generate")
-def assess_generate(
-    context: typer.Context,
-    scope: str = typer.Option("global", "--scope"),
-    project: str | None = typer.Option(None, "--project"),
-) -> None:
+def assess_generate(context: typer.Context) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        selected_scope, selected_project = validate_assessment_selection(
-            scope=scope, project=project
-        )
         require_compatible(workspace)
-        generated = run_assess_generate(
-            workspace, scope=selected_scope, project=selected_project
-        )
+        generated = run_assess_generate(workspace)
         assert generated.snapshot is not None and generated.snapshot_id is not None
         created_groups = [
             EntityIdGroup(
@@ -1780,14 +1766,13 @@ def assess_list(context: typer.Context) -> None:
             SnapshotListItem(
                 id=item.id,
                 scope=item.scope,
-                scope_target=item.scope_target,
                 verification_status=item.verification_status,
                 created_at=item.created_at,
             )
             for item in snapshots
         ]
         human = "\n".join(
-            f"{item.id}\t{item.scope}\t{item.scope_target or ''}\t"
+            f"{item.id}\t{item.scope}\t"
             f"{item.verification_status}\t{item.created_at.isoformat()}"
             for item in items
         )

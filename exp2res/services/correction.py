@@ -204,9 +204,7 @@ def capture_correction(
             )
             invalidated_views = tuple(
                 invalidated_view(
-                    scope=snapshot.scope,
-                    scope_target=snapshot.scope_target,
-                    snapshot_id=snapshot.id,
+                    scope=snapshot.scope, snapshot_id=snapshot.id
                 )
                 for snapshot in snapshots
             )

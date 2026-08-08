@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 CORPUS_NAME = "vera-example-fixtures"
-CORPUS_VERSION = "0.3.0"
+CORPUS_VERSION = "0.4.0"
 MARKER = "Vera Example"
 PERSONA_SOURCE = "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md"
 ROOT = Path(__file__).resolve().parent / "corpus"
@@ -619,7 +619,7 @@ DEMO_RESPONSES = {
         }],
         "warnings": [],
     },
-    "demo-assessment-act1.json": {
+    "demo-assessment-supported.json": {
         # §15.4: the pattern is transport-only scratch work — it is never
         # persisted, and its whole fact set becomes the citing claim's
         # closure, with the contrary member marked on the claim.
@@ -649,12 +649,12 @@ DEMO_RESPONSES = {
         ],
         "warnings": [],
     },
-    "demo-verification-act1-supported.json": {
+    "demo-verification-supported.json": {
         "status": "supported",
         "reason": "The Vera Example claim resolves to the supplied fact, evidence-item, and raw-log closure.",
         "unsupported_phrases": [], "counterevidence": [], "suggested_rewrite": None,
     },
-    "demo-assessment-act2-overclaim.json": {
+    "demo-assessment-overclaim.json": {
         "patterns": [{
             "label": "production Kubernetes operation",
             "supporting_fact_ids": ["fact_demo_0001"],
@@ -677,7 +677,7 @@ DEMO_RESPONSES = {
         ],
         "warnings": [],
     },
-    "demo-verification-act2-rejected.json": {
+    "demo-verification-rejected.json": {
         "status": "rejected",
         "reason": "The Vera Example corpus contains no production-tenure or seniority evidence.",
         "unsupported_phrases": ["operated production Kubernetes systems for ten years"],
@@ -687,7 +687,7 @@ DEMO_RESPONSES = {
         }],
         "suggested_rewrite": "Vera Example drafted and validated a kubectl troubleshooting runbook on an invented toy cluster.",
     },
-    "demo-verification-act2-supported.json": {
+    "demo-verification-narrowed.json": {
         "status": "supported",
         "reason": "The narrower Vera Example evidence-bound summary is supported.",
         "unsupported_phrases": [], "counterevidence": [], "suggested_rewrite": None,

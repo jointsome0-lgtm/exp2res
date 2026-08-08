@@ -104,25 +104,31 @@ def exported_workspace(workspace: Path) -> str:
     return generated.snapshot_id
 
 
-def project_snapshot(workspace: Path) -> str:
-    """One current project-scoped view beside the global one."""
+def duplicate_current_snapshot(workspace: Path) -> str:
+    """Add a second current row beside the one §11.7 admits.
 
-    with read_database(workspace) as connection:
-        facts = [
-            row[0]
-            for row in connection.execute(
-                "SELECT id FROM experience_facts WHERE superseded_at IS NULL"
-            )
+    §11.7 allows at most one current snapshot, and after A4 `scope` names the
+    sole view, so a second current row is reachable only by writing one
+    directly — which is exactly the corrupted state rule 7 fails closed on.
+    """
+
+    duplicate = "01JD00000000000000000DUP"
+    with writer_database(workspace, owner_delete=True) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        columns = [
+            row[1]
+            for row in connection.execute("PRAGMA table_info(assessment_snapshots)")
         ]
-    generated = run_stage6(
-        workspace,
-        FakeContractRunner([assessment_response(fact_ids=facts)]),
-        AssessmentIds(),
-        scope="project",
-        target="Vera Example Project",
-    )
-    assert generated.snapshot_id is not None
-    return generated.snapshot_id
+        selected = ", ".join(
+            "?" if name == "id" else name for name in columns
+        )
+        connection.execute(
+            f"INSERT INTO assessment_snapshots SELECT {selected} "
+            "FROM assessment_snapshots WHERE superseded_at IS NULL",
+            (duplicate,),
+        )
+        connection.commit()
+    return duplicate
 
 
 def final_set(workspace: Path, snapshot_id: str) -> Path:
@@ -608,39 +614,9 @@ def test_a_broken_claim_graph_is_a_named_refusal_not_an_internal_error(
     assert b"assess list" in by_id.body
 
 
-def test_an_unrelated_broken_snapshot_cannot_block_the_global_view(
-    workspace: Path,
-) -> None:
-    snapshot_id = exported_workspace(workspace)
-    project = project_snapshot(workspace)
-    # A current project-scoped row this build cannot hydrate at all. V1 never
-    # serves it, so it must not decide the outcome of the view that is served.
-    update_snapshot(workspace, project, "metadata_json", "{")
-
-    page = mirror(workspace, b"scope=global")
-
-    assert page.outcome == "served"
-    assert page.body == member(workspace, snapshot_id, "report.html")
-
-
 def test_a_duplicated_current_identity_names_no_remedy(workspace: Path) -> None:
     exported_workspace(workspace)
-    with writer_database(workspace, owner_delete=True) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
-            "UPDATE assessment_snapshots SET scope_target = NULL, scope = 'global' "
-            "WHERE scope = 'project'"
-        )
-        connection.commit()
-    project = project_snapshot(workspace)
-    with writer_database(workspace, owner_delete=True) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
-            "UPDATE assessment_snapshots SET scope = 'global', scope_target = NULL "
-            "WHERE id = ?",
-            (project,),
-        )
-        connection.commit()
+    duplicate_current_snapshot(workspace)
 
     page = mirror(workspace, b"scope=global")
 
@@ -764,31 +740,17 @@ def test_a_double_encoded_selector_resolves_to_nothing(workspace: Path) -> None:
 @pytest.mark.parametrize(
     "query", [b"scope=project", b"scope=project&project=Vera%20Example%20Project"]
 )
-def test_the_deferred_project_form_is_refused_as_deferred(
+def test_the_retired_project_form_is_an_unknown_selector(
     workspace: Path, query: bytes
 ) -> None:
+    """§30 rule 3: `global` is the only value a `scope` selector names."""
+
     exported_workspace(workspace)
     page = mirror(workspace, query)
 
     assert page.outcome == "invalid_selector"
-    assert b"deferred" in page.body
+    assert page.status == 400
     assert b"Vera Example Project" not in page.body
-
-
-def test_a_project_scoped_snapshot_is_not_reachable_through_its_id(
-    workspace: Path,
-) -> None:
-    exported_workspace(workspace)
-    project_id = project_snapshot(workspace)
-
-    page = mirror(workspace, f"snapshot={project_id}".encode("ascii"))
-    question_page = questions(workspace, f"snapshot={project_id}".encode("ascii"))
-
-    for answer in (page, question_page):
-        assert answer.outcome == "invalid_selector"
-        assert answer.status == 400
-        assert b"deferred" in answer.body
-        assert project_id.encode("ascii") not in answer.body
 
 
 @pytest.mark.parametrize("route", [b"/", b"/mirror/", b"/questions/x", b"/report.html"])

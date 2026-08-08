@@ -31,6 +31,7 @@ from exp2res.exports.companions import (
     SelfClaimsDocument,
 )
 from exp2res.exports.graph import load_assessment_graph, load_current_snapshot
+from exp2res.storage.repository import hydrate_assessment_snapshot
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import (
     AttemptTelemetry,
@@ -56,8 +57,8 @@ GOLDEN_TRANSCRIPT = ROOT / "demo" / "transcript.txt"
 GOLDEN_CAST = ROOT / "demo.cast"
 WORKSPACE_LABEL = "demo/workspace"
 FIXED_CLOCK = datetime.fromisoformat("2026-07-15T12:30:00+00:00")
-CORPUS_VERSION = "0.3.0"
-ENVELOPE_VERSION = 1
+CORPUS_VERSION = "0.4.0"
+ENVELOPE_VERSION = 2
 EXPORT_MEMBERS = (
     "report.md",
     "report.html",
@@ -320,15 +321,13 @@ def _configure_workspace(workspace: Path) -> None:
     path.chmod(0o600)
 
 
-def _current_snapshot(workspace: Path, scope: str) -> str:
+def _current_snapshot(workspace: Path) -> str:
     with read_database(workspace) as connection:
         row = connection.execute(
-            "SELECT id FROM assessment_snapshots "
-            "WHERE superseded_at IS NULL AND scope = ? ORDER BY id",
-            (scope,),
+            "SELECT id FROM assessment_snapshots WHERE superseded_at IS NULL"
         ).fetchone()
     if row is None:
-        raise AssertionError(f"Vera Example demo has no current {scope} snapshot")
+        raise AssertionError("Vera Example demo has no current assessment snapshot")
     return row[0]
 
 
@@ -380,7 +379,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
                 ],
             )
 
-    transcript.section("Act 1 — supported first mirror and export")
+    transcript.section("Facts, gaps, and contradictions from the captured logs")
     clock.set("2026-07-11T10:00:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
@@ -398,39 +397,77 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     )
     invoke(transcript, workspace, ["gaps", "list"])
     invoke(transcript, workspace, ["contradictions", "show", "--contradiction-id", "contradiction_demo_0001"])
+    # §13.13: one view means one current snapshot, so each regeneration
+    # supersedes the previous one and takes its published set with it. The
+    # blocked act therefore comes first: the mirror the demo leaves published
+    # is the last one generated, and the refused overclaim publishes nothing
+    # at any point.
+    transcript.section("Act 1 — rejected overclaim and first-class export refusal")
     clock.set("2026-07-11T10:15:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
         service=assessment_service, stage_name="run_assessment_generation",
         real_stage=run_assessment_generation,
-        response_names=["demo-assessment-act1.json"],
+        response_names=["demo-assessment-overclaim.json"],
         arguments=["assess", "generate"],
     )
-    act1_snapshot = _current_snapshot(workspace, "global")
+    blocked_snapshot = _current_snapshot(workspace)
+    invoke(transcript, workspace, ["assess", "show", "--snapshot", blocked_snapshot])
     clock.set("2026-07-11T10:17:00+02:00")
+    verify_result = _stage_command(
+        transcript, workspace, ids, clock,
+        service=assessment_service, stage_name="run_assessment_verification",
+        real_stage=run_assessment_verification,
+        response_names=[
+            "demo-verification-rejected.json",
+            "demo-verification-narrowed.json",
+        ],
+        arguments=["assess", "verify", "--snapshot", blocked_snapshot],
+        expected={10},
+    )
+    export_result = invoke(
+        transcript, workspace,
+        ["export", "assessment", "--snapshot", blocked_snapshot],
+        expected={10},
+    )
+    transcript.note(
+        "Act 1 result: verifier exit 10; assessment export exit 10; no blocked export published."
+    )
+
+    transcript.section("Act 2 — supported mirror and its published export")
+    clock.set("2026-07-11T10:25:00+02:00")
+    _stage_command(
+        transcript, workspace, ids, clock,
+        service=assessment_service, stage_name="run_assessment_generation",
+        real_stage=run_assessment_generation,
+        response_names=["demo-assessment-supported.json"],
+        arguments=["assess", "generate"],
+    )
+    published_snapshot = _current_snapshot(workspace)
+    clock.set("2026-07-11T10:27:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
         service=assessment_service, stage_name="run_assessment_verification",
         real_stage=run_assessment_verification,
-        response_names=["demo-verification-act1-supported.json"] * 2,
-        arguments=["assess", "verify", "--snapshot", act1_snapshot],
+        response_names=["demo-verification-supported.json"] * 2,
+        arguments=["assess", "verify", "--snapshot", published_snapshot],
     )
-    invoke(transcript, workspace, ["assess", "show", "--snapshot", act1_snapshot])
+    invoke(transcript, workspace, ["assess", "show", "--snapshot", published_snapshot])
 
     def deterministic_export(selected_workspace: Path, *, snapshot_id: str):
         return real_export_assessment(
             selected_workspace, snapshot_id=snapshot_id, clock=clock
         )
 
-    clock.set("2026-07-11T10:20:00+02:00")
+    clock.set("2026-07-11T10:30:00+02:00")
     with replaced(cli_module, "export_assessment", deterministic_export):
         invoke(
             transcript, workspace,
-            ["export", "assessment", "--snapshot", act1_snapshot],
+            ["export", "assessment", "--snapshot", published_snapshot],
         )
 
     transcript.note(
-        "Claim claim_demo_0001 -> fact fact_demo_0001 -> evidence evi_demo_0001 -> raw log log_demo_0001"
+        "Claim claim_demo_0003 -> fact fact_demo_0001 -> evidence evi_demo_0001 -> raw log log_demo_0001"
     )
     invoke(transcript, workspace, ["logs", "show", "--log-id", "log_demo_0001"])
     transcript.note(
@@ -439,49 +476,15 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     invoke(transcript, workspace, ["logs", "show", "--log-id", "log_demo_0002"])
     invoke(transcript, workspace, ["logs", "show", "--log-id", "log_demo_0003"])
 
-    transcript.section("Act 2 — rejected overclaim and first-class export refusal")
-    clock.set("2026-07-11T10:25:00+02:00")
-    _stage_command(
-        transcript, workspace, ids, clock,
-        service=assessment_service, stage_name="run_assessment_generation",
-        real_stage=run_assessment_generation,
-        response_names=["demo-assessment-act2-overclaim.json"],
-        arguments=[
-            "assess", "generate", "--scope", "project",
-            "--project", "K8s Playbook",
-        ],
-    )
-    act2_snapshot = _current_snapshot(workspace, "project")
-    invoke(transcript, workspace, ["assess", "show", "--snapshot", act2_snapshot])
-    clock.set("2026-07-11T10:27:00+02:00")
-    verify_result = _stage_command(
-        transcript, workspace, ids, clock,
-        service=assessment_service, stage_name="run_assessment_verification",
-        real_stage=run_assessment_verification,
-        response_names=[
-            "demo-verification-act2-rejected.json",
-            "demo-verification-act2-supported.json",
-        ],
-        arguments=["assess", "verify", "--snapshot", act2_snapshot],
-        expected={10},
-    )
-    export_result = invoke(
-        transcript, workspace,
-        ["export", "assessment", "--snapshot", act2_snapshot],
-        expected={10},
-    )
-    transcript.note(
-        "Act 2 result: verifier exit 10; assessment export exit 10; no blocked export published."
-    )
     state = {
         "persona": "Vera Example",
         "corpus_version": CORPUS_VERSION,
         "schema_version": CURRENT_SCHEMA_VERSION,
         "envelope_version": ENVELOPE_VERSION,
-        "act1_snapshot_id": act1_snapshot,
-        "act2_snapshot_id": act2_snapshot,
-        "act2_verify_exit": verify_result.exit_code,
-        "act2_export_exit": export_result.exit_code,
+        "blocked_snapshot_id": blocked_snapshot,
+        "published_snapshot_id": published_snapshot,
+        "blocked_verify_exit": verify_result.exit_code,
+        "blocked_export_exit": export_result.exit_code,
     }
     (workspace / "demo-state.json").write_text(
         json.dumps(state, sort_keys=True, indent=2) + "\n",
@@ -500,13 +503,14 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
     state = json.loads((workspace / "demo-state.json").read_text(encoding="utf-8"))
     if state["persona"] != "Vera Example" or state["corpus_version"] != CORPUS_VERSION:
         raise AssertionError("Vera Example demo state version pin mismatch")
-    if state["schema_version"] != CURRENT_SCHEMA_VERSION or state["envelope_version"] != 1:
+    if state["schema_version"] != CURRENT_SCHEMA_VERSION or state["envelope_version"] != ENVELOPE_VERSION:
         raise AssertionError("Vera Example demo schema/envelope pin mismatch")
-    if (state["act2_verify_exit"], state["act2_export_exit"]) != (10, 10):
+    if (state["blocked_verify_exit"], state["blocked_export_exit"]) != (10, 10):
         raise AssertionError("Vera Example blocked-overclaim exit contract was not observed")
 
-    act1, act2 = state["act1_snapshot_id"], state["act2_snapshot_id"]
-    members = exported_bytes(workspace, act1)
+    blocked = state["blocked_snapshot_id"]
+    published = state["published_snapshot_id"]
+    members = exported_bytes(workspace, published)
     manifest = json.loads(members["manifest.json"])
     recorded = {item["name"]: item["sha256"] for item in manifest["members"]}
     for name in ("report.md", "report.html", "self_claims.json", "evidence_map.json"):
@@ -520,18 +524,28 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
     )
 
     with read_database(workspace) as connection:
-        act1_row, act1_model = load_current_snapshot(connection, act1)
-        act2_row, act2_model = load_current_snapshot(connection, act2)
-        act1_graph = load_assessment_graph(
-            connection, snapshot_row=act1_row, snapshot=act1_model
+        # The mirror has one view, so Act 2's regeneration superseded Act 1's
+        # rejected snapshot. That snapshot is read as history here: it stays
+        # stored, it never reached `out/`, and its supersession is what proves
+        # the refused overclaim left nothing behind.
+        blocked_row = connection.execute(
+            "SELECT * FROM assessment_snapshots WHERE id = ?", (blocked,)
+        ).fetchone()
+        if blocked_row is None:
+            raise AssertionError("Vera Example blocked snapshot is missing")
+        blocked_model = hydrate_assessment_snapshot(blocked_row)
+        published_row, published_model = load_current_snapshot(connection, published)
+        published_graph = load_assessment_graph(
+            connection, snapshot_row=published_row, snapshot=published_model
         )
-        load_assessment_graph(connection, snapshot_row=act2_row, snapshot=act2_model)
-        if act1_model.verification_status != "supported":
-            raise AssertionError("Vera Example Act 1 snapshot is not supported/current")
-        if act2_model.verification_status != "rejected":
-            raise AssertionError("Vera Example Act 2 snapshot is not rejected/current")
-        if (workspace / "out" / "assessment" / act2).exists():
-            raise AssertionError("Vera Example blocked Act 2 export was published")
+        if blocked_model.superseded_at is None:
+            raise AssertionError("Vera Example Act 2 did not replace the blocked view")
+        if blocked_model.verification_status != "rejected":
+            raise AssertionError("Vera Example blocked snapshot is not rejected")
+        if published_model.verification_status != "supported":
+            raise AssertionError("Vera Example mirror snapshot is not supported/current")
+        if (workspace / "out" / "assessment" / blocked).exists():
+            raise AssertionError("Vera Example blocked export was published")
 
         claim_links = {item.claim_id: item for item in evidence_map.claim_links}
         fact_links = {item.fact_id: item for item in evidence_map.fact_links}
@@ -563,7 +577,9 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
                         ).fetchone() is None:
                             raise AssertionError(f"Vera Example closure row missing: {entity_id}")
 
-    if evidence_map.rendered_claim_ids != [item.value.id for item in act1_graph.claims]:
+    if evidence_map.rendered_claim_ids != [
+        item.value.id for item in published_graph.claims
+    ]:
         raise AssertionError("Vera Example rendered claim set is not graph-complete")
     report = members["report.md"].decode("utf-8")
     if "Vera Example" not in report or not claims_document.unknowns:

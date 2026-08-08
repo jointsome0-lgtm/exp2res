@@ -62,10 +62,10 @@ status = "partial"
 nodes = [
   "tests/test_stage3_extraction.py::test_rerun_supersedes_prior_generation_at_one_swap_instant",
   "tests/test_vera_replay_extract.py::test_vera_e1_cli_replay_preserves_provenance_and_one_current_generation",
-  "tests/test_stage6_assessment.py::test_folded_project_view_replacement_preserves_other_views",
+  "tests/test_stage6_assessment.py::test_regeneration_replaces_the_sole_view_and_removes_its_stale_set",
 ]
 phase = "1"
-note = "Stage 3 reruns prove coherent current fact generations, and Stage 6 proves one-current-per-view replacement; Stage 7+ verification mixing and managed-export invalidation remain unavailable until their owning phases"
+note = "Stage 3 reruns prove coherent current fact generations, and Stage 6 proves that regenerating the sole view supersedes exactly the prior snapshot and removes its published set; Stage 7+ verification mixing and the branch half of managed-export invalidation remain unavailable until their owning phases"
 
 ["21.13"]
 status = "partial"
@@ -239,25 +239,33 @@ phase = "3"
 note = "The registered closure tests prove the fact-only §15.5 bundle — the exact duplicate-free ID-ordered closure, its displaced-support projection, the claim's own counter marking, and the current contradiction set as view context"
 
 ["21.33"]
-status = "partial"
+status = "covered"
 nodes = [
-  "tests/test_stage6_assessment.py::test_folded_project_view_replacement_preserves_other_views",
-  "tests/test_stage6_assessment.py::test_project_input_uses_stored_key_and_supplies_no_cross_project_context",
+  "tests/test_stage6_assessment.py::test_the_global_view_supplies_every_current_fact_and_no_context_facts",
+  "tests/test_stage6_assessment.py::test_regeneration_replaces_the_sole_view_and_removes_its_stale_set",
+  "tests/test_stage6_assessment.py::test_snapshot_copies_complete_gap_and_contradiction_sets_and_writer_inputs",
+  "tests/test_stage6_assessment.py::test_unsupplied_claim_reference_retries_then_fails_without_rows[fact]",
+  "tests/test_stage6_assessment.py::test_pattern_claim_source_facts_must_equal_its_cited_patterns",
+  "tests/test_stage6_assessment.py::test_empty_global_fails_before_provider_and_processing_run",
+  "tests/test_cli_assess.py::test_the_retired_scope_selectors_are_class_2[arguments0]",
+  "tests/test_cli_assess.py::test_the_retired_scope_selectors_are_class_2[arguments1]",
+  "tests/test_cli_assess.py::test_the_retired_scope_selectors_are_class_2[arguments2]",
+  "tests/test_stage3_extraction.py::test_happy_path_persists_governing_provenance_and_telemetry",
   "tests/test_cli_correction.py::test_correction_copy_and_explicit_temporal_project_replacement",
 ]
 phase = "3"
-note = "Stage 6 proves stored-key subject selection, folded view replacement identity, and the context-free subject supply of the signal-free §13.6 — a project view carries exactly its own subject facts; correction add proves exact project and temporal copy plus explicit replacement before selected-lineage re-extraction, and broader multi-view coverage remains"
+note = "Stage 6 proves the sole view's subject set is every current fact with no context partition, the unfiltered complete gap and contradiction supply, the invalid unsupplied-fact and mismatched-pattern citations, the fail-before-provider empty view, and replacement of exactly the prior snapshot leaving one current row; the retired --scope/--project selectors now fail in the parser before any run; Stage 3 proves governing project provenance and correction add proves exact project and temporal copy plus explicit replacement before selected-lineage re-extraction"
 
 ["21.34"]
 status = "partial"
 nodes = [
   "tests/test_cli_export_assessment.py::test_export_assessment_closed_success_envelope_needs_no_yes",
   "tests/test_cli_export_assessment.py::test_reverification_cleanup_residual_takes_class_8_over_blocked_findings",
-  "tests/test_stage6_assessment.py::test_global_atlas_and_exp2res_views_coexist_and_only_folded_match_replaces",
+  "tests/test_stage6_assessment.py::test_regeneration_replaces_the_sole_view_and_removes_its_stale_set",
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
 phase = "4"
-note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, same-view isolation, and lifecycle-sensitive re-export are covered; resume ID-keyed paths, branch-name cases, and shell consumption remain"
+note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; resume ID-keyed paths, branch-name cases, and shell consumption remain"
 
 ["21.35"]
 status = "partial"
@@ -635,7 +643,7 @@ nodes = [
 phase = "3"
 note = "Offline scans pin the §16.14 instruction binding in both halves — including the verifier's licensed second-person form (#219) — and keep golden generated prose free of third-person owner nouns; semantic referent judgment remains live-only, where tests/test_stage7_verification.py::test_live_verifier_accepts_the_second_person_owner_reference reproduces the licensed form under a real provider"
 ["21.55"]
-status = "partial"
+status = "covered"
 nodes = [
   "tests/test_export_html.py::test_html_member_is_deterministic_and_carries_no_render_time_value",
   "tests/test_export_html.py::test_both_report_members_render_the_same_content_in_the_same_order",
@@ -647,7 +655,7 @@ nodes = [
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
 phase = "3"
-note = "The published set's fourth member is pinned by golden bytes and its manifest hash — still at the shipped manifest_version 5, so §21.55's revised version-6 requirement stays uncovered until the queued implementation and its goldens land — both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"
+note = "The published set's fourth member is pinned by golden bytes and its manifest hash at §13.14's manifest_version 6, both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"
 
 ["21.56"]
 status = "partial"
@@ -660,7 +668,7 @@ phase = "3"
 note = "Offline tests pin the dimension- and status-keyed §17 routing and its totality over the §16.11 exportable statuses; the §13.7 check 13 semantic dimension judgment remains live-only"
 
 ["21.57"]
-status = "partial"
+status = "covered"
 nodes = [
   "tests/test_view_end_to_end.py::test_both_routes_serve_both_selector_forms_over_a_real_socket",
   "tests/test_view_end_to_end.py::test_one_running_server_observes_invalidation_and_the_replacement",
@@ -690,7 +698,6 @@ nodes = [
   "tests/test_view_resolution.py::test_an_entry_replaced_before_its_first_check_is_export_changed",
   "tests/test_view_resolution.py::test_the_integrity_half_runs_before_the_status_half",
   "tests/test_view_resolution.py::test_a_missing_narrative_summary_names_a_selector_specific_remedy",
-  "tests/test_view_resolution.py::test_an_unrelated_broken_snapshot_cannot_block_the_global_view",
   "tests/test_view_resolution.py::test_a_duplicated_current_identity_names_no_remedy",
   "tests/test_view_resolution.py::test_a_blocked_assessment_is_a_completed_semantic_refusal[unverified-assess verify-assess verify]",
   "tests/test_view_resolution.py::test_a_blocked_assessment_is_a_completed_semantic_refusal[unsupported-assess generate-assess list]",
@@ -699,8 +706,8 @@ nodes = [
   "tests/test_view_resolution.py::test_a_grammar_valid_id_reaches_ordinary_resolution[a]",
   "tests/test_view_resolution.py::test_a_grammar_valid_id_reaches_ordinary_resolution[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]",
   "tests/test_view_resolution.py::test_a_double_encoded_selector_resolves_to_nothing",
-  "tests/test_view_resolution.py::test_the_deferred_project_form_is_refused_as_deferred[scope=project]",
-  "tests/test_view_resolution.py::test_a_project_scoped_snapshot_is_not_reachable_through_its_id",
+  "tests/test_view_resolution.py::test_the_retired_project_form_is_an_unknown_selector[scope=project]",
+  "tests/test_view_resolution.py::test_the_retired_project_form_is_an_unknown_selector[scope=project&project=Vera%20Example%20Project]",
   "tests/test_view_resolution.py::test_a_route_outside_the_closed_set_is_refused_before_state[/]",
   "tests/test_view_resolution.py::test_an_expired_processing_budget_opens_no_read_transaction",
   "tests/test_view_resolution.py::test_a_budget_that_expires_during_composition_is_the_timeout[scope=global]",
@@ -781,7 +788,7 @@ nodes = [
   "tests/test_cli_view_serve.py::test_quiet_keeps_the_urls_and_drops_the_request_lines",
 ]
 phase = "3"
-note = "The §14.17 command form now lands the last piece: tests/test_view_end_to_end.py serves the published Vera Example set over real loopback HTTP — both routes by both selector forms and a valid one-pass encoded selector, byte-identical mirror members, advisory-writer coexistence, bounded SQLite contention followed by reuse of the same server, the ignored ambient cookie and both fetch-metadata site declarations against the refused foreign origin, the answer/re-export invalidation cycle on one unrestarted server, a forward migration by another build refusing the very next request on that same server as schema_incompatible, the ::1 bind, and the empty question projection — partial after A4, because the registered resolver tests still require the `deferred` outcome for `scope=project` and construct a project-scoped snapshot, while §21.57 now makes every non-global scope an ordinary unknown selector — while tests/test_cli_view_serve.py pins the bind admission — including successful binds at both allowed port boundaries, 1024 and 65535, beside the refusals just outside them — the two startup URLs, both startup gates before any socket exists (the incompatible schema as class 4 and a blocked compatibility read as class 5, never relabelled as each other), and the class-9 envelope. tests/test_view_resolution.py keeps the offline state-dependent half and tests/test_view_http.py with tests/test_view_transport.py keep the rule 9 grammar and caps, rule 2 framing, rule 1 authority, rule 10 admission, and the receive/processing/emit/drain deadlines, including a slow trickle through the admission-anchored receive boundary and emit expiry against a client that stops reading a response past the socket buffers"
+note = "The §14.17 command form now lands the last piece: tests/test_view_end_to_end.py serves the published Vera Example set over real loopback HTTP — both routes by both selector forms and a valid one-pass encoded selector, byte-identical mirror members, advisory-writer coexistence, bounded SQLite contention followed by reuse of the same server, the ignored ambient cookie and both fetch-metadata site declarations against the refused foreign origin, the answer/re-export invalidation cycle on one unrestarted server, a forward migration by another build refusing the very next request on that same server as schema_incompatible, the ::1 bind, and the empty question projection — while tests/test_cli_view_serve.py pins the bind admission — including successful binds at both allowed port boundaries, 1024 and 65535, beside the refusals just outside them — the two startup URLs, both startup gates before any socket exists (the incompatible schema as class 4 and a blocked compatibility read as class 5, never relabelled as each other), and the class-9 envelope. tests/test_view_resolution.py keeps the offline state-dependent half and tests/test_view_http.py with tests/test_view_transport.py keep the rule 9 grammar and caps, rule 2 framing, rule 1 authority, rule 10 admission, and the receive/processing/emit/drain deadlines, including a slow trickle through the admission-anchored receive boundary and emit expiry against a client that stops reading a response past the socket buffers"
 
 ["21.58"]
 status = "partial"
