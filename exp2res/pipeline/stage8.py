@@ -13,6 +13,7 @@ from typing import Callable, Iterable, Pattern, Sequence, cast
 from pydantic import BaseModel
 
 from exp2res.domain.models import JDRequirement, JobDescription, ParsedJD
+from exp2res.errors import LLMCancelledError
 from exp2res.llm.contracts import ContractWarning
 from exp2res.llm.jd_parser import (
     JD_PARSER_CONTRACT,
@@ -149,17 +150,30 @@ def run_job_description_parse(
             job_description=JobDescriptionPayload(raw_text=raw_text)
         )
         run_id = id_factory("run")
+        # §14.14 rule 6: the parser's warnings live only in the resolved
+        # candidate, so a cancellation delivered at or after the business
+        # commit would otherwise report a durable job description with none of
+        # the advisories that describe it. Capturing them here keeps the
+        # standard envelope fields whole on that path.
+        resolved_parses: list[_ResolvedParse] = []
+        resolve_candidate = _resolve_for(
+            connection=connection,
+            raw_text=raw_text,
+            id_factory=id_factory,
+            clock=now,
+        )
+
+        def resolve(validated: BaseModel) -> object:
+            candidate = resolve_candidate(validated)
+            resolved_parses.append(cast(_ResolvedParse, candidate))
+            return candidate
+
         planned = (
             PlannedCall(
                 input_payload=input_payload,
                 input_ids=(),
                 enrich=None,
-                resolve=_resolve_for(
-                    connection=connection,
-                    raw_text=raw_text,
-                    id_factory=id_factory,
-                    clock=now,
-                ),
+                resolve=resolve,
             ),
         )
 
@@ -170,28 +184,35 @@ def run_job_description_parse(
             insert_job_description(held, candidate.job_description)
             return (candidate.job_description.id,)
 
-        outcome = run_complete_stage(
-            workspace,
-            connection,
-            stage="13.8",
-            contract=JD_PARSER_CONTRACT,
-            selection=selection,
-            budgets=budgets,
-            runner=runner,
-            planned=planned,
-            commit=commit,
-            run_id=run_id,
-            parent_run_id=parent_run_id,
-            clock=now,
-            cli_version=cli_version,
-            capability_check=capability_check,
-            monotonic=monotonic,
-            sleeper=sleeper,
-            jitter=jitter,
-            token_patterns=token_patterns,
-            resolved_credentials=resolved_credentials,
-            input_ids=(),
-        )
+        try:
+            outcome = run_complete_stage(
+                workspace,
+                connection,
+                stage="13.8",
+                contract=JD_PARSER_CONTRACT,
+                selection=selection,
+                budgets=budgets,
+                runner=runner,
+                planned=planned,
+                commit=commit,
+                run_id=run_id,
+                parent_run_id=parent_run_id,
+                clock=now,
+                cli_version=cli_version,
+                capability_check=capability_check,
+                monotonic=monotonic,
+                sleeper=sleeper,
+                jitter=jitter,
+                token_patterns=token_patterns,
+                resolved_credentials=resolved_credentials,
+                input_ids=(),
+            )
+        except (LLMCancelledError, KeyboardInterrupt) as error:
+            # Only cancellation: a failed run persisted nothing its advisories
+            # could describe.
+            if resolved_parses and not getattr(error, "warnings", None):
+                error.warnings = list(resolved_parses[-1].warnings)
+            raise
         resolved = cast(_ResolvedParse, outcome.resolved[0])
         persisted = resolved.job_description
         # The result carries the §14.14 rule 5 projection fields only: the

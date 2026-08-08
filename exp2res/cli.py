@@ -2332,17 +2332,33 @@ def _jd_delete_outcome(deleted: JobDescriptionDeleteOutcome) -> Outcome:
         run_ids=[deleted.run_id],
         residual_paths=list(deleted.residual_paths),
         result=_jd_delete_result(deleted),
-        human_result=(
-            f"Deleted job description {deleted.selected.id}; no derived "
-            "state remained."
-        )
+        human_result=_jd_delete_human_result(deleted),
+    )
+
+
+def _jd_delete_human_result(deleted: JobDescriptionDeleteOutcome) -> str:
+    # §14.15 requires the same reporting in both modes: the closed result
+    # record is serialized only under `--json`, so every purged branch and
+    # every removed managed path is named here too.
+    lines = [
+        f"Deleted job description {deleted.selected.id}; no derived "
+        "state remained."
         if not deleted.purged_branches
         else (
             f"Deleted job description {deleted.selected.id} and "
             f"{len(deleted.purged_branches)} dependent branch"
             f"{'' if len(deleted.purged_branches) == 1 else 'es'}."
-        ),
+        )
+    ]
+    lines.extend(
+        f"Purged branch: {branch.id}\t{branch.name}"
+        for branch in deleted.purged_branches
     )
+    lines.extend(
+        f"Removed managed path: {path}"
+        for path in _jd_delete_result(deleted).removed_managed_paths
+    )
+    return "\n".join(lines)
 
 
 def _jd_delete_affected(deleted: JobDescriptionDeleteOutcome) -> AffectedIds:

@@ -147,7 +147,7 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         if created:
             error.affected_ids = _created_job_descriptions(created)
         raise
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as error:
         # The same rule one frame further out: the interrupt may also land
         # after Stage 8 returned from its commit — while its result is built,
         # or while the writer lock and connection tear down — where nothing
@@ -158,6 +158,7 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         cancelled = OperationCancelledError()
         cancelled.run_ids = list(runs)
         cancelled.affected_ids = _created_job_descriptions(created)
+        cancelled.warnings = list(getattr(error, "warnings", ()) or ())
         raise cancelled from None
 
 

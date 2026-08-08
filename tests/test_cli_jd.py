@@ -753,3 +753,82 @@ def test_a_backup_recreated_during_the_purge_is_reported_as_residual(
         assert connection.execute(
             "SELECT COUNT(*) FROM job_descriptions"
         ).fetchone()[0] == 0
+
+
+def test_a_cancelled_add_still_reports_its_parser_warnings(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the advisories describing a durable parse survive."""
+
+    import exp2res.pipeline.stage8 as stage8
+
+    class InterruptOnCommitReturn:
+        """Interrupt once, as the business commit returns to Python."""
+
+        def __init__(self, connection) -> None:
+            self._connection = connection
+            self._fired = False
+
+        def __getattr__(self, name: str):
+            return getattr(self._connection, name)
+
+        def commit(self) -> None:
+            self._connection.commit()
+            if self._fired:
+                return
+            if self._connection.execute(
+                "SELECT COUNT(*) FROM job_descriptions"
+            ).fetchone()[0]:
+                self._fired = True
+                raise KeyboardInterrupt()
+
+    real_writer = stage8.writer_database
+
+    @contextmanager
+    def wrapped(target: Path, **keywords):
+        with real_writer(target, **keywords) as connection:
+            yield InterruptOnCommitReturn(connection)
+
+    monkeypatch.setattr(stage8, "writer_database", wrapped)
+
+    result, envelope = add_job_description(
+        workspace,
+        tmp_path,
+        monkeypatch,
+        warnings=[{"type": "vera_note", "message": "Vera Example advisory"}],
+    )
+
+    assert result.exit_code == 9
+    assert [warning["type"] for warning in envelope["warnings"]] == ["vera_note"]
+    assert envelope["affected_ids"]["created"][0]["entity_type"] == (
+        "job_description"
+    )
+
+
+def test_human_mode_delete_names_every_removed_managed_path(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.15 reports the same removals without `--json`."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    backup = backup_root / "pre-migration.sqlite"
+    backup.write_bytes(b"")
+
+    result = runner.invoke(
+        app,
+        [
+            "--workspace",
+            str(workspace),
+            "--yes",
+            "jd",
+            "delete",
+            "--jd",
+            job_description_id,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"Removed managed path: {backup.absolute()}" in result.stdout
