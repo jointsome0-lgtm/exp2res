@@ -832,3 +832,31 @@ def test_human_mode_delete_names_every_removed_managed_path(
 
     assert result.exit_code == 0
     assert f"Removed managed path: {backup.absolute()}" in result.stdout
+
+
+def test_two_backup_names_that_differ_only_in_escaping_stay_distinct(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.15 reports each removed path by identity, so rendering is injective."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    undecodable = os.path.join(os.fsencode(str(backup_root)), b"pre-\xff.sqlite")
+    with open(undecodable, "wb") as handle:
+        handle.write(b"")
+    literal = backup_root / "pre-\\xff.sqlite"
+    literal.write_bytes(b"")
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 0
+    removed = envelope["result"]["removed_managed_paths"]
+    assert len(set(removed)) == 2
+    assert str(backup_root / "pre-\\\\xff.sqlite") in removed
+    assert str(backup_root / "pre-\\xff.sqlite") in removed
+    assert not os.path.exists(undecodable)
+    assert not literal.exists()

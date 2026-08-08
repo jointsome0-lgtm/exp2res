@@ -284,6 +284,23 @@ def _evidence_projection(item) -> EvidenceItemProjection:
     )
 
 
+def _render_path(path: str) -> str:
+    """Render one filesystem path so the envelope can carry it losslessly.
+
+    Undecodable POSIX names surface as surrogate-escaped strings that neither
+    UTF-8 stdout nor the JSON envelope can encode. Escaping the byte into
+    `\\xNN` form would collide with a name that literally contains those
+    characters, so the literal backslash is escaped first and the rendering
+    stays injective: distinct paths keep distinct reported identities.
+    """
+
+    return (
+        path.replace("\\", "\\\\")
+        .encode("utf-8", "surrogateescape")
+        .decode("utf-8", "backslashreplace")
+    )
+
+
 def _invalidated_view_lines(views: list[InvalidatedView]) -> list[str]:
     """§14.14 rule 5's one human rendering of §13.13 rule 9 view reports.
 
@@ -530,15 +547,9 @@ def _run_operation(
         except OSError:
             pass
         observed_residuals.append(path)
-    # Undecodable POSIX names surface as surrogateescape'd strings that
-    # neither UTF-8 stdout nor the JSON envelope can carry; escape them into
-    # backslash form so the committed result and every residual stay
-    # reportable in both modes.
     residual_paths = sorted(
         {
-            path.encode("utf-8", "surrogateescape").decode(
-                "utf-8", "backslashreplace"
-            )
+            _render_path(path)
             for path in {*outcome.residual_paths, *observed_residuals}
         },
         key=os.fsencode,
@@ -2314,11 +2325,10 @@ def _jd_delete_result(deleted: JobDescriptionDeleteOutcome) -> JdDeleteResult:
         ],
         # Undecodable POSIX names reach here surrogate-escaped from
         # `os.scandir`; the envelope serializes with `ensure_ascii=False`, so
-        # the same backslash rendering the residual finalizer applies keeps a
-        # committed removal reportable instead of failing stdout encoding.
+        # the same rendering the residual finalizer applies keeps a committed
+        # removal reportable instead of failing stdout encoding.
         removed_managed_paths=[
-            path.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
-            for path in deleted.removed_managed_paths
+            _render_path(path) for path in deleted.removed_managed_paths
         ],
     )
 

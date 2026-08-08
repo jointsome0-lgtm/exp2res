@@ -65,14 +65,35 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
         for entry in entries:
             managed_path = str((backup_root / entry.name).absolute())
             try:
-                entry_mode = os.stat(
+                scanned = os.stat(
                     entry.name, dir_fd=backup_fd, follow_symlinks=False
-                ).st_mode
-                if stat.S_ISREG(entry_mode) and not stat.S_ISLNK(entry_mode):
-                    os.unlink(entry.name, dir_fd=backup_fd)
-                    removed.append(managed_path)
-                else:
+                )
+                if not stat.S_ISREG(scanned.st_mode):
                     refused.append(managed_path)
+                    continue
+                # Pin the inode before removing it: the open refuses a symlink
+                # outright, and the descriptor's own identity is what decides
+                # whether the name still holds the file this pass classified
+                # (§13.14 rule 6). POSIX unlinks by name and offers no
+                # unlink-by-inode, so the check narrows the window to its
+                # minimum rather than closing it; the re-enumeration below is
+                # what proves the outcome.
+                entry_fd = os.open(
+                    entry.name, os.O_RDONLY | no_follow, dir_fd=backup_fd
+                )
+                try:
+                    pinned = os.fstat(entry_fd)
+                finally:
+                    os.close(entry_fd)
+                if (pinned.st_dev, pinned.st_ino, pinned.st_nlink) != (
+                    scanned.st_dev,
+                    scanned.st_ino,
+                    scanned.st_nlink,
+                ) or pinned.st_nlink != 1:
+                    refused.append(managed_path)
+                    continue
+                os.unlink(entry.name, dir_fd=backup_fd)
+                removed.append(managed_path)
             except OSError:
                 refused.append(managed_path)
         # POSIX unlinks by name, so no removal is atomic with the `stat` that
