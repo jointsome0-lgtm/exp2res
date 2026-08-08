@@ -10,9 +10,12 @@ from pathlib import Path
 import sqlite3
 from typing import Callable, Iterable
 
+from pydantic import ValidationError
+
 from exp2res import __version__
 from exp2res.config import load_workspace_config
-from exp2res.domain.models import JobDescription
+from exp2res.domain.models import JobDescription, validate_free_text
+from exp2res.domain.results import AffectedIds, EntityIdGroup
 from exp2res.errors import (
     InvalidInputError,
     LLMInvocationError,
@@ -75,17 +78,45 @@ def _committed_runs(workspace: Path, run_ids: list[str]) -> tuple[str, ...]:
     return tuple(run_id for run_id in run_ids if run_id in committed)
 
 
+def _committed_job_descriptions(
+    workspace: Path, job_description_ids: list[str]
+) -> tuple[str, ...]:
+    if not job_description_ids:
+        return ()
+    placeholders = ",".join("?" for _ in job_description_ids)
+    with read_database(workspace) as connection:
+        rows = connection.execute(
+            f"SELECT id FROM job_descriptions WHERE id IN ({placeholders})",
+            job_description_ids,
+        ).fetchall()
+    committed = {row[0] for row in rows}
+    return tuple(value for value in job_description_ids if value in committed)
+
+
 def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
     """Resolve configured execution lazily and run the one Stage 8 parse."""
 
     require_compatible(workspace)
+    # §14.14 rule 4: boundary text is rejected in exit class 2 before any
+    # adapter is built or any writer authority is taken, so an empty or
+    # control-bearing vacancy never reaches §15.9's payload as an
+    # unclassified internal failure after the writer preamble ran.
+    try:
+        validate_free_text(raw_text, raw=True, nonempty=True)
+    except (ValidationError, ValueError, TypeError) as error:
+        failure = InvalidInputError()
+        failure.public_message = "The vacancy text failed strict validation."
+        raise failure from error
     selection, budgets, runner = build_llm_execution(workspace)
     allocated_runs: list[str] = []
+    allocated_job_descriptions: list[str] = []
 
     def tracking_id_factory(kind: str) -> str:
         value = new_id(kind)
         if kind == "run":
             allocated_runs.append(value)
+        elif kind == "job_description":
+            allocated_job_descriptions.append(value)
         return value
 
     try:
@@ -100,6 +131,16 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         )
     except LLMInvocationError as error:
         error.run_ids = _committed_runs(workspace, allocated_runs)
+        # §14.14 rule 6: an interrupt delivered as Stage 8's business commit
+        # returns leaves the row durable, so cancellation reports the created
+        # job description rather than an effect-free envelope.
+        created = _committed_job_descriptions(workspace, allocated_job_descriptions)
+        if created:
+            error.affected_ids = AffectedIds(
+                created=[
+                    EntityIdGroup(entity_type="job_description", ids=list(created))
+                ]
+            )
         raise
 
 
@@ -187,6 +228,41 @@ def delete_job_description(
         if connection is not None
         else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
     )
+    # §14.14 rule 6: once the deletion commits, no later interrupt may produce
+    # an empty cancelled envelope. This cell makes the whole remaining region —
+    # checkpoint, result construction, lock and connection teardown — one
+    # cancellation boundary instead of a sequence of narrower guarded blocks.
+    committed: list[JobDescriptionDeleteOutcome] = []
+    try:
+        return _delete_locked(
+            workspace,
+            held=held,
+            job_description_id=job_description_id,
+            orchestration_run_id=orchestration_run_id,
+            residual_paths=residual_paths,
+            removed_paths=removed_paths,
+            committed=committed,
+            now=now,
+        )
+    except KeyboardInterrupt:
+        if not committed:
+            raise
+        cancelled = OperationCancelledError()
+        cancelled.delete_outcome = committed[-1]
+        raise cancelled from None
+
+
+def _delete_locked(
+    workspace: Path,
+    *,
+    held,
+    job_description_id: str,
+    orchestration_run_id: str,
+    residual_paths: list[str],
+    removed_paths: list[str],
+    committed: list[JobDescriptionDeleteOutcome],
+    now: Callable[[], datetime],
+) -> JobDescriptionDeleteOutcome:
     with held as connection:
         selected = get_job_description(connection, job_description_id)
         if selected is None:
@@ -197,6 +273,31 @@ def delete_job_description(
         removed, backup_residuals = _purge_managed_backups(workspace)
         removed_paths.extend(removed)
         residual_paths.extend(backup_residuals)
+        # §13.13 rule 10 captures every current or historical branch naming
+        # this job description, then deletes that branch state before the job
+        # description itself. `resume_branches`, `resume_bullets`, and their
+        # findings arrive with §22 Phase 4's Stages 10-12; until then no branch
+        # can exist, so the captured set is empty, the dependent deletes have
+        # no table to address, and the `out/branch/<branch-id>/` half of the
+        # managed removal above has no ID source. All three join here with
+        # those tables.
+        purged_branches: tuple[PurgedBranch, ...] = ()
+        purged_bullet_ids: tuple[str, ...] = ()
+        purged_finding_ids: tuple[str, ...] = ()
+        database = workspace / ".exp2res" / "exp2res.sqlite"
+        write_ahead_log = str(database.with_name(database.name + "-wal"))
+
+        def build_outcome(residuals: Iterable[str]) -> JobDescriptionDeleteOutcome:
+            return _committed_outcome(
+                run_id=orchestration_run_id,
+                selected=selected,
+                purged_branches=purged_branches,
+                purged_bullet_ids=purged_bullet_ids,
+                purged_finding_ids=purged_finding_ids,
+                removed_paths=removed_paths,
+                residuals=residuals,
+            )
+
         try:
             connection.execute("BEGIN IMMEDIATE")
             # The selector is revalidated under the writer authority: the
@@ -219,18 +320,6 @@ def delete_job_description(
                 input_ids=(job_description_id,),
                 metadata={"mode": "job_description"},
             )
-            # §13.13 rule 10 captures every current or historical branch naming
-            # this job description, then deletes that branch state before the
-            # job description itself. `resume_branches`, `resume_bullets`, and
-            # their findings arrive with §22 Phase 4's Stages 10-12; until
-            # then no branch can exist, so the captured set is empty, the
-            # dependent deletes have no table to address, and the
-            # `out/branch/<branch-id>/` half of the managed removal below has
-            # no ID source. All three join here with those tables.
-            purged_branches: tuple[PurgedBranch, ...] = ()
-            purged_bullet_ids: tuple[str, ...] = ()
-            purged_finding_ids: tuple[str, ...] = ()
-
             connection.execute(
                 "DELETE FROM job_descriptions WHERE id = ?", (job_description_id,)
             )
@@ -254,54 +343,18 @@ def delete_job_description(
         except BaseException:
             # §14.14 rule 6: an interrupt delivered as `commit()` returns
             # leaves the deletion durable, so a rollback here would only
-            # discard the report of something that already happened.
+            # discard the report of something that already happened. The WAL
+            # stays residual until a checkpoint proves erasure.
             if connection.in_transaction:
                 connection.rollback()
                 raise
-            cancelled = OperationCancelledError()
-            cancelled.delete_outcome = _committed_outcome(
-                run_id=orchestration_run_id,
-                selected=selected,
-                purged_branches=purged_branches,
-                purged_bullet_ids=purged_bullet_ids,
-                purged_finding_ids=purged_finding_ids,
-                removed_paths=removed_paths,
-                residuals=(
-                    *residual_paths,
-                    str(
-                        (workspace / ".exp2res" / "exp2res.sqlite-wal").absolute()
-                    ),
-                ),
-            )
-            raise cancelled from None
-
-        def build_outcome(residuals: Iterable[str]) -> JobDescriptionDeleteOutcome:
-            return _committed_outcome(
-                run_id=orchestration_run_id,
-                selected=selected,
-                purged_branches=purged_branches,
-                purged_bullet_ids=purged_bullet_ids,
-                purged_finding_ids=purged_finding_ids,
-                removed_paths=removed_paths,
-                residuals=residuals,
-            )
-
-        database = workspace / ".exp2res" / "exp2res.sqlite"
-        try:
-            residual_paths.extend(
-                _delete_checkpoint_residuals(connection, database)
-            )
-        except KeyboardInterrupt:
-            # §14.14 rule 6: the purge committed before checkpoint work, so
-            # cancellation carries the durable deletion and reports the WAL as
-            # residual until a later writer proves erasure.
-            cancelled = OperationCancelledError()
-            cancelled.delete_outcome = build_outcome(
-                (
-                    *residual_paths,
-                    str(database.with_name(database.name + "-wal")),
-                )
-            )
-            raise cancelled from None
-
-        return build_outcome(tuple(residual_paths))
+            committed.append(build_outcome((*residual_paths, write_ahead_log)))
+            raise
+        # From here the deletion is durable. The pessimistic outcome is banked
+        # before any further work, so an interrupt anywhere below — checkpoint,
+        # teardown, or the caller's own result assembly — still reports it.
+        committed.append(build_outcome((*residual_paths, write_ahead_log)))
+        residual_paths.extend(_delete_checkpoint_residuals(connection, database))
+        outcome = build_outcome(tuple(residual_paths))
+        committed.append(outcome)
+        return outcome

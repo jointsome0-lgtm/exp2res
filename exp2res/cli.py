@@ -2294,7 +2294,36 @@ def _jd_delete_result(deleted: JobDescriptionDeleteOutcome) -> JdDeleteResult:
             PurgedBranchProjection(id=branch.id, name=branch.name)
             for branch in deleted.purged_branches
         ],
-        removed_managed_paths=list(deleted.removed_managed_paths),
+        # Undecodable POSIX names reach here surrogate-escaped from
+        # `os.scandir`; the envelope serializes with `ensure_ascii=False`, so
+        # the same backslash rendering the residual finalizer applies keeps a
+        # committed removal reportable instead of failing stdout encoding.
+        removed_managed_paths=[
+            path.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+            for path in deleted.removed_managed_paths
+        ],
+    )
+
+
+def _jd_delete_outcome(deleted: JobDescriptionDeleteOutcome) -> Outcome:
+    exit_code = 8 if deleted.residual_paths else 0
+    return Outcome(
+        exit_code=exit_code,
+        diagnostic_class="deletion_incomplete" if exit_code else None,
+        affected_ids=_jd_delete_affected(deleted),
+        run_ids=[deleted.run_id],
+        residual_paths=list(deleted.residual_paths),
+        result=_jd_delete_result(deleted),
+        human_result=(
+            f"Deleted job description {deleted.selected.id}; no derived "
+            "state remained."
+        )
+        if not deleted.purged_branches
+        else (
+            f"Deleted job description {deleted.selected.id} and "
+            f"{len(deleted.purged_branches)} dependent branch"
+            f"{'' if len(deleted.purged_branches) == 1 else 'es'}."
+        ),
     )
 
 
@@ -2356,25 +2385,17 @@ def jd_delete(
                 error.residual_paths = list(committed.residual_paths)
                 error.result = _jd_delete_result(committed)
             raise
-        exit_code = 8 if deleted.residual_paths else 0
-        return Outcome(
-            exit_code=exit_code,
-            diagnostic_class="deletion_incomplete" if exit_code else None,
-            affected_ids=_jd_delete_affected(deleted),
-            run_ids=[deleted.run_id],
-            residual_paths=list(deleted.residual_paths),
-            result=_jd_delete_result(deleted),
-            human_result=(
-                f"Deleted job description {deleted.selected.id}; no derived "
-                "state remained."
-            )
-            if not deleted.purged_branches
-            else (
-                f"Deleted job description {deleted.selected.id} and "
-                f"{len(deleted.purged_branches)} dependent branch"
-                f"{'' if len(deleted.purged_branches) == 1 else 'es'}."
-            ),
-        )
+        try:
+            return _jd_delete_outcome(deleted)
+        except KeyboardInterrupt:
+            # The service returned a durable deletion; §14.14 rule 6 keeps it
+            # reported even when the interrupt lands in result assembly.
+            cancelled = OperationCancelledError()
+            cancelled.affected_ids = _jd_delete_affected(deleted)
+            cancelled.run_ids = [deleted.run_id]
+            cancelled.residual_paths = list(deleted.residual_paths)
+            cancelled.result = _jd_delete_result(deleted)
+            raise cancelled from None
 
     _run_command(context, "jd delete", operation)
 

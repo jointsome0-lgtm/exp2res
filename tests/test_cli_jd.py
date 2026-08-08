@@ -530,3 +530,128 @@ def test_a_preamble_residual_is_a_deletion_failure_not_an_output_failure(
         assert connection.execute(
             "SELECT COUNT(*) FROM job_descriptions"
         ).fetchone()[0] == 0
+
+
+def test_control_bearing_vacancy_text_is_rejected_before_the_writer(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: boundary text fails in class 2, not as an internal error."""
+
+    fake = FakeContractRunner([])
+    install_fake_execution(monkeypatch, fake)
+
+    result, envelope = invoke_json(
+        workspace, ["jd", "add", str(vacancy_file(tmp_path, "Agent engineer\x07"))]
+    )
+
+    assert result.exit_code == 2
+    assert envelope["status"] == "failed"
+    assert fake.calls == []
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM processing_runs"
+        ).fetchone()[0] == 0
+
+
+def test_an_interrupt_as_the_parse_commits_reports_the_created_record(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: a durable Stage 8 commit survives its cancelled envelope."""
+
+    import exp2res.pipeline.stage8 as stage8
+
+    class InterruptOnCommitReturn:
+        """Interrupt once, as the business commit returns to Python."""
+
+        def __init__(self, connection) -> None:
+            self._connection = connection
+            self._fired = False
+
+        def __getattr__(self, name: str):
+            return getattr(self._connection, name)
+
+        def commit(self) -> None:
+            self._connection.commit()
+            # A real signal fires once, and only the business commit leaves
+            # something durable to report: the run-row commit precedes it.
+            if self._fired:
+                return
+            if self._connection.execute(
+                "SELECT COUNT(*) FROM job_descriptions"
+            ).fetchone()[0]:
+                self._fired = True
+                raise KeyboardInterrupt()
+
+    real_writer = stage8.writer_database
+
+    @contextmanager
+    def wrapped(target: Path, **keywords):
+        with real_writer(target, **keywords) as connection:
+            yield InterruptOnCommitReturn(connection)
+
+    monkeypatch.setattr(stage8, "writer_database", wrapped)
+
+    result, envelope = add_job_description(workspace, tmp_path, monkeypatch)
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = envelope["affected_ids"]["created"]
+    assert [group["entity_type"] for group in created] == ["job_description"]
+    with read_database(workspace) as connection:
+        stored = connection.execute("SELECT id FROM job_descriptions").fetchall()
+    assert [row[0] for row in stored] == created[0]["ids"]
+
+
+def test_an_interrupt_after_the_checkpoint_still_reports_the_deletion(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the committed outcome spans the whole service teardown."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+
+    def interrupt(*_arguments: object, **_keywords: object):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(jd_service, "_delete_checkpoint_residuals", interrupt)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["affected_ids"]["deleted"] == [
+        {"entity_type": "job_description", "ids": [job_description_id]}
+    ]
+    assert envelope["result"]["selected_job_description"]["id"] == (
+        job_description_id
+    )
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0
+
+
+def test_an_undecodable_backup_name_is_reported_in_backslash_form(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5: an unencodable removed path never breaks the envelope."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    undecodable = os.path.join(os.fsencode(str(backup_root)), b"pre-\xff.sqlite")
+    with open(undecodable, "wb") as handle:
+        handle.write(b"")
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 0
+    assert envelope["result"]["removed_managed_paths"] == [
+        str(backup_root / "pre-\\xff.sqlite")
+    ]
+    assert not os.path.exists(undecodable)
