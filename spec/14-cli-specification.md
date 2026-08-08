@@ -299,7 +299,7 @@ This contract binds every command-specific form above and every later §14 addit
      - `command` — canonical §14 command path without arguments, or `null` when parsing did not resolve a command.
      - `status` — canonical `CLIResultStatus`, constrained by rule 4's exit-code taxonomy.
      - `exit_code` — integer process exit status from rule 4's taxonomy.
-     - `diagnostic_class` — stable non-empty machine code, or `null` if and only if `exit_code = 0`; code 10 uses a gate-specific blocking class.
+     - `diagnostic_class` — stable non-empty machine code, or `null` if and only if `exit_code = 0`; code 10 uses a blocking class specific to its outcome: a gate-specific class for a verifier or §16.11 refusal, and the stable `no_bullet_generated` class for a §13.10 run that produces no bullet.
        - These codes are open for append-only extension like §12.13 `failure_code`, not a §10 enum.
      - `workspace` — canonical real discovered or overridden workspace-root path, the canonical `init` target, or `null` when no root was established.
      - `affected_ids` — closed object with exactly `created`, `superseded`, and `deleted`.
