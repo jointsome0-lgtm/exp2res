@@ -348,21 +348,24 @@ def _delete_locked(
         # place, so the value is allocated against the retained set with the
         # same bounded local retry Stage 8 uses.
         orchestration_run_id = _allocate_run_id(connection, allocate_id)
+        # The pass reports removals as it makes them, so an interrupt mid-pass
+        # still names what it had already unlinked (§14.14 rule 6). What it
+        # had yet to reach is unproven, which the root residual states.
+        unlinked: list[str] = []
         try:
             if database_identity is None:
                 removed, backup_residuals = (), (backup_root,)
             else:
                 removed, backup_residuals = _purge_managed_backups(
-                    workspace, expected_database=database_identity
+                    workspace,
+                    expected_database=database_identity,
+                    removed_ledger=unlinked,
                 )
         except KeyboardInterrupt:
-            # The pass was cut mid-flight, so which names it had already
-            # removed is unknown and the store's state is unproven: the root
-            # is the honest report (§13.13 rule 6).
             cleaned.append(
                 JobDescriptionCleanupOutcome(
                     selected=selected,
-                    removed_managed_paths=(),
+                    removed_managed_paths=tuple(sorted(set(unlinked), key=_path_key)),
                     residual_paths=(backup_root,),
                 )
             )
@@ -402,6 +405,10 @@ def _delete_locked(
                 residuals=residuals,
             )
 
+        # `in_transaction` alone cannot tell a finished commit from a
+        # transaction that never opened: both report false. Only a commit that
+        # was actually reached may be read as durable below.
+        commit_reached = False
         try:
             connection.execute("BEGIN IMMEDIATE")
             # The selector is revalidated under the writer authority: the
@@ -438,6 +445,7 @@ def _delete_locked(
                 finished_at=now(),
                 status="completed",
             )
+            commit_reached = True
             connection.commit()
         except sqlite3.OperationalError as error:
             connection.rollback()
@@ -449,7 +457,7 @@ def _delete_locked(
             # leaves the deletion durable, so a rollback here would only
             # discard the report of something that already happened. The WAL
             # stays residual until a checkpoint proves erasure.
-            if connection.in_transaction:
+            if connection.in_transaction or not commit_reached:
                 connection.rollback()
                 raise
             committed.append(build_outcome((*residual_paths, write_ahead_log)))

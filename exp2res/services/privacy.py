@@ -37,7 +37,10 @@ DATABASE_NAME = "exp2res.sqlite"
 
 
 def purge_managed_backups(
-    workspace: Path, *, expected_database: os.stat_result | None = None
+    workspace: Path,
+    *,
+    expected_database: os.stat_result | None = None,
+    removed_ledger: list[str] | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Remove every regular migration backup and report `(removed, residual)`.
 
@@ -52,6 +55,19 @@ def purge_managed_backups(
     reached from the path now holds a different database file, the identities
     disagree, and the store is reported residual instead of a foreign tree
     being purged while the original's backups survive.
+
+    `removed_ledger` receives each name as it is unlinked. The return value is
+    only produced once the pass finishes, so a caller that must report durable
+    effects after a cancellation mid-pass has no other way to learn what this
+    function already removed (§14.14 rule 6).
+
+    Residual window this cannot close: `expected_database` is an identity taken
+    from a pathname, and POSIX offers no way to ask an open SQLite connection
+    for the inode it holds. A workspace renamed and replaced in the instant
+    between the caller's connection open and its stat is therefore outside what
+    this check can prove. §8.1's single business writer and §29's local
+    boundary — anything able to rename the workspace root is already inside it
+    — are what bound that window.
     """
 
     backup_root = workspace / ".exp2res" / "backup"
@@ -180,6 +196,8 @@ def purge_managed_backups(
                     continue
                 os.unlink(entry.name, dir_fd=backup_fd)
                 removed.append(managed_path)
+                if removed_ledger is not None:
+                    removed_ledger.append(managed_path)
             except OSError:
                 refused.append(managed_path)
         if removed:

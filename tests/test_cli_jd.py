@@ -1211,3 +1211,93 @@ def test_an_unreadable_database_anchor_refuses_the_purge(
     assert result.exit_code == 8
     assert envelope["residual_paths"] == [str(backup_root.absolute())]
     assert backup.read_bytes() == b"Vera Example migration backup"
+
+
+def test_an_interrupt_entering_the_transaction_reports_no_deletion(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`in_transaction` false before BEGIN is not proof of a commit."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+
+    class InterruptOnBegin:
+        """Refuse the transaction exactly as it opens."""
+
+        def __init__(self, connection) -> None:
+            self._connection = connection
+
+        def __getattr__(self, name: str):
+            return getattr(self._connection, name)
+
+        @property
+        def in_transaction(self) -> bool:
+            return self._connection.in_transaction
+
+        def execute(self, statement: str, *arguments):
+            if statement == "BEGIN IMMEDIATE":
+                raise KeyboardInterrupt()
+
+            return self._connection.execute(statement, *arguments)
+
+    real_writer = jd_service.writer_database
+
+    @contextmanager
+    def wrapped(target: Path, **keywords):
+        with real_writer(target, **keywords) as connection:
+            yield InterruptOnBegin(connection)
+
+    monkeypatch.setattr(jd_service, "writer_database", wrapped)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["affected_ids"]["deleted"] == []
+    assert envelope["run_ids"] == []
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM processing_runs WHERE stage = '13.13'"
+        ).fetchone()[0] == 0
+
+
+def test_an_interrupt_inside_the_purge_still_names_what_it_removed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: a removal made mid-pass is a durable effect."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    first = backup_root / "schema-09.sqlite"
+    second = backup_root / "schema-10.sqlite"
+    first.write_bytes(b"Vera Example migration backup")
+    second.write_bytes(b"Vera Example migration backup")
+    real_unlink = privacy_service.os.unlink
+    unlinked: list[str] = []
+
+    def interrupting_unlink(name, **keywords):
+        if unlinked:
+            raise KeyboardInterrupt()
+
+        unlinked.append(name)
+        real_unlink(name, **keywords)
+
+    monkeypatch.setattr(privacy_service.os, "unlink", interrupting_unlink)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["result"]["removed_managed_paths"] == [str(first.absolute())]
+    assert envelope["residual_paths"] == [str(backup_root.absolute())]
+    assert not first.exists()
+    assert second.exists()
