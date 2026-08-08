@@ -6,9 +6,12 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
+
+import exp2res.services.capture as capture_service
 
 from exp2res.domain.models import RAW_TEXT_LIMIT, OccurredAt
 from exp2res.errors import ForbiddenPathError, IdCollisionError, InvalidInputError
@@ -16,6 +19,7 @@ from exp2res.services.capture import (
     capture_daily,
     capture_daily_file,
     capture_retro,
+    new_id,
 )
 from exp2res.services.logs import list_logs, show_log
 from exp2res.services.time_input import parse_occurred
@@ -260,3 +264,46 @@ def test_out_of_range_calendar_anchor_is_invalid_input_not_internal_error() -> N
             )
         assert caught.value.diagnostic_class == "invalid_time"
         assert caught.value.exit_code == 2
+
+
+def test_every_allocated_id_delegates_to_a_version_4_uuid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§12 rule 11: random allocation is the whole anti-reuse mechanism."""
+
+    kinds = (
+        "raw_log",
+        "evidence_item",
+        "fact",
+        "gap",
+        "contradiction",
+        "snapshot",
+        "claim",
+        "finding",
+        "job_description",
+        "jd_requirement",
+        "run",
+        "gen",
+    )
+    drawn: list[UUID] = []
+    source = capture_service.uuid4
+
+    def recording_uuid4() -> UUID:
+        value = source()
+        drawn.append(value)
+        return value
+
+    monkeypatch.setattr(capture_service, "uuid4", recording_uuid4)
+    for kind in kinds:
+        allocated = new_id(kind)
+        prefix, _, suffix = allocated.partition("_")
+        assert prefix
+        assert len(drawn) == kinds.index(kind) + 1
+        assert drawn[-1].version == 4
+        assert suffix == drawn[-1].hex
+
+    monkeypatch.undo()
+    for kind in kinds:
+        allocated = [new_id(kind) for _ in range(256)]
+        assert len(set(allocated)) == 256
+        assert not set(allocated) & {new_id(kind) for _ in range(256)}
