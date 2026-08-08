@@ -33,8 +33,13 @@ def vacuum_residuals(
         return (str(database),)
 
 
-def remove_managed_backups(workspace: Path) -> tuple[str, ...]:
-    """Remove every regular migration backup without following any symlink."""
+def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Remove every regular migration backup and report `(removed, residual)`.
+
+    Enumeration and removal share one `O_NOFOLLOW` directory-descriptor
+    boundary, so a symlinked `backup/` root is never traversed: it is
+    refused at the open and reported as one residual path (§13.13 rule 6).
+    """
 
     backup_root = workspace / ".exp2res" / "backup"
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
@@ -50,9 +55,10 @@ def remove_managed_backups(workspace: Path) -> tuple[str, ...]:
         try:
             backup_fd = os.open("backup", directory_flags | no_follow, dir_fd=marker_fd)
         except FileNotFoundError:
-            return ()
+            return (), ()
         descriptors.append(backup_fd)
 
+        removed: list[str] = []
         residuals: list[str] = []
         with os.scandir(backup_fd) as iterator:
             entries = sorted(iterator, key=lambda entry: os.fsencode(entry.name))
@@ -64,13 +70,21 @@ def remove_managed_backups(workspace: Path) -> tuple[str, ...]:
                 ).st_mode
                 if stat.S_ISREG(entry_mode) and not stat.S_ISLNK(entry_mode):
                     os.unlink(entry.name, dir_fd=backup_fd)
+                    removed.append(managed_path)
                 else:
                     residuals.append(managed_path)
             except OSError:
                 residuals.append(managed_path)
-        return tuple(residuals)
+        return tuple(removed), tuple(residuals)
     except OSError:
-        return (str(backup_root.absolute()),)
+        return (), (str(backup_root.absolute()),)
     finally:
         for descriptor in reversed(descriptors):
             os.close(descriptor)
+
+
+def remove_managed_backups(workspace: Path) -> tuple[str, ...]:
+    """Remove every regular migration backup, reporting only its residuals."""
+
+    _removed, residuals = purge_managed_backups(workspace)
+    return residuals

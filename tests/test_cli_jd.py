@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.services.job_descriptions as jd_service
+import exp2res.exports.managed as managed_outputs
 from exp2res.cli import app
 from exp2res.storage.workspace import read_database, writer_database
 
@@ -369,3 +371,162 @@ def test_a_persisted_job_description_is_never_updated_by_a_rerun(
                 "UPDATE job_descriptions SET company = 'Rewritten' WHERE id = ?",
                 (first_id,),
             )
+
+
+def test_a_symlinked_backup_root_is_never_traversed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR #252 review: enumeration shares removal's no-follow boundary."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "unrelated.sqlite").write_bytes(b"Vera Example untouched backup")
+    backup_root = workspace / ".exp2res" / "backup"
+    os.symlink(outside, backup_root)
+
+    _result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str(backup_root.absolute())]
+    # The external directory is reported by its own name only, never walked.
+    assert envelope["result"]["removed_managed_paths"] == []
+    assert (outside / "unrelated.sqlite").read_bytes() == (
+        b"Vera Example untouched backup"
+    )
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0
+
+
+def test_an_unknown_selector_never_reaches_the_writer_preamble(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR #252 review: an invalid selector mutates no managed state."""
+
+    add_job_description(workspace, tmp_path, monkeypatch)
+    taken: list[Path] = []
+    real_writer = jd_service.writer_database
+
+    def recording(target: Path, **keywords):
+        taken.append(target)
+        return real_writer(target, **keywords)
+
+    monkeypatch.setattr(jd_service, "writer_database", recording)
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(parents=True, exist_ok=True)
+    backup = backup_root / "exp2res-10.sqlite"
+    backup.write_bytes(b"Vera Example migration backup")
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", "job_description_absent"]
+    )
+
+    assert result.exit_code == 2
+    assert envelope["status"] == "failed"
+    assert taken == []
+    assert backup.read_bytes() == b"Vera Example migration backup"
+
+
+def test_an_interrupt_as_commit_returns_still_reports_the_deletion(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the durable deletion survives its cancelled envelope."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+
+    class InterruptOnCommitReturn:
+        """Commit for real, then raise as the C call returns to Python."""
+
+        def __init__(self, connection) -> None:
+            self._connection = connection
+
+        def __getattr__(self, name: str):
+            return getattr(self._connection, name)
+
+        def commit(self) -> None:
+            self._connection.commit()
+            raise KeyboardInterrupt()
+
+    real_writer = jd_service.writer_database
+
+    @contextmanager
+    def wrapped(target: Path, **keywords):
+        with real_writer(target, **keywords) as connection:
+            yield InterruptOnCommitReturn(connection)
+
+    monkeypatch.setattr(jd_service, "writer_database", wrapped)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["result"]["selected_job_description"]["id"] == (
+        job_description_id
+    )
+    assert envelope["affected_ids"]["deleted"] == [
+        {"entity_type": "job_description", "ids": [job_description_id]}
+    ]
+    assert len(envelope["run_ids"]) == 1
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    assert str(database.with_name(database.name + "-wal")) in (
+        envelope["residual_paths"]
+    )
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0
+
+
+def test_add_rejects_the_stdin_spelling(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.10 declares a positional path; stdin belongs to §14.2's `--file -`."""
+
+    fake = FakeContractRunner([])
+    install_fake_execution(monkeypatch, fake)
+
+    result, envelope = invoke_json(workspace, ["jd", "add", "-"])
+
+    assert result.exit_code == 2
+    assert envelope["status"] == "failed"
+    assert fake.calls == []
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0
+
+
+def test_a_preamble_residual_is_a_deletion_failure_not_an_output_failure(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.15: every `jd delete` residual reports `deletion_incomplete`."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    stranded = workspace / "out" / "assessment"
+    stranded.mkdir(mode=0o700, parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        managed_outputs,
+        "reconcile_managed_outputs",
+        lambda _workspace: (str(stranded),),
+    )
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str(stranded)]
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0

@@ -113,6 +113,7 @@ from exp2res.services.job_descriptions import (
     delete_job_description,
     list_job_descriptions,
     run_jd_add_file,
+    show_job_description,
 )
 from exp2res.services.logs import DeleteOutcome, delete_log, list_logs, show_log
 from exp2res.services.lifecycle import (
@@ -400,6 +401,13 @@ def _run_command(
         )
 
 
+# §14.15/§14.16 name `deletion_incomplete` as the residual class for these
+# two commands specifically. `logs delete` is absent because §14.11 routes
+# it through §13.13 rules 6 and 8, where the rebuild republishes managed
+# output and a residual is not necessarily a deletion failure.
+_DESTRUCTIVE_DELETION_COMMANDS = frozenset({"workspace purge", "jd delete"})
+
+
 def _run_operation(
     context: typer.Context,
     command: CommandPath,
@@ -541,9 +549,12 @@ def _run_operation(
         # failed class (1-7) is not a completion and keeps its own code while
         # still reporting the residual paths.
         outcome.exit_code = 8
+        # §14.15/§14.16: a destructive privacy operation reports every
+        # residual as `deletion_incomplete`, whatever produced it — the
+        # command's own cleanup or the writer preamble merged in above.
         outcome.diagnostic_class = (
             "deletion_incomplete"
-            if command == "workspace purge"
+            if command in _DESTRUCTIVE_DELETION_COMMANDS
             else "managed_output_incomplete"
         )
     if residual_paths:
@@ -2314,11 +2325,18 @@ def jd_delete(
     job_description_id: str = typer.Option(..., "--jd"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
+        # §13.13 rule 10 captures the selected projection first, and an
+        # unknown selector must fail before the writer preamble can touch
+        # managed output. The service revalidates it under the writer lock,
+        # so this read cannot race the deletion.
+        selected = show_job_description(
+            workspace, job_description_id=job_description_id
+        )
         if not controls.yes:
             if _noninteractive(controls):
                 raise NonInteractiveInputRequired()
             if not typer.confirm(
-                f"Delete job description {job_description_id} and every "
+                f"Delete job description {selected.id} and every "
                 "verified bullet pack derived from it?",
                 err=True,
             ):

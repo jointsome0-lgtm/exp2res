@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import sqlite3
-from typing import Callable
+from typing import Callable, Iterable
 
 from exp2res import __version__
 from exp2res.config import load_workspace_config
 from exp2res.domain.models import JobDescription
 from exp2res.errors import (
+    InvalidInputError,
     LLMInvocationError,
     OperationCancelledError,
     SelectorNotFoundError,
@@ -25,7 +26,7 @@ from exp2res.services.extraction import build_llm_execution
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
-    remove_managed_backups as _remove_managed_backups,
+    purge_managed_backups as _purge_managed_backups,
 )
 from exp2res.storage.repository import (
     get_job_description,
@@ -105,6 +106,12 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
 def run_jd_add_file(workspace: Path, *, source_path: str) -> Stage8Result:
     """Acquire the vacancy file under §29.4, then run the one Stage 8 parse."""
 
+    # §14.10 declares a positional filesystem path; stdin belongs to §14.2's
+    # explicitly declared `--file -` capture forms, and accepting it here
+    # would be an undeclared input surface that never reaches §29.4's
+    # path gate at all.
+    if source_path == "-":
+        raise InvalidInputError()
     # Fail closed before acquiring the private source file (§12.14, §22).
     require_compatible(workspace)
     raw_text, _external_ref = read_capture_file(
@@ -122,23 +129,42 @@ def list_job_descriptions(
         return _list_job_descriptions(connection)
 
 
-def _backup_paths(workspace: Path) -> tuple[str, ...]:
-    """Name the migration backups deletion will attempt, for its report."""
+def show_job_description(
+    workspace: Path,
+    *,
+    job_description_id: str,
+    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+) -> JobDescription:
+    """Resolve one selector read-only, before any writer authority is taken."""
 
-    backup_root = workspace / ".exp2res" / "backup"
-    try:
-        entries = sorted(backup_root.iterdir(), key=lambda path: _path_key(path.name))
-    except OSError:
-        return ()
-    return tuple(str(entry.absolute()) for entry in entries)
+    with read_database(workspace, timeout_ms=timeout_ms) as connection:
+        selected = get_job_description(connection, job_description_id)
+    if selected is None:
+        raise SelectorNotFoundError()
+    return selected
 
 
-def _still_present(path: str) -> bool:
-    try:
-        os.lstat(path)
-    except OSError:
-        return False
-    return True
+def _committed_outcome(
+    *,
+    run_id: str,
+    selected: JobDescription,
+    purged_branches: tuple[PurgedBranch, ...],
+    purged_bullet_ids: tuple[str, ...],
+    purged_finding_ids: tuple[str, ...],
+    removed_paths: Iterable[str],
+    residuals: Iterable[str],
+) -> JobDescriptionDeleteOutcome:
+    """Report one committed deletion, however it reached its end."""
+
+    return JobDescriptionDeleteOutcome(
+        run_id=run_id,
+        selected=selected,
+        purged_branches=purged_branches,
+        purged_bullet_ids=purged_bullet_ids,
+        purged_finding_ids=purged_finding_ids,
+        removed_managed_paths=tuple(sorted(set(removed_paths), key=_path_key)),
+        residual_paths=tuple(sorted(set(residuals), key=_path_key)),
+    )
 
 
 def delete_job_description(
@@ -162,8 +188,19 @@ def delete_job_description(
         else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
     )
     with held as connection:
+        selected = get_job_description(connection, job_description_id)
+        if selected is None:
+            raise SelectorNotFoundError()
+        # §13.13 rule 10 orders managed-path removal before the database
+        # transaction, so the writer lock is never held across filesystem I/O
+        # and an interrupt between the two leaves no half-open transaction.
+        removed, backup_residuals = _purge_managed_backups(workspace)
+        removed_paths.extend(removed)
+        residual_paths.extend(backup_residuals)
         try:
             connection.execute("BEGIN IMMEDIATE")
+            # The selector is revalidated under the writer authority: the
+            # read above could not hold it.
             selected = get_job_description(connection, job_description_id)
             if selected is None:
                 raise SelectorNotFoundError()
@@ -194,15 +231,6 @@ def delete_job_description(
             purged_bullet_ids: tuple[str, ...] = ()
             purged_finding_ids: tuple[str, ...] = ()
 
-            attempted = _backup_paths(workspace)
-            backup_residuals = _remove_managed_backups(workspace)
-            residual_paths.extend(backup_residuals)
-            removed_paths.extend(
-                path
-                for path in attempted
-                if path not in set(backup_residuals) and not _still_present(path)
-            )
-
             connection.execute(
                 "DELETE FROM job_descriptions WHERE id = ?", (job_description_id,)
             )
@@ -224,20 +252,38 @@ def delete_job_description(
                 raise WorkspaceBusyError() from error
             raise
         except BaseException:
-            connection.rollback()
-            raise
-
-        def build_outcome(residuals: tuple[str, ...]) -> JobDescriptionDeleteOutcome:
-            return JobDescriptionDeleteOutcome(
+            # §14.14 rule 6: an interrupt delivered as `commit()` returns
+            # leaves the deletion durable, so a rollback here would only
+            # discard the report of something that already happened.
+            if connection.in_transaction:
+                connection.rollback()
+                raise
+            cancelled = OperationCancelledError()
+            cancelled.delete_outcome = _committed_outcome(
                 run_id=orchestration_run_id,
                 selected=selected,
                 purged_branches=purged_branches,
                 purged_bullet_ids=purged_bullet_ids,
                 purged_finding_ids=purged_finding_ids,
-                removed_managed_paths=tuple(
-                    sorted(set(removed_paths), key=_path_key)
+                removed_paths=removed_paths,
+                residuals=(
+                    *residual_paths,
+                    str(
+                        (workspace / ".exp2res" / "exp2res.sqlite-wal").absolute()
+                    ),
                 ),
-                residual_paths=tuple(sorted(set(residuals), key=_path_key)),
+            )
+            raise cancelled from None
+
+        def build_outcome(residuals: Iterable[str]) -> JobDescriptionDeleteOutcome:
+            return _committed_outcome(
+                run_id=orchestration_run_id,
+                selected=selected,
+                purged_branches=purged_branches,
+                purged_bullet_ids=purged_bullet_ids,
+                purged_finding_ids=purged_finding_ids,
+                removed_paths=removed_paths,
+                residuals=residuals,
             )
 
         database = workspace / ".exp2res" / "exp2res.sqlite"
