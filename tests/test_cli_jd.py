@@ -1079,3 +1079,31 @@ def test_a_backup_root_appearing_after_its_absence_is_reported(
     assert result.exit_code == 8
     assert envelope["diagnostic_class"] == "deletion_incomplete"
     assert envelope["residual_paths"] == [str(backup_root.absolute())]
+
+
+def test_an_unreadable_backup_entry_is_never_read_as_absence(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 6: a failed recheck is not evidence the store is gone."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    assert not backup_root.exists()
+    real_stat = privacy_service.os.stat
+
+    def refusing_stat(path, **keywords):
+        if path == "backup":
+            raise PermissionError(13, "Permission denied")
+
+        return real_stat(path, **keywords)
+
+    monkeypatch.setattr(privacy_service.os, "stat", refusing_stat)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str(backup_root.absolute())]

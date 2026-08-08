@@ -61,10 +61,14 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
             # away. §8.1's single business writer — held by this caller — is
             # what bounds the remaining window: no exp2res command can create
             # a backup while this lock is out.
+            # Only a second ENOENT confirms absence: any other error means the
+            # entry could not be read, which is not evidence that it is gone.
             try:
                 os.stat("backup", dir_fd=marker_fd, follow_symlinks=False)
-            except OSError:
+            except FileNotFoundError:
                 return (), ()
+            except OSError:
+                return (), (str(backup_root.absolute()),)
             return (), (str(backup_root.absolute()),)
         descriptors.append(backup_fd)
 
