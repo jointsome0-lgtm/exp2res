@@ -2774,8 +2774,13 @@ def _bullets_generate_outcome(generated: Stage10Result) -> Outcome:
         created_groups.append(
             EntityIdGroup(entity_type="resume_branch", ids=[generated.branch_id])
         )
+        # §14.14 rule 5 orders every reported group by its stable identity, and
+        # a production bullet ID carries no writer-order information.
         created_groups.append(
-            EntityIdGroup(entity_type="resume_bullet", ids=list(generated.bullet_ids))
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=sorted(generated.bullet_ids, key=lambda value: value.encode("utf-8")),
+            )
         )
     superseded_groups: list[EntityIdGroup] = []
     if generated.superseded_branch_ids:

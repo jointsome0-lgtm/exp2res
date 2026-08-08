@@ -14,15 +14,22 @@ import unicodedata
 from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.enums import ResumeTargetSection
-from exp2res.domain.models import ExperienceFact, ResumeBranch, ResumeBullet
+from exp2res.domain.models import (
+    ExperienceFact,
+    ResumeBranch,
+    ResumeBullet,
+    validate_structural,
+)
 from exp2res.domain.results import InvalidatedBranch
 from exp2res.domain.verification import aggregate_verification_status
 from exp2res.errors import (
+    AnchorNotEligibleError,
+    BranchNameInvalidError,
     IntegrityFailureError,
+    LLMCancelledError,
     OperationCancelledError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
-    SnapshotNotVerifiedError,
 )
 from exp2res.exports.managed import branch_set_paths, remove_branch_sets
 from exp2res.llm.contracts import (
@@ -232,6 +239,40 @@ def _projected_text(value: str) -> str:
     return unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
 
 
+def _validated_branch_name(value: str) -> str:
+    """§14.10's non-blank, §11-hygienic `--branch` value, checked at entry.
+
+    The same rule guards `BranchContext` and `ResumeBranch`, but those raise
+    deep inside the stage, where a `ValidationError` would surface as §14.14's
+    class-1 internal error instead of the class-2 result ordinary bad input
+    owes the caller.
+    """
+
+    try:
+        validate_structural(value)
+    except ValueError as error:
+        raise BranchNameInvalidError() from error
+    if not value.strip():
+        raise BranchNameInvalidError()
+    return value
+
+
+def _run_is_committed(connection: sqlite3.Connection, run_id: str) -> bool:
+    """Prove the stage's single final transaction reached durable storage.
+
+    The run's completed transition commits with the business swap, so a
+    `completed` row is exactly the durability the interrupt could not undo.
+    """
+
+    try:
+        row = connection.execute(
+            "SELECT status FROM processing_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    except Exception:
+        return False
+    return bool(row) and row[0] == "completed"
+
+
 def run_bullet_generation(
     workspace: Path,
     *,
@@ -255,6 +296,7 @@ def run_bullet_generation(
     """Run the one whole-pack writer call and atomically swap its branch."""
 
     now = clock or (lambda: datetime.now(timezone.utc))
+    branch_name = _validated_branch_name(branch_name)
     with writer_database(workspace, timeout_ms=timeout_ms, reconcile=True) as connection:
         job_description = get_job_description(connection, job_description_id)
         if job_description is None:
@@ -265,7 +307,7 @@ def run_bullet_generation(
         if snapshot.superseded_at is not None:
             raise SnapshotNotCurrentError()
         if snapshot.verification_status not in STAGE10_ANCHOR_ALLOWLIST:
-            raise SnapshotNotVerifiedError()
+            raise AnchorNotEligibleError()
         members = list_self_claims_for_snapshot(connection, snapshot.id)
         if snapshot.verification_status != aggregate_verification_status(
             item.verification_status for item in members
@@ -324,11 +366,13 @@ def run_bullet_generation(
         superseded_generation_ids: set[str] = set()
         replaced = BranchSupersession()
         pending_stale_paths: tuple[str, ...] = ()
+        pack_warnings: tuple[ContractWarning, ...] = ()
 
         def commit(held: sqlite3.Connection, resolved: Sequence[object]) -> Iterable[str]:
             nonlocal branch_id, bullet_ids, generation_id, replaced
-            nonlocal pending_stale_paths
+            nonlocal pending_stale_paths, pack_warnings
             pack = cast(_ResolvedPack, resolved[0])
+            pack_warnings = pack.warnings
             requirement_ids = [
                 requirement.id
                 for requirement in job_description.parsed.requirements
@@ -345,17 +389,22 @@ def run_bullet_generation(
                 projected[projection] = candidate.text
 
             swap_time = now()
-            conflict = current_branch_name_conflict(held, branch_name)
-            if conflict is not None:
-                # §13.10/§14.10: generating a name that folds equal to a
-                # current branch's supersedes exactly that branch, so at most
-                # one generation of the named branch is ever current.
-                replaced = supersede_branches(
-                    held, (conflict.id,), superseded_at=swap_time
-                )
-                superseded_generation_ids.update(replaced.superseded_generation_ids)
-
             if retained:
+                # §15.6's valid empty array is a semantic no-bullet result with
+                # no branch, no bullet, and no partial commit, so the current
+                # branch is replaced only by a batch that actually persists.
+                conflict = current_branch_name_conflict(held, branch_name)
+                if conflict is not None:
+                    # §13.10/§14.10: generating a name that folds equal to a
+                    # current branch's supersedes exactly that branch, so at
+                    # most one generation of the named branch is ever current.
+                    replaced = supersede_branches(
+                        held, (conflict.id,), superseded_at=swap_time
+                    )
+                    superseded_generation_ids.update(
+                        replaced.superseded_generation_ids
+                    )
+
                 new_branch_id = id_factory("branch")
                 generation_id = id_factory("gen")
                 insert_resume_branch(
@@ -410,8 +459,39 @@ def run_bullet_generation(
             created_ids = () if branch_id is None else (branch_id, *bullet_ids)
             return created_ids
 
+        def build_result(
+            residuals: tuple[str, ...],
+            branch: ResumeBranch | None,
+            bullets: tuple[ResumeBullet, ...],
+        ) -> Stage10Result:
+            return Stage10Result(
+                run_id=run_id,
+                branch_name=branch_name,
+                branch_id=branch_id,
+                bullet_ids=bullet_ids,
+                superseded_branch_ids=replaced.branch_ids,
+                superseded_bullet_ids=replaced.bullet_ids,
+                generation_id=generation_id,
+                superseded_generation_ids=tuple(
+                    sorted(superseded_generation_ids, key=_id_key)
+                ),
+                invalidated_branches=replaced.invalidated_branches,
+                residual_paths=residuals,
+                warnings=pack_warnings,
+                branch=branch,
+                bullets=bullets,
+            )
+
+        def committed_pack() -> tuple[ResumeBranch | None, tuple[ResumeBullet, ...]]:
+            if branch_id is None:
+                return None, ()
+            return (
+                get_resume_branch(connection, branch_id),
+                list_resume_bullets_for_branch(connection, branch_id),
+            )
+
         try:
-            outcome = run_complete_stage(
+            run_complete_stage(
                 workspace,
                 connection,
                 stage="13.10",
@@ -431,44 +511,33 @@ def run_bullet_generation(
                 token_patterns=token_patterns,
                 resolved_credentials=resolved_credentials,
             )
-        except BaseException:
+        except BaseException as error:
             # Withdraw the pre-commit pending report only when the rollback is
             # proven; an interrupt after a durable commit keeps it reported.
+            # The proof reads the table this stage supersedes.
             withdraw_pending_unless_superseded(
-                connection, pending_stale_paths, replaced.branch_ids
+                connection,
+                pending_stale_paths,
+                replaced.branch_ids,
+                table="resume_branches",
             )
+            if isinstance(error, LLMCancelledError) and _run_is_committed(
+                connection, run_id
+            ):
+                # §14.14 rule 6: an interrupt between SQLite's durable commit
+                # and the stage's return leaves the swap visible, so the
+                # cancelled envelope still reports it. No cleanup ran yet, so
+                # every pending stale set is still a residual.
+                cancelled = OperationCancelledError()
+                cancelled.stage_result = build_result(
+                    pending_stale_paths, *committed_pack()
+                )
+                raise cancelled from None
             raise
 
         # Read the committed rows before the interruptible cleanup below, so the
         # guard has a complete result to carry.
-        branch = (
-            None if branch_id is None else get_resume_branch(connection, branch_id)
-        )
-        bullets = (
-            ()
-            if branch_id is None
-            else list_resume_bullets_for_branch(connection, branch_id)
-        )
-        pack = cast(_ResolvedPack, outcome.resolved[0])
-
-        def build_result(residuals: tuple[str, ...]) -> Stage10Result:
-            return Stage10Result(
-                run_id=run_id,
-                branch_name=branch_name,
-                branch_id=branch_id,
-                bullet_ids=bullet_ids,
-                superseded_branch_ids=replaced.branch_ids,
-                superseded_bullet_ids=replaced.bullet_ids,
-                generation_id=generation_id,
-                superseded_generation_ids=tuple(
-                    sorted(superseded_generation_ids, key=_id_key)
-                ),
-                invalidated_branches=replaced.invalidated_branches,
-                residual_paths=residuals,
-                warnings=pack.warnings,
-                branch=branch,
-                bullets=bullets,
-            )
+        branch, bullets = committed_pack()
 
         # §13 stale-export trigger class 1: the swap is already committed, so
         # cleanup failure or interruption never rolls it back.
@@ -482,7 +551,9 @@ def run_bullet_generation(
             # result, and the sets this pass never reached stay reported.
             cancelled = OperationCancelledError()
             cancelled.stage_result = build_result(
-                unfinished_stale_paths(pending_stale_paths, cleaned_sets)
+                unfinished_stale_paths(pending_stale_paths, cleaned_sets),
+                branch,
+                bullets,
             )
             raise cancelled from None
-        return build_result(residual_paths)
+        return build_result(residual_paths, branch, bullets)

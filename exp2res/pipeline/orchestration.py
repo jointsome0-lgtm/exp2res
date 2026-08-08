@@ -34,32 +34,41 @@ class StageOutcome:
     resolved: tuple[object, ...]
 
 
+_ROLLBACK_PROOF_TABLES = frozenset({"assessment_snapshots", "resume_branches"})
+
+
 def withdraw_pending_unless_superseded(
     connection: sqlite3.Connection,
     pending_paths: Sequence[str],
-    snapshot_ids: Sequence[str],
+    superseded_ids: Sequence[str],
+    *,
+    table: str = "assessment_snapshots",
 ) -> None:
     """Withdraw a pre-commit stale-set report only on a proven rollback.
 
     An interrupt can arrive after SQLite durably committed but before the
-    stage returns; the supersession of the listed snapshots is atomic, so any
-    listed snapshot that is still current proves the rollback. An
-    indeterminate read keeps the report (fail closed: a spurious residual is
-    recoverable, an unreported stale set is not).
+    stage returns; the supersession of the listed rows is atomic, so any listed
+    row of ``table`` that is still current proves the rollback. The proof must
+    read the table the caller actually superseded — IDs from another table
+    match nothing and would keep a withdrawn report forever. An indeterminate
+    read keeps the report (fail closed: a spurious residual is recoverable, an
+    unreported stale set is not).
     """
 
     from exp2res.storage.workspace import withdraw_managed_residuals
 
+    if table not in _ROLLBACK_PROOF_TABLES:
+        raise ValueError("unknown rollback-proof table")
     if not pending_paths:
         return
     rolled_back = False
     try:
-        if not connection.in_transaction and snapshot_ids:
-            placeholders = ",".join("?" for _ in snapshot_ids)
+        if not connection.in_transaction and superseded_ids:
+            placeholders = ",".join("?" for _ in superseded_ids)
             row = connection.execute(
-                "SELECT COUNT(*) FROM assessment_snapshots "
+                f"SELECT COUNT(*) FROM {table} "
                 f"WHERE superseded_at IS NULL AND id IN ({placeholders})",
-                tuple(snapshot_ids),
+                tuple(superseded_ids),
             ).fetchone()
             rolled_back = bool(row and row[0])
     except Exception:

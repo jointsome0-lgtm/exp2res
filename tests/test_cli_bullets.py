@@ -10,7 +10,8 @@ from typer.testing import CliRunner
 
 import exp2res.pipeline.stage10 as stage10_module
 import exp2res.services.bullets as bullets_service
-from exp2res.cli import app
+from exp2res.cli import _bullets_generate_outcome, app
+from exp2res.pipeline.stage10 import Stage10Result
 from exp2res.storage.repository import list_resume_branches
 from exp2res.storage.workspace import read_database
 
@@ -113,6 +114,45 @@ def test_a_no_bullet_response_is_a_blocked_completion(
     assert envelope["run_ids"]
     with read_database(workspace) as connection:
         assert list_resume_branches(connection, current_only=False) == ()
+
+
+def test_created_bullet_ids_are_ordered_by_their_stable_identity() -> None:
+    """§14.14 rule 5: reported groups order by identity, not writer order."""
+
+    outcome = _bullets_generate_outcome(
+        Stage10Result(
+            run_id="run_vera_0001",
+            branch_name=BRANCH_NAME,
+            branch_id="branch_vera_0001",
+            bullet_ids=("bullet_vera_zz", "bullet_vera_aa"),
+            superseded_branch_ids=(),
+            superseded_bullet_ids=(),
+            generation_id="gen_vera_0001",
+            superseded_generation_ids=(),
+            invalidated_branches=(),
+            residual_paths=(),
+            warnings=(),
+            branch=None,
+            bullets=(),
+        )
+    )
+
+    created = {group.entity_type: group.ids for group in outcome.affected_ids.created}
+    assert created["resume_bullet"] == ["bullet_vera_aa", "bullet_vera_zz"]
+
+
+def test_an_invalid_branch_name_fails_in_the_input_class(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.10: bad `--branch` input is class 2, never an internal error."""
+
+    _facts, snapshot_id = arrange(workspace, monkeypatch, one_bullet)
+
+    result, envelope = generate(workspace, snapshot_id, branch="   ")
+
+    assert result.exit_code == 2, (result.stderr, envelope)
+    assert envelope["status"] == "failed"
+    assert envelope["diagnostic_class"] == "branch_name_invalid"
 
 
 def test_a_replacement_generation_reports_both_generations(

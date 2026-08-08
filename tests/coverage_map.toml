@@ -300,9 +300,10 @@ nodes = [
   "tests/test_branch_substrate.py::test_folded_identity_controls_replacement_and_never_a_path",
   "tests/test_branch_substrate.py::test_view_regeneration_supersedes_only_its_dependent_branches",
   "tests/test_stage10_generation.py::test_a_generated_name_replaces_exactly_the_branch_it_folds_onto",
+  "tests/test_stage10_generation.py::test_a_no_bullet_answer_leaves_the_current_branch_in_place",
 ]
 phase = "4"
-note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; Stage 10 now proves the folded-identity replacement itself, superseding exactly the branch a generated name folds onto and removing that branch's set while the owner's exact new spelling is stored; publishing a branch set with its manifest waits on Stage 12"
+note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; Stage 10 now proves the folded-identity replacement itself, superseding exactly the branch a generated name folds onto and removing that branch's set while the owner's exact new spelling is stored, and proves that a semantic no-bullet answer replaces nothing, leaving the prior generation and its published set current; publishing a branch set with its manifest waits on Stage 12"
 
 ["21.35"]
 status = "partial"

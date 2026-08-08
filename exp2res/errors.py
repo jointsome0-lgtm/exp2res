@@ -100,6 +100,19 @@ class SnapshotNotVerifiedError(InvalidInputError):
     public_message = "Repair requires a fully verified snapshot."
 
 
+class AnchorNotEligibleError(SnapshotNotVerifiedError):
+    """§16.11's Stage 10 anchor allowlist, under the shared stable class."""
+
+    public_message = (
+        "Bullet generation requires a snapshot the verifier accepted."
+    )
+
+
+class BranchNameInvalidError(InvalidInputError):
+    diagnostic_class = "branch_name_invalid"
+    public_message = "The branch name must be non-blank and free of control characters."
+
+
 class NothingToRepairError(InvalidInputError):
     diagnostic_class = "nothing_to_repair"
     public_message = "No member claim is rejected or unsupported."

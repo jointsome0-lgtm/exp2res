@@ -14,12 +14,15 @@ from pathlib import Path
 import pytest
 
 from exp2res.errors import (
+    BranchNameInvalidError,
+    LLMCancelledError,
     LLMInvocationError,
     OperationCancelledError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
     SnapshotNotVerifiedError,
 )
+from exp2res.pipeline.orchestration import withdraw_pending_unless_superseded
 import exp2res.pipeline.stage10 as stage10_module
 from exp2res.pipeline.stage10 import run_bullet_generation
 from exp2res.storage.repository import (
@@ -27,7 +30,11 @@ from exp2res.storage.repository import (
     list_resume_branches,
     list_resume_bullets_for_branch,
 )
-from exp2res.storage.workspace import read_database
+from exp2res.storage.workspace import (
+    collect_preamble_residuals,
+    connect_database,
+    read_database,
+)
 
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
@@ -256,6 +263,141 @@ def test_an_empty_array_persists_nothing_and_blocks(workspace: Path) -> None:
     assert run_status["status"] == "completed"
 
 
+def test_a_no_bullet_answer_leaves_the_current_branch_in_place(
+    workspace: Path,
+) -> None:
+    """§15.6: the empty array replaces nothing — no branch, no partial commit."""
+
+    ids, facts, snapshot_id = prepare_anchor(workspace)
+    prior_id, prior_bullet_id = plant_branch(
+        workspace,
+        snapshot_id=snapshot_id,
+        fact_ids=facts,
+        branch_id="branch_vera_0009",
+        bullet_id="bullet_vera_0009",
+        suffix="0009",
+    )
+    kept_set = plant_branch_set(workspace, prior_id)
+    fake = FakeContractRunner([writer_response([])])
+
+    generated = run_stage10(workspace, fake, ids, snapshot_id=snapshot_id)
+
+    assert generated.branch_id is None
+    assert generated.superseded_branch_ids == ()
+    assert generated.superseded_bullet_ids == ()
+    assert generated.invalidated_branches == ()
+    # The prior generation is untouched, so neither its rows nor its published
+    # managed set may be invalidated by a response that persists nothing.
+    assert kept_set.exists()
+    with read_database(workspace) as connection:
+        current = list_resume_branches(connection, current_only=True)
+        bullets = list_resume_bullets_for_branch(connection, prior_id)
+    assert [branch.id for branch in current] == [prior_id]
+    assert [bullet.id for bullet in bullets] == [prior_bullet_id]
+
+
+def test_an_invalid_branch_name_is_ordinary_input_and_never_a_call(
+    workspace: Path,
+) -> None:
+    """§14.10: a non-blank, §11-hygienic name, refused in exit class 2."""
+
+    ids, _facts, snapshot_id = prepare_anchor(workspace)
+    exhausted = FakeContractRunner([])
+
+    for name in ("   ", "agent\u0007engineer"):
+        with pytest.raises(BranchNameInvalidError) as caught:
+            run_stage10(
+                workspace, exhausted, ids, snapshot_id=snapshot_id, branch_name=name
+            )
+        assert caught.value.exit_code == 2
+    assert exhausted.calls == []
+    with read_database(workspace) as connection:
+        assert list_resume_branches(connection, current_only=False) == ()
+
+
+def test_an_interrupt_after_the_durable_commit_still_reports_the_swap(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: cancellation between commit and return keeps the swap."""
+
+    ids, facts, snapshot_id = prepare_anchor(workspace)
+    prior_id, _prior_bullet_id = plant_branch(
+        workspace,
+        snapshot_id=snapshot_id,
+        fact_ids=facts,
+        branch_id="branch_vera_0009",
+        bullet_id="bullet_vera_0009",
+        suffix="0009",
+    )
+    stale_set = plant_branch_set(workspace, prior_id)
+    complete_stage = stage10_module.run_complete_stage
+
+    def cancel_after_commit(*arguments, **keywords):
+        # The interrupt SQLite cannot undo: the final transaction is durable
+        # and the stage has not returned yet.
+        complete_stage(*arguments, **keywords)
+        raise LLMCancelledError()
+
+    monkeypatch.setattr(stage10_module, "run_complete_stage", cancel_after_commit)
+    fake = FakeContractRunner(
+        [writer_response([bullet_candidate(fact_ids=list(facts))])]
+    )
+
+    with pytest.raises(OperationCancelledError) as caught:
+        run_stage10(workspace, fake, ids, snapshot_id=snapshot_id)
+
+    carried = caught.value.stage_result
+    assert carried.branch_id is not None
+    assert carried.branch is not None
+    assert carried.superseded_branch_ids == (prior_id,)
+    assert len(carried.bullets) == 1
+    # Cleanup never ran, so the replaced branch's set is still a residual.
+    assert str(stale_set) in carried.residual_paths
+    with read_database(workspace) as connection:
+        current = list_resume_branches(connection, current_only=True)
+    assert [branch.id for branch in current] == [carried.branch_id]
+
+
+def test_a_rolled_back_branch_swap_withdraws_its_pending_report(
+    workspace: Path,
+) -> None:
+    """The rollback proof must read the table the stage actually supersedes."""
+
+    _ids, facts, snapshot_id = prepare_anchor(workspace)
+    prior_id, _prior_bullet_id = plant_branch(
+        workspace,
+        snapshot_id=snapshot_id,
+        fact_ids=facts,
+        branch_id="branch_vera_0009",
+        bullet_id="bullet_vera_0009",
+        suffix="0009",
+    )
+    pending = ["out/branch/branch_vera_0009/manifest.json"]
+
+    residuals: list[str] = []
+    # A plain connection, because the proof runs where the stage's own
+    # transaction has already ended.
+    connection = connect_database(
+        workspace / ".exp2res" / "exp2res.sqlite", readonly=True
+    )
+    with collect_preamble_residuals(residuals):
+        try:
+            residuals.extend(pending)
+            # The prior branch is still current, which is exactly the proof
+            # that the swap rolled back.
+            withdraw_pending_unless_superseded(
+                connection, pending, (prior_id,), table="resume_branches"
+            )
+            assert residuals == []
+            residuals.extend(pending)
+            # The snapshot table knows nothing about a branch ID, so the
+            # default proof can never withdraw a branch stage's report.
+            withdraw_pending_unless_superseded(connection, pending, (prior_id,))
+        finally:
+            connection.close()
+    assert residuals == pending
+
+
 def test_the_anchor_must_be_current_supplied_and_verified(workspace: Path) -> None:
     """§13.10/§16.11: no implicit latest snapshot and no unverified anchor."""
 
@@ -279,8 +421,12 @@ def test_the_anchor_must_be_current_supplied_and_verified(workspace: Path) -> No
         )
     with pytest.raises(SelectorNotFoundError):
         run_stage10(workspace, exhausted, ids, snapshot_id="snapshot_vera_absent")
-    with pytest.raises(SnapshotNotVerifiedError):
+    with pytest.raises(SnapshotNotVerifiedError) as ineligible:
         run_stage10(workspace, exhausted, ids, snapshot_id=assessed.snapshot_id)
+    # The owner-facing message must describe this command, not `assess repair`,
+    # while the diagnostic class stays the shared stable one.
+    assert "Bullet generation" in ineligible.value.public_message
+    assert ineligible.value.diagnostic_class == "snapshot_not_verified"
 
     anchor_snapshot(workspace, assessed.snapshot_id)
     regenerated = run_stage6(
