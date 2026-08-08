@@ -16,6 +16,7 @@ from exp2res.services.capture import (
     capture_daily,
     capture_daily_file,
     capture_retro,
+    new_id,
 )
 from exp2res.services.logs import list_logs, show_log
 from exp2res.services.time_input import parse_occurred
@@ -260,3 +261,41 @@ def test_out_of_range_calendar_anchor_is_invalid_input_not_internal_error() -> N
             )
         assert caught.value.diagnostic_class == "invalid_time"
         assert caught.value.exit_code == 2
+
+
+def test_allocation_carries_the_random_component_that_prevents_reuse() -> None:
+    """§12 rule 11: random allocation is the whole anti-reuse mechanism.
+
+    Nothing in the workspace remembers a purged identifier — the guarantee
+    that one is never handed out again lives entirely in this allocator. A
+    change that made IDs sequential, derived from surviving rows, or
+    otherwise predictable would silently retire that guarantee, so the
+    property is pinned here rather than left to the implementation.
+    """
+
+    kinds = (
+        "raw_log",
+        "evidence_item",
+        "fact",
+        "gap",
+        "contradiction",
+        "snapshot",
+        "claim",
+        "finding",
+        "job_description",
+        "jd_requirement",
+        "run",
+        "gen",
+    )
+    for kind in kinds:
+        allocated = [new_id(kind) for _ in range(256)]
+        assert len(set(allocated)) == 256
+        for value in allocated:
+            prefix, _, suffix = value.partition("_")
+            assert prefix
+            # 32 hex digits: the 122 random bits of a UUID4. Anything
+            # materially shorter or non-random makes reuse reachable.
+            assert len(suffix) == 32
+            assert set(suffix) <= set("0123456789abcdef")
+        # Two independent draws of the same kind never overlap.
+        assert not set(allocated) & {new_id(kind) for _ in range(256)}
