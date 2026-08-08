@@ -621,7 +621,7 @@ def test_post_commit_interrupt_carries_the_committed_result(
     )
     stale_path = plant_assessment_set(workspace, generated.snapshot_id)
 
-    def interrupt_cleanup(_workspace, _snapshot_ids):
+    def interrupt_cleanup(*_arguments, **_keywords):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(

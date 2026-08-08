@@ -67,6 +67,7 @@ from .lineage import LineageContext, plan_lineages
 from .orchestration import (
     PlannedCall,
     run_complete_stage,
+    unfinished_stale_paths,
     withdraw_pending_unless_superseded,
 )
 
@@ -611,16 +612,25 @@ def run_fact_extraction(
 
         # §13 stale-export trigger class 1: business supersession is already
         # committed; cleanup failure is returned and never rolls it back.
+        cleaned_sets: list[str] = []
         try:
             residual_paths = (
-                *remove_assessment_sets(workspace, superseded_snapshot_ids),
-                *remove_branch_sets(workspace, branch_swap.branch_ids),
+                *remove_assessment_sets(
+                    workspace, superseded_snapshot_ids, removed_ledger=cleaned_sets
+                ),
+                *remove_branch_sets(
+                    workspace,
+                    branch_swap.branch_ids,
+                    removed_ledger=cleaned_sets,
+                ),
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the swap committed before cleanup, so the
             # class-9 error carries the complete committed result; the
             # pending stale paths stay reported as residuals.
             cancelled = LLMCancelledError()
-            cancelled.stage_result = build_result(tuple(pending_stale_paths))
+            cancelled.stage_result = build_result(
+                unfinished_stale_paths(pending_stale_paths, cleaned_sets)
+            )
             raise cancelled from None
         return build_result(residual_paths)

@@ -68,6 +68,20 @@ def withdraw_pending_unless_superseded(
         withdraw_managed_residuals(pending_paths)
 
 
+def unfinished_stale_paths(
+    pending: Sequence[str], removed: Sequence[str]
+) -> tuple[str, ...]:
+    """Report only the pending stale sets an interrupted cleanup left behind.
+
+    §14.14 rule 5 defines `residual_paths` as cleanup that did not complete, so
+    a set the interrupted pass had already unlinked must not travel in the
+    cancelled envelope as though it were retained.
+    """
+
+    finished = set(removed)
+    return tuple(path for path in pending if path not in finished)
+
+
 def _transaction(
     connection: sqlite3.Connection, operation: Callable[[], object]
 ) -> object:

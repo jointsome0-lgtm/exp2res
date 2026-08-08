@@ -628,7 +628,17 @@ def _managed_set_paths(
         if ENTITY_ID.fullmatch(entity_id) is None:
             continue
         path = parent / entity_id
-        if _lstat(path) is not None:
+        try:
+            exists = _lstat(path) is not None
+        except OSError:
+            # Fail closed: an unreadable managed parent is not evidence that
+            # the set is gone, and this report is the only warning an owner
+            # gets about a stale export. Callers run it before the transaction
+            # they are about to commit (§13 stale-export invalidation rule), so
+            # raising here would refuse the swap over a filesystem condition
+            # §13.13 rule 6 classifies as residual.
+            exists = True
+        if exists:
             paths.append(str(path))
     return tuple(paths)
 

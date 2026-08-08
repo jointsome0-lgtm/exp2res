@@ -22,7 +22,8 @@ from exp2res.domain.models import (
     ResumeBullet,
     canonical_branch_identity,
 )
-from exp2res.errors import IntegrityFailureError
+import exp2res.pipeline.stage6 as stage6_module
+from exp2res.errors import IntegrityFailureError, OperationCancelledError
 from exp2res.services.correction import capture_correction
 from exp2res.services.logs import delete_log
 from exp2res.storage.repository import (
@@ -581,3 +582,40 @@ def test_a_bullet_must_carry_its_branch_production_identity(
             generation_id="gen_vera_identity",
         )
         connection.commit()
+
+
+def test_an_interrupted_cleanup_reports_only_what_it_never_reached(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5: a residual is cleanup that did not complete.
+
+    The assessment half of the pass finishes before the interrupt lands in
+    the branch half, so reporting the whole pre-commit pending list would
+    name a set that is already gone.
+    """
+
+    ids, facts, snapshot_id, branch_id = prepare_branch(workspace)
+    assessment_set = workspace / "out" / "assessment" / snapshot_id
+    assessment_set.mkdir(mode=0o700, parents=True)
+    branch_set = plant_branch_set(workspace, branch_id)
+
+    def interrupt_branch_cleanup(*_arguments, **_keywords):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        stage6_module, "remove_branch_sets", interrupt_branch_cleanup
+    )
+
+    with pytest.raises(OperationCancelledError) as caught:
+        run_stage6(
+            workspace,
+            FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+            ids,
+        )
+
+    carried = caught.value.stage_result
+    assert carried.superseded_branch_ids == (branch_id,)
+    assert str(assessment_set) not in carried.residual_paths
+    assert str(branch_set) in carried.residual_paths
+    assert not assessment_set.exists()
+    assert branch_set.exists()

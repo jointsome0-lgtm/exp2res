@@ -80,6 +80,7 @@ from .branch_lifecycle import BranchSupersession, supersede_dependent_branches
 from .orchestration import (
     PlannedCall,
     run_complete_stage,
+    unfinished_stale_paths,
     withdraw_pending_unless_superseded,
 )
 from .view_selection import select_assessment_view
@@ -550,16 +551,23 @@ def run_assessment_generation(
 
         # §13 stale-export trigger class 1: the swap is already committed, so
         # cleanup failure or interruption never rolls it back.
+        cleaned_sets: list[str] = []
         try:
             residual_paths = (
-                *remove_assessment_sets(workspace, superseded_snapshot_ids),
-                *remove_branch_sets(workspace, branch_swap.branch_ids),
+                *remove_assessment_sets(
+                    workspace, superseded_snapshot_ids, removed_ledger=cleaned_sets
+                ),
+                *remove_branch_sets(
+                    workspace, branch_swap.branch_ids, removed_ledger=cleaned_sets
+                ),
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the class-9 error carries the complete committed
-            # result; the pending stale paths stay reported as residuals.
+            # result, and the sets this pass never reached stay reported.
             cancelled = OperationCancelledError()
-            cancelled.stage_result = build_result(tuple(pending_stale_paths))
+            cancelled.stage_result = build_result(
+                unfinished_stale_paths(pending_stale_paths, cleaned_sets)
+            )
             raise cancelled from None
         return build_result(residual_paths)
 
@@ -952,17 +960,26 @@ def run_assessment_repair(
 
         # §13 stale-export trigger class 1: the swap is already committed;
         # cleanup failure or interruption never rolls it back.
+        repair_cleaned_sets: list[str] = []
         try:
             residual_paths = (
-                *remove_assessment_sets(workspace, superseded_snapshot_ids),
-                *remove_branch_sets(workspace, branch_swap.branch_ids),
+                *remove_assessment_sets(
+                    workspace,
+                    superseded_snapshot_ids,
+                    removed_ledger=repair_cleaned_sets,
+                ),
+                *remove_branch_sets(
+                    workspace,
+                    branch_swap.branch_ids,
+                    removed_ledger=repair_cleaned_sets,
+                ),
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the class-9 error carries the complete
-            # committed result; the pending stale paths stay reported.
+            # committed result, and only the sets never reached stay reported.
             cancelled = OperationCancelledError()
             cancelled.stage_result = committed_result(
-                pending_stale_paths,
+                unfinished_stale_paths(pending_stale_paths, repair_cleaned_sets),
                 new_snapshot,
                 sorted(new_claims, key=lambda item: _id_key(item.id)),
             )

@@ -33,7 +33,10 @@ from exp2res.exports.managed import (
 )
 from exp2res.pipeline.branch_lifecycle import supersede_current_branches
 from exp2res.pipeline.lineage import plan_lineages
-from exp2res.pipeline.orchestration import withdraw_pending_unless_superseded
+from exp2res.pipeline.orchestration import (
+    unfinished_stale_paths,
+    withdraw_pending_unless_superseded,
+)
 from exp2res.services.capture import (
     build_capture_evidence_items,
     new_id,
@@ -348,10 +351,17 @@ def capture_correction(
                 residual_paths=residuals,
             )
 
+        cleaned_sets: list[str] = []
         try:
             residual_paths = (
-                *remove_assessment_sets(workspace, superseded_snapshot_ids),
-                *remove_branch_sets(workspace, branch_swap.branch_ids),
+                *remove_assessment_sets(
+                    workspace, superseded_snapshot_ids, removed_ledger=cleaned_sets
+                ),
+                *remove_branch_sets(
+                    workspace,
+                    branch_swap.branch_ids,
+                    removed_ledger=cleaned_sets,
+                ),
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the correction transaction committed before this
@@ -359,7 +369,7 @@ def capture_correction(
             # the pending stale paths stay reported as residuals.
             cancelled = OperationCancelledError()
             cancelled.correction_outcome = build_outcome(
-                tuple(pending_stale_paths)
+                unfinished_stale_paths(pending_stale_paths, cleaned_sets)
             )
             raise cancelled from None
         return build_outcome(residual_paths)

@@ -43,6 +43,16 @@ class BranchContext(StrictModel):
     def structural_fields(cls, value: str) -> str:
         return validate_structural(value)
 
+    @field_validator("name")
+    @classmethod
+    def name_is_not_blank(cls, value: str) -> str:
+        # §14.10's non-blank rule, enforced here as well as on ResumeBranch:
+        # this is the boundary a cost-bearing provider call crosses, and a
+        # branch that can never be persisted must not reach it.
+        if not value.strip():
+            raise ValueError("blank branch name")
+        return value
+
 
 class JobDescriptionContext(StrictModel):
     """§15.1: the parsed view, never `raw_text` or `created_at`."""

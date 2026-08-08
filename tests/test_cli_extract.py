@@ -254,7 +254,7 @@ def test_post_commit_interrupt_keeps_the_committed_result_and_warning(
         FakeContractRunner([fact_response([correction_items[0].id])]),
     )
 
-    def interrupt_cleanup(_workspace, _snapshot_ids):
+    def interrupt_cleanup(*_arguments, **_keywords):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(
