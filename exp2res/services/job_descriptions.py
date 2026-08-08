@@ -452,24 +452,55 @@ def _delete_locked(
         # missing, or invalid manifest never redirects this to a name-derived
         # path — §13.14 owns exact-path validation and no-follow removal.
         branch_ids = tuple(branch.id for branch in purged_branches)
-        existing_branch_sets = branch_set_paths(workspace, branch_ids)
-        if not workspace_database_is_live(workspace, database_identity):
-            # The pathname no longer resolves to the database this command
-            # holds open, so removing anything under it would purge a foreign
-            # tree while this workspace's own sets survive. Every set is
-            # reported residual instead (§13.13 rule 6), exactly as the backup
-            # purge above does on the same mismatch.
-            residual_paths.extend(existing_branch_sets)
-        else:
-            residual_paths.extend(remove_branch_sets(workspace, branch_ids))
-            # A path counts as removed only when it is proven gone: a residual
-            # may name the parent rather than each child — `out/` failing
-            # canonical-root validation reports one root path — so the
-            # surviving set is re-read instead of inferred from that list.
-            surviving = set(branch_set_paths(workspace, branch_ids))
-            removed_paths.extend(
-                path for path in existing_branch_sets if path not in surviving
+        branch_parent = str((workspace / "out" / "branch").absolute())
+        unlinked_sets: list[str] = []
+        try:
+            existing_branch_sets = branch_set_paths(workspace, branch_ids)
+            if not workspace_database_is_live(workspace, database_identity):
+                # The pathname no longer resolves to the database this command
+                # holds open, so removing anything under it would purge a
+                # foreign tree while this workspace's own sets survive. Every
+                # set is reported residual instead (§13.13 rule 6), exactly as
+                # the backup purge above does on the same mismatch.
+                residual_paths.extend(existing_branch_sets)
+            else:
+                residual_paths.extend(
+                    remove_branch_sets(
+                        workspace, branch_ids, removed_ledger=unlinked_sets
+                    )
+                )
+                # A path counts as removed only when it is proven gone: a
+                # residual may name the parent rather than each child — `out/`
+                # failing canonical-root validation reports one root path — so
+                # the surviving set is re-read instead of inferred from it.
+                surviving = set(branch_set_paths(workspace, branch_ids))
+                removed_paths.extend(
+                    path for path in existing_branch_sets if path not in surviving
+                )
+        except OSError:
+            # §13.13 rule 6: cleanup never blocks the deletion. An unreadable
+            # managed parent is reported residual and the purge continues, or
+            # the owner would be left with both the vacancy and its generated
+            # prose because a directory could not be stat'ed.
+            removed_paths.extend(unlinked_sets)
+            residual_paths.append(branch_parent)
+        except KeyboardInterrupt:
+            # §14.14 rule 6: whatever this pass already unlinked is durable
+            # even though nothing was deleted, and the cleanup-only outcome is
+            # its only carrier.
+            removed_paths.extend(unlinked_sets)
+            cleaned.append(
+                JobDescriptionCleanupOutcome(
+                    selected=selected,
+                    removed_managed_paths=tuple(
+                        sorted(set(removed_paths), key=_path_key)
+                    ),
+                    residual_paths=tuple(
+                        sorted({*residual_paths, branch_parent}, key=_path_key)
+                    ),
+                )
             )
+            raise
         cleaned.append(
             JobDescriptionCleanupOutcome(
                 selected=selected,

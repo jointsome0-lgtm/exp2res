@@ -453,6 +453,8 @@ nodes = [
   "tests/test_cli_jd.py::test_delete_purges_dependent_branches_bullets_and_managed_sets",
   "tests/test_cli_jd.py::test_delete_reports_the_dependent_purge_in_human_mode",
   "tests/test_cli_jd.py::test_a_cancelled_purge_still_reports_the_branch_generation",
+  "tests/test_cli_jd.py::test_an_unreadable_branch_parent_never_blocks_the_purge",
+  "tests/test_cli_jd.py::test_an_interrupt_mid_cleanup_still_reports_what_it_unlinked",
 ]
 phase = "4"
 note = "The workspace purge half is proven, including complete schema inventory, consent, retained initialization, SQLite erasure, and residual symlink semantics; jd list's raw-text-free projection, jd delete's consent, committed point deletion, global call-hash redaction, removed-and-residual managed-path reporting, and untraversed symlink now join it, and jd delete's dependent branch, bullet, and out/branch/ purge is proven in both output modes"

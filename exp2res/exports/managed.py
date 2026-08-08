@@ -634,9 +634,19 @@ def _managed_set_paths(
 
 
 def _remove_managed_sets(
-    workspace: Path, entity_ids: tuple[str, ...] | list[str], *, parent_name: str
+    workspace: Path,
+    entity_ids: tuple[str, ...] | list[str],
+    *,
+    parent_name: str,
+    removed_ledger: list[str] | None = None,
 ) -> tuple[str, ...]:
-    """Remove exactly the selected ID-keyed sets after commit."""
+    """Remove exactly the selected ID-keyed sets after commit.
+
+    `removed_ledger` receives each set path as it is unlinked. The return value
+    is only produced once the pass finishes, so a caller that must report
+    durable effects after a cancellation mid-pass has no other way to learn
+    what this function already removed (§14.14 rule 6).
+    """
 
     selected = tuple(sorted(set(entity_ids), key=id_key))
     for entity_id in selected:
@@ -665,6 +675,8 @@ def _remove_managed_sets(
             continue
         if _remove_entry(path, out_root):
             removed = True
+            if removed_ledger is not None:
+                removed_ledger.append(str(path))
         else:
             residuals.add(str(path))
     if removed:
@@ -682,9 +694,17 @@ def assessment_set_paths(
 
 
 def remove_assessment_sets(
-    workspace: Path, snapshot_ids: tuple[str, ...] | list[str]
+    workspace: Path,
+    snapshot_ids: tuple[str, ...] | list[str],
+    *,
+    removed_ledger: list[str] | None = None,
 ) -> tuple[str, ...]:
-    return _remove_managed_sets(workspace, snapshot_ids, parent_name="assessment")
+    return _remove_managed_sets(
+        workspace,
+        snapshot_ids,
+        parent_name="assessment",
+        removed_ledger=removed_ledger,
+    )
 
 
 def branch_set_paths(
@@ -696,9 +716,17 @@ def branch_set_paths(
 
 
 def remove_branch_sets(
-    workspace: Path, branch_ids: tuple[str, ...] | list[str]
+    workspace: Path,
+    branch_ids: tuple[str, ...] | list[str],
+    *,
+    removed_ledger: list[str] | None = None,
 ) -> tuple[str, ...]:
-    return _remove_managed_sets(workspace, branch_ids, parent_name="branch")
+    return _remove_managed_sets(
+        workspace,
+        branch_ids,
+        parent_name="branch",
+        removed_ledger=removed_ledger,
+    )
 
 
 def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:

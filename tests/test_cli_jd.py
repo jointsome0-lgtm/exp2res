@@ -1491,3 +1491,68 @@ def test_a_cancelled_purge_still_reports_the_branch_generation(
     }
     assert deleted["resume_branch"] == [branch_id]
     assert deleted["resume_bullet"] == [bullet_id]
+
+
+def test_an_unreadable_branch_parent_never_blocks_the_purge(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 6: cleanup failure is residual, never a refused deletion."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+
+    def unreadable(*_arguments, **_keywords):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(jd_service, "branch_set_paths", unreadable)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert str((workspace / "out" / "branch").absolute()) in (
+        envelope["residual_paths"]
+    )
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0
+
+
+def test_an_interrupt_mid_cleanup_still_reports_what_it_unlinked(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: a removal is durable even when nothing was deleted.
+
+    The interrupt lands before the transaction, so no delete outcome exists
+    to carry the report — the cleanup-only outcome is the sole carrier, and
+    it can only name what the removal pass recorded as it went.
+    """
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    unlinked = workspace / "out" / "branch" / "branch_vera_interrupted"
+    unlinked.mkdir(mode=0o700, parents=True)
+
+    def interrupt_after_one(
+        _workspace: Path, _branch_ids, *, removed_ledger=None
+    ):
+        if removed_ledger is not None:
+            removed_ledger.append(str(unlinked))
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(jd_service, "remove_branch_sets", interrupt_after_one)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert str(unlinked) in envelope["result"]["removed_managed_paths"]
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 1
