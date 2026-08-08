@@ -1492,6 +1492,10 @@ def get_job_description(
     return None if row is None else hydrate_job_description(row)
 
 
+# Conservative bound below every documented SQLITE_LIMIT_VARIABLE_NUMBER.
+_ID_PARAMETER_CHUNK = 500
+
+
 def bullet_log_closure(
     connection: sqlite3.Connection, fact_ids: Iterable[str]
 ) -> tuple[str, ...]:
@@ -1506,14 +1510,23 @@ def bullet_log_closure(
     ids = list(fact_ids)
     if not ids:
         return ()
-    placeholders = ",".join("?" for _ in ids)
-    rows = connection.execute(
-        "SELECT DISTINCT ei.raw_log_id FROM fact_sources AS fs "
-        "JOIN evidence_items AS ei ON ei.id = fs.evidence_item_id "
-        f"WHERE fs.fact_id IN ({placeholders})",
-        ids,
-    ).fetchall()
-    return tuple(sorted((row[0] for row in rows), key=lambda value: value.encode("utf-8")))
+    # SQLITE_LIMIT_VARIABLE_NUMBER is 999 on older builds while a §11-valid
+    # bullet may cite 1,000 facts, so the closure is read in bounded chunks
+    # instead of binding one parameter per cited fact.
+    log_ids: set[str] = set()
+    for start in range(0, len(ids), _ID_PARAMETER_CHUNK):
+        chunk = ids[start : start + _ID_PARAMETER_CHUNK]
+        placeholders = ",".join("?" for _ in chunk)
+        log_ids.update(
+            row[0]
+            for row in connection.execute(
+                "SELECT DISTINCT ei.raw_log_id FROM fact_sources AS fs "
+                "JOIN evidence_items AS ei ON ei.id = fs.evidence_item_id "
+                f"WHERE fs.fact_id IN ({placeholders})",
+                chunk,
+            )
+        )
+    return tuple(sorted(log_ids, key=lambda value: value.encode("utf-8")))
 
 
 def current_branch_name_conflict(

@@ -511,10 +511,8 @@ def run_assessment_generation(
                 connection, pending_stale_paths, superseded_snapshot_ids
             )
             raise
-        residual_paths = (
-            *remove_assessment_sets(workspace, superseded_snapshot_ids),
-            *remove_branch_sets(workspace, branch_swap.branch_ids),
-        )
+        # Read the committed rows before the interruptible cleanup below, so
+        # the guard has a complete result to carry.
         snapshot = (
             None
             if snapshot_id is None
@@ -525,25 +523,45 @@ def run_assessment_generation(
             if snapshot_id is None
             else list_self_claims_for_snapshot(connection, snapshot_id)
         )
+        resolved = cast(_ResolvedAssessment, outcome.resolved[0])
 
-    resolved = cast(_ResolvedAssessment, outcome.resolved[0])
-    return Stage6Result(
-        run_id=run_id,
-        snapshot_id=snapshot_id,
-        created_claim_ids=created_claim_ids,
-        superseded_snapshot_ids=tuple(sorted(superseded_snapshot_ids, key=_id_key)),
-        superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
-        superseded_branch_ids=branch_swap.branch_ids,
-        superseded_bullet_ids=branch_swap.bullet_ids,
-        generation_id=generation_id,
-        superseded_generation_ids=tuple(sorted(superseded_generation_ids, key=_id_key)),
-        replaced_view=replaced_view,
-        invalidated_branches=branch_swap.invalidated_branches,
-        residual_paths=residual_paths,
-        warnings=resolved.warnings,
-        snapshot=snapshot,
-        claims=claims,
-    )
+        def build_result(residuals: tuple[str, ...]) -> Stage6Result:
+            return Stage6Result(
+                run_id=run_id,
+                snapshot_id=snapshot_id,
+                created_claim_ids=created_claim_ids,
+                superseded_snapshot_ids=tuple(
+                    sorted(superseded_snapshot_ids, key=_id_key)
+                ),
+                superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
+                superseded_branch_ids=branch_swap.branch_ids,
+                superseded_bullet_ids=branch_swap.bullet_ids,
+                generation_id=generation_id,
+                superseded_generation_ids=tuple(
+                    sorted(superseded_generation_ids, key=_id_key)
+                ),
+                replaced_view=replaced_view,
+                invalidated_branches=branch_swap.invalidated_branches,
+                residual_paths=residuals,
+                warnings=resolved.warnings,
+                snapshot=snapshot,
+                claims=claims,
+            )
+
+        # §13 stale-export trigger class 1: the swap is already committed, so
+        # cleanup failure or interruption never rolls it back.
+        try:
+            residual_paths = (
+                *remove_assessment_sets(workspace, superseded_snapshot_ids),
+                *remove_branch_sets(workspace, branch_swap.branch_ids),
+            )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the class-9 error carries the complete committed
+            # result; the pending stale paths stay reported as residuals.
+            cancelled = OperationCancelledError()
+            cancelled.stage_result = build_result(tuple(pending_stale_paths))
+            raise cancelled from None
+        return build_result(residual_paths)
 
 
 REPAIRABLE_STATUSES = frozenset({"rejected", "unsupported"})

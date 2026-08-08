@@ -74,6 +74,7 @@ nodes = [
   "tests/test_cli_correction.py::test_correction_rebuilds_through_artifacts_and_preserves_history",
   "tests/test_cli_correction.py::test_failed_correction_stays_committed_and_selected_recompute_repairs",
   "tests/test_branch_substrate.py::test_correction_capture_supersedes_every_current_branch",
+  "tests/test_cli_correction.py::test_correction_reports_the_superseded_branch_and_bullet",
 ]
 phase = "4"
 note = "Correction capture, atomic global invalidation, managed assessment-export removal, linked Stage 3-4 orchestration, inspectable superseded history, and failure retry are covered offline; resume branch and bullet invalidation now joins them at the same atomic boundary; simultaneous multi-view reporting remains"
@@ -285,7 +286,7 @@ nodes = [
   "tests/test_branch_substrate.py::test_view_regeneration_supersedes_only_its_dependent_branches",
 ]
 phase = "4"
-note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary while fold-equal names supersede; publishing a branch set and its manifest remains with the Stage 12 export phase"
+note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; the folded-identity replacement itself and publishing a branch set with its manifest wait on the Stage 10 and Stage 12 phases"
 
 ["21.35"]
 status = "partial"

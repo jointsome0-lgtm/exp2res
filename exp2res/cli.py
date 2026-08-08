@@ -90,6 +90,7 @@ from exp2res.services.correction import (
 )
 from exp2res.services.assessment import (
     Stage6Result,
+    Stage7Result,
     list_current_snapshots,
     run_assess_generate,
     run_assess_repair,
@@ -841,6 +842,11 @@ def _correction_affected(captured: CorrectionOutcome) -> AffectedIds:
         "contradiction": captured.superseded_contradiction_ids,
         "experience_fact": captured.superseded_fact_ids,
         "gap_question": captured.superseded_gap_ids,
+        # §13.13 rule 4: correction capture supersedes every current branch and
+        # bullet before the rebuild, which never sees them again — so this is
+        # the only composition that can report them.
+        "resume_branch": captured.superseded_branch_ids,
+        "resume_bullet": captured.superseded_bullet_ids,
         "self_claim": captured.superseded_claim_ids,
     }
     return AffectedIds(
@@ -1712,79 +1718,100 @@ def _verification_human_result(
 def assess_generate(context: typer.Context) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
         require_compatible(workspace)
-        generated = run_assess_generate(workspace)
-        assert generated.snapshot is not None and generated.snapshot_id is not None
-        created_groups = [
-            EntityIdGroup(
-                entity_type="assessment_snapshot", ids=[generated.snapshot_id]
-            ),
-            EntityIdGroup(
-                entity_type="self_claim", ids=list(generated.created_claim_ids)
-            ),
-        ]
-        superseded_groups: list[EntityIdGroup] = []
-        if generated.superseded_claim_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="self_claim",
-                    ids=list(generated.superseded_claim_ids),
-                )
-            )
-        if generated.superseded_snapshot_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="assessment_snapshot",
-                    ids=list(generated.superseded_snapshot_ids),
-                )
-            )
-        if generated.superseded_branch_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="resume_branch",
-                    ids=list(generated.superseded_branch_ids),
-                )
-            )
-        if generated.superseded_bullet_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="resume_bullet",
-                    ids=list(generated.superseded_bullet_ids),
-                )
-            )
-        prior = (
-            ""
-            if generated.replaced_view is None
-            else f"; superseded {generated.replaced_view.snapshot_id}"
-        )
-        return Outcome(
-            affected_ids=AffectedIds(
-                created=created_groups,
-                superseded=superseded_groups,
-                deleted=[],
-            ),
-            generation_ids=sorted(
-                {
-                    *(
-                        [generated.generation_id]
-                        if generated.generation_id is not None
-                        else []
-                    ),
-                    *generated.superseded_generation_ids,
-                },
-                key=lambda value: value.encode("utf-8"),
-            ),
-            run_ids=[generated.run_id],
-            invalidated_branches=list(generated.invalidated_branches),
-            residual_paths=list(generated.residual_paths),
-            warnings=list(generated.warnings),
-            result=None,
-            human_result=(
-                f"Created {generated.snapshot.id} — {generated.snapshot.title}; "
-                f"{len(generated.claims)} claims{prior}."
-            ),
-        )
+        try:
+            generated = run_assess_generate(workspace)
+        except Exp2ResError as error:
+            # §14.14 rules 5/6: an interrupt after the committed §13.6 swap
+            # carries the complete result on the error; fold it into the
+            # fields the cancelled envelope reads.
+            carried = getattr(error, "stage_result", None)
+            if isinstance(carried, Stage6Result):
+                committed = _assess_generate_outcome(carried)
+                error.affected_ids = committed.affected_ids
+                error.generation_ids = committed.generation_ids
+                error.run_ids = committed.run_ids
+                error.invalidated_branches = committed.invalidated_branches
+                error.residual_paths = committed.residual_paths
+                error.warnings = committed.warnings
+            raise
+        return _assess_generate_outcome(generated)
 
     _run_command(context, "assess generate", operation)
+
+
+def _assess_generate_outcome(generated: Stage6Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted swaps."""
+
+    assert generated.snapshot is not None and generated.snapshot_id is not None
+    created_groups = [
+        EntityIdGroup(
+            entity_type="assessment_snapshot", ids=[generated.snapshot_id]
+        ),
+        EntityIdGroup(
+            entity_type="self_claim", ids=list(generated.created_claim_ids)
+        ),
+    ]
+    superseded_groups: list[EntityIdGroup] = []
+    if generated.superseded_claim_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="self_claim",
+                ids=list(generated.superseded_claim_ids),
+            )
+        )
+    if generated.superseded_snapshot_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="assessment_snapshot",
+                ids=list(generated.superseded_snapshot_ids),
+            )
+        )
+    if generated.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(generated.superseded_branch_ids),
+            )
+        )
+    if generated.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(generated.superseded_bullet_ids),
+            )
+        )
+    prior = (
+        ""
+        if generated.replaced_view is None
+        else f"; superseded {generated.replaced_view.snapshot_id}"
+    )
+    return Outcome(
+        affected_ids=AffectedIds(
+            created=created_groups,
+            superseded=superseded_groups,
+            deleted=[],
+        ),
+        generation_ids=sorted(
+            {
+                *(
+                    [generated.generation_id]
+                    if generated.generation_id is not None
+                    else []
+                ),
+                *generated.superseded_generation_ids,
+            },
+            key=lambda value: value.encode("utf-8"),
+        ),
+        run_ids=[generated.run_id],
+        invalidated_branches=list(generated.invalidated_branches),
+        residual_paths=list(generated.residual_paths),
+        warnings=list(generated.warnings),
+        result=None,
+        human_result=(
+            f"Created {generated.snapshot.id} — {generated.snapshot.title}; "
+            f"{len(generated.claims)} claims{prior}."
+        ),
+    )
 
 
 @assess_app.command("repair")
@@ -1906,54 +1933,75 @@ def assess_verify(
         if snapshot.superseded_at is not None:
             raise SnapshotNotCurrentError()
 
-        verified = run_assess_verify(workspace, snapshot_id=snapshot_id)
-        findings = list(verified.findings)
-        blocked = verified.snapshot_status in {"unsupported", "rejected"}
-        if blocked:
+        try:
+            verified = run_assess_verify(workspace, snapshot_id=snapshot_id)
+        except Exp2ResError as error:
+            # §14.14 rules 5/6: an interrupt after the committed §13.7 pass
+            # carries the complete result on the error; fold it into the
+            # fields the cancelled envelope reads.
+            carried = getattr(error, "stage_result", None)
+            if isinstance(carried, Stage7Result):
+                committed = _assess_verify_outcome(carried)
+                error.affected_ids = committed.affected_ids
+                error.generation_ids = committed.generation_ids
+                error.run_ids = committed.run_ids
+                error.findings = committed.findings
+                error.invalidated_branches = committed.invalidated_branches
+                error.residual_paths = committed.residual_paths
+            raise
+        if verified.snapshot_status in {"unsupported", "rejected"}:
             typer.echo(
                 "Assessment verification completed, but assessment export is blocked.",
                 err=True,
             )
-        return Outcome(
-            exit_code=10 if blocked else 0,
-            diagnostic_class="verifier_gate_blocked" if blocked else None,
-            affected_ids=AffectedIds(
-                created=[
-                    EntityIdGroup(
-                        entity_type="verification_finding",
-                        ids=[item.id for item in findings],
-                    )
-                ],
-                # §13.7: a changed verifier state supersedes the branches
-                # anchored to this snapshot, so the envelope reports them.
-                superseded=[
-                    group
-                    for group in (
-                        EntityIdGroup(
-                            entity_type="resume_branch",
-                            ids=list(verified.superseded_branch_ids),
-                        ),
-                        EntityIdGroup(
-                            entity_type="resume_bullet",
-                            ids=list(verified.superseded_bullet_ids),
-                        ),
-                    )
-                    if group.ids
-                ],
-                deleted=[],
-            ),
-            generation_ids=list(verified.superseded_generation_ids),
-            run_ids=[verified.run_id],
-            findings=findings,
-            invalidated_branches=list(verified.invalidated_branches),
-            residual_paths=list(verified.residual_paths),
-            result=None,
-            human_result=_verification_human_result(
-                verified.snapshot_id, verified.snapshot_status, findings
-            ),
-        )
+        return _assess_verify_outcome(verified)
 
     _run_command(context, "assess verify", operation)
+
+
+def _assess_verify_outcome(verified: Stage7Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted passes."""
+
+    findings = list(verified.findings)
+    blocked = verified.snapshot_status in {"unsupported", "rejected"}
+    return Outcome(
+        exit_code=10 if blocked else 0,
+        diagnostic_class="verifier_gate_blocked" if blocked else None,
+        affected_ids=AffectedIds(
+            created=[
+                EntityIdGroup(
+                    entity_type="verification_finding",
+                    ids=[item.id for item in findings],
+                )
+            ],
+            # §13.7: a changed verifier state supersedes the branches
+            # anchored to this snapshot, so the envelope reports them.
+            superseded=[
+                group
+                for group in (
+                    EntityIdGroup(
+                        entity_type="resume_branch",
+                        ids=list(verified.superseded_branch_ids),
+                    ),
+                    EntityIdGroup(
+                        entity_type="resume_bullet",
+                        ids=list(verified.superseded_bullet_ids),
+                    ),
+                )
+                if group.ids
+            ],
+            deleted=[],
+        ),
+        generation_ids=list(verified.superseded_generation_ids),
+        run_ids=[verified.run_id],
+        findings=findings,
+        invalidated_branches=list(verified.invalidated_branches),
+        residual_paths=list(verified.residual_paths),
+        result=None,
+        human_result=_verification_human_result(
+            verified.snapshot_id, verified.snapshot_status, findings
+        ),
+    )
 
 
 @assess_app.command("list")

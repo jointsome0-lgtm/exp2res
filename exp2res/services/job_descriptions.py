@@ -32,6 +32,7 @@ from exp2res.services.extraction import build_llm_execution
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
+    workspace_database_is_live,
     purge_managed_backups as _purge_managed_backups,
 )
 from exp2res.storage.repository import (
@@ -452,11 +453,23 @@ def _delete_locked(
         # path — §13.14 owns exact-path validation and no-follow removal.
         branch_ids = tuple(branch.id for branch in purged_branches)
         existing_branch_sets = branch_set_paths(workspace, branch_ids)
-        branch_residuals = remove_branch_sets(workspace, branch_ids)
-        removed_paths.extend(
-            path for path in existing_branch_sets if path not in branch_residuals
-        )
-        residual_paths.extend(branch_residuals)
+        if not workspace_database_is_live(workspace, database_identity):
+            # The pathname no longer resolves to the database this command
+            # holds open, so removing anything under it would purge a foreign
+            # tree while this workspace's own sets survive. Every set is
+            # reported residual instead (§13.13 rule 6), exactly as the backup
+            # purge above does on the same mismatch.
+            residual_paths.extend(existing_branch_sets)
+        else:
+            residual_paths.extend(remove_branch_sets(workspace, branch_ids))
+            # A path counts as removed only when it is proven gone: a residual
+            # may name the parent rather than each child — `out/` failing
+            # canonical-root validation reports one root path — so the
+            # surviving set is re-read instead of inferred from that list.
+            surviving = set(branch_set_paths(workspace, branch_ids))
+            removed_paths.extend(
+                path for path in existing_branch_sets if path not in surviving
+            )
         cleaned.append(
             JobDescriptionCleanupOutcome(
                 selected=selected,

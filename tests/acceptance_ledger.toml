@@ -247,7 +247,7 @@ status = "partial"
 phases = ["3", "4"]
 evals = ["21.34", "21.47"]
 issues = []
-note = "Assessment sets are opaque-snapshot-ID keyed, manifest-validated, lifecycle-hash-sensitive, invalidated by verification and gap answers, and same-view replaced without touching other views; resume branch invalidation targets exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and fold-equal display names supersede without ever deriving a path, so branch-name separation holds; publishing a branch set and its manifest remains with Stage 12"
+note = "Assessment sets are opaque-snapshot-ID keyed, manifest-validated, lifecycle-hash-sensitive, invalidated by verification and gap answers, and same-view replaced without touching other views; resume branch invalidation targets exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and fold-equal display names resolve one current branch without ever deriving a path, so branch-name separation holds; the folded-identity replacement itself and publishing a branch set with its manifest remain with Stages 10 and 12"
 
 ["24.38"]
 status = "partial"

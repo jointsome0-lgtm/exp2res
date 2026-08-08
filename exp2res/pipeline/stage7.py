@@ -27,6 +27,7 @@ from exp2res.domain.models import (
 from exp2res.domain.verification import aggregate_verification_status
 from exp2res.errors import (
     IntegrityFailureError,
+    OperationCancelledError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
@@ -532,25 +533,35 @@ def run_assessment_verification(
         # §13.7 stale-export trigger: only a committed verification-field
         # change invalidates this snapshot's ID-keyed set. Finding history by
         # itself does not change the renderer state.
-        if current_verification_state != prior_verification_state:
+        def build_result(residuals: tuple[str, ...]) -> Stage7Result:
+            return Stage7Result(
+                run_id=run_id,
+                snapshot_id=snapshot_id,
+                snapshot_status=current_snapshot.verification_status,
+                findings=findings,
+                claim_statuses=tuple(
+                    (item.id, item.verification_status) for item in current_claims
+                ),
+                superseded_branch_ids=branch_swap.branch_ids,
+                superseded_bullet_ids=branch_swap.bullet_ids,
+                superseded_generation_ids=branch_swap.superseded_generation_ids,
+                invalidated_branches=branch_swap.invalidated_branches,
+                residual_paths=residuals,
+            )
+
+        if current_verification_state == prior_verification_state:
+            return build_result(())
+        # The verification pass is already committed, so cleanup failure or
+        # interruption never rolls it back.
+        try:
             residual_paths = (
                 *remove_assessment_sets(workspace, (snapshot_id,)),
                 *remove_branch_sets(workspace, branch_swap.branch_ids),
             )
-        else:
-            residual_paths = ()
-
-    return Stage7Result(
-        run_id=run_id,
-        snapshot_id=snapshot_id,
-        snapshot_status=current_snapshot.verification_status,
-        findings=findings,
-        claim_statuses=tuple(
-            (item.id, item.verification_status) for item in current_claims
-        ),
-        superseded_branch_ids=branch_swap.branch_ids,
-        superseded_bullet_ids=branch_swap.bullet_ids,
-        superseded_generation_ids=branch_swap.superseded_generation_ids,
-        invalidated_branches=branch_swap.invalidated_branches,
-        residual_paths=residual_paths,
-    )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the class-9 error carries the complete committed
+            # result; the pending stale paths stay reported as residuals.
+            cancelled = OperationCancelledError()
+            cancelled.stage_result = build_result(tuple(pending_stale_paths))
+            raise cancelled from None
+        return build_result(residual_paths)
