@@ -110,6 +110,13 @@ class SelectedFact(StrictModel):
         supplied = [item.evidence_item.id for item in self.evidence]
         if supplied != sorted(self.fact.evidence_item_ids, key=_id_key):
             raise ValueError("evidence is not the fact's complete §12.4 set")
+        # §13.3 rule 7 derives `source_log_ids` as exactly the duplicate-free
+        # set of raw-log IDs reached through those items, so a bundle whose
+        # items point elsewhere would put a record outside the fact's closure —
+        # and its prose — in front of the writer.
+        reached = {item.evidence_item.raw_log_id for item in self.evidence}
+        if reached != set(self.fact.source_log_ids):
+            raise ValueError("evidence does not reach the fact's source logs")
         return self
 
 
@@ -144,6 +151,10 @@ class ResumeWriterInput(StrictModel):
     def claims_are_supported_and_ordered(cls, value: list[SelfClaim]) -> list[SelfClaim]:
         if value != sorted(value, key=lambda item: _id_key(item.id)):
             raise ValueError("self claims must be ordered by ID bytes")
+        # Equal adjacent members stay sorted, so ordering never catches a
+        # repeat: §13.10 supplies the supported member set exactly once.
+        if len({claim.id for claim in value}) != len(value):
+            raise ValueError("duplicate self claim")
         for claim in value:
             # §13.10: only `supported` current member claims may guide
             # generation, so an ineligible claim never reaches the wire.

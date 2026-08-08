@@ -1529,6 +1529,12 @@ def bullet_log_closure(
     return tuple(sorted(log_ids, key=lambda value: value.encode("utf-8")))
 
 
+STAGE10_ANCHOR_ALLOWLIST = frozenset(
+    {"supported", "partially_supported", "inferred_but_acceptable"}
+)
+"""§16.11's Stage 10 snapshot-anchor allowlist."""
+
+
 def current_branch_name_conflict(
     connection: sqlite3.Connection, name: str
 ) -> ResumeBranch | None:
@@ -1558,13 +1564,19 @@ def insert_resume_branch(
     if branch.superseded_at is not None:
         raise IntegrityFailureError("branch_initial_lifecycle_invalid")
     snapshot = connection.execute(
-        "SELECT superseded_at FROM assessment_snapshots WHERE id = ?",
+        "SELECT superseded_at, verification_status FROM assessment_snapshots "
+        "WHERE id = ?",
         (branch.assessment_snapshot_id,),
     ).fetchone()
     if snapshot is None:
         raise IntegrityFailureError("branch_snapshot_missing")
     if snapshot["superseded_at"] is not None:
         raise IntegrityFailureError("branch_snapshot_superseded")
+    if snapshot["verification_status"] not in STAGE10_ANCHOR_ALLOWLIST:
+        # §16.11: a current snapshot is not yet an eligible anchor. A freshly
+        # generated one is `unverified` until Stage 7 runs, and generation
+        # alone is not verification.
+        raise IntegrityFailureError("branch_snapshot_not_anchor_eligible")
     if (
         connection.execute(
             "SELECT 1 FROM job_descriptions WHERE id = ?",

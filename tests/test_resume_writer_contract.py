@@ -122,6 +122,32 @@ def test_the_whole_pack_carries_each_fact_once() -> None:
         writer_input([fact, fact])
 
 
+def test_evidence_may_only_reach_the_fact_s_own_source_logs() -> None:
+    """§13.3 rule 7: the closure is the logs reached through the fact's items.
+
+    An item bundle that keeps the expected item IDs but points at another
+    record would put prose from outside the fact's closure in front of the
+    writer.
+    """
+
+    honest = selected_fact("0001")
+    foreign = selected_fact("0002")
+    with pytest.raises(
+        ValidationError, match="evidence does not reach the fact's source logs"
+    ):
+        SelectedFact(
+            fact=honest.fact,
+            evidence=[
+                FactEvidence(
+                    evidence_item=foreign.evidence[0].evidence_item.model_copy(
+                        update={"id": honest.fact.evidence_item_ids[0]}
+                    ),
+                    raw_log=foreign.evidence[0].raw_log,
+                )
+            ],
+        )
+
+
 def test_a_branch_name_that_can_never_be_persisted_never_reaches_the_wire() -> None:
     """§14.10's non-blank rule, held at the provider boundary too."""
 
@@ -160,6 +186,9 @@ def test_a_claim_guides_generation_only_from_the_branch_snapshot() -> None:
 
     with pytest.raises(ValidationError, match="self claim is outside the branch snapshot"):
         writer_input(facts, supported_self_claims=[claim(snapshot_id="snapshot_vera_writer_0002")])
+
+    with pytest.raises(ValidationError, match="duplicate self claim"):
+        writer_input(facts, supported_self_claims=[claim(), claim()])
 
 
 def test_an_empty_bullet_array_is_a_valid_writer_response() -> None:
