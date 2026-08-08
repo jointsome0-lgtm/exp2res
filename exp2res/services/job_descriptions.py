@@ -25,6 +25,7 @@ from exp2res.errors import (
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
+from exp2res.exports.managed import branch_set_paths, remove_branch_sets
 from exp2res.pipeline.stage8 import Stage8Result, run_job_description_parse
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import build_llm_execution
@@ -235,6 +236,37 @@ def _allocate_run_id(
     raise IdCollisionError()
 
 
+def _dependent_purge_targets(
+    connection: sqlite3.Connection, branch_ids: tuple[str, ...]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the bullets of these branches and the findings targeting them."""
+
+    if not branch_ids:
+        return (), ()
+    placeholders = ",".join("?" for _ in branch_ids)
+    bullet_ids = tuple(
+        row[0]
+        for row in connection.execute(
+            f"SELECT id FROM resume_bullets WHERE branch_id IN ({placeholders}) "
+            "ORDER BY CAST(id AS BLOB)",
+            branch_ids,
+        )
+    )
+    if not bullet_ids:
+        return (), ()
+    bullet_placeholders = ",".join("?" for _ in bullet_ids)
+    finding_ids = tuple(
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM verification_findings "
+            "WHERE target_type = 'resume_bullet' "
+            f"AND target_id IN ({bullet_placeholders}) ORDER BY CAST(id AS BLOB)",
+            bullet_ids,
+        )
+    )
+    return bullet_ids, finding_ids
+
+
 def _committed_outcome(
     *,
     run_id: str,
@@ -348,6 +380,22 @@ def _delete_locked(
         # place, so the value is allocated against the retained set with the
         # same bounded local retry Stage 8 uses.
         orchestration_run_id = _allocate_run_id(connection, allocate_id)
+        # §13.13 rule 10 captures every current or historical branch naming this
+        # job description before the transaction, because the captured opaque
+        # IDs are also the only source for the `out/branch/<branch-id>/` half of
+        # the managed removal below: no branch outside this set can own or spare
+        # one of those directories (§12 rule 11).
+        purged_branches = tuple(
+            PurgedBranch(id=row["id"], name=row["name"])
+            for row in connection.execute(
+                "SELECT id, name FROM resume_branches WHERE job_description_id = ? "
+                "ORDER BY CAST(id AS BLOB)",
+                (job_description_id,),
+            )
+        )
+        purged_bullet_ids, purged_finding_ids = _dependent_purge_targets(
+            connection, tuple(branch.id for branch in purged_branches)
+        )
         # The pass reports removals as it makes them, so an interrupt mid-pass
         # still names what it had already unlinked (§14.14 rule 6). What it
         # had yet to reach is unproven, which the root residual states.
@@ -372,6 +420,17 @@ def _delete_locked(
             raise
         removed_paths.extend(removed)
         residual_paths.extend(backup_residuals)
+        # §13.13 rule 10: the exact ID-keyed resume sets of the captured
+        # branches, deduplicated with the backup removal above. A matching,
+        # missing, or invalid manifest never redirects this to a name-derived
+        # path — §13.14 owns exact-path validation and no-follow removal.
+        branch_ids = tuple(branch.id for branch in purged_branches)
+        existing_branch_sets = branch_set_paths(workspace, branch_ids)
+        branch_residuals = remove_branch_sets(workspace, branch_ids)
+        removed_paths.extend(
+            path for path in existing_branch_sets if path not in branch_residuals
+        )
+        residual_paths.extend(branch_residuals)
         cleaned.append(
             JobDescriptionCleanupOutcome(
                 selected=selected,
@@ -381,17 +440,6 @@ def _delete_locked(
                 residual_paths=tuple(sorted(set(residual_paths), key=_path_key)),
             )
         )
-        # §13.13 rule 10 captures every current or historical branch naming
-        # this job description, then deletes that branch state before the job
-        # description itself. `resume_branches`, `resume_bullets`, and their
-        # findings arrive with §22 Phase 4's Stages 10-12; until then no branch
-        # can exist, so the captured set is empty, the dependent deletes have
-        # no table to address, and the `out/branch/<branch-id>/` half of the
-        # managed removal above has no ID source. All three join here with
-        # those tables.
-        purged_branches: tuple[PurgedBranch, ...] = ()
-        purged_bullet_ids: tuple[str, ...] = ()
-        purged_finding_ids: tuple[str, ...] = ()
         write_ahead_log = str(database.with_name(database.name + "-wal"))
 
         def build_outcome(residuals: Iterable[str]) -> JobDescriptionDeleteOutcome:
@@ -431,6 +479,30 @@ def _delete_locked(
                 input_ids=(job_description_id,),
                 metadata={"mode": "job_description"},
             )
+            # §13.13 rule 10: findings, then bullets, then the captured
+            # branches, then the vacancy itself, so no foreign key ever blocks
+            # the privacy operation. Current assessment views and every
+            # snapshot, claim, and claim finding are untouched: they do not
+            # depend on a job description, and no recompute follows.
+            if purged_finding_ids:
+                placeholders = ",".join("?" for _ in purged_finding_ids)
+                connection.execute(
+                    f"DELETE FROM verification_findings WHERE id IN ({placeholders})",
+                    purged_finding_ids,
+                )
+            if purged_bullet_ids:
+                placeholders = ",".join("?" for _ in purged_bullet_ids)
+                connection.execute(
+                    f"DELETE FROM resume_bullets WHERE id IN ({placeholders})",
+                    purged_bullet_ids,
+                )
+            if purged_branches:
+                branch_ids = tuple(branch.id for branch in purged_branches)
+                placeholders = ",".join("?" for _ in branch_ids)
+                connection.execute(
+                    f"DELETE FROM resume_branches WHERE id IN ({placeholders})",
+                    branch_ids,
+                )
             connection.execute(
                 "DELETE FROM job_descriptions WHERE id = ?", (job_description_id,)
             )

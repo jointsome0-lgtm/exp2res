@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -158,6 +158,52 @@ def invalidated_view(*, scope: AssessmentScope, snapshot_id: str) -> Invalidated
     )
 
 
+def posix_single_quote(value: str) -> str:
+    """Quote one printed argument value under §13.13 rule 9.
+
+    Unconditional single-quote wrapping, with an embedded single quote spelled
+    `'\\''`, so a branch name carrying whitespace or shell metacharacters stays
+    copy-paste-safe and selects the exact stored value.
+    """
+
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+class FormerViewProjection(StrictModel):
+    scope: AssessmentScope
+    snapshot_id: str
+
+
+class InvalidatedBranch(StrictModel):
+    name: str
+    job_description_id: str
+    former_view: FormerViewProjection
+    regeneration_command_shape: str
+
+
+def invalidated_branch(
+    *,
+    name: str,
+    job_description_id: str,
+    scope: AssessmentScope,
+    snapshot_id: str,
+) -> InvalidatedBranch:
+    # §13.13 rule 9: a shape, not an executable command — §14.10 requires a
+    # current `--snapshot`, which exists only after the view is regenerated.
+    shape = (
+        "exp2res bullets generate --jd "
+        + posix_single_quote(job_description_id)
+        + " --snapshot <new-snapshot-id> --branch "
+        + posix_single_quote(name)
+    )
+    return InvalidatedBranch(
+        name=name,
+        job_description_id=job_description_id,
+        former_view=FormerViewProjection(scope=scope, snapshot_id=snapshot_id),
+        regeneration_command_shape=shape,
+    )
+
+
 class SnapshotListItem(StrictModel):
     id: str
     scope: AssessmentScope
@@ -239,7 +285,7 @@ class CLIEnvelope(StrictModel):
     generation_ids: list[str] = Field(default_factory=list)
     run_ids: list[str] = Field(default_factory=list)
     invalidated_views: list[InvalidatedView] = Field(default_factory=list)
-    invalidated_branches: list[Any] = Field(default_factory=list)
+    invalidated_branches: list[InvalidatedBranch] = Field(default_factory=list)
     findings: list[VerificationFinding] = Field(default_factory=list)
     residual_paths: list[str] = Field(default_factory=list)
     warnings: list[ContractWarning] = Field(default_factory=list)

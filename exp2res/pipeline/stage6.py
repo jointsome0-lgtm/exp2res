@@ -17,6 +17,7 @@ from exp2res.domain.calibration import (
     pattern_generalization_cap,
 )
 from exp2res.domain.enums import AssessmentScope
+from exp2res.domain.results import InvalidatedBranch
 from exp2res.domain.models import (
     AssessmentSnapshot,
     ExperienceFact,
@@ -35,7 +36,12 @@ from exp2res.errors import (
     SnapshotNotCurrentError,
     SnapshotNotVerifiedError,
 )
-from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
+from exp2res.exports.managed import (
+    assessment_set_paths,
+    branch_set_paths,
+    remove_assessment_sets,
+    remove_branch_sets,
+)
 from exp2res.llm.assessment_writer import (
     ASSESSMENT_WRITER_CONTRACT,
     AssessmentWriterInput,
@@ -70,6 +76,7 @@ from exp2res.storage.workspace import (
     writer_database,
 )
 
+from .branch_lifecycle import BranchSupersession, supersede_dependent_branches
 from .orchestration import (
     PlannedCall,
     run_complete_stage,
@@ -91,9 +98,12 @@ class Stage6Result:
     created_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
     superseded_claim_ids: tuple[str, ...]
+    superseded_branch_ids: tuple[str, ...]
+    superseded_bullet_ids: tuple[str, ...]
     generation_id: str | None
     superseded_generation_ids: tuple[str, ...]
     replaced_view: ReplacedAssessmentView | None
+    invalidated_branches: tuple[InvalidatedBranch, ...]
     residual_paths: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
     snapshot: AssessmentSnapshot | None
@@ -360,10 +370,11 @@ def run_assessment_generation(
         generation_id: str | None = None
         superseded_generation_ids: set[str] = set()
         replaced_view: ReplacedAssessmentView | None = None
+        branch_swap = BranchSupersession()
 
         def commit(held: sqlite3.Connection, resolved: Sequence[object]) -> Iterable[str]:
             nonlocal snapshot_id, created_claim_ids, superseded_snapshot_ids
-            nonlocal superseded_claim_ids, generation_id, replaced_view
+            nonlocal superseded_claim_ids, generation_id, replaced_view, branch_swap
             candidate = cast(_ResolvedAssessment, resolved[0])
             # §11.7: one declared view, so at most one snapshot is current
             # and it is unconditionally the one this swap replaces.
@@ -391,6 +402,15 @@ def run_assessment_generation(
                                 ids,
                             )
                         )
+                # §13.10: a replacement assessment generation supersedes every
+                # branch anchored to the view it replaces, before that anchor
+                # stops being current.
+                branch_swap = supersede_dependent_branches(
+                    held, superseded_snapshot_ids, superseded_at=swap_time
+                )
+                superseded_generation_ids.update(
+                    branch_swap.superseded_generation_ids
+                )
                 mark_self_claims_superseded(held, superseded_claim_ids, swap_time)
                 mark_assessment_snapshots_superseded(
                     held, superseded_snapshot_ids, swap_time
@@ -446,7 +466,6 @@ def run_assessment_generation(
             ).fetchone()
             if orphan is not None:
                 raise IntegrityFailureError("current_claim_superseded_snapshot")
-            # §13.6: branch/bullet supersession joins this swap when those tables land.
             snapshot_id = candidate.snapshot.id
             created_claim_ids = tuple(sorted((item.id for item in candidate.claims), key=_id_key))
             # Pre-commit pending report: the paths this supersession makes
@@ -455,8 +474,9 @@ def run_assessment_generation(
             # completed removal clears the report through the existence
             # re-check; a rolled-back transaction withdraws it below.
             nonlocal pending_stale_paths
-            pending_stale_paths = assessment_set_paths(
-                workspace, superseded_snapshot_ids
+            pending_stale_paths = (
+                *assessment_set_paths(workspace, superseded_snapshot_ids),
+                *branch_set_paths(workspace, branch_swap.branch_ids),
             )
             report_managed_residuals(pending_stale_paths)
             return (snapshot_id, *created_claim_ids)
@@ -491,8 +511,9 @@ def run_assessment_generation(
                 connection, pending_stale_paths, superseded_snapshot_ids
             )
             raise
-        residual_paths = remove_assessment_sets(
-            workspace, superseded_snapshot_ids
+        residual_paths = (
+            *remove_assessment_sets(workspace, superseded_snapshot_ids),
+            *remove_branch_sets(workspace, branch_swap.branch_ids),
         )
         snapshot = (
             None
@@ -512,9 +533,12 @@ def run_assessment_generation(
         created_claim_ids=created_claim_ids,
         superseded_snapshot_ids=tuple(sorted(superseded_snapshot_ids, key=_id_key)),
         superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
+        superseded_branch_ids=branch_swap.branch_ids,
+        superseded_bullet_ids=branch_swap.bullet_ids,
         generation_id=generation_id,
         superseded_generation_ids=tuple(sorted(superseded_generation_ids, key=_id_key)),
         replaced_view=replaced_view,
+        invalidated_branches=branch_swap.invalidated_branches,
         residual_paths=residual_paths,
         warnings=resolved.warnings,
         snapshot=snapshot,
@@ -597,6 +621,7 @@ def run_assessment_repair(
         superseded_claim_ids = tuple(item.id for item in members)
         superseded_generation_ids: set[str] = set()
         replaced_view = ReplacedAssessmentView(snapshot.scope, snapshot.id)
+        branch_swap = BranchSupersession()
         pending_stale_paths: tuple[str, ...] = ()
 
         def finalize_durable_run(
@@ -687,11 +712,14 @@ def run_assessment_repair(
                 ),
                 superseded_snapshot_ids=superseded_snapshot_ids,
                 superseded_claim_ids=superseded_claim_ids,
+                superseded_branch_ids=branch_swap.branch_ids,
+                superseded_bullet_ids=branch_swap.bullet_ids,
                 generation_id=generation_id,
                 superseded_generation_ids=tuple(
                     sorted(superseded_generation_ids, key=_id_key)
                 ),
                 replaced_view=replaced_view,
+                invalidated_branches=branch_swap.invalidated_branches,
                 residual_paths=residuals,
                 warnings=(),
                 snapshot=snapshot_row,
@@ -818,6 +846,12 @@ def run_assessment_repair(
                         ids,
                     )
                 )
+            # §13.10: the repair form is an ordinary Stage 6 swap, so it
+            # invalidates the replaced view's branches exactly like generation.
+            branch_swap = supersede_dependent_branches(
+                connection, superseded_snapshot_ids, superseded_at=swap_time
+            )
+            superseded_generation_ids.update(branch_swap.superseded_generation_ids)
             mark_self_claims_superseded(connection, superseded_claim_ids, swap_time)
             mark_assessment_snapshots_superseded(
                 connection, superseded_snapshot_ids, swap_time
@@ -857,8 +891,9 @@ def run_assessment_repair(
                 output_ids=(new_snapshot.id, *(item.id for item in new_claims)),
             )
             # Same pre-commit pending-report pattern as the generated form.
-            pending_stale_paths = assessment_set_paths(
-                workspace, superseded_snapshot_ids
+            pending_stale_paths = (
+                *assessment_set_paths(workspace, superseded_snapshot_ids),
+                *branch_set_paths(workspace, branch_swap.branch_ids),
             )
             report_managed_residuals(pending_stale_paths)
             connection.commit()
@@ -900,8 +935,9 @@ def run_assessment_repair(
         # §13 stale-export trigger class 1: the swap is already committed;
         # cleanup failure or interruption never rolls it back.
         try:
-            residual_paths = remove_assessment_sets(
-                workspace, superseded_snapshot_ids
+            residual_paths = (
+                *remove_assessment_sets(workspace, superseded_snapshot_ids),
+                *remove_branch_sets(workspace, branch_swap.branch_ids),
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the class-9 error carries the complete

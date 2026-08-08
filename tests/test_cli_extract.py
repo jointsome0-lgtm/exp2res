@@ -537,3 +537,86 @@ def test_extract_interrupt_is_cancelled_without_partial_facts(
     # §14.14 rules 5/6: the committed cancellation telemetry is reported in
     # the cancelled envelope rather than dropped.
     assert envelope["run_ids"] == [run[0]]
+
+
+def _plant_current_branch(workspace: Path):
+    """One current view with one branch on it, for the §13.13 rule 9 report."""
+
+    from test_branch_substrate import plant_branch, plant_job_description
+    from test_stage6_assessment import (
+        assessment_response,
+        prepare_graph,
+        run_stage6,
+    )
+
+    ids, facts = prepare_graph(workspace)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    plant_job_description(workspace)
+    branch_id, bullet_id = plant_branch(
+        workspace, snapshot_id=assessed.snapshot_id, fact_ids=facts
+    )
+    return assessed.snapshot_id, branch_id, bullet_id
+
+
+BRANCH_COMMAND_SHAPE = (
+    "exp2res bullets generate --jd 'jd_vera_0001' "
+    "--snapshot <new-snapshot-id> --branch 'agent-engineer'"
+)
+
+
+def test_extract_reports_invalidated_branches_in_the_json_envelope(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5/§13.13 rule 9: the branch report reaches the envelope."""
+
+    snapshot_id, branch_id, bullet_id = _plant_current_branch(workspace)
+    install_fake_execution(
+        monkeypatch, FakeContractRunner([fact_response(["evi_vera_signal_0"])])
+    )
+
+    result, envelope = invoke_json(
+        workspace, ["extract", "--log-id", "log_vera_signal_0"]
+    )
+
+    assert result.exit_code == 0
+    assert envelope["invalidated_branches"] == [
+        {
+            "name": "agent-engineer",
+            "job_description_id": "jd_vera_0001",
+            "former_view": {"scope": "global", "snapshot_id": snapshot_id},
+            "regeneration_command_shape": BRANCH_COMMAND_SHAPE,
+        }
+    ]
+    superseded = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["superseded"]
+    }
+    assert superseded["resume_branch"] == [branch_id]
+    assert superseded["resume_bullet"] == [bullet_id]
+
+
+def test_extract_prints_the_branch_report_in_human_mode(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5: human mode reports the same §13.13 rule 9 context."""
+
+    snapshot_id, _branch_id, _bullet_id = _plant_current_branch(workspace)
+    install_fake_execution(
+        monkeypatch, FakeContractRunner([fact_response(["evi_vera_signal_0"])])
+    )
+
+    result = runner.invoke(
+        app,
+        ["--workspace", str(workspace), "extract", "--log-id", "log_vera_signal_0"],
+    )
+
+    assert result.exit_code == 0
+    assert (
+        "Invalidated bullet-pack branch agent-engineer for job description "
+        f"jd_vera_0001, generated against assessment view {snapshot_id} "
+        f"(global); regenerate with: {BRANCH_COMMAND_SHAPE}"
+    ) in result.stdout

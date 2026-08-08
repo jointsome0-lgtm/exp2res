@@ -26,6 +26,9 @@ from exp2res.storage.schema import (
     SCHEMA_V8_SQL,
     SCHEMA_V9_SQL,
     SCHEMA_V10_SQL,
+    SCHEMA_V11_SQL,
+    RESUME_BRANCHES_SQL,
+    RESUME_BULLETS_SQL,
 )
 from exp2res.storage.workspace import (
     inspect_workspace,
@@ -629,7 +632,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     assert result.exit_code == 0, result.stderr
     envelope = json.loads(result.stdout)
     schema = envelope["result"]["schema"]
-    assert schema["stored_version"] == 11
+    assert schema["stored_version"] == 12
     assert schema["compatible"] is True
     backup = Path(schema["managed_backup_path"])
     assert backup.is_file()
@@ -647,7 +650,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     with sqlite3.connect(database) as connection:
         assert [
             row[0] for row in connection.execute("SELECT version FROM schema_meta ORDER BY version")
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
         tables = {
             row[0]
             for row in connection.execute(
@@ -682,7 +685,7 @@ def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 11
+    assert migrated.stored_version == 12
     backup = Path(migrated.managed_backup_path or "")
     assert backup.is_file()
     assert "exp2res-v2-" in backup.name
@@ -701,7 +704,7 @@ def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
         assert connection.execute(
             "SELECT version FROM schema_meta ORDER BY version"
         ).fetchall() == [
-            (1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (11,)
+            (1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (11,), (12,)
         ]
 
 
@@ -735,7 +738,7 @@ def test_v8_to_v9_deletes_the_derived_layer_and_its_published_sets(
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 11
+    assert migrated.stored_version == 12
     assert migrated.compatible is True
     # The published set is regenerable output over rows the step deletes, so
     # it goes with them rather than outliving its own database provenance.
@@ -774,7 +777,7 @@ def test_v8_to_v9_deletes_the_derived_layer_and_its_published_sets(
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute(
             "SELECT version FROM schema_meta ORDER BY version"
-        ).fetchall() == [(index,) for index in range(1, 12)]
+        ).fetchall() == [(index,) for index in range(1, 13)]
         # The rebuilt tables keep their §11 lifecycle guards, so the empty
         # derived layer is protected exactly like a populated one.
         assert {
@@ -803,7 +806,7 @@ def test_v9_to_v10_deletes_the_project_views_and_keeps_the_global_one(
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 11
+    assert migrated.stored_version == 12
     assert migrated.compatible is True
     # The deleted view's set has no provenance left at all, and the retained
     # view's set carries the superseded `manifest_version` §13.14 rule 5
@@ -855,7 +858,7 @@ def test_v9_to_v10_deletes_the_project_views_and_keeps_the_global_one(
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute(
             "SELECT version FROM schema_meta ORDER BY version"
-        ).fetchall() == [(index,) for index in range(1, 12)]
+        ).fetchall() == [(index,) for index in range(1, 13)]
         assert {
             row[0]
             for row in connection.execute(
@@ -889,8 +892,8 @@ def test_v9_to_v10_reports_a_managed_set_it_cannot_remove(
     assert envelope["diagnostic_class"] == "managed_output_incomplete"
     assert envelope["residual_paths"] == [str(link)]
     assert link.is_symlink()
-    assert envelope["result"]["schema"]["stored_version"] == 11
-    assert inspect_workspace(workspace).stored_version == 11
+    assert envelope["result"]["schema"]["stored_version"] == 12
+    assert inspect_workspace(workspace).stored_version == 12
 
 
 def test_v7_to_v8_rebuild_preserves_rows_guards_indexes_and_admits_open_ranges(
@@ -1014,10 +1017,16 @@ def test_v7_to_v8_rebuild_preserves_rows_guards_indexes_and_admits_open_ranges(
                 "fact_sources",
             )
         }
-        # The v9 step legitimately drops the signal layer's own objects and
-        # the v10 step adds the job-description layer's, so the parity this
-        # test owns is over everything else (issue #76).
-        added_or_removed = ("self_signals", "job_descriptions")
+        # The v9 step legitimately drops the signal layer's own objects, the
+        # v11 step adds the job-description layer's, and the v12 step adds the
+        # branch/bullet layer's, so the parity this test owns is over
+        # everything else (issue #76).
+        added_or_removed = (
+            "self_signals",
+            "job_descriptions",
+            "resume_branches",
+            "resume_bullets",
+        )
         indexes_before = [
             row for row in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name"
@@ -1034,7 +1043,7 @@ def test_v7_to_v8_rebuild_preserves_rows_guards_indexes_and_admits_open_ranges(
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 11
+    assert migrated.stored_version == 12
     with sqlite3.connect(database) as connection:
         connection.create_function("exp2res_owner_delete", 0, lambda: 0)
         retained_after = {
@@ -1379,7 +1388,7 @@ def test_post_commit_interrupt_reports_backup_and_leaves_durable_v8(
     assert len(backups) == 1
     assert interrupt_info.value.managed_backup_path == str(backups[0])
     after = inspect_workspace(workspace)
-    assert after.stored_version == 11
+    assert after.stored_version == 12
     assert after.compatible is True
 
 
@@ -1409,7 +1418,7 @@ def test_cli_post_commit_interrupt_envelope_reports_durable_v8_and_backup(
     assert result.exit_code == 9
     envelope = json.loads(result.stdout)
     assert envelope["status"] == "cancelled"
-    assert envelope["result"]["schema"]["stored_version"] == 11
+    assert envelope["result"]["schema"]["stored_version"] == 12
     assert envelope["result"]["schema"]["compatible"] is True
     backup = Path(envelope["result"]["schema"]["managed_backup_path"])
     assert backup.is_file()
@@ -1604,7 +1613,7 @@ def test_exact_shape_preexisting_telemetry_table_migrates(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
 
-    assert migrated.stored_version == 11
+    assert migrated.stored_version == 12
     assert migrated.compatible is True
     assert table_shape(database, table) == expected_shape
 
@@ -1678,7 +1687,7 @@ def test_v10_to_v11_adds_the_job_description_layer_and_keeps_prior_rows(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
 
-    assert migrated.stored_version == 11
+    assert migrated.stored_version == 12
     assert migrated.compatible is True
     assert table_shape(database, "job_descriptions") == normative_shape(
         JOB_DESCRIPTIONS_SQL, "job_descriptions"
@@ -1709,4 +1718,151 @@ def test_v10_to_v11_adds_the_job_description_layer_and_keeps_prior_rows(
     }
     # The only schema_meta change is the appended v11 row (§12.14).
     assert table_rows(database, "schema_meta")[:10] == retained_before["schema_meta"]
-    assert table_rows(database, "schema_meta")[10][0] == 11
+    assert table_rows(database, "schema_meta")[11][0] == 12
+
+
+def v11_workspace(tmp_path: Path, *, name: str = "v11-workspace") -> Path:
+    """A v11 workspace holding a raw lineage, a view, and a job description.
+
+    Every layer the branch/bullet substrate references already exists here, so
+    the 11→12 step has real rows to leave alone and real foreign-key targets.
+    """
+
+    root = tmp_path / name
+    root.mkdir()
+    (root / ".exp2res").mkdir(mode=0o700)
+    (root / ".exp2res" / "lock").touch(mode=0o600)
+    (root / "out").mkdir(mode=0o700)
+    configure_timezone(root)
+    database = root / ".exp2res" / "exp2res.sqlite"
+    stamp = FIXED_NOW.isoformat()
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.executescript(SCHEMA_V11_SQL)
+        connection.executemany(
+            "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
+            tuple(
+                (version, stamp, f"0.1.0-v{version}-fixture")
+                for version in range(1, 12)
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO raw_logs(
+                id, recorded_at, entry_type, source_type, occurred_start,
+                occurred_end, temporal_precision, temporal_confidence, raw_text,
+                project, project_key, external_ref, corrects_log_id, metadata_json
+            ) VALUES (
+                'log_vera_v11', ?, 'manual_daily', 'manual_entry', ?, NULL,
+                'exact_day', 'high', 'Vera Example retained raw record.',
+                NULL, NULL, NULL, NULL, '{}'
+            )
+            """,
+            (stamp, stamp),
+        )
+        connection.execute(
+            """
+            INSERT INTO processing_runs(
+                id, stage, started_at, status, input_ids_json, output_ids_json,
+                metadata_json
+            ) VALUES (
+                'run_vera_v11', '13.6', ?, 'completed', '[]', '[]', '{}'
+            )
+            """,
+            (stamp,),
+        )
+        connection.execute(
+            """
+            INSERT INTO assessment_snapshots(
+                id, created_at, superseded_at, scope, title, summary,
+                gap_question_ids_json, contradiction_ids_json,
+                verification_status, metadata_json, produced_by_run_id,
+                generation_id
+            ) VALUES (
+                'snapshot_vera_v11', ?, NULL, 'global',
+                'Self-Assessment — Global',
+                'Current evidence suggests a provenance-aware workflow.',
+                '[]', '[]', 'supported', '{}', 'run_vera_v11', 'gen_vera_v11'
+            )
+            """,
+            (stamp,),
+        )
+        connection.execute(
+            """
+            INSERT INTO job_descriptions(
+                id, created_at, title, company, raw_text, parsed_json
+            ) VALUES (
+                'jd_vera_v11', ?, 'Agent Engineer', 'Example Co',
+                'Vera Example vacancy text.', '{}'
+            )
+            """,
+            (stamp,),
+        )
+    database.chmod(0o600)
+    return root
+
+
+def test_v11_to_v12_adds_the_branch_substrate_and_keeps_prior_rows(
+    tmp_path: Path,
+) -> None:
+    """§12.14/§13.10: the additive branch/bullet step touches no prior row."""
+
+    workspace = v11_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    retained_tables = (
+        "raw_logs",
+        "processing_runs",
+        "assessment_snapshots",
+        "job_descriptions",
+    )
+    retained_before = {
+        table: table_rows(database, table)
+        for table in (*retained_tables, "schema_meta")
+    }
+
+    migrated = migrate_workspace(
+        workspace, clock=lambda: FIXED_NOW.replace(day=16)
+    )
+
+    assert migrated.stored_version == 12
+    assert migrated.compatible is True
+    assert table_shape(database, "resume_branches") == normative_shape(
+        RESUME_BRANCHES_SQL, "resume_branches"
+    )
+    assert table_shape(database, "resume_bullets") == normative_shape(
+        RESUME_BULLETS_SQL, "resume_bullets"
+    )
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        for table in ("resume_branches", "resume_bullets"):
+            assert connection.execute(
+                f"SELECT COUNT(*) FROM {table}"
+            ).fetchone()[0] == 0
+        assert {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        } >= {
+            "resume_branches_lifecycle_update_guard",
+            "resume_branches_owner_delete_guard",
+            "resume_bullets_lifecycle_update_guard",
+            "resume_bullets_owner_delete_guard",
+        }
+        # §12 rule 12's exact-spelling backstop arrives with its table.
+        assert connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+            ("resume_branches_current_name_unique",),
+        ).fetchone() is not None
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert {
+        table: table_rows(database, table) for table in retained_tables
+    } == {
+        table: rows
+        for table, rows in retained_before.items()
+        if table != "schema_meta"
+    }
+    # The only schema_meta change is the appended v12 row (§12.14).
+    assert table_rows(database, "schema_meta")[:11] == retained_before["schema_meta"]
+    assert table_rows(database, "schema_meta")[11][0] == 12

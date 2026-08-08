@@ -27,7 +27,7 @@ from exp2res.errors import (
 )
 
 from .schema import (
-    SCHEMA_V11_SQL,
+    SCHEMA_V12_SQL,
     apply_migration_1_to_2,
     apply_migration_2_to_3,
     apply_migration_3_to_4,
@@ -38,10 +38,11 @@ from .schema import (
     apply_migration_8_to_9,
     apply_migration_9_to_10,
     apply_migration_10_to_11,
+    apply_migration_11_to_12,
     create_schema,
 )
 
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 _CLI_PREAMBLE_RESIDUALS: ContextVar[list[str] | None] = ContextVar(
     "exp2res_cli_preamble_residuals", default=None
@@ -122,6 +123,7 @@ MIGRATION_REGISTRY = (
         ),
     ),
     MigrationStep(10, 11, apply_migration_10_to_11),
+    MigrationStep(11, 12, apply_migration_11_to_12),
 )
 
 
@@ -142,9 +144,10 @@ def _assessment_set_cleanup(
     the retained view's set is as stale as a deleted one's and the retained
     view re-exports cleanly at version 6 instead of stalling on a residual.
 
-    The `out/branch/<branch-id>/` half of §12.14's cleanup has no ID source in
-    this build: §22 Phase 4 has not created `resume_branches`, so neither a v8
-    nor a v9 workspace can hold a branch set. It joins here with that table.
+    The `out/branch/<branch-id>/` half of §12.14's cleanup has no ID source
+    here: `resume_branches` arrives at v12, so neither a v8 nor a v9 workspace
+    can hold a branch set. It joins here when §22 Phase 4 publishes branch
+    output.
     """
 
     from exp2res.exports.managed import remove_assessment_sets
@@ -554,6 +557,8 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
         hydrate_job_description,
         hydrate_raw_log,
         hydrate_assessment_snapshot,
+        hydrate_resume_branch,
+        hydrate_resume_bullet,
         hydrate_self_claim,
     )
 
@@ -583,6 +588,10 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
         hydrate_self_claim(row)
     for row in connection.execute("SELECT * FROM job_descriptions"):
         hydrate_job_description(row)
+    for row in connection.execute("SELECT * FROM resume_branches"):
+        hydrate_resume_branch(row)
+    for row in connection.execute("SELECT * FROM resume_bullets"):
+        hydrate_resume_bullet(row)
     if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
         raise sqlite3.IntegrityError("foreign key validation failed")
     status = inspect_schema(connection)
@@ -606,7 +615,7 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
     scratch = sqlite3.connect(":memory:")
     try:
         scratch.create_function("exp2res_owner_delete", 0, lambda: 0)
-        scratch.executescript(SCHEMA_V11_SQL)
+        scratch.executescript(SCHEMA_V12_SQL)
         expected_entries = schema_entries(scratch)
     finally:
         scratch.close()

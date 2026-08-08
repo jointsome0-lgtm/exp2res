@@ -42,6 +42,7 @@ from exp2res.domain.results import (
     EntityIdGroup,
     FactsListResult,
     GapsListResult,
+    InvalidatedBranch,
     InvalidatedView,
     JdDeleteResult,
     JdListResult,
@@ -203,6 +204,7 @@ class Outcome:
     generation_ids: list[str] = field(default_factory=list)
     run_ids: list[str] = field(default_factory=list)
     invalidated_views: list[InvalidatedView] = field(default_factory=list)
+    invalidated_branches: list[InvalidatedBranch] = field(default_factory=list)
     findings: list[VerificationFinding] = field(default_factory=list)
     residual_paths: list[str] = field(default_factory=list)
     warnings: list[ContractWarning] = field(default_factory=list)
@@ -339,6 +341,23 @@ def _invalidated_view_lines(views: list[InvalidatedView]) -> list[str]:
         f"Invalidated assessment view {item.snapshot_id} "
         f"({item.scope}); regenerate with: {item.regeneration_command}"
         for item in views
+    ]
+
+
+def _invalidated_branch_lines(branches: list[InvalidatedBranch]) -> list[str]:
+    """§14.14 rule 5's one human rendering of §13.13 rule 9 branch reports.
+
+    The printed §14.10 shape is deliberately not executable: it keeps a
+    `<new-snapshot-id>` placeholder because a branch needs a current snapshot
+    that exists only after the invalidated view is regenerated.
+    """
+
+    return [
+        f"Invalidated bullet-pack branch {item.name} for job description "
+        f"{item.job_description_id}, generated against assessment view "
+        f"{item.former_view.snapshot_id} ({item.former_view.scope}); "
+        f"regenerate with: {item.regeneration_command_shape}"
+        for item in branches
     ]
 
 
@@ -535,6 +554,9 @@ def _run_operation(
             invalidated_views=list(
                 getattr(error, "invalidated_views", ()) or ()
             ),
+            invalidated_branches=list(
+                getattr(error, "invalidated_branches", ()) or ()
+            ),
             residual_paths=list(getattr(error, "residual_paths", ()) or ()),
             warnings=list(getattr(error, "warnings", ()) or ()),
             retry=getattr(error, "retry", None),
@@ -558,7 +580,10 @@ def _run_operation(
         # JSON path carries the same executable command in the closed field.
         typer.echo(f"Retry: {outcome.retry.command}", err=True)
 
-    view_lines = _invalidated_view_lines(outcome.invalidated_views)
+    view_lines = [
+        *_invalidated_view_lines(outcome.invalidated_views),
+        *_invalidated_branch_lines(outcome.invalidated_branches),
+    ]
     if view_lines:
         outcome.human_result = "\n".join(
             [*([outcome.human_result] if outcome.human_result else []), *view_lines]
@@ -643,7 +668,7 @@ def _run_operation(
         generation_ids=outcome.generation_ids,
         run_ids=outcome.run_ids,
         invalidated_views=outcome.invalidated_views,
-        invalidated_branches=[],
+        invalidated_branches=outcome.invalidated_branches,
         findings=outcome.findings,
         residual_paths=outcome.residual_paths,
         warnings=outcome.warnings,
@@ -847,12 +872,23 @@ def _views(*collections) -> list[InvalidatedView]:
     ]
 
 
+def _branches(*collections) -> list[InvalidatedBranch]:
+    # §13.13 rule 9 identifies a branch report by the branch name: one command
+    # may supersede the same named branch through several lifecycle steps.
+    by_name = {item.name: item for collection in collections for item in collection}
+    return [
+        by_name[key]
+        for key in sorted(by_name, key=lambda value: value.encode("utf-8"))
+    ]
+
+
 def _decorate_lifecycle_error(
     error: Exp2ResError,
     *,
     base_affected: AffectedIds | None = None,
     base_generation_ids: tuple[str, ...] = (),
     base_invalidated_views: tuple[InvalidatedView, ...] = (),
+    base_invalidated_branches: tuple[InvalidatedBranch, ...] = (),
     base_residual_paths: tuple[str, ...] = (),
     retry: Retry | None = None,
     result=None,
@@ -876,6 +912,12 @@ def _decorate_lifecycle_error(
             progress.invalidated_views if progress else (),
         )
     )
+    error.invalidated_branches = tuple(
+        _branches(
+            base_invalidated_branches,
+            progress.invalidated_branches if progress else (),
+        )
+    )
     error.residual_paths = tuple(
         sorted(
             {*base_residual_paths, *(progress.residual_paths if progress else ())},
@@ -891,9 +933,13 @@ def _lifecycle_outcome(
     recomputed: LifecycleResult,
     *,
     base_invalidated_views: tuple[InvalidatedView, ...] = (),
+    base_invalidated_branches: tuple[InvalidatedBranch, ...] = (),
 ) -> Outcome:
     invalidated_views = _views(
         base_invalidated_views, recomputed.invalidated_views
+    )
+    invalidated_branches = _branches(
+        base_invalidated_branches, recomputed.invalidated_branches
     )
     no_view = (
         "\nNo current assessment view exists; run exp2res assess generate."
@@ -905,6 +951,7 @@ def _lifecycle_outcome(
         generation_ids=list(recomputed.generation_ids),
         run_ids=list(recomputed.run_ids),
         invalidated_views=invalidated_views,
+        invalidated_branches=invalidated_branches,
         residual_paths=list(recomputed.residual_paths),
         warnings=list(recomputed.warnings),
         human_result="Recomputed derived state through Stage 5." + no_view,
@@ -1237,6 +1284,7 @@ def _store_correction(
                     base_affected=_correction_affected(committed),
                     base_generation_ids=committed.superseded_generation_ids,
                     base_invalidated_views=committed.invalidated_views,
+                    base_invalidated_branches=committed.invalidated_branches,
                     base_residual_paths=committed.residual_paths,
                     retry=Retry(
                         command="exp2res recompute --log-id "
@@ -1257,13 +1305,16 @@ def _store_correction(
                 base_affected=_correction_affected(captured),
                 base_generation_ids=captured.superseded_generation_ids,
                 base_invalidated_views=captured.invalidated_views,
+                base_invalidated_branches=captured.invalidated_branches,
                 base_residual_paths=captured.residual_paths,
                 retry=retry,
             )
             raise
 
     lifecycle = _lifecycle_outcome(
-        recomputed, base_invalidated_views=captured.invalidated_views
+        recomputed,
+        base_invalidated_views=captured.invalidated_views,
+        base_invalidated_branches=captured.invalidated_branches,
     )
     lifecycle.affected_ids = _merge_affected(
         _correction_affected(captured), lifecycle.affected_ids
@@ -1332,6 +1383,7 @@ def extract_command(
                 error.affected_ids = committed.affected_ids
                 error.generation_ids = committed.generation_ids
                 error.invalidated_views = committed.invalidated_views
+                error.invalidated_branches = committed.invalidated_branches
                 error.residual_paths = committed.residual_paths
                 error.warnings = committed.warnings
             raise
@@ -1378,6 +1430,20 @@ def _stage3_outcome(extracted: Stage3Result) -> Outcome:
                 ids=list(extracted.superseded_snapshot_ids),
             )
         )
+    if extracted.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(extracted.superseded_branch_ids),
+            )
+        )
+    if extracted.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(extracted.superseded_bullet_ids),
+            )
+        )
     invalidated_views = list(extracted.invalidated_views)
     return Outcome(
         affected_ids=AffectedIds(
@@ -1397,6 +1463,7 @@ def _stage3_outcome(extracted: Stage3Result) -> Outcome:
         ),
         run_ids=[extracted.run_id],
         invalidated_views=invalidated_views,
+        invalidated_branches=list(extracted.invalidated_branches),
         residual_paths=list(extracted.residual_paths),
         warnings=list(extracted.warnings),
         human_result=(
@@ -1509,6 +1576,20 @@ def detections_generate(context: typer.Context) -> None:
                     ids=list(generated.superseded_snapshot_ids),
                 )
             )
+        if generated.superseded_branch_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="resume_branch",
+                    ids=list(generated.superseded_branch_ids),
+                )
+            )
+        if generated.superseded_bullet_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="resume_bullet",
+                    ids=list(generated.superseded_bullet_ids),
+                )
+            )
         invalidated_views = list(generated.invalidated_views)
         if generated.short_circuited:
             human = (
@@ -1574,6 +1655,7 @@ def detections_generate(context: typer.Context) -> None:
             run_ids=[generated.run_id],
             warnings=list(generated.warnings),
             invalidated_views=invalidated_views,
+            invalidated_branches=list(generated.invalidated_branches),
             residual_paths=list(generated.residual_paths),
             result=DetectionsGenerateResult(
                 gaps=gaps,
@@ -1655,6 +1737,20 @@ def assess_generate(context: typer.Context) -> None:
                     ids=list(generated.superseded_snapshot_ids),
                 )
             )
+        if generated.superseded_branch_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="resume_branch",
+                    ids=list(generated.superseded_branch_ids),
+                )
+            )
+        if generated.superseded_bullet_ids:
+            superseded_groups.append(
+                EntityIdGroup(
+                    entity_type="resume_bullet",
+                    ids=list(generated.superseded_bullet_ids),
+                )
+            )
         prior = (
             ""
             if generated.replaced_view is None
@@ -1678,6 +1774,7 @@ def assess_generate(context: typer.Context) -> None:
                 key=lambda value: value.encode("utf-8"),
             ),
             run_ids=[generated.run_id],
+            invalidated_branches=list(generated.invalidated_branches),
             residual_paths=list(generated.residual_paths),
             warnings=list(generated.warnings),
             result=None,
@@ -1710,6 +1807,7 @@ def assess_repair(
                 error.affected_ids = committed.affected_ids
                 error.generation_ids = committed.generation_ids
                 error.run_ids = committed.run_ids
+                error.invalidated_branches = committed.invalidated_branches
                 error.residual_paths = committed.residual_paths
             raise
         return _repair_outcome(repaired)
@@ -1745,6 +1843,20 @@ def _repair_outcome(repaired: Stage6Result) -> Outcome:
             ids=list(repaired.superseded_snapshot_ids),
         ),
     ]
+    if repaired.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(repaired.superseded_branch_ids),
+            )
+        )
+    if repaired.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(repaired.superseded_bullet_ids),
+            )
+        )
     return Outcome(
         affected_ids=AffectedIds(
             created=created_groups,
@@ -1763,6 +1875,7 @@ def _repair_outcome(repaired: Stage6Result) -> Outcome:
             key=lambda value: value.encode("utf-8"),
         ),
         run_ids=[repaired.run_id],
+        invalidated_branches=list(repaired.invalidated_branches),
         residual_paths=list(repaired.residual_paths),
         result=None,
         human_result=(
@@ -1811,12 +1924,28 @@ def assess_verify(
                         ids=[item.id for item in findings],
                     )
                 ],
-                superseded=[],
+                # §13.7: a changed verifier state supersedes the branches
+                # anchored to this snapshot, so the envelope reports them.
+                superseded=[
+                    group
+                    for group in (
+                        EntityIdGroup(
+                            entity_type="resume_branch",
+                            ids=list(verified.superseded_branch_ids),
+                        ),
+                        EntityIdGroup(
+                            entity_type="resume_bullet",
+                            ids=list(verified.superseded_bullet_ids),
+                        ),
+                    )
+                    if group.ids
+                ],
                 deleted=[],
             ),
-            generation_ids=[],
+            generation_ids=list(verified.superseded_generation_ids),
             run_ids=[verified.run_id],
             findings=findings,
+            invalidated_branches=list(verified.invalidated_branches),
             residual_paths=list(verified.residual_paths),
             result=None,
             human_result=_verification_human_result(
@@ -2124,6 +2253,8 @@ def _delete_affected(deleted: DeleteOutcome) -> AffectedIds:
         ("gap_question", deleted.purged_gap_ids),
         ("contradiction", deleted.purged_contradiction_ids),
         ("verification_finding", deleted.purged_finding_ids),
+        ("resume_bullet", deleted.purged_bullet_ids),
+        ("resume_branch", deleted.purged_branch_ids),
         ("self_claim", deleted.purged_claim_ids),
         ("assessment_snapshot", deleted.purged_snapshot_ids),
         ("raw_log", (deleted.selected_log.id,)),
@@ -2189,6 +2320,7 @@ def logs_delete(
                         base_affected=_delete_affected(committed),
                         base_generation_ids=committed.purged_generation_ids,
                         base_invalidated_views=committed.invalidated_views,
+                        base_invalidated_branches=committed.invalidated_branches,
                         base_residual_paths=committed.residual_paths,
                         retry=retry,
                         result=_delete_result(committed),
@@ -2206,6 +2338,7 @@ def logs_delete(
                     base_affected=base_affected,
                     base_generation_ids=deleted.purged_generation_ids,
                     base_invalidated_views=deleted.invalidated_views,
+                    base_invalidated_branches=deleted.invalidated_branches,
                     base_residual_paths=deleted.residual_paths,
                     retry=retry,
                     result=result,
@@ -2228,6 +2361,9 @@ def logs_delete(
             ),
             invalidated_views=_views(
                 deleted.invalidated_views, lifecycle.invalidated_views
+            ),
+            invalidated_branches=_branches(
+                deleted.invalidated_branches, lifecycle.invalidated_branches
             ),
             warnings=lifecycle.warnings,
             result=result,

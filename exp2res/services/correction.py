@@ -13,7 +13,11 @@ from pydantic import ValidationError
 
 from exp2res.config import load_workspace_config
 from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
-from exp2res.domain.results import InvalidatedView, invalidated_view
+from exp2res.domain.results import (
+    InvalidatedBranch,
+    InvalidatedView,
+    invalidated_view,
+)
 from exp2res.errors import (
     IdCollisionError,
     InvalidInputError,
@@ -21,7 +25,13 @@ from exp2res.errors import (
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
-from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
+from exp2res.exports.managed import (
+    assessment_set_paths,
+    branch_set_paths,
+    remove_assessment_sets,
+    remove_branch_sets,
+)
+from exp2res.pipeline.branch_lifecycle import supersede_current_branches
 from exp2res.pipeline.lineage import plan_lineages
 from exp2res.pipeline.orchestration import withdraw_pending_unless_superseded
 from exp2res.services.capture import (
@@ -69,8 +79,11 @@ class CorrectionOutcome:
     superseded_contradiction_ids: tuple[str, ...]
     superseded_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
+    superseded_branch_ids: tuple[str, ...]
+    superseded_bullet_ids: tuple[str, ...]
     superseded_generation_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
+    invalidated_branches: tuple[InvalidatedBranch, ...]
     residual_paths: tuple[str, ...]
 
 
@@ -269,6 +282,16 @@ def capture_correction(
             mark_contradictions_superseded(
                 connection, superseded_contradiction_ids, now
             )
+            # §13.13 rule 4: the correction's one visibility boundary
+            # supersedes every current resume branch and bullet too, before
+            # the anchoring snapshots stop being current.
+            branch_swap = supersede_current_branches(connection, superseded_at=now)
+            superseded_generation_ids = tuple(
+                sorted(
+                    {*superseded_generation_ids, *branch_swap.superseded_generation_ids},
+                    key=_id_key,
+                )
+            )
             mark_self_claims_superseded(connection, superseded_claim_ids, now)
             mark_assessment_snapshots_superseded(
                 connection, superseded_snapshot_ids, now
@@ -276,8 +299,9 @@ def capture_correction(
             # Pre-commit pending report (same pattern as the Stage 3-7
             # trigger sites): an interrupt in the commit-to-cleanup window
             # still reports the stale sets; a proven rollback withdraws.
-            pending_stale_paths = assessment_set_paths(
-                workspace, superseded_snapshot_ids
+            pending_stale_paths = (
+                *assessment_set_paths(workspace, superseded_snapshot_ids),
+                *branch_set_paths(workspace, branch_swap.branch_ids),
             )
             report_managed_residuals(pending_stale_paths)
             try:
@@ -311,6 +335,8 @@ def capture_correction(
                 superseded_snapshot_ids=tuple(
                     sorted(superseded_snapshot_ids, key=_id_key)
                 ),
+                superseded_branch_ids=branch_swap.branch_ids,
+                superseded_bullet_ids=branch_swap.bullet_ids,
                 superseded_generation_ids=superseded_generation_ids,
                 invalidated_views=tuple(
                     sorted(
@@ -318,12 +344,14 @@ def capture_correction(
                         key=lambda item: _id_key(item.snapshot_id),
                     )
                 ),
+                invalidated_branches=branch_swap.invalidated_branches,
                 residual_paths=residuals,
             )
 
         try:
-            residual_paths = remove_assessment_sets(
-                workspace, superseded_snapshot_ids
+            residual_paths = (
+                *remove_assessment_sets(workspace, superseded_snapshot_ids),
+                *remove_branch_sets(workspace, branch_swap.branch_ids),
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the correction transaction committed before this

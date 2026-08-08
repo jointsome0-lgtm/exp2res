@@ -24,8 +24,11 @@ from exp2res.domain.models import (
     JobDescription,
     OccurredAt,
     RawLog,
+    ResumeBranch,
+    ResumeBullet,
     SelfClaim,
     VerificationFinding,
+    canonical_branch_identity,
     canonical_project_key,
 )
 from exp2res.domain.temporal import (
@@ -1487,3 +1490,340 @@ def get_job_description(
         (job_description_id,),
     ).fetchone()
     return None if row is None else hydrate_job_description(row)
+
+
+def bullet_log_closure(
+    connection: sqlite3.Connection, fact_ids: Iterable[str]
+) -> tuple[str, ...]:
+    """Return §15.11's service-derived bullet `source_log_ids`.
+
+    The exact duplicate-free raw-log set reached through the cited facts, in
+    ID-byte order. A displaced record reached through a fact's evidence
+    contributes its `raw_log_id` here exactly like a current one (§13.3 rule
+    10); displacement withholds prose, not provenance.
+    """
+
+    ids = list(fact_ids)
+    if not ids:
+        return ()
+    placeholders = ",".join("?" for _ in ids)
+    rows = connection.execute(
+        "SELECT DISTINCT ei.raw_log_id FROM fact_sources AS fs "
+        "JOIN evidence_items AS ei ON ei.id = fs.evidence_item_id "
+        f"WHERE fs.fact_id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    return tuple(sorted((row[0] for row in rows), key=lambda value: value.encode("utf-8")))
+
+
+def current_branch_name_conflict(
+    connection: sqlite3.Connection, name: str
+) -> ResumeBranch | None:
+    """Return the current branch whose name folds equal to `name`, if any.
+
+    §14.10's folded identity cannot be indexed, so this is the Stage 10
+    transaction check the §8.1 writer lock makes race-free; §12 rule 12's raw
+    `name` partial unique index is the coarser backstop underneath it.
+    """
+
+    folded = canonical_branch_identity(name)
+    for branch in list_resume_branches(connection, current_only=True):
+        if canonical_branch_identity(branch.name) == folded:
+            return branch
+    return None
+
+
+def insert_resume_branch(
+    connection: sqlite3.Connection,
+    branch: ResumeBranch,
+    *,
+    produced_by_run_id: str,
+    generation_id: str,
+) -> None:
+    if not produced_by_run_id or not generation_id:
+        raise IntegrityFailureError("branch_production_identity_invalid")
+    if branch.superseded_at is not None:
+        raise IntegrityFailureError("branch_initial_lifecycle_invalid")
+    snapshot = connection.execute(
+        "SELECT superseded_at FROM assessment_snapshots WHERE id = ?",
+        (branch.assessment_snapshot_id,),
+    ).fetchone()
+    if snapshot is None:
+        raise IntegrityFailureError("branch_snapshot_missing")
+    if snapshot["superseded_at"] is not None:
+        raise IntegrityFailureError("branch_snapshot_superseded")
+    if (
+        connection.execute(
+            "SELECT 1 FROM job_descriptions WHERE id = ?",
+            (branch.job_description_id,),
+        ).fetchone()
+        is None
+    ):
+        raise IntegrityFailureError("branch_job_description_missing")
+    if current_branch_name_conflict(connection, branch.name) is not None:
+        raise IntegrityFailureError("branch_folded_name_conflict")
+    try:
+        connection.execute(
+            """
+            INSERT INTO resume_branches(
+                id, name, assessment_snapshot_id, job_description_id,
+                created_at, superseded_at, metadata_json, produced_by_run_id,
+                generation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                branch.id,
+                branch.name,
+                branch.assessment_snapshot_id,
+                branch.job_description_id,
+                _iso(branch.created_at),
+                _iso(branch.superseded_at),
+                _json(branch.metadata),
+                produced_by_run_id,
+                generation_id,
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        if "resume_branches.id" in str(error):
+            raise IdCollisionError() from error
+        raise IntegrityFailureError("branch_insert_failed") from error
+
+
+def insert_resume_bullet(
+    connection: sqlite3.Connection,
+    bullet: ResumeBullet,
+    *,
+    produced_by_run_id: str,
+    generation_id: str,
+) -> None:
+    if not produced_by_run_id or not generation_id:
+        raise IntegrityFailureError("bullet_production_identity_invalid")
+    if bullet.superseded_at is not None:
+        raise IntegrityFailureError("bullet_initial_lifecycle_invalid")
+    # §13.10: Stage 10 cannot grant its own output permission to export, so a
+    # candidate carries the §11.8 verifier-field defaults until Stage 11.
+    if bullet.verification_status != "unverified":
+        raise IntegrityFailureError("bullet_initial_verification_invalid")
+    if bullet.unsupported_phrases or bullet.verifier_reason is not None:
+        raise IntegrityFailureError("bullet_initial_verifier_state_invalid")
+    branch_row = connection.execute(
+        """
+        SELECT superseded_at, assessment_snapshot_id, job_description_id
+        FROM resume_branches WHERE id = ?
+        """,
+        (bullet.branch_id,),
+    ).fetchone()
+    if branch_row is None:
+        raise IntegrityFailureError("bullet_branch_missing")
+    if branch_row["superseded_at"] is not None:
+        raise IntegrityFailureError("bullet_branch_superseded")
+
+    for fact_id in bullet.source_fact_ids:
+        row = connection.execute(
+            "SELECT superseded_at FROM experience_facts WHERE id = ?", (fact_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("bullet_fact_missing")
+        if row["superseded_at"] is not None:
+            raise IntegrityFailureError("bullet_fact_superseded")
+    for log_id in bullet.source_log_ids:
+        if (
+            connection.execute(
+                "SELECT 1 FROM raw_logs WHERE id = ?", (log_id,)
+            ).fetchone()
+            is None
+        ):
+            raise IntegrityFailureError("bullet_log_missing")
+    # §15.11 owns `source_log_ids` as a service derivation, so storage accepts
+    # exactly the closure and never a writer-shaped subset or superset (§18).
+    if tuple(sorted(bullet.source_log_ids, key=lambda value: value.encode("utf-8"))) != (
+        bullet_log_closure(connection, bullet.source_fact_ids)
+    ):
+        raise IntegrityFailureError("bullet_log_closure_mismatch")
+
+    for claim_id in bullet.source_self_claim_ids:
+        row = connection.execute(
+            """
+            SELECT superseded_at, snapshot_id, verification_status
+            FROM self_claims WHERE id = ?
+            """,
+            (claim_id,),
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("bullet_claim_missing")
+        if row["superseded_at"] is not None:
+            raise IntegrityFailureError("bullet_claim_superseded")
+        if row["snapshot_id"] != branch_row["assessment_snapshot_id"]:
+            raise IntegrityFailureError("bullet_claim_outside_branch_snapshot")
+        if row["verification_status"] != "supported":
+            raise IntegrityFailureError("bullet_claim_not_supported")
+
+    if bullet.matched_jd_requirements:
+        job_description = get_job_description(
+            connection, branch_row["job_description_id"]
+        )
+        if job_description is None:
+            raise IntegrityFailureError("bullet_job_description_missing")
+        requirement_ids = [
+            requirement.id for requirement in job_description.parsed.requirements
+        ]
+        for requirement_id in bullet.matched_jd_requirements:
+            if requirement_ids.count(requirement_id) != 1:
+                raise IntegrityFailureError("bullet_requirement_unresolved")
+
+    try:
+        connection.execute(
+            """
+            INSERT INTO resume_bullets(
+                id, created_at, superseded_at, branch_id, text, target_section,
+                target_role_relevance, matched_jd_requirements_json,
+                source_fact_ids_json, source_log_ids_json,
+                source_self_claim_ids_json, verification_status,
+                unsupported_phrases_json, verifier_reason, produced_by_run_id,
+                generation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                bullet.id,
+                _iso(bullet.created_at),
+                _iso(bullet.superseded_at),
+                bullet.branch_id,
+                bullet.text,
+                bullet.target_section,
+                bullet.target_role_relevance,
+                _json(bullet.matched_jd_requirements),
+                _json(bullet.source_fact_ids),
+                _json(bullet.source_log_ids),
+                _json(bullet.source_self_claim_ids),
+                bullet.verification_status,
+                _json(bullet.unsupported_phrases),
+                bullet.verifier_reason,
+                produced_by_run_id,
+                generation_id,
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        if "resume_bullets.id" in str(error):
+            raise IdCollisionError() from error
+        raise IntegrityFailureError("bullet_insert_failed") from error
+
+
+def hydrate_resume_branch(row: sqlite3.Row) -> ResumeBranch:
+    try:
+        metadata = json.loads(row["metadata_json"])
+    except (json.JSONDecodeError, IndexError, TypeError) as error:
+        raise HydrationFailureError() from error
+    return _hydrate(
+        ResumeBranch,
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "assessment_snapshot_id": row["assessment_snapshot_id"],
+            "job_description_id": row["job_description_id"],
+            "created_at": row["created_at"],
+            "superseded_at": row["superseded_at"],
+            "metadata": metadata,
+        },
+    )
+
+
+def hydrate_resume_bullet(row: sqlite3.Row) -> ResumeBullet:
+    try:
+        matched = json.loads(row["matched_jd_requirements_json"])
+        fact_ids = json.loads(row["source_fact_ids_json"])
+        log_ids = json.loads(row["source_log_ids_json"])
+        claim_ids = json.loads(row["source_self_claim_ids_json"])
+        unsupported_phrases = json.loads(row["unsupported_phrases_json"])
+    except (json.JSONDecodeError, IndexError, TypeError) as error:
+        raise HydrationFailureError() from error
+    return _hydrate(
+        ResumeBullet,
+        {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "superseded_at": row["superseded_at"],
+            "branch_id": row["branch_id"],
+            "text": row["text"],
+            "target_section": row["target_section"],
+            "target_role_relevance": row["target_role_relevance"],
+            "matched_jd_requirements": matched,
+            "source_fact_ids": fact_ids,
+            "source_log_ids": log_ids,
+            "source_self_claim_ids": claim_ids,
+            "verification_status": row["verification_status"],
+            "unsupported_phrases": unsupported_phrases,
+            "verifier_reason": row["verifier_reason"],
+        },
+    )
+
+
+def list_resume_branches(
+    connection: sqlite3.Connection, *, current_only: bool = True
+) -> tuple[ResumeBranch, ...]:
+    where = " WHERE superseded_at IS NULL" if current_only else ""
+    rows = connection.execute("SELECT * FROM resume_branches" + where).fetchall()
+    return tuple(
+        sorted(
+            (hydrate_resume_branch(row) for row in rows),
+            key=lambda item: item.id.encode("utf-8"),
+        )
+    )
+
+
+def get_resume_branch(
+    connection: sqlite3.Connection,
+    branch_id: str,
+    *,
+    current_only: bool = True,
+) -> ResumeBranch | None:
+    current = " AND superseded_at IS NULL" if current_only else ""
+    row = connection.execute(
+        "SELECT * FROM resume_branches WHERE id = ?" + current,
+        (branch_id,),
+    ).fetchone()
+    return None if row is None else hydrate_resume_branch(row)
+
+
+def list_resume_bullets_for_branch(
+    connection: sqlite3.Connection,
+    branch_id: str,
+    *,
+    current_only: bool = True,
+) -> tuple[ResumeBullet, ...]:
+    current = " AND superseded_at IS NULL" if current_only else ""
+    rows = connection.execute(
+        "SELECT * FROM resume_bullets WHERE branch_id = ?" + current,
+        (branch_id,),
+    ).fetchall()
+    return tuple(
+        sorted(
+            (hydrate_resume_bullet(row) for row in rows),
+            key=lambda item: item.id.encode("utf-8"),
+        )
+    )
+
+
+def mark_resume_branches_superseded(
+    connection: sqlite3.Connection,
+    branch_ids: Iterable[str],
+    superseded_at: datetime,
+) -> None:
+    _mark_rows_superseded(
+        connection,
+        table="resume_branches",
+        ids=branch_ids,
+        superseded_at=superseded_at,
+    )
+
+
+def mark_resume_bullets_superseded(
+    connection: sqlite3.Connection,
+    bullet_ids: Iterable[str],
+    superseded_at: datetime,
+) -> None:
+    _mark_rows_superseded(
+        connection,
+        table="resume_bullets",
+        ids=bullet_ids,
+        superseded_at=superseded_at,
+    )

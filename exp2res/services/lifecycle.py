@@ -11,7 +11,12 @@ import sqlite3
 from typing import Callable
 
 from exp2res import __version__
-from exp2res.domain.results import AffectedIds, EntityIdGroup, InvalidatedView
+from exp2res.domain.results import (
+    AffectedIds,
+    EntityIdGroup,
+    InvalidatedBranch,
+    InvalidatedView,
+)
 from exp2res.errors import Exp2ResError, LLMCancelledError, LLMInvocationError
 from exp2res.llm.contracts import ContractWarning
 from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
@@ -55,6 +60,21 @@ class LifecycleResult:
             if result:
                 by_id.update((item.snapshot_id, item) for item in result.invalidated_views)
         return tuple(by_id[key] for key in sorted(by_id, key=lambda value: value.encode("utf-8")))
+
+    @property
+    def invalidated_branches(self) -> tuple[InvalidatedBranch, ...]:
+        # §13.13 rule 9: one report per branch name, whichever stage
+        # invalidated it; both stages replace the same current branch set.
+        by_name: dict[str, InvalidatedBranch] = {}
+        for result in (self.stage3, self.stage4):
+            if result:
+                by_name.update(
+                    (item.name, item) for item in result.invalidated_branches
+                )
+        return tuple(
+            by_name[key]
+            for key in sorted(by_name, key=lambda value: value.encode("utf-8"))
+        )
 
     @property
     def residual_paths(self) -> tuple[str, ...]:
@@ -104,6 +124,8 @@ class LifecycleResult:
             add(superseded, "contradiction", self.stage3.superseded_contradiction_ids)
             add(superseded, "self_claim", self.stage3.superseded_claim_ids)
             add(superseded, "assessment_snapshot", self.stage3.superseded_snapshot_ids)
+            add(superseded, "resume_branch", self.stage3.superseded_branch_ids)
+            add(superseded, "resume_bullet", self.stage3.superseded_bullet_ids)
         if self.stage4:
             add(created, "gap_question", self.stage4.created_gap_ids)
             add(created, "contradiction", self.stage4.created_contradiction_ids)
@@ -111,6 +133,8 @@ class LifecycleResult:
             add(superseded, "contradiction", self.stage4.superseded_contradiction_ids)
             add(superseded, "self_claim", self.stage4.superseded_claim_ids)
             add(superseded, "assessment_snapshot", self.stage4.superseded_snapshot_ids)
+            add(superseded, "resume_branch", self.stage4.superseded_branch_ids)
+            add(superseded, "resume_bullet", self.stage4.superseded_bullet_ids)
 
         def groups(values: dict[str, set[str]]) -> list[EntityIdGroup]:
             return [
