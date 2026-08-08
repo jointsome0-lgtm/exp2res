@@ -17,12 +17,12 @@ from exp2res.storage.workspace import read_database, require_compatible
 
 
 def validate_extract_selection(workspace: Path, *, log_id: str | None) -> None:
-    """§14.14 rule 3: selector validity precedes consent and adapter preflight.
+    """§14.14 rule 3: selector validity precedes adapter resolution/preflight.
 
     An unknown `--log-id` must fail as class-2 `selector_not_found` before
-    the cost-consent prompt and before any provider-side construction; the
-    lineage planner re-checks under the writer lock, so a record deleted
-    between this check and extraction still fails with the same class.
+    any provider-side construction; the lineage planner re-checks under the
+    writer lock, so a record deleted between this check and extraction still
+    fails with the same class.
     """
 
     require_compatible(workspace)

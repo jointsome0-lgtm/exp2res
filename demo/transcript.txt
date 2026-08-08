@@ -11,21 +11,21 @@ Initialized schema version 9 at demo/workspace.
 
 Configured demo/workspace timezone: Europe/Berlin
 
-$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-06-02.md --owner-authored
+$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-06-02.md
 Created raw log log_demo_0001 with evidence evi_demo_0001.
 
-$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-06-25.md --owner-authored
+$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-06-25.md
 Created raw log log_demo_0002 with evidence evi_demo_0002.
 
-$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-07-02.md --owner-authored
+$ exp2res --workspace demo/workspace log today --project 'K8s Playbook' --file examples/vera/corpus/logs/daily-2026-07-02.md
 Created raw log log_demo_0003 with evidence evi_demo_0003.
 
 == Act 1 — supported first mirror and export ==
 
-$ exp2res --workspace demo/workspace --yes extract
+$ exp2res --workspace demo/workspace extract
 Extracted 3 facts (0 superseded).
 
-$ exp2res --workspace demo/workspace --yes detections generate
+$ exp2res --workspace demo/workspace detections generate
 Replaced the complete gap and contradiction sets. Current gaps (1): gap_demo_0001. Current contradictions (1): contradiction_demo_0001. Invalidated artifact classes: none.
 
 $ exp2res --workspace demo/workspace gaps list
@@ -34,10 +34,10 @@ gap_demo_0001	medium	missing_metric	false
 $ exp2res --workspace demo/workspace contradictions show --contradiction-id contradiction_demo_0001
 contradiction_demo_0001	Vera Example ingress completion conflict	2026-07-11T10:05:00+02:00
 
-$ exp2res --workspace demo/workspace --yes assess generate
+$ exp2res --workspace demo/workspace assess generate
 Created snapshot_demo_0001 — Self-Assessment — Global; 2 claims.
 
-$ exp2res --workspace demo/workspace --yes assess verify --snapshot snapshot_demo_0001
+$ exp2res --workspace demo/workspace assess verify --snapshot snapshot_demo_0001
 Snapshot snapshot_demo_0001: supported
 
 Finding finding_demo_0001
@@ -183,7 +183,7 @@ drafting back up today.
 
 == Act 2 — rejected overclaim and first-class export refusal ==
 
-$ exp2res --workspace demo/workspace --yes assess generate --scope project --project 'K8s Playbook'
+$ exp2res --workspace demo/workspace assess generate --scope project --project 'K8s Playbook'
 Created snapshot_demo_0002 — Self-Assessment — K8s Playbook; 2 claims.
 
 $ exp2res --workspace demo/workspace assess show --snapshot snapshot_demo_0002
@@ -191,7 +191,7 @@ Self-Assessment — K8s Playbook
 claim_demo_0003	pattern_signal	technical_skill	medium	unverified
 claim_demo_0004	narrative_summary	trajectory	medium	unverified
 
-$ exp2res --workspace demo/workspace --yes assess verify --snapshot snapshot_demo_0002
+$ exp2res --workspace demo/workspace assess verify --snapshot snapshot_demo_0002
 Assessment verification completed, but assessment export is blocked.
 Snapshot snapshot_demo_0002: rejected
 

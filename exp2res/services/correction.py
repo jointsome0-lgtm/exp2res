@@ -87,7 +87,7 @@ def _capture_error(error: BaseException) -> InvalidInputError:
 
 
 def validate_correction_selection(workspace: Path, *, log_id: str) -> RawLog:
-    """Resolve the retained raw selector before prompts, consent, or adapter work."""
+    """Resolve the retained raw selector before capture input or adapter work."""
 
     require_compatible(workspace)
     with read_database(workspace) as connection:

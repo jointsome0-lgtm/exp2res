@@ -204,7 +204,6 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
             gap_id,
             "--file",
             str(answer_source),
-            "--owner-authored",
         ],
     )
     assert answered_result.exit_code == 0, (answered_result.stderr, answered)

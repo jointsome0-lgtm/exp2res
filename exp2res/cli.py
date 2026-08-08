@@ -60,7 +60,6 @@ from exp2res.errors import (
     MigrationInterrupted,
     NonInteractiveInputRequired,
     OperationCancelledError,
-    OwnerAuthorshipRequired,
     PeriodNotAllowedError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
@@ -872,15 +871,12 @@ def log_today(
     context: typer.Context,
     project: str | None = typer.Option(None, "--project"),
     source_file: str | None = typer.Option(None, "--file"),
-    owner_authored: bool = typer.Option(False, "--owner-authored"),
     artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
         artifact_values = tuple(artifacts or ())
         validate_artifact_locator_count(artifact_values)
         if source_file is not None:
-            if not owner_authored:
-                raise OwnerAuthorshipRequired()
             return _capture_outcome(
                 capture_daily_file(
                     workspace,
@@ -915,15 +911,12 @@ def log_retro(
     precision: str | None = typer.Option(None, "--precision"),
     confidence: str | None = typer.Option(None, "--confidence"),
     project: str | None = typer.Option(None, "--project"),
-    owner_authored: bool = typer.Option(False, "--owner-authored"),
     artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
         artifact_values = tuple(artifacts or ())
         validate_artifact_locator_count(artifact_values)
         if source_file is not None:
-            if not owner_authored:
-                raise OwnerAuthorshipRequired()
             _validate_non_prompt_period(precision, period, confidence)
             validate_project_label(project)
             require_compatible(workspace)
@@ -1001,7 +994,6 @@ def correction_add(
     context: typer.Context,
     log_id: str = typer.Option(..., "--log-id"),
     source_file: str | None = typer.Option(None, "--file"),
-    owner_authored: bool = typer.Option(False, "--owner-authored"),
     period: str | None = typer.Option(None, "--period"),
     precision: str | None = typer.Option(None, "--precision"),
     confidence: str | None = typer.Option(None, "--confidence"),
@@ -1036,8 +1028,6 @@ def correction_add(
         target = validate_correction_selection(workspace, log_id=log_id)
 
         if source_file is not None:
-            if not owner_authored:
-                raise OwnerAuthorshipRequired()
             # Copy-unless-replaced, made explicit: no temporal flag copies the
             # target's placement exactly, and any flag demands §14.3's whole
             # typed set rather than a partial edit of the copied value.
@@ -1060,28 +1050,11 @@ def correction_add(
                 else project_option
             )
             validate_project_label(project)
-            # §14.14 rule 3: the affirmation covers authorship of the text,
-            # never the cost-bearing rebuild the capture triggers. A
-            # non-interactive run cannot supply that consent, so it fails
-            # before the source is touched — `--file -` would otherwise block
-            # on a pipe whose content the command was never going to use.
-            if not controls.yes and _noninteractive(controls):
-                raise NonInteractiveInputRequired()
             raw_text, external_ref = read_correction_source(
                 workspace, source_path=source_file
             )
-            # The interactive confirmation stays after acquisition: under
-            # `--file -` the record and the answer share one stream, so
-            # confirming first would consume the record's first line.
-            if not controls.yes and not typer.confirm(
-                "Store the correction and rebuild derived state through "
-                "Stage 5 with the configured model provider?",
-                err=True,
-            ):
-                return Outcome(exit_code=9, diagnostic_class="cancelled")
             return _store_correction(
                 workspace,
-                controls,
                 target_id=target.id,
                 raw_text=raw_text,
                 occurred=occurred,
@@ -1114,34 +1087,26 @@ def correction_add(
                 error.public_message = "The temporal shape is invalid."
                 raise error from cause
 
-        project_display = target.project if target.project is not None else "<none>"
-        if typer.confirm(
-            f"Copy stored project/activity exactly ({project_display})?",
-            default=True,
+        project_seed = json.dumps(target.project, ensure_ascii=False)
+        project_value = typer.prompt(
+            "Project/activity JSON (accept to copy the stored value exactly)",
+            default=project_seed,
             err=True,
-        ):
+        )
+        if project_value == project_seed:
             project = target.project
         else:
-            project = (
-                typer.prompt(
-                    "Replacement project/activity? (leave blank to clear)",
-                    default="",
-                    err=True,
-                )
-                or None
-            )
+            try:
+                parsed_project = json.loads(project_value)
+            except (json.JSONDecodeError, TypeError) as cause:
+                raise InvalidInputError() from cause
+            if parsed_project is not None and not isinstance(parsed_project, str):
+                raise InvalidInputError()
+            project = parsed_project
         validate_project_label(project)
-
-        if not controls.yes and not typer.confirm(
-            "Store the correction and rebuild derived state through Stage 5 "
-            "with the configured model provider?",
-            err=True,
-        ):
-            return Outcome(exit_code=9, diagnostic_class="cancelled")
 
         return _store_correction(
             workspace,
-            controls,
             target_id=target.id,
             raw_text=raw_text,
             occurred=occurred,
@@ -1155,7 +1120,6 @@ def correction_add(
 
 def _store_correction(
     workspace: Path,
-    controls: Controls,
     *,
     target_id: str,
     raw_text: str,
@@ -1166,15 +1130,14 @@ def _store_correction(
 ) -> Outcome:
     """Commit one §14.4 correction and its §13.13 rebuild, however captured.
 
-    Both capture forms reach this identical boundary: prompts, the non-prompt
-    flags, source acquisition, and consent all resolve before it, so the
-    writer authority below covers exactly the capture-and-rebuild pair.
+    Both capture forms reach this identical boundary after prompt or file
+    input, flags, and source acquisition resolve, so the writer authority
+    below covers exactly the capture-and-rebuild pair.
     """
 
     # §8.1: one writer authority covers the §13.13 rule 4 capture
     # boundary and the selected-lineage rebuild — no other business
-    # writer can interleave between them. Prompts and consent stay
-    # outside the lock.
+    # writer can interleave between them. Capture input stays outside the lock.
     with writer_database(workspace, reconcile=True) as connection:
         try:
             captured = capture_correction(
@@ -1263,16 +1226,8 @@ def recompute_command(
     context: typer.Context,
     log_id: str | None = typer.Option(None, "--log-id"),
 ) -> None:
-    def operation(workspace: Path, controls: Controls) -> Outcome:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
         validate_extract_selection(workspace, log_id=log_id)
-        if not controls.yes:
-            if _noninteractive(controls):
-                raise NonInteractiveInputRequired()
-            if not typer.confirm(
-                "Recompute derived state through Stage 5 using the configured model provider?",
-                err=True,
-            ):
-                return Outcome(exit_code=9, diagnostic_class="cancelled")
         retry = Retry(
             command=(
                 "exp2res recompute"
@@ -1295,20 +1250,11 @@ def extract_command(
     context: typer.Context,
     log_id: str | None = typer.Option(None, "--log-id"),
 ) -> None:
-    def operation(workspace: Path, controls: Controls) -> Outcome:
-        # §14.14 rule 3, in `logs delete` order: the selector must resolve
-        # before consent is requested and before any adapter construction.
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.14 rule 3: the selector must resolve before any adapter
+        # construction. A mistyped selector therefore remains a class-2
+        # refusal and cannot reach provider preflight.
         validate_extract_selection(workspace, log_id=log_id)
-        # §14.14 rule 3: extraction is cost-bearing — explicit --yes when
-        # non-interactive, a TTY confirmation otherwise.
-        if not controls.yes:
-            if _noninteractive(controls):
-                raise NonInteractiveInputRequired()
-            if not typer.confirm(
-                "Run fact extraction with the configured model provider?",
-                err=True,
-            ):
-                return Outcome(exit_code=9, diagnostic_class="cancelled")
         try:
             extracted = run_extract(workspace, log_id=log_id)
         except Exp2ResError as error:
@@ -1469,19 +1415,10 @@ def _detection_groups(
 
 @detections_app.command("generate")
 def detections_generate(context: typer.Context) -> None:
-    def operation(workspace: Path, controls: Controls) -> Outcome:
-        # §14.14 rule 3: compatibility precedes consent; this command has no
-        # selector, and adapter construction follows cost consent.
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.14 rule 3: compatibility precedes adapter construction; this
+        # command has no selector.
         require_compatible(workspace)
-        if not controls.yes:
-            if _noninteractive(controls):
-                raise NonInteractiveInputRequired()
-            if not typer.confirm(
-                "Regenerate the detection sets with the configured model "
-                "provider, replacing any changed complete set?",
-                err=True,
-            ):
-                return Outcome(exit_code=9, diagnostic_class="cancelled")
         generated = run_detections_generate(workspace)
         gaps = list(generated.current_gaps)
         contradictions = list(generated.current_contradictions)
@@ -1631,19 +1568,11 @@ def assess_generate(
     scope: str = typer.Option("global", "--scope"),
     project: str | None = typer.Option(None, "--project"),
 ) -> None:
-    def operation(workspace: Path, controls: Controls) -> Outcome:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
         selected_scope, selected_project = validate_assessment_selection(
             scope=scope, project=project
         )
         require_compatible(workspace)
-        if not controls.yes:
-            if _noninteractive(controls):
-                raise NonInteractiveInputRequired()
-            if not typer.confirm(
-                "Generate the self-assessment view using the configured model provider?",
-                err=True,
-            ):
-                return Outcome(exit_code=9, diagnostic_class="cancelled")
         generated = run_assess_generate(
             workspace, scope=selected_scope, project=selected_project
         )
@@ -1711,8 +1640,8 @@ def assess_repair(
     context: typer.Context,
     snapshot_id: str = typer.Option(..., "--snapshot"),
 ) -> None:
-    def operation(workspace: Path, controls: Controls) -> Outcome:
-        # §14.9: no provider call and no cost-bearing consent; the §13.6
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.9: no provider call or adapter construction; the §13.6
         # preconditions and swap run under the ordinary writer authority.
         try:
             repaired = run_assess_repair(workspace, snapshot_id=snapshot_id)
@@ -1796,9 +1725,9 @@ def assess_verify(
     context: typer.Context,
     snapshot_id: str = typer.Option(..., "--snapshot"),
 ) -> None:
-    def operation(workspace: Path, controls: Controls) -> Outcome:
-        # §14.14 rule 3: resolve the selector before consent so a missing or
-        # superseded snapshot never prompts or constructs the LLM adapter.
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.14 rule 3: resolve the selector before adapter construction so a
+        # missing or superseded snapshot cannot reach provider preflight.
         require_compatible(workspace)
         with read_database(workspace) as connection:
             snapshot = get_assessment_snapshot(
@@ -1808,15 +1737,6 @@ def assess_verify(
             raise SelectorNotFoundError()
         if snapshot.superseded_at is not None:
             raise SnapshotNotCurrentError()
-
-        if not controls.yes:
-            if _noninteractive(controls):
-                raise NonInteractiveInputRequired()
-            if not typer.confirm(
-                "Verify the self-assessment view using the configured model provider?",
-                err=True,
-            ):
-                return Outcome(exit_code=9, diagnostic_class="cancelled")
 
         verified = run_assess_verify(workspace, snapshot_id=snapshot_id)
         findings = list(verified.findings)
@@ -1972,14 +1892,11 @@ def gaps_answer(
     context: typer.Context,
     gap_id: str = typer.Option(..., "--gap-id"),
     source_file: str | None = typer.Option(None, "--file"),
-    owner_authored: bool = typer.Option(False, "--owner-authored"),
     artifacts: list[str] | None = typer.Option(None, "--artifact"),
 ) -> None:
     def operation(workspace: Path, controls: Controls) -> Outcome:
         artifact_values = tuple(artifacts or ())
         validate_artifact_locator_count(artifact_values)
-        if source_file is not None and not owner_authored:
-            raise OwnerAuthorshipRequired()
         # Resolve before file acquisition or prompt; capture re-checks under
         # the writer lock so this read-only validation cannot race the write.
         validate_gap_answer_selection(workspace, gap_id=gap_id)

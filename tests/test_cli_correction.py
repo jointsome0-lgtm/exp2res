@@ -341,7 +341,7 @@ def test_correction_copy_and_explicit_temporal_project_replacement(
         input=(
             "Vera Example second complete restatement.\n"
             + replacement.model_dump_json()
-            + "\nn\nVera Example Replacement\n"
+            + '\n"Vera Example Replacement"\n'
         ),
     )
     assert second_result.exit_code == 0
@@ -459,8 +459,8 @@ def test_open_period_correction_reattests_then_closes_without_rewriting_history(
 @pytest.mark.parametrize(
     ("stored_project", "replacement_input", "expected_project"),
     [
-        ("<clear>", "\n", None),
-        (None, "<none>\n", "<none>"),
+        ("<clear>", "null\n", None),
+        (None, '"<none>"\n', "<none>"),
     ],
 )
 def test_correction_project_choice_has_no_sentinel_collisions(
@@ -488,7 +488,6 @@ def test_correction_project_choice_has_no_sentinel_collisions(
         input=(
             "Vera Example complete project-sentinel restatement.\n"
             "\n"
-            "n\n"
             + replacement_input
         ),
     )
@@ -1035,7 +1034,7 @@ def test_interactive_delete_confirmation_names_the_rebuild(
         assert get_raw_log(connection, selected.id) is not None
 
 
-def test_interactive_correction_confirmation_names_model_provider(
+def test_interactive_correction_runs_without_confirmation(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target, _items = add_log(
@@ -1047,26 +1046,31 @@ def test_interactive_correction_confirmation_names_model_provider(
         item_specs=(("evi_vera_correction_consent", "manual_claim"),),
     )
     monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+    _install_lifecycle_runner(monkeypatch)
     monkeypatch.setattr(
-        lifecycle_service,
-        "build_llm_execution",
-        lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
+        cli_module.typer,
+        "confirm",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("routine model work prompted")
+        ),
     )
 
     result, envelope = _invoke_json(
         workspace,
         ["correction", "add", "--log-id", target.id],
-        input="Vera Example declined correction restatement.\n\n\nn\n",
+        input="Vera Example promptless correction restatement.\n\n\n",
     )
 
-    assert result.exit_code == 9
-    assert envelope["diagnostic_class"] == "cancelled"
-    assert "configured model provider" in result.output
+    assert result.exit_code == 0, result.output
+    correction_id = next(
+        group["ids"][0]
+        for group in envelope["affected_ids"]["created"]
+        if group["entity_type"] == "raw_log"
+    )
     with read_database(workspace) as connection:
-        rows = connection.execute(
-            "SELECT id FROM raw_logs ORDER BY CAST(id AS BLOB)"
-        ).fetchall()
-    assert [row[0] for row in rows] == [target.id]
+        correction = get_raw_log(connection, correction_id)
+    assert correction is not None
+    assert correction.corrects_log_id == target.id
 
 
 def test_correction_and_delete_hold_one_writer_acquisition(

@@ -195,8 +195,8 @@ note = "Current Stage 6 tests prove complete current unknown membership and type
 status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.30", "21.43", "21.44", "21.49"]
-issues = ["#81", "PR #95", "#69", "PR #101", "PR #107", "#82", "PR #125"]
-note = "Local workspace controls, bounded foreground transport, secret-safe preflight, explicit extraction consent, and an instruction-like Vera source replay are proven; the complete no-egress, prompt-composition, full injection matrix, integration, and managed-deletion contract remains"
+issues = ["#81", "PR #95", "#69", "PR #101", "PR #107", "#82", "PR #125", "#248"]
+note = "Local workspace controls, bounded foreground transport, secret-safe preflight, promptless explicit pipeline calls, and an instruction-like Vera source replay are proven; the complete no-egress, prompt-composition, full injection matrix, integration, and managed-deletion contract remains"
 
 ["24.31"]
 status = "pending"
@@ -297,8 +297,8 @@ note = "Stage 3 and Vera E1 prove deterministic correction displacement, effecti
 status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.41"]
-issues = ["#81", "PR #95", "#69", "PR #101", "#82", "PR #125", "#96", "#156", "#157", "#164"]
-note = "Discovery, schema gating, non-interactive controls, stable exit classes, closed envelopes, extraction consent/cancellation, standard Stage 3 affected/generation/run/warning fields, complete read-only facts list/show projections, logs show current/displaced inspection with linked evidence and its single-record human raw-text carve-out, and human-mode rendering of the fact field set and §13.13 rule 9 view reports on success and failure alike are proven; later command families remain"
+issues = ["#81", "PR #95", "#69", "PR #101", "#82", "PR #125", "#96", "#156", "#157", "#164", "#248"]
+note = "Discovery, schema gating, non-interactive controls, stable exit classes, closed envelopes, promptless explicit model calls, extraction cancellation, standard Stage 3 affected/generation/run/warning fields, complete read-only facts list/show projections, logs show current/displaced inspection with linked evidence and its single-record human raw-text carve-out, and human-mode rendering of the fact field set and §13.13 rule 9 view reports on success and failure alike are proven; later command families remain"
 
 ["24.45"]
 status = "partial"
@@ -403,11 +403,11 @@ issues = ["#159", "#171"]
 note = "Covered eval 21.51 proves every owner-capture command surface, ordered atomic persistence and logs-show projection, strict byte-preserving remote URI validation, slash-prefixed drive rejection, shared current-policy prompt reauthorization for captured and imported local paths without row mutation, directory-independent reauthorization of canonically persisted locators captured through relative spellings, remote non-resolution, and both unchanged §9.4 calibration outcomes."
 
 ["24.56"]
-status = "partial"
+status = "met"
 phases = ["0"]
 evals = ["21.52"]
-issues = ["#161", "#163", "#171", "#180"]
-note = "Eval 21.52 proves bounded byte-identical multiline file/stdin capture with unchanged classifications and artifact composition, canonical-real-path external_ref for a relative --file source, the unknown-precision prompt and typed-value carve-outs, and — for corrections — copy-unless-replaced placement and project, whole-typed-set replacement, mutually exclusive project flags, non-prompt-only flag scoping, and a copied placement needing no workspace timezone where an explicit replacement still does. Partial until A6's CLI change lands: no test yet proves that a non-prompt capture succeeds with no affirmation flag and no confirmation."
+issues = ["#161", "#163", "#171", "#180", "#248"]
+note = "Eval 21.52 proves bounded byte-identical multiline file/stdin capture without an affirmation flag or confirmation, with unchanged classifications and artifact composition, canonical-real-path external_ref for a relative --file source, the unknown-precision prompt and typed-value carve-outs, and — for corrections — copy-unless-replaced placement and project, whole-typed-set replacement, mutually exclusive project flags, non-prompt-only flag scoping, and a copied placement needing no workspace timezone where an explicit replacement still does."
 
 ["24.57"]
 status = "met"

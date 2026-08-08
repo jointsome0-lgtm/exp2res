@@ -334,6 +334,11 @@ nodes = [
   "tests/test_workspace_phase0.py::test_nearest_partial_marker_wins_and_override_never_falls_back",
   "tests/test_workspace_phase0.py::test_incompatible_workspace_blocks_file_capture_before_source_read",
   "tests/test_cli_extract.py::test_facts_show_human_renders_content_and_leaves_the_envelope_unchanged",
+  "tests/test_cli_extract.py::test_extract_runs_without_yes_or_confirmation",
+  "tests/test_cli_detections.py::test_generate_runs_without_confirmation_and_keeps_zero_input_runner_lazy",
+  "tests/test_cli_assess.py::test_generate_runs_without_yes_or_confirmation",
+  "tests/test_cli_assess.py::test_verify_runs_without_yes_or_confirmation",
+  "tests/test_correction_nonprompt.py::test_file_correction_reads_stdin_and_runs_without_cost_prompt",
   "tests/test_cli_correction.py::test_failed_lifecycle_still_reports_the_invalidated_view[human]",
   "tests/test_cli_correction.py::test_failed_lifecycle_still_reports_the_invalidated_view[json]",
 ]
@@ -563,7 +568,7 @@ nodes = [
 ]
 
 ["21.52"]
-status = "partial"
+status = "covered"
 nodes = [
   "tests/test_capture_noninteractive.py::test_multiline_file_and_stdin_capture_round_trip_with_unchanged_classes",
   "tests/test_capture_noninteractive.py::test_interactive_unknown_precision_skips_period_and_stores_null_bounds",
@@ -586,9 +591,10 @@ nodes = [
   "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[missing-period]",
   "tests/test_correction_nonprompt.py::test_copied_placement_needs_no_workspace_timezone",
   "tests/test_correction_nonprompt.py::test_explicit_temporal_replacement_still_requires_the_timezone",
+  "tests/test_correction_nonprompt.py::test_file_correction_reads_stdin_and_runs_without_cost_prompt",
 ]
 phase = "1"
-note = "All four non-prompt capture forms prove multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate; correction proves copy-unless-replaced placement and project, the whole-typed-set replacement rules, mutually exclusive project flags, and non-prompt-only flag scoping. Partial until A6's CLI change lands: the shipped affirmation and rebuild-consent tests asserted the removed prerequisites and left with the flag, so flagless-success coverage is still missing."
+note = "All four non-prompt capture forms prove flagless multiline file/stdin fidelity, unchanged classification, and no confirmation; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate; correction proves copy-unless-replaced placement and project, the whole-typed-set replacement rules, mutually exclusive project flags, non-prompt-only flag scoping, and promptless capture-triggered model work."
 
 ["21.53"]
 status = "covered"

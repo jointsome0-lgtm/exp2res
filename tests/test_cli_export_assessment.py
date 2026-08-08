@@ -149,7 +149,7 @@ def test_logs_delete_clears_a_preamble_residual_it_later_removed(
     # committed deletion reports success rather than class 8.
     source = VERA_CORPUS / "logs" / "daily-2026-06-09.md"
     captured, captured_envelope = invoke_json(
-        workspace, ["log", "today", "--file", str(source), "--owner-authored"]
+        workspace, ["log", "today", "--file", str(source)]
     )
     assert captured.exit_code == 0
     log_id = next(
@@ -171,7 +171,7 @@ def test_logs_delete_clears_a_preamble_residual_it_later_removed(
     # Non-vacuity: a non-destructive writer leaves the ambiguous sibling in
     # place and reports it, exactly the state the deletion must clear.
     retained, retained_envelope = invoke_json(
-        workspace, ["log", "today", "--file", str(source), "--owner-authored"]
+        workspace, ["log", "today", "--file", str(source)]
     )
     assert retained.exit_code == 8
     assert retained_envelope["residual_paths"] == [str(ambiguous)]
@@ -289,7 +289,7 @@ def test_undecodable_managed_entry_does_not_block_writers(
 
     source = VERA_CORPUS / "logs" / "daily-2026-06-09.md"
     result, envelope = invoke_json(
-        workspace, ["log", "today", "--file", str(source), "--owner-authored"]
+        workspace, ["log", "today", "--file", str(source)]
     )
     assert result.exit_code == 0
     assert envelope["residual_paths"] == []
@@ -341,7 +341,6 @@ def test_interrupted_gap_answer_cleanup_reports_the_stale_set(
             "gap_vera_interrupt",
             "--file",
             str(source),
-            "--owner-authored",
         ],
     )
     # The answer transaction committed before the interrupt; the cancelled
@@ -413,7 +412,7 @@ def test_undecodable_residual_path_is_escaped_in_the_envelope(
     # form instead of surrogates that UTF-8 output cannot carry.
     source = VERA_CORPUS / "logs" / "daily-2026-06-09.md"
     captured, captured_envelope = invoke_json(
-        workspace, ["log", "today", "--file", str(source), "--owner-authored"]
+        workspace, ["log", "today", "--file", str(source)]
     )
     assert captured.exit_code == 0
     log_id = next(
@@ -452,7 +451,7 @@ def test_non_export_writer_commits_but_preamble_residual_forces_class_8(
 
     source = VERA_CORPUS / "logs" / "daily-2026-06-09.md"
     result, envelope = invoke_json(
-        workspace, ["log", "today", "--file", str(source), "--owner-authored"]
+        workspace, ["log", "today", "--file", str(source)]
     )
     assert result.exit_code == 8
     assert envelope["diagnostic_class"] == "managed_output_incomplete"

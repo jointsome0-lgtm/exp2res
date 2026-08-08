@@ -377,7 +377,6 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
                     "K8s Playbook",
                     "--file",
                     relative,
-                    "--owner-authored",
                 ],
             )
 
@@ -388,14 +387,14 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
         service=extraction_service, stage_name="run_fact_extraction",
         real_stage=run_fact_extraction,
         response_names=[f"demo-extract-call-{index:02d}.json" for index in range(1, 4)],
-        arguments=["--yes", "extract"],
+        arguments=["extract"],
     )
     clock.set("2026-07-11T10:05:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
         service=detection_service, stage_name="run_detection_generation",
         real_stage=run_detection_generation, response_names=["demo-detection.json"],
-        arguments=["--yes", "detections", "generate"],
+        arguments=["detections", "generate"],
     )
     invoke(transcript, workspace, ["gaps", "list"])
     invoke(transcript, workspace, ["contradictions", "show", "--contradiction-id", "contradiction_demo_0001"])
@@ -405,7 +404,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
         service=assessment_service, stage_name="run_assessment_generation",
         real_stage=run_assessment_generation,
         response_names=["demo-assessment-act1.json"],
-        arguments=["--yes", "assess", "generate"],
+        arguments=["assess", "generate"],
     )
     act1_snapshot = _current_snapshot(workspace, "global")
     clock.set("2026-07-11T10:17:00+02:00")
@@ -414,7 +413,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
         service=assessment_service, stage_name="run_assessment_verification",
         real_stage=run_assessment_verification,
         response_names=["demo-verification-act1-supported.json"] * 2,
-        arguments=["--yes", "assess", "verify", "--snapshot", act1_snapshot],
+        arguments=["assess", "verify", "--snapshot", act1_snapshot],
     )
     invoke(transcript, workspace, ["assess", "show", "--snapshot", act1_snapshot])
 
@@ -448,7 +447,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
         real_stage=run_assessment_generation,
         response_names=["demo-assessment-act2-overclaim.json"],
         arguments=[
-            "--yes", "assess", "generate", "--scope", "project",
+            "assess", "generate", "--scope", "project",
             "--project", "K8s Playbook",
         ],
     )
@@ -463,7 +462,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
             "demo-verification-act2-rejected.json",
             "demo-verification-act2-supported.json",
         ],
-        arguments=["--yes", "assess", "verify", "--snapshot", act2_snapshot],
+        arguments=["assess", "verify", "--snapshot", act2_snapshot],
         expected={10},
     )
     export_result = invoke(

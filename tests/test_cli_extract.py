@@ -10,6 +10,7 @@ import sqlite3
 import pytest
 from typer.testing import CliRunner
 
+import exp2res.cli as cli_module
 import exp2res.pipeline.stage3 as stage3_module
 import exp2res.services.extraction as extraction_service
 import exp2res.services.facts as facts_service
@@ -145,19 +146,26 @@ def test_build_llm_execution_uses_workspace_selection_and_budget_defaults(
     assert selected_runner.materialize() is materialized
 
 
-def test_extract_noninteractive_requires_yes_before_runner_construction(
+def test_extract_runs_without_yes_or_confirmation(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§14.14 rule 3: no consent means no provider-side construction or call."""
+    """§14.14 rule 3: an explicit cost-bearing command does not prompt."""
 
-    def refuse_build(_workspace: Path):
-        raise AssertionError("LLM execution was built before cost consent")
+    evidence_id = seed_lineage(workspace, "promptless")
+    fake = FakeContractRunner([fact_response([evidence_id])])
+    install_fake_execution(monkeypatch, fake)
+    monkeypatch.setattr(
+        cli_module.typer,
+        "confirm",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("routine model work prompted")
+        ),
+    )
 
-    monkeypatch.setattr(extraction_service, "build_llm_execution", refuse_build)
     result, envelope = invoke_json(workspace, ["extract"])
-    assert result.exit_code == 2
-    assert envelope["diagnostic_class"] == "input_required"
-    assert envelope["run_ids"] == []
+    assert result.exit_code == 0, (result.stderr, envelope)
+    assert len(envelope["run_ids"]) == 1
+    assert len(fake.calls) == 1
 
 
 def test_extract_success_reports_standard_fields_and_contract_warnings(
@@ -273,7 +281,7 @@ def test_post_commit_interrupt_keeps_the_committed_result_and_warning(
 def test_extract_unknown_selector_has_no_run_row(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§14.6/§14.14 rule 3: selector failure precedes consent and preflight."""
+    """§14.6/§14.14 rule 3: selector failure precedes adapter preflight."""
 
     def refuse_build(_workspace: Path):
         raise AssertionError("adapter preflight ran for an invalid selector")
@@ -285,13 +293,13 @@ def test_extract_unknown_selector_has_no_run_row(
     assert result.exit_code == 2
     assert envelope["diagnostic_class"] == "selector_not_found"
     assert envelope["run_ids"] == []
-    # In `logs delete` order, the selector resolves before consent: a
-    # non-interactive call without --yes still reports the selector class.
-    unconsented, unconsented_envelope = invoke_json(
+    # The selector resolves before adapter construction whether or not the
+    # unrelated global --yes control is present.
+    without_yes, without_yes_envelope = invoke_json(
         workspace, ["extract", "--log-id", "log_vera_missing"]
     )
-    assert unconsented.exit_code == 2
-    assert unconsented_envelope["diagnostic_class"] == "selector_not_found"
+    assert without_yes.exit_code == 2
+    assert without_yes_envelope["diagnostic_class"] == "selector_not_found"
     with sqlite3.connect(workspace / ".exp2res" / "exp2res.sqlite") as connection:
         assert (
             connection.execute("SELECT COUNT(*) FROM processing_runs").fetchone()[0]
