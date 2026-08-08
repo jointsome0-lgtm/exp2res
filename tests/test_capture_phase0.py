@@ -6,9 +6,12 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
+
+import exp2res.services.capture as capture_service
 
 from exp2res.domain.models import RAW_TEXT_LIMIT, OccurredAt
 from exp2res.errors import ForbiddenPathError, IdCollisionError, InvalidInputError
@@ -263,15 +266,10 @@ def test_out_of_range_calendar_anchor_is_invalid_input_not_internal_error() -> N
         assert caught.value.exit_code == 2
 
 
-def test_allocation_carries_the_random_component_that_prevents_reuse() -> None:
-    """§12 rule 11: random allocation is the whole anti-reuse mechanism.
-
-    Nothing in the workspace remembers a purged identifier — the guarantee
-    that one is never handed out again lives entirely in this allocator. A
-    change that made IDs sequential, derived from surviving rows, or
-    otherwise predictable would silently retire that guarantee, so the
-    property is pinned here rather than left to the implementation.
-    """
+def test_every_allocated_id_delegates_to_a_version_4_uuid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§12 rule 11: random allocation is the whole anti-reuse mechanism."""
 
     kinds = (
         "raw_log",
@@ -287,15 +285,25 @@ def test_allocation_carries_the_random_component_that_prevents_reuse() -> None:
         "run",
         "gen",
     )
+    drawn: list[UUID] = []
+    source = capture_service.uuid4
+
+    def recording_uuid4() -> UUID:
+        value = source()
+        drawn.append(value)
+        return value
+
+    monkeypatch.setattr(capture_service, "uuid4", recording_uuid4)
+    for kind in kinds:
+        allocated = new_id(kind)
+        prefix, _, suffix = allocated.partition("_")
+        assert prefix
+        assert len(drawn) == kinds.index(kind) + 1
+        assert drawn[-1].version == 4
+        assert suffix == drawn[-1].hex
+
+    monkeypatch.undo()
     for kind in kinds:
         allocated = [new_id(kind) for _ in range(256)]
         assert len(set(allocated)) == 256
-        for value in allocated:
-            prefix, _, suffix = value.partition("_")
-            assert prefix
-            # 32 hex digits: the 122 random bits of a UUID4. Anything
-            # materially shorter or non-random makes reuse reachable.
-            assert len(suffix) == 32
-            assert set(suffix) <= set("0123456789abcdef")
-        # Two independent draws of the same kind never overlap.
         assert not set(allocated) & {new_id(kind) for _ in range(256)}
