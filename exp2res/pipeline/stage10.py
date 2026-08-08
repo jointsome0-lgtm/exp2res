@@ -492,6 +492,14 @@ def run_bullet_generation(
                 list_resume_bullets_for_branch(connection, branch_id),
             )
 
+        # One guarded window from the business swap to the end of cleanup:
+        # every interrupt past the durable commit — inside the transaction,
+        # between it and the result read, in the read, or in the cleanup —
+        # owes the caller the same §14.14 rule 6 report.
+        branch: ResumeBranch | None = None
+        bullets: tuple[ResumeBullet, ...] = ()
+        cleaned_sets: list[str] = []
+        returned = False
         try:
             run_complete_stage(
                 workspace,
@@ -513,6 +521,15 @@ def run_bullet_generation(
                 token_patterns=token_patterns,
                 resolved_credentials=resolved_credentials,
             )
+            returned = True
+            # Read the committed rows before the interruptible cleanup below,
+            # so the guard has a complete result to carry.
+            branch, bullets = committed_pack()
+            # §13 stale-export trigger class 1: the swap is already committed,
+            # so cleanup failure or interruption never rolls it back.
+            residual_paths = remove_branch_sets(
+                workspace, replaced.branch_ids, removed_ledger=cleaned_sets
+            )
         except BaseException as error:
             # Withdraw the pre-commit pending report only when the rollback is
             # proven; an interrupt after a durable commit keeps it reported.
@@ -523,39 +540,25 @@ def run_bullet_generation(
                 replaced.branch_ids,
                 table="resume_branches",
             )
-            if isinstance(error, LLMCancelledError) and _run_is_committed(
-                connection, run_id
-            ):
-                # §14.14 rule 6: an interrupt between SQLite's durable commit
-                # and the stage's return leaves the swap visible, so the
-                # cancelled envelope still reports it. No cleanup ran yet, so
-                # every pending stale set is still a residual.
+            cancelling = isinstance(error, (KeyboardInterrupt, LLMCancelledError))
+            if cancelling and (returned or _run_is_committed(connection, run_id)):
+                # §14.14 rule 6: the class-9 error carries the complete
+                # committed result, and only the sets this pass never reached
+                # stay reported.
+                if branch is None and branch_id is not None:
+                    try:
+                        branch, bullets = committed_pack()
+                    except BaseException:
+                        # A second interrupt inside the recovery read must not
+                        # cost the caller the identifiers already in hand; the
+                        # cancellation is honored by the raise below either way.
+                        pass
                 cancelled = OperationCancelledError()
                 cancelled.stage_result = build_result(
-                    pending_stale_paths, *committed_pack()
+                    unfinished_stale_paths(pending_stale_paths, cleaned_sets),
+                    branch,
+                    bullets,
                 )
                 raise cancelled from None
             raise
-
-        # Read the committed rows before the interruptible cleanup below, so the
-        # guard has a complete result to carry.
-        branch, bullets = committed_pack()
-
-        # §13 stale-export trigger class 1: the swap is already committed, so
-        # cleanup failure or interruption never rolls it back.
-        cleaned_sets: list[str] = []
-        try:
-            residual_paths = remove_branch_sets(
-                workspace, replaced.branch_ids, removed_ledger=cleaned_sets
-            )
-        except KeyboardInterrupt:
-            # §14.14 rule 6: the class-9 error carries the complete committed
-            # result, and the sets this pass never reached stay reported.
-            cancelled = OperationCancelledError()
-            cancelled.stage_result = build_result(
-                unfinished_stale_paths(pending_stale_paths, cleaned_sets),
-                branch,
-                bullets,
-            )
-            raise cancelled from None
         return build_result(residual_paths, branch, bullets)

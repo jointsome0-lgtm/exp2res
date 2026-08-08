@@ -386,6 +386,44 @@ def test_an_interrupt_after_the_durable_commit_still_reports_the_swap(
     assert [branch.id for branch in current] == [carried.branch_id]
 
 
+def test_an_interrupt_in_the_result_read_still_reports_the_swap(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the whole post-commit window is one guarded report."""
+
+    ids, facts, snapshot_id = prepare_anchor(workspace)
+    prior_id, _prior_bullet_id = plant_branch(
+        workspace,
+        snapshot_id=snapshot_id,
+        fact_ids=facts,
+        branch_id="branch_vera_0009",
+        bullet_id="bullet_vera_0009",
+        suffix="0009",
+    )
+    stale_set = plant_branch_set(workspace, prior_id)
+
+    def interrupt_read(*_arguments, **_keywords):
+        raise KeyboardInterrupt()
+
+    # The interrupt lands between the durable commit and the cleanup, where no
+    # error class marks it: a raw KeyboardInterrupt over committed rows.
+    monkeypatch.setattr(stage10_module, "get_resume_branch", interrupt_read)
+    fake = FakeContractRunner(
+        [writer_response([bullet_candidate(fact_ids=list(facts))])]
+    )
+
+    with pytest.raises(OperationCancelledError) as caught:
+        run_stage10(workspace, fake, ids, snapshot_id=snapshot_id)
+
+    carried = caught.value.stage_result
+    assert carried.branch_id is not None
+    assert carried.superseded_branch_ids == (prior_id,)
+    assert len(carried.bullet_ids) == 1
+    # Cleanup never started, so the replaced branch's set is still a residual.
+    assert str(stale_set) in carried.residual_paths
+    assert stale_set.exists()
+
+
 def test_a_rolled_back_branch_swap_withdraws_its_pending_report(
     workspace: Path,
 ) -> None:
