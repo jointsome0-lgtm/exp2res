@@ -880,7 +880,7 @@ def test_control_bytes_in_a_backup_name_are_escaped_in_both_modes(
 
     assert result.exit_code == 0
     assert envelope["result"]["removed_managed_paths"] == [
-        str(backup_root / "pre") + "\\x0amigration.sqlite"
+        str(backup_root / "pre") + "\\u000amigration.sqlite"
     ]
 
 
@@ -989,3 +989,29 @@ def test_a_cancelled_delete_reports_its_committed_effect_in_human_mode(
 
     assert result.exit_code == 9
     assert f"Deleted job description {job_description_id}" in result.stdout
+
+
+def test_a_real_c1_character_and_an_undecodable_byte_stay_distinct(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.15 reports each removed path by identity across both escape forms."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    literal = "pre\u0085.sqlite"
+    (backup_root / literal).write_bytes(b"")
+    undecodable = os.path.join(os.fsencode(str(backup_root)), b"pre\x85.sqlite")
+    with open(undecodable, "wb") as handle:
+        handle.write(b"")
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 0
+    removed = envelope["result"]["removed_managed_paths"]
+    assert len(set(removed)) == 2
+    assert str(backup_root / "pre") + "\\u0085.sqlite" in removed
+    assert str(backup_root / "pre") + "\\x85.sqlite" in removed

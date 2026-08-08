@@ -292,7 +292,9 @@ def _render_text(value: str) -> str:
     spells its escape keep distinct rendered identities. Control characters
     are then escaped because a legal name may hold a newline, a tab, or a
     terminal escape sequence, and one record must stay one record in both
-    the envelope and the human rendering.
+    the envelope and the human rendering. A real character takes the
+    four-digit `\\uNNNN` form, keeping it distinct from the two-digit
+    `\\xNN` an undecodable byte takes in `_render_path`.
     """
 
     escaped = value.replace("\\", "\\\\")
@@ -303,7 +305,7 @@ def _render_text(value: str) -> str:
             or ord(character) == 0x7F
             or 0x80 <= ord(character) <= 0x9F
         )
-        else f"\\x{ord(character):02x}"
+        else f"\\u{ord(character):04x}"
         for character in escaped
     )
 
@@ -2468,6 +2470,7 @@ def jd_delete(
             cancelled.run_ids = [deleted.run_id]
             cancelled.residual_paths = list(deleted.residual_paths)
             cancelled.result = _jd_delete_result(deleted)
+            cancelled.human_result = _jd_delete_human_result(deleted)
             raise cancelled from None
 
     _run_command(context, "jd delete", operation)

@@ -58,22 +58,30 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
             return (), ()
         descriptors.append(backup_fd)
 
-        def root_is_live() -> bool:
-            """Answer whether the descriptor still is the live `backup` entry.
-
-            Every scan and unlink below travels through this descriptor, so a
-            root renamed out from under it would let the work continue in a
-            detached directory while a replacement kept the purged vacancy.
-            The identity is therefore matched back to the name before removal
-            and again before cleanup is declared complete (§13.14 rule 6).
-            """
-
+        def _same_entry(name: str, parent_fd: int, opened_fd: int) -> bool:
             try:
-                named = os.stat("backup", dir_fd=marker_fd, follow_symlinks=False)
-                opened = os.fstat(backup_fd)
+                named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                opened = os.fstat(opened_fd)
             except OSError:
                 return False
             return (named.st_dev, named.st_ino) == (opened.st_dev, opened.st_ino)
+
+        def root_is_live() -> bool:
+            """Answer whether the open descriptors still are the live store.
+
+            Every scan and unlink below travels through these descriptors, so
+            a directory renamed out from under one of them would let the work
+            continue in a detached tree while a replacement kept the purged
+            vacancy. Each level is therefore matched back to its name before
+            removal and again before cleanup is declared complete (§13.14
+            rule 6). The chain ends at the workspace path itself: that path is
+            what the owner named, and §29's local boundary makes anything that
+            can rename it already inside the workspace's own trust boundary.
+            """
+
+            return _same_entry(
+                ".exp2res", workspace_fd, marker_fd
+            ) and _same_entry("backup", marker_fd, backup_fd)
 
         if not root_is_live():
             return (), (str(backup_root.absolute()),)
