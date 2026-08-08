@@ -784,6 +784,139 @@ BEGIN
 END;
 """
 
+RESUME_BRANCHES_SQL = """
+CREATE TABLE resume_branches (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    name TEXT NOT NULL CHECK (name <> ''),
+    assessment_snapshot_id TEXT NOT NULL REFERENCES assessment_snapshots(id),
+    job_description_id TEXT NOT NULL REFERENCES job_descriptions(id),
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
+    generation_id TEXT NOT NULL CHECK (generation_id <> '')
+);
+"""
+
+# §12 rule 12: the coarser exact-spelling backstop. §14.10's folded branch
+# identity cannot be expressed as an index, so folded one-current-per-branch
+# enforcement stays the Stage 10 transaction check under the §8.1 writer lock.
+RESUME_BRANCHES_CURRENT_NAME_INDEX_SQL = (
+    "CREATE UNIQUE INDEX resume_branches_current_name_unique "
+    "ON resume_branches(name) WHERE superseded_at IS NULL;"
+)
+
+RESUME_BULLETS_SQL = """
+CREATE TABLE resume_bullets (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,
+    branch_id TEXT NOT NULL REFERENCES resume_branches(id),
+    text TEXT NOT NULL CHECK (text <> ''),
+    target_section TEXT NOT NULL CHECK (target_section IN (
+        'summary', 'professional_experience', 'selected_projects',
+        'competitions', 'skills', 'education'
+    )),
+    target_role_relevance TEXT NOT NULL CHECK (
+        target_role_relevance IN ('low', 'medium', 'high')
+    ),
+    matched_jd_requirements_json TEXT NOT NULL DEFAULT '[]',
+    source_fact_ids_json TEXT NOT NULL DEFAULT '[]',
+    source_log_ids_json TEXT NOT NULL DEFAULT '[]',
+    source_self_claim_ids_json TEXT NOT NULL DEFAULT '[]',
+    verification_status TEXT NOT NULL CHECK (verification_status IN (
+        'unverified', 'supported', 'partially_supported',
+        'inferred_but_acceptable', 'needs_clarification', 'contradicted',
+        'unsupported', 'rejected'
+    )),
+    unsupported_phrases_json TEXT NOT NULL DEFAULT '[]',
+    verifier_reason TEXT,
+    produced_by_run_id TEXT NOT NULL REFERENCES processing_runs(id),
+    generation_id TEXT NOT NULL CHECK (generation_id <> '')
+);
+"""
+
+RESUME_BULLETS_BRANCH_INDEX_SQL = (
+    "CREATE INDEX resume_bullets_branch_id_idx ON resume_bullets(branch_id);"
+)
+
+# §13.10 allocates one generation for the jointly swapped branch and bullets, so
+# a branch mutates only through its one-way `superseded_at` transition.
+RESUME_BRANCHES_UPDATE_GUARD_SQL = """
+CREATE TRIGGER resume_branches_lifecycle_update_guard
+BEFORE UPDATE ON resume_branches
+WHEN exp2res_owner_delete() <> 1 AND NOT (
+    OLD.superseded_at IS NULL
+    AND NEW.superseded_at IS NOT NULL
+    AND NEW.id IS OLD.id
+    AND NEW.name IS OLD.name
+    AND NEW.assessment_snapshot_id IS OLD.assessment_snapshot_id
+    AND NEW.job_description_id IS OLD.job_description_id
+    AND NEW.created_at IS OLD.created_at
+    AND NEW.metadata_json IS OLD.metadata_json
+    AND NEW.produced_by_run_id IS OLD.produced_by_run_id
+    AND NEW.generation_id IS OLD.generation_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'resume_branch_lifecycle_only');
+END;
+"""
+
+# §13.11 owns the only in-place bullet mutation: the three denormalized verifier
+# fields, while the bullet is current. Supersession carries none of them.
+RESUME_BULLETS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER resume_bullets_lifecycle_update_guard
+BEFORE UPDATE ON resume_bullets
+WHEN exp2res_owner_delete() <> 1 AND NOT (
+    OLD.superseded_at IS NULL
+    AND (
+        (
+            NEW.superseded_at IS NOT NULL
+            AND NEW.verification_status IS OLD.verification_status
+            AND NEW.unsupported_phrases_json IS OLD.unsupported_phrases_json
+            AND NEW.verifier_reason IS OLD.verifier_reason
+        )
+        OR
+        (
+            NEW.superseded_at IS OLD.superseded_at
+        )
+    )
+    AND NEW.id IS OLD.id
+    AND NEW.created_at IS OLD.created_at
+    AND NEW.branch_id IS OLD.branch_id
+    AND NEW.text IS OLD.text
+    AND NEW.target_section IS OLD.target_section
+    AND NEW.target_role_relevance IS OLD.target_role_relevance
+    AND NEW.matched_jd_requirements_json IS OLD.matched_jd_requirements_json
+    AND NEW.source_fact_ids_json IS OLD.source_fact_ids_json
+    AND NEW.source_log_ids_json IS OLD.source_log_ids_json
+    AND NEW.source_self_claim_ids_json IS OLD.source_self_claim_ids_json
+    AND NEW.produced_by_run_id IS OLD.produced_by_run_id
+    AND NEW.generation_id IS OLD.generation_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'resume_bullet_lifecycle_only');
+END;
+"""
+
+RESUME_BRANCHES_DELETE_GUARD_SQL = """
+CREATE TRIGGER resume_branches_owner_delete_guard
+BEFORE DELETE ON resume_branches
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'resume_branch_owner_purge_required');
+END;
+"""
+
+RESUME_BULLETS_DELETE_GUARD_SQL = """
+CREATE TRIGGER resume_bullets_owner_delete_guard
+BEFORE DELETE ON resume_bullets
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'resume_bullet_owner_purge_required');
+END;
+"""
+
 SCHEMA_META_SQL = """
 CREATE TABLE schema_meta (
     version INTEGER PRIMARY KEY,
@@ -967,12 +1100,31 @@ SCHEMA_V11_SQL = "\n".join(
     )
 )
 
+
+# §22 Phase 4: schema v12 adds the §13.10 branch/bullet substrate. Both tables
+# are created fresh, so no rebuild and no pre-quoted table name is involved.
+SCHEMA_V12_SQL = "\n".join(
+    (
+        SCHEMA_V11_SQL,
+        RESUME_BRANCHES_SQL,
+        RESUME_BRANCHES_CURRENT_NAME_INDEX_SQL,
+        RESUME_BULLETS_SQL,
+        RESUME_BULLETS_BRANCH_INDEX_SQL,
+        RESUME_BRANCHES_UPDATE_GUARD_SQL,
+        RESUME_BULLETS_UPDATE_GUARD_SQL,
+        RESUME_BRANCHES_DELETE_GUARD_SQL,
+        RESUME_BULLETS_DELETE_GUARD_SQL,
+    )
+)
+
 # §14.16 owns one complete, referentially ordered whole-workspace purge.
 # Keeping the inventory beside the current schema makes a newly added table a
 # deliberate compile-time/test-time lifecycle decision instead of a silent
 # omission in service code.
 PURGE_TABLE_ORDER = (
     "verification_findings",
+    "resume_bullets",
+    "resume_branches",
     "self_claims",
     "assessment_snapshots",
     "gap_questions",
@@ -998,6 +1150,8 @@ PURGE_ENTITY_TABLES = (
     ("self_claims", "self_claim"),
     ("verification_findings", "verification_finding"),
     ("job_descriptions", "job_description"),
+    ("resume_branches", "resume_branch"),
+    ("resume_bullets", "resume_bullet"),
     ("processing_runs", "processing_run"),
 )
 
@@ -1005,9 +1159,9 @@ PURGE_ENTITY_TABLES = (
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    if version != 11:
-        raise ValueError("fresh workspaces must use schema version 11")
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V11_SQL)
+    if version != 12:
+        raise ValueError("fresh workspaces must use schema version 12")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V12_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
@@ -1232,10 +1386,10 @@ def apply_migration_9_to_10(connection: Connection) -> None:
     whole-layer deletion it is selective: every `assessment_snapshots` row
     whose stored scope is `project` goes, current and superseded alike, with
     its self-claims and their verification findings, while every global row is
-    retained with every remaining value unchanged. The resume rows anchored to
-    a deleted snapshot and the `out/branch/<branch-id>/` half of the cleanup
-    have no source in this build — §22 Phase 4 has not created
-    `resume_branches` — and join here with that table.
+    retained with every remaining value unchanged. A v9 workspace predates
+    `resume_branches`, which arrives at v12, so no branch or bullet row can be
+    anchored to a snapshot this step deletes and the `out/branch/<branch-id>/`
+    half of the cleanup has no ID source here.
 
     The two derived tables lose rows rather than shape, so their delete guards
     stand aside for the transform and are back before it ends. `scope_target`
@@ -1309,5 +1463,26 @@ def apply_migration_10_to_11(connection: Connection) -> None:
         JOB_DESCRIPTIONS_SQL,
         JOB_DESCRIPTIONS_UPDATE_GUARD_SQL,
         JOB_DESCRIPTIONS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+
+def apply_migration_11_to_12(connection: Connection) -> None:
+    """Create the §13.10 branch/bullet substrate (§12.14).
+
+    Purely additive: a v11 workspace holds no branch or bullet, so there is no
+    row to transform and no existing table to rebuild. The §12 rule 12 partial
+    unique index and both lifecycle/delete guards arrive with their tables.
+    """
+
+    for statement in (
+        RESUME_BRANCHES_SQL,
+        RESUME_BRANCHES_CURRENT_NAME_INDEX_SQL,
+        RESUME_BULLETS_SQL,
+        RESUME_BULLETS_BRANCH_INDEX_SQL,
+        RESUME_BRANCHES_UPDATE_GUARD_SQL,
+        RESUME_BULLETS_UPDATE_GUARD_SQL,
+        RESUME_BRANCHES_DELETE_GUARD_SQL,
+        RESUME_BULLETS_DELETE_GUARD_SQL,
     ):
         connection.execute(statement)

@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.enums import VerificationStatus
+from exp2res.domain.results import InvalidatedBranch
 from exp2res.domain.models import (
     AssessmentSnapshot,
     Contradiction,
@@ -26,10 +27,16 @@ from exp2res.domain.models import (
 from exp2res.domain.verification import aggregate_verification_status
 from exp2res.errors import (
     IntegrityFailureError,
+    OperationCancelledError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
-from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
+from exp2res.exports.managed import (
+    assessment_set_paths,
+    branch_set_paths,
+    remove_assessment_sets,
+    remove_branch_sets,
+)
 from exp2res.llm.assessment_verifier import (
     ASSESSMENT_VERIFIER_CONTRACT,
     AssessmentVerifierInput,
@@ -60,6 +67,7 @@ from exp2res.storage.workspace import (
     writer_database,
 )
 
+from .branch_lifecycle import BranchSupersession, supersede_dependent_branches
 from .evidence_context import project_evidence_context
 from .orchestration import PlannedCall, run_complete_stage
 from .view_selection import select_assessment_view
@@ -72,6 +80,10 @@ class Stage7Result:
     snapshot_status: VerificationStatus
     findings: tuple[VerificationFinding, ...]
     claim_statuses: tuple[tuple[str, VerificationStatus], ...]
+    superseded_branch_ids: tuple[str, ...]
+    superseded_bullet_ids: tuple[str, ...]
+    superseded_generation_ids: tuple[str, ...]
+    invalidated_branches: tuple[InvalidatedBranch, ...]
     residual_paths: tuple[str, ...]
 
 
@@ -396,7 +408,7 @@ def run_assessment_verification(
         def commit(
             held: sqlite3.Connection, resolved: Sequence[object]
         ) -> Iterable[str]:
-            nonlocal snapshot_status, pending_stale_paths
+            nonlocal snapshot_status, pending_stale_paths, branch_swap
             candidates = tuple(cast(_ResolvedVerification, item) for item in resolved)
             if tuple(item.claim_id for item in candidates) != tuple(
                 item.id for item in claims
@@ -437,16 +449,24 @@ def run_assessment_verification(
                 ),
             )
             if fresh_state != prior_verification_state:
+                # §13.7: a changed verifier state may not leave a resume
+                # current against it, so every branch and bullet based on this
+                # snapshot is superseded in the same transaction.
+                branch_swap = supersede_dependent_branches(
+                    held, (snapshot_id,), superseded_at=now()
+                )
                 # Pre-commit pending report (same pattern as Stages 3-6): an
                 # interrupt in the commit-to-cleanup window still reports the
                 # now-stale published set; rollback withdraws it below.
-                pending_stale_paths = assessment_set_paths(
-                    workspace, (snapshot_id,)
+                pending_stale_paths = (
+                    *assessment_set_paths(workspace, (snapshot_id,)),
+                    *branch_set_paths(workspace, branch_swap.branch_ids),
                 )
                 report_managed_residuals(pending_stale_paths)
             return tuple(candidate.finding.id for candidate in candidates)
 
         pending_stale_paths: tuple[str, ...] = ()
+        branch_swap = BranchSupersession()
         try:
             run_complete_stage(
             workspace,
@@ -513,18 +533,35 @@ def run_assessment_verification(
         # §13.7 stale-export trigger: only a committed verification-field
         # change invalidates this snapshot's ID-keyed set. Finding history by
         # itself does not change the renderer state.
-        if current_verification_state != prior_verification_state:
-            residual_paths = remove_assessment_sets(workspace, (snapshot_id,))
-        else:
-            residual_paths = ()
+        def build_result(residuals: tuple[str, ...]) -> Stage7Result:
+            return Stage7Result(
+                run_id=run_id,
+                snapshot_id=snapshot_id,
+                snapshot_status=current_snapshot.verification_status,
+                findings=findings,
+                claim_statuses=tuple(
+                    (item.id, item.verification_status) for item in current_claims
+                ),
+                superseded_branch_ids=branch_swap.branch_ids,
+                superseded_bullet_ids=branch_swap.bullet_ids,
+                superseded_generation_ids=branch_swap.superseded_generation_ids,
+                invalidated_branches=branch_swap.invalidated_branches,
+                residual_paths=residuals,
+            )
 
-    return Stage7Result(
-        run_id=run_id,
-        snapshot_id=snapshot_id,
-        snapshot_status=current_snapshot.verification_status,
-        findings=findings,
-        claim_statuses=tuple(
-            (item.id, item.verification_status) for item in current_claims
-        ),
-        residual_paths=residual_paths,
-    )
+        if current_verification_state == prior_verification_state:
+            return build_result(())
+        # The verification pass is already committed, so cleanup failure or
+        # interruption never rolls it back.
+        try:
+            residual_paths = (
+                *remove_assessment_sets(workspace, (snapshot_id,)),
+                *remove_branch_sets(workspace, branch_swap.branch_ids),
+            )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: the class-9 error carries the complete committed
+            # result; the pending stale paths stay reported as residuals.
+            cancelled = OperationCancelledError()
+            cancelled.stage_result = build_result(tuple(pending_stale_paths))
+            raise cancelled from None
+        return build_result(residual_paths)

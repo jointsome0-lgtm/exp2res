@@ -43,6 +43,7 @@ from assessment_helpers import VeraIds
 from test_stage4_detection import detector_response, run_stage4
 from test_stage6_assessment import assessment_response, run_stage6
 from test_stage7_verification import run_stage7, verifier_response
+from test_branch_substrate import plant_branch, plant_job_description
 
 
 pytestmark = [pytest.mark.contract, pytest.mark.lifecycle]
@@ -1190,3 +1191,45 @@ def test_interrupted_stage_cleanup_keeps_committed_swap_in_envelope(
     assert envelope["generation_ids"]
     assert len(envelope["run_ids"]) == 2
     assert envelope["retry"] == {"command": "exp2res recompute"}
+
+
+def test_correction_reports_the_superseded_branch_and_bullet(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 4: only the capture composition can report these IDs.
+
+    Correction capture supersedes every current branch and bullet before the
+    Stage 3-4 rebuild, and the rebuild never sees them again — so a mapper
+    that skipped them would drop the IDs from every correction envelope.
+    """
+
+    target, _other, _fact, _detected, assessed, _export_dir = _prepare_full_graph(
+        workspace
+    )
+    plant_job_description(workspace)
+    branch_id, bullet_id = plant_branch(
+        workspace,
+        snapshot_id=assessed.snapshot_id,
+        fact_ids=tuple(
+            sorted(item.id for item in list_experience_facts_for(workspace))
+        ),
+    )
+    _install_lifecycle_runner(monkeypatch)
+    monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
+
+    result, envelope = _invoke_json(
+        workspace,
+        ["--yes", "correction", "add", "--log-id", target.id],
+        input="Vera Example corrected and fully restated the workflow.\n\n\n",
+    )
+
+    assert result.exit_code == 0, result.stderr
+    superseded = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["superseded"]
+    }
+    assert superseded["resume_branch"] == [branch_id]
+    assert superseded["resume_bullet"] == [bullet_id]
+    assert [item["name"] for item in envelope["invalidated_branches"]] == [
+        "agent-engineer"
+    ]

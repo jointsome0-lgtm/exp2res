@@ -9,7 +9,12 @@ from pathlib import Path
 import sqlite3
 
 from exp2res.domain.models import RawLog
-from exp2res.domain.results import InvalidatedView, invalidated_view
+from exp2res.domain.results import (
+    InvalidatedBranch,
+    InvalidatedView,
+    invalidated_branch,
+    invalidated_view,
+)
 from exp2res.errors import (
     OperationCancelledError,
     SelectorNotFoundError,
@@ -44,8 +49,11 @@ class DeleteOutcome:
     purged_finding_ids: tuple[str, ...]
     purged_claim_ids: tuple[str, ...]
     purged_snapshot_ids: tuple[str, ...]
+    purged_branch_ids: tuple[str, ...]
+    purged_bullet_ids: tuple[str, ...]
     purged_generation_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
+    invalidated_branches: tuple[InvalidatedBranch, ...]
     residual_paths: tuple[str, ...]
 
 
@@ -140,6 +148,37 @@ def delete_log(
                     "SELECT id FROM assessment_snapshots ORDER BY CAST(id AS BLOB)"
                 )
             )
+            purged_branch_ids = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM resume_branches ORDER BY CAST(id AS BLOB)"
+                )
+            )
+            purged_bullet_ids = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM resume_bullets ORDER BY CAST(id AS BLOB)"
+                )
+            )
+            # §13.13 rule 9: after owner deletion this branch report is command
+            # output only, never persisted derived state.
+            invalidated_branches = tuple(
+                invalidated_branch(
+                    name=row["name"],
+                    job_description_id=row["job_description_id"],
+                    scope=row["scope"],
+                    snapshot_id=row["assessment_snapshot_id"],
+                )
+                for row in connection.execute(
+                    "SELECT branch.name, branch.job_description_id, "
+                    "branch.assessment_snapshot_id, snapshot.scope "
+                    "FROM resume_branches AS branch "
+                    "JOIN assessment_snapshots AS snapshot "
+                    "ON snapshot.id = branch.assessment_snapshot_id "
+                    "WHERE branch.superseded_at IS NULL "
+                    "ORDER BY CAST(branch.name AS BLOB)"
+                )
+            )
             purged_generation_ids = tuple(
                 sorted(
                     {
@@ -150,6 +189,8 @@ def delete_log(
                             "contradictions",
                             "self_claims",
                             "assessment_snapshots",
+                            "resume_branches",
+                            "resume_bullets",
                         )
                         for row in connection.execute(
                             f"SELECT DISTINCT generation_id FROM {table}"
@@ -168,6 +209,10 @@ def delete_log(
             # answer_log_id ON DELETE SET NULL action from firing into the
             # gap_questions answered-iff CHECK.
             connection.execute("DELETE FROM verification_findings")
+            # §13.13 rule 5: bullets and branches are generated prose too, and
+            # they go before the snapshots their anchor foreign key names.
+            connection.execute("DELETE FROM resume_bullets")
+            connection.execute("DELETE FROM resume_branches")
             connection.execute("DELETE FROM self_claims")
             connection.execute("DELETE FROM assessment_snapshots")
             connection.execute("DELETE FROM gap_questions")
@@ -197,8 +242,11 @@ def delete_log(
                 purged_finding_ids=purged_finding_ids,
                 purged_claim_ids=purged_claim_ids,
                 purged_snapshot_ids=purged_snapshot_ids,
+                purged_branch_ids=purged_branch_ids,
+                purged_bullet_ids=purged_bullet_ids,
                 purged_generation_ids=purged_generation_ids,
                 invalidated_views=invalidated_views,
+                invalidated_branches=invalidated_branches,
                 residual_paths=tuple(sorted(set(residuals), key=os.fsencode)),
             )
 

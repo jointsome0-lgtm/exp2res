@@ -15,13 +15,22 @@ from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.models import ExperienceFact, RawLog
 from exp2res.errors import LLMCancelledError
-from exp2res.domain.results import InvalidatedView, invalidated_view
+from exp2res.domain.results import (
+    InvalidatedBranch,
+    InvalidatedView,
+    invalidated_view,
+)
 from exp2res.domain.temporal import (
     confidence_exceeds,
     governing_contains,
     placement_supports,
 )
-from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
+from exp2res.exports.managed import (
+    assessment_set_paths,
+    branch_set_paths,
+    remove_assessment_sets,
+    remove_branch_sets,
+)
 from exp2res.llm.contracts import (
     ContractValidationError,
     ContractWarning,
@@ -53,6 +62,7 @@ from exp2res.storage.workspace import (
     writer_database,
 )
 
+from .branch_lifecycle import BranchSupersession, supersede_current_branches
 from .lineage import LineageContext, plan_lineages
 from .orchestration import (
     PlannedCall,
@@ -72,7 +82,10 @@ class Stage3Result:
     superseded_contradiction_ids: tuple[str, ...]
     superseded_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
+    superseded_branch_ids: tuple[str, ...]
+    superseded_bullet_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
+    invalidated_branches: tuple[InvalidatedBranch, ...]
     residual_paths: tuple[str, ...]
     warnings: tuple[ContractWarning, ...]
 
@@ -408,6 +421,7 @@ def run_fact_extraction(
         superseded_snapshot_ids: list[str] = []
         invalidated_views: list[InvalidatedView] = []
         superseded_generation_ids: set[str] = set()
+        branch_swap = BranchSupersession()
 
         def commit(
             held: sqlite3.Connection, resolved: Sequence[object]
@@ -477,6 +491,17 @@ def run_fact_extraction(
                                 ids,
                             )
                         )
+                # §13.10: a replacement fact set supersedes every dependent
+                # current branch and bullet. Every current snapshot goes with
+                # this swap, so every current branch is dependent — and its
+                # bullets cite facts from the graph being replaced anyway.
+                nonlocal branch_swap
+                branch_swap = supersede_current_branches(
+                    held, superseded_at=swap_time
+                )
+                superseded_generation_ids.update(
+                    branch_swap.superseded_generation_ids
+                )
                 mark_gap_questions_superseded(
                     held, superseded_gap_ids, swap_time
                 )
@@ -493,8 +518,9 @@ def run_fact_extraction(
             # completed removal clears the report through the existence
             # re-check; a rolled-back transaction withdraws it below.
             nonlocal pending_stale_paths
-            pending_stale_paths = assessment_set_paths(
-                workspace, superseded_snapshot_ids
+            pending_stale_paths = (
+                *assessment_set_paths(workspace, superseded_snapshot_ids),
+                *branch_set_paths(workspace, branch_swap.branch_ids),
             )
             report_managed_residuals(pending_stale_paths)
             return created_ids
@@ -557,12 +583,15 @@ def run_fact_extraction(
                 superseded_snapshot_ids=tuple(
                     sorted(superseded_snapshot_ids, key=_id_key)
                 ),
+                superseded_branch_ids=branch_swap.branch_ids,
+                superseded_bullet_ids=branch_swap.bullet_ids,
                 invalidated_views=tuple(
                     sorted(
                         invalidated_views,
                         key=lambda item: _id_key(item.snapshot_id),
                     )
                 ),
+                invalidated_branches=branch_swap.invalidated_branches,
                 residual_paths=residuals,
                 warnings=tuple(
                     (
@@ -583,8 +612,9 @@ def run_fact_extraction(
         # §13 stale-export trigger class 1: business supersession is already
         # committed; cleanup failure is returned and never rolls it back.
         try:
-            residual_paths = remove_assessment_sets(
-                workspace, superseded_snapshot_ids
+            residual_paths = (
+                *remove_assessment_sets(workspace, superseded_snapshot_ids),
+                *remove_branch_sets(workspace, branch_swap.branch_ids),
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the swap committed before cleanup, so the

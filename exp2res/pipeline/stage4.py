@@ -15,9 +15,18 @@ from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.canonical import canonical_model_hash
 from exp2res.domain.models import Contradiction, GapQuestion
-from exp2res.domain.results import InvalidatedView, invalidated_view
+from exp2res.domain.results import (
+    InvalidatedBranch,
+    InvalidatedView,
+    invalidated_view,
+)
 from exp2res.errors import LLMCancelledError
-from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
+from exp2res.exports.managed import (
+    assessment_set_paths,
+    branch_set_paths,
+    remove_assessment_sets,
+    remove_branch_sets,
+)
 from exp2res.llm.contracts import (
     ContractValidationError,
     ContractWarning,
@@ -55,6 +64,7 @@ from exp2res.storage.workspace import (
     writer_database,
 )
 
+from .branch_lifecycle import BranchSupersession, supersede_current_branches
 from .lineage import plan_lineages
 from .orchestration import (
     PlannedCall,
@@ -80,7 +90,10 @@ class Stage4Result:
     superseded_contradiction_ids: tuple[str, ...]
     superseded_claim_ids: tuple[str, ...]
     superseded_snapshot_ids: tuple[str, ...]
+    superseded_branch_ids: tuple[str, ...]
+    superseded_bullet_ids: tuple[str, ...]
     invalidated_views: tuple[InvalidatedView, ...]
+    invalidated_branches: tuple[InvalidatedBranch, ...]
     residual_paths: tuple[str, ...]
     generation_id: str | None
     superseded_generation_ids: tuple[str, ...]
@@ -406,6 +419,7 @@ def run_detection_generation(
         superseded_claim_ids: tuple[str, ...] = ()
         superseded_snapshot_ids: tuple[str, ...] = ()
         invalidated_views: tuple[InvalidatedView, ...] = ()
+        branch_swap = BranchSupersession()
         generation_id: str | None = None
         superseded_generation_ids: set[str] = set()
 
@@ -479,6 +493,12 @@ def run_detection_generation(
                             ids,
                         )
                     )
+            # §13.10: a replacement assessment generation supersedes every
+            # dependent current branch and bullet. This swap supersedes every
+            # current snapshot, so every current branch is dependent.
+            nonlocal branch_swap
+            branch_swap = supersede_current_branches(held, superseded_at=swap_time)
+            superseded_generation_ids.update(branch_swap.superseded_generation_ids)
             mark_gap_questions_superseded(held, superseded_gap_ids, swap_time)
             mark_contradictions_superseded(
                 held, superseded_contradiction_ids, swap_time
@@ -518,8 +538,9 @@ def run_detection_generation(
             # completed removal clears the report through the existence
             # re-check; a rolled-back transaction withdraws it below.
             nonlocal pending_stale_paths
-            pending_stale_paths = assessment_set_paths(
-                workspace, superseded_snapshot_ids
+            pending_stale_paths = (
+                *assessment_set_paths(workspace, superseded_snapshot_ids),
+                *branch_set_paths(workspace, branch_swap.branch_ids),
             )
             report_managed_residuals(pending_stale_paths)
             return (*created_gap_ids, *created_contradiction_ids)
@@ -588,12 +609,15 @@ def run_detection_generation(
                 superseded_snapshot_ids=tuple(
                     sorted(superseded_snapshot_ids, key=_id_key)
                 ),
+                superseded_branch_ids=branch_swap.branch_ids,
+                superseded_bullet_ids=branch_swap.bullet_ids,
                 invalidated_views=tuple(
                     sorted(
                         invalidated_views,
                         key=lambda item: _id_key(item.snapshot_id),
                     )
                 ),
+                invalidated_branches=branch_swap.invalidated_branches,
                 residual_paths=residuals,
                 generation_id=generation_id,
                 superseded_generation_ids=tuple(
@@ -609,8 +633,9 @@ def run_detection_generation(
             )
 
         try:
-            residual_paths = remove_assessment_sets(
-                workspace, superseded_snapshot_ids
+            residual_paths = (
+                *remove_assessment_sets(workspace, superseded_snapshot_ids),
+                *remove_branch_sets(workspace, branch_swap.branch_ids),
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the swap committed before cleanup, so the

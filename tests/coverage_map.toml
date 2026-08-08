@@ -63,18 +63,21 @@ nodes = [
   "tests/test_stage3_extraction.py::test_rerun_supersedes_prior_generation_at_one_swap_instant",
   "tests/test_vera_replay_extract.py::test_vera_e1_cli_replay_preserves_provenance_and_one_current_generation",
   "tests/test_stage6_assessment.py::test_regeneration_replaces_the_sole_view_and_removes_its_stale_set",
+  "tests/test_branch_substrate.py::test_fact_replacement_supersedes_the_branch_and_removes_its_set",
 ]
 phase = "1"
-note = "Stage 3 reruns prove coherent current fact generations, and Stage 6 proves that regenerating the sole view supersedes exactly the prior snapshot and removes its published set; Stage 7+ verification mixing and the branch half of managed-export invalidation remain unavailable until their owning phases"
+note = "Stage 3 reruns prove coherent current fact generations, and Stage 6 proves that regenerating the sole view supersedes exactly the prior snapshot and removes its published set; Stage 3 replacement now also supersedes every dependent branch and bullet and removes their ID-keyed sets; Stage 7+ verification mixing remains unavailable until its owning phase"
 
 ["21.13"]
 status = "partial"
 nodes = [
   "tests/test_cli_correction.py::test_correction_rebuilds_through_artifacts_and_preserves_history",
   "tests/test_cli_correction.py::test_failed_correction_stays_committed_and_selected_recompute_repairs",
+  "tests/test_branch_substrate.py::test_correction_capture_supersedes_every_current_branch",
+  "tests/test_cli_correction.py::test_correction_reports_the_superseded_branch_and_bullet",
 ]
 phase = "4"
-note = "Correction capture, atomic global invalidation, managed assessment-export removal, linked Stage 3-4 orchestration, inspectable superseded history, and failure retry are covered offline; resume branch/bullet invalidation and simultaneous multi-view reporting remain"
+note = "Correction capture, atomic global invalidation, managed assessment-export removal, linked Stage 3-4 orchestration, inspectable superseded history, and failure retry are covered offline; resume branch and bullet invalidation now joins them at the same atomic boundary; simultaneous multi-view reporting remains"
 
 ["21.14"]
 status = "partial"
@@ -83,9 +86,10 @@ nodes = [
   "tests/test_deletion_phase0.py::test_delete_preserves_external_source_and_does_not_follow_backup_symlink",
   "tests/test_cli_correction.py::test_delete_rebuild_success_failure_zero_survivor_and_bare_recompute",
   "tests/test_cli_correction.py::test_delete_rebuild_failure_never_restores_deleted_record",
+  "tests/test_branch_substrate.py::test_owner_log_deletion_purges_branches_and_bullets",
 ]
 phase = "4"
-note = "Owner deletion proves raw/evidence and complete historical derived purge, secure managed cleanup, surviving-lineage Stage 3-4 rebuild, offline zero-survivor completion through empty stage runs, and committed deletion across rebuild failure; resume branch/JD and empty-project-view halves remain"
+note = "Owner deletion proves raw/evidence and complete historical derived purge, secure managed cleanup, surviving-lineage Stage 3-4 rebuild, offline zero-survivor completion through empty stage runs, and committed deletion across rebuild failure; the resume branch and bullet purge with its §13.13 rule 9 report now joins them; the empty-project-view half remains"
 
 ["21.15"]
 status = "partial"
@@ -169,9 +173,10 @@ nodes = [
   "tests/test_cli_detections.py::test_answered_gap_key_equal_cli_rerun_replaces_without_relinking",
   "tests/test_cli_detections.py::test_invalid_detector_response_keeps_prior_generation_and_reports_run",
   "tests/test_vera_replay_detect.py::test_vera_e2_cli_detect_replay_is_navigable_and_retains_paraphrases",
+  "tests/test_branch_substrate.py::test_detection_replacement_supersedes_the_branch",
 ]
 phase = "2"
-note = "Stage 4 plus the CLI and Vera E2 execute the detector-lifecycle blocks; still missing are the generated-voice violation block (no deterministic validator) and the upper-layer clauses — superseding current claims, snapshots, branches, and bullets and reporting their regeneration guidance — whose tables land in later phases"
+note = "Stage 4 plus the CLI and Vera E2 execute the detector-lifecycle blocks; the upper-layer clause superseding current claims, snapshots, branches, and bullets is now proven too; the generated-voice violation block remains uncovered because no deterministic validator exists for it"
 
 ["21.24"]
 status = "covered"
@@ -277,9 +282,11 @@ nodes = [
   "tests/test_cli_export_assessment.py::test_reverification_cleanup_residual_takes_class_8_over_blocked_findings",
   "tests/test_stage6_assessment.py::test_regeneration_replaces_the_sole_view_and_removes_its_stale_set",
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
+  "tests/test_branch_substrate.py::test_folded_identity_controls_replacement_and_never_a_path",
+  "tests/test_branch_substrate.py::test_view_regeneration_supersedes_only_its_dependent_branches",
 ]
 phase = "4"
-note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; resume ID-keyed paths, branch-name cases, and shell consumption remain"
+note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; the folded-identity replacement itself and publishing a branch set with its manifest wait on the Stage 10 and Stage 12 phases"
 
 ["21.35"]
 status = "partial"
@@ -442,9 +449,11 @@ nodes = [
   "tests/test_cli_jd.py::test_a_residual_managed_path_keeps_the_deletion_committed",
   "tests/test_cli_jd.py::test_a_removed_managed_backup_is_reported_by_canonical_path",
   "tests/test_cli_jd.py::test_a_managed_symlink_is_reported_without_traversal",
+  "tests/test_cli_jd.py::test_delete_purges_dependent_branches_bullets_and_managed_sets",
+  "tests/test_cli_jd.py::test_delete_reports_the_dependent_purge_in_human_mode",
 ]
 phase = "4"
-note = "The workspace purge half is proven, including complete schema inventory, consent, retained initialization, SQLite erasure, and residual symlink semantics; jd list's raw-text-free projection, jd delete's consent, committed point deletion, global call-hash redaction, removed-and-residual managed-path reporting, and untraversed symlink now join it, while the dependent branch, bullet, and out/branch/ half waits on the Phase 4 stages that create those tables"
+note = "The workspace purge half is proven, including complete schema inventory, consent, retained initialization, SQLite erasure, and residual symlink semantics; jd list's raw-text-free projection, jd delete's consent, committed point deletion, global call-hash redaction, removed-and-residual managed-path reporting, and untraversed symlink now join it, and jd delete's dependent branch, bullet, and out/branch/ purge is proven in both output modes"
 
 ["21.45"]
 status = "pending"
@@ -819,9 +828,10 @@ nodes = [
   "tests/test_stage6_assessment.py::test_stage4_retention_preserves_view_but_changed_generation_invalidates_it",
   "tests/test_cli_detections.py::test_generate_replaces_then_retains_complete_sets_and_standard_fields",
   "tests/test_vera_replay_assess.py::test_vera_e4_cli_assessment_is_navigable_then_regeneration_invalidates",
+  "tests/test_branch_substrate.py::test_detection_replacement_supersedes_the_branch",
 ]
 phase = "2"
-note = "Offline tests prove the free identical-input rerun with zero llm_calls rows, every named disqualifier, per-set retention with per-swap generations, the §14.7 per-set envelope, and either-set replacement superseding the current claims and snapshots and naming the invalidated view; resume branch/bullet supersession stays with the later Stage 10 phase"
+note = "Offline tests prove the free identical-input rerun with zero llm_calls rows, every named disqualifier, per-set retention with per-swap generations, the §14.7 per-set envelope, and either-set replacement superseding the current claims and snapshots and naming the invalidated view; resume branch and bullet supersession under the same swap now joins them"
 
 ["21.59"]
 status = "partial"

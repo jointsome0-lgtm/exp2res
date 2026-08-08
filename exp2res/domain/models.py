@@ -24,8 +24,10 @@ from .enums import (
     GapTrigger,
     JDRequirementKind,
     OwnershipLevel,
+    ResumeTargetSection,
     SelfClaimDimension,
     SourceType,
+    TargetRoleRelevance,
     TemporalConfidence,
     TemporalPrecision,
     VerificationStatus,
@@ -46,6 +48,17 @@ def canonical_project_key(label: str) -> str:
     """Return §12 rule 14's one canonical project comparison identity."""
 
     return unicodedata.normalize("NFC", label).strip().casefold()
+
+
+def canonical_branch_identity(name: str) -> str:
+    """Return §14.10's folded branch replacement/selection identity.
+
+    §11 rule 47 names this point exactly: Unicode NFC followed by
+    locale-independent Default Case Folding, with no whitespace trim, and it
+    controls replacement and selection only — never a managed path (§13.14).
+    """
+
+    return unicodedata.normalize("NFC", name).casefold()
 
 
 def _utf8_size(value: str) -> int:
@@ -670,3 +683,104 @@ class JobDescription(StrictModel):
     @classmethod
     def raw_text_policy(cls, value: str) -> str:
         return validate_free_text(value, raw=True, nonempty=True)
+
+
+class ResumeBranch(StrictModel):
+    id: str
+    name: str
+    assessment_snapshot_id: str
+    job_description_id: str
+
+    created_at: datetime
+    superseded_at: Optional[datetime] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("id", "assessment_snapshot_id", "job_description_id")
+    @classmethod
+    def structural_fields(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("name")
+    @classmethod
+    def name_policy(cls, value: str) -> str:
+        # §14.10: a non-blank display name under structural hygiene, stored at
+        # the owner's exact spelling. No path-specific rejection applies —
+        # `/`, `\`, dot segments, surrounding whitespace or `.`, and the name
+        # `assessment` are ordinary names because §13.14 publishes only under
+        # `out/branch/<branch-id>/`.
+        validate_structural(value)
+        if not value.strip():
+            raise ValueError("blank branch name")
+        return value
+
+    @field_validator("created_at", "superseded_at")
+    @classmethod
+    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("datetime must carry an offset")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_metadata(value)
+
+
+class ResumeBullet(StrictModel):
+    id: str
+    created_at: datetime
+    superseded_at: Optional[datetime] = None
+    branch_id: str
+    text: str
+    target_section: ResumeTargetSection
+    target_role_relevance: TargetRoleRelevance
+    matched_jd_requirements: list[str] = Field(default_factory=list, max_length=1_000)
+    source_fact_ids: list[str] = Field(min_length=1, max_length=1_000)
+    source_log_ids: list[str] = Field(min_length=1, max_length=1_000)
+    source_self_claim_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    verification_status: VerificationStatus
+    unsupported_phrases: list[str] = Field(default_factory=list, max_length=1_000)
+    verifier_reason: Optional[str] = None
+
+    @field_validator("id", "branch_id")
+    @classmethod
+    def structural_fields(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("created_at", "superseded_at")
+    @classmethod
+    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("datetime must carry an offset")
+        return value
+
+    @field_validator("text")
+    @classmethod
+    def text_policy(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True)
+
+    @field_validator(
+        "matched_jd_requirements",
+        "source_fact_ids",
+        "source_log_ids",
+        "source_self_claim_ids",
+    )
+    @classmethod
+    def typed_id_list_policy(cls, value: list[str]) -> list[str]:
+        for member in value:
+            validate_structural(member)
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate typed ID")
+        return value
+
+    @field_validator("unsupported_phrases")
+    @classmethod
+    def unsupported_phrase_policy(cls, value: list[str]) -> list[str]:
+        for member in value:
+            validate_free_text(member, nonempty=True)
+        return value
+
+    @field_validator("verifier_reason")
+    @classmethod
+    def verifier_reason_policy(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else validate_free_text(value, nonempty=True)
