@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 import exp2res.services.job_descriptions as jd_service
 import exp2res.exports.managed as managed_outputs
 from exp2res.cli import app
+from exp2res.errors import LLMInvocationError
 from exp2res.storage.workspace import read_database, writer_database
 
 from fakes import FakeContractRunner
@@ -655,3 +656,100 @@ def test_an_undecodable_backup_name_is_reported_in_backslash_form(
         str(backup_root / "pre-\\xff.sqlite")
     ]
     assert not os.path.exists(undecodable)
+
+
+def test_an_interrupt_during_stage_8_teardown_still_reports_the_creation(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the durable parse survives an interrupt after it returns."""
+
+    import exp2res.pipeline.stage8 as stage8
+
+    real_parse = stage8.run_job_description_parse
+
+    def interrupt_on_return(*arguments: object, **keywords: object):
+        real_parse(*arguments, **keywords)
+        # The whole stage, including its writer teardown, has completed.
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        jd_service, "run_job_description_parse", interrupt_on_return
+    )
+
+    result, envelope = add_job_description(workspace, tmp_path, monkeypatch)
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = envelope["affected_ids"]["created"]
+    assert [group["entity_type"] for group in created] == ["job_description"]
+    assert len(envelope["run_ids"]) == 1
+    with read_database(workspace) as connection:
+        stored = connection.execute("SELECT id FROM job_descriptions").fetchall()
+    assert [row[0] for row in stored] == created[0]["ids"]
+
+
+def test_a_colliding_candidate_id_is_never_reported_as_this_run_s_creation(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a completed run's own output IDs name what this command created."""
+
+    ids = ParserIds()
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch, ids=ids)
+    retained = added["affected_ids"]["created"][0]["ids"][0]
+
+    def failing_parse(*_arguments: object, **_keywords: object):
+        # The allocator offered the retained ID, rejected it, and the run then
+        # failed: the pre-existing row is not this invocation's creation.
+        jd_service.new_id("job_description")
+        raise LLMInvocationError("business_commit_failed")
+
+    install_fake_execution(monkeypatch, FakeContractRunner([]), ids)
+    monkeypatch.setattr(jd_service, "new_id", lambda _kind: retained)
+    monkeypatch.setattr(jd_service, "run_job_description_parse", failing_parse)
+
+    result, envelope = invoke_json(
+        workspace, ["jd", "add", str(vacancy_file(tmp_path))]
+    )
+
+    assert result.exit_code != 0
+    assert envelope["status"] == "failed"
+    assert envelope["affected_ids"]["created"] == []
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 1
+
+
+def test_a_backup_recreated_during_the_purge_is_reported_as_residual(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 6: completeness is proven by re-enumeration, not by one pass."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    backup = backup_root / "pre-migration.sqlite"
+    backup.write_bytes(b"")
+
+    real_unlink = os.unlink
+
+    def racing_unlink(name, *, dir_fd=None):
+        real_unlink(name, dir_fd=dir_fd)
+        # A concurrent writer recreates the name the pass just removed.
+        backup.write_bytes(b"")
+
+    monkeypatch.setattr(os, "unlink", racing_unlink)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str(backup.absolute())]
+    assert envelope["result"]["removed_managed_paths"] == []
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0

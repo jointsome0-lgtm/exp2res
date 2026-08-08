@@ -108,6 +108,7 @@ from exp2res.services.extraction import (
 )
 from exp2res.services.export import export_assessment, require_export_eligible
 from exp2res.services.facts import list_facts, show_fact
+from exp2res.pipeline.stage8 import Stage8Result
 from exp2res.services.job_descriptions import (
     JobDescriptionDeleteOutcome,
     delete_job_description,
@@ -2222,6 +2223,37 @@ def _job_description_projection(
     )
 
 
+def _jd_add_affected(parsed: Stage8Result) -> AffectedIds:
+    return AffectedIds(
+        created=[
+            EntityIdGroup(
+                entity_type="job_description",
+                ids=[parsed.job_description_id],
+            )
+        ],
+        superseded=[],
+        deleted=[],
+    )
+
+
+def _jd_add_outcome(parsed: Stage8Result) -> Outcome:
+    requirement_count = len(parsed.requirement_ids)
+    return Outcome(
+        affected_ids=_jd_add_affected(parsed),
+        run_ids=[parsed.run_id],
+        warnings=list(parsed.warnings),
+        # §14.14 rule 5 declares no `jd add` result: the standard envelope
+        # fields carry it, and the parse itself stays unexposed under the
+        # rule 7 per-record-inspection deferral.
+        result=None,
+        human_result=(
+            f"Added job description {parsed.job_description_id} with "
+            f"{requirement_count} typed "
+            f"requirement{'' if requirement_count == 1 else 's'}."
+        ),
+    )
+
+
 @jd_app.command("add")
 def jd_add(
     context: typer.Context,
@@ -2232,30 +2264,16 @@ def jd_add(
         # construction; the service re-checks under its own authority.
         require_compatible(workspace)
         parsed = run_jd_add_file(workspace, source_path=source_path)
-        requirement_count = len(parsed.requirement_ids)
-        return Outcome(
-            affected_ids=AffectedIds(
-                created=[
-                    EntityIdGroup(
-                        entity_type="job_description",
-                        ids=[parsed.job_description_id],
-                    )
-                ],
-                superseded=[],
-                deleted=[],
-            ),
-            run_ids=[parsed.run_id],
-            warnings=list(parsed.warnings),
-            # §14.14 rule 5 declares no `jd add` result: the standard envelope
-            # fields carry it, and the parse itself stays unexposed under the
-            # rule 7 per-record-inspection deferral.
-            result=None,
-            human_result=(
-                f"Added job description {parsed.job_description_id} with "
-                f"{requirement_count} typed "
-                f"requirement{'' if requirement_count == 1 else 's'}."
-            ),
-        )
+        try:
+            return _jd_add_outcome(parsed)
+        except KeyboardInterrupt:
+            # The service returned a durable parse; §14.14 rule 6 keeps it
+            # reported even when the interrupt lands in result assembly.
+            cancelled = OperationCancelledError()
+            cancelled.affected_ids = _jd_add_affected(parsed)
+            cancelled.run_ids = [parsed.run_id]
+            cancelled.warnings = list(parsed.warnings)
+            raise cancelled from None
 
     _run_command(context, "jd add", operation)
 

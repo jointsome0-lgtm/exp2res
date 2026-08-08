@@ -59,7 +59,7 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
         descriptors.append(backup_fd)
 
         removed: list[str] = []
-        residuals: list[str] = []
+        refused: list[str] = []
         with os.scandir(backup_fd) as iterator:
             entries = sorted(iterator, key=lambda entry: os.fsencode(entry.name))
         for entry in entries:
@@ -72,10 +72,27 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
                     os.unlink(entry.name, dir_fd=backup_fd)
                     removed.append(managed_path)
                 else:
-                    residuals.append(managed_path)
+                    refused.append(managed_path)
             except OSError:
-                residuals.append(managed_path)
-        return tuple(removed), tuple(residuals)
+                refused.append(managed_path)
+        # POSIX unlinks by name, so no removal is atomic with the `stat` that
+        # classified it: a concurrent rename or recreation can leave a file
+        # under a name this pass already visited. Completeness is therefore
+        # proven by re-enumeration, not by the first pass — every name still
+        # present afterwards is residual and none of them counts as removed
+        # (§13.13 rule 6, §13.14 rule 6).
+        try:
+            with os.scandir(backup_fd) as iterator:
+                surviving = {
+                    str((backup_root / entry.name).absolute()) for entry in iterator
+                }
+        except OSError:
+            surviving = {str(backup_root.absolute())}
+        residuals = sorted({*refused, *surviving}, key=os.fsencode)
+        return (
+            tuple(path for path in removed if path not in surviving),
+            tuple(residuals),
+        )
     except OSError:
         return (), (str(backup_root.absolute()),)
     finally:

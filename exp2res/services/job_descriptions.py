@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -65,32 +66,43 @@ def _path_key(value: str) -> bytes:
     return os.fsencode(value)
 
 
-def _committed_runs(workspace: Path, run_ids: list[str]) -> tuple[str, ...]:
+def _committed_effects(
+    workspace: Path, run_ids: list[str]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Report the runs that committed and the records they actually created.
+
+    Creation is read back from each completed run's own `output_ids`, which
+    name the rows its commit wrote. Allocated IDs cannot stand in: §12 rule 11
+    allocation retries a collision, so a candidate the allocator rejected
+    would otherwise be reported as this command's creation.
+    """
+
     if not run_ids:
-        return ()
+        return (), ()
     placeholders = ",".join("?" for _ in run_ids)
     with read_database(workspace) as connection:
         rows = connection.execute(
-            f"SELECT id FROM processing_runs WHERE id IN ({placeholders})",
+            "SELECT id, status, output_ids_json FROM processing_runs "
+            f"WHERE id IN ({placeholders})",
             run_ids,
         ).fetchall()
-    committed = {row[0] for row in rows}
-    return tuple(run_id for run_id in run_ids if run_id in committed)
+    committed = {row[0]: (row[1], row[2]) for row in rows}
+    created: list[str] = []
+    for run_id in run_ids:
+        status, output_ids_json = committed.get(run_id, (None, None))
+        if status != "completed":
+            continue
+        created.extend(json.loads(output_ids_json or "[]"))
+    return (
+        tuple(run_id for run_id in run_ids if run_id in committed),
+        tuple(created),
+    )
 
 
-def _committed_job_descriptions(
-    workspace: Path, job_description_ids: list[str]
-) -> tuple[str, ...]:
-    if not job_description_ids:
-        return ()
-    placeholders = ",".join("?" for _ in job_description_ids)
-    with read_database(workspace) as connection:
-        rows = connection.execute(
-            f"SELECT id FROM job_descriptions WHERE id IN ({placeholders})",
-            job_description_ids,
-        ).fetchall()
-    committed = {row[0] for row in rows}
-    return tuple(value for value in job_description_ids if value in committed)
+def _created_job_descriptions(created: Iterable[str]) -> AffectedIds:
+    return AffectedIds(
+        created=[EntityIdGroup(entity_type="job_description", ids=list(created))]
+    )
 
 
 def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
@@ -109,14 +121,11 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         raise failure from error
     selection, budgets, runner = build_llm_execution(workspace)
     allocated_runs: list[str] = []
-    allocated_job_descriptions: list[str] = []
 
     def tracking_id_factory(kind: str) -> str:
         value = new_id(kind)
         if kind == "run":
             allocated_runs.append(value)
-        elif kind == "job_description":
-            allocated_job_descriptions.append(value)
         return value
 
     try:
@@ -130,18 +139,26 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        error.run_ids = _committed_runs(workspace, allocated_runs)
+        runs, created = _committed_effects(workspace, allocated_runs)
+        error.run_ids = runs
         # §14.14 rule 6: an interrupt delivered as Stage 8's business commit
         # returns leaves the row durable, so cancellation reports the created
         # job description rather than an effect-free envelope.
-        created = _committed_job_descriptions(workspace, allocated_job_descriptions)
         if created:
-            error.affected_ids = AffectedIds(
-                created=[
-                    EntityIdGroup(entity_type="job_description", ids=list(created))
-                ]
-            )
+            error.affected_ids = _created_job_descriptions(created)
         raise
+    except KeyboardInterrupt:
+        # The same rule one frame further out: the interrupt may also land
+        # after Stage 8 returned from its commit — while its result is built,
+        # or while the writer lock and connection tear down — where nothing
+        # has classified it yet. A durable creation still gets reported.
+        runs, created = _committed_effects(workspace, allocated_runs)
+        if not created:
+            raise
+        cancelled = OperationCancelledError()
+        cancelled.run_ids = list(runs)
+        cancelled.affected_ids = _created_job_descriptions(created)
+        raise cancelled from None
 
 
 def run_jd_add_file(workspace: Path, *, source_path: str) -> Stage8Result:
