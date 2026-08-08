@@ -55,7 +55,17 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
         try:
             backup_fd = os.open("backup", directory_flags | no_follow, dir_fd=marker_fd)
         except FileNotFoundError:
-            return (), ()
+            # Nothing to purge, and no descriptor the checks below could use.
+            # The caller commits the database deletion next, so a root that
+            # appears in between is reported as residual rather than assumed
+            # away. §8.1's single business writer — held by this caller — is
+            # what bounds the remaining window: no exp2res command can create
+            # a backup while this lock is out.
+            try:
+                os.stat("backup", dir_fd=marker_fd, follow_symlinks=False)
+            except OSError:
+                return (), ()
+            return (), (str(backup_root.absolute()),)
         descriptors.append(backup_fd)
 
         def _same_entry(name: str, parent_fd: int, opened_fd: int) -> bool:

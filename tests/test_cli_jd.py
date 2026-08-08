@@ -1015,3 +1015,67 @@ def test_a_real_c1_character_and_an_undecodable_byte_stay_distinct(
     assert len(set(removed)) == 2
     assert str(backup_root / "pre") + "\\u0085.sqlite" in removed
     assert str(backup_root / "pre") + "\\x85.sqlite" in removed
+
+
+def test_a_colliding_orchestration_run_id_never_blocks_the_deletion(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 6: telemetry allocation never leaves the vacancy in place."""
+
+    ids = ParserIds()
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch, ids=ids)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    with read_database(workspace) as connection:
+        retained = connection.execute("SELECT id FROM processing_runs").fetchone()[0]
+
+    offered = [retained, retained, "run_vera_fresh"]
+
+    def colliding_factory(kind: str) -> str:
+        assert kind == "run"
+        return offered.pop(0)
+
+    monkeypatch.setattr(jd_service, "new_id", colliding_factory)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 0
+    assert envelope["run_ids"] == ["run_vera_fresh"]
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0
+
+
+def test_a_backup_root_appearing_after_its_absence_is_reported(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store created between the probe and the commit is residual."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    assert not backup_root.exists()
+    real_open = privacy_service.os.open
+
+    def creating_open(path, flags, **keywords):
+        if path == "backup" and not backup_root.exists():
+            try:
+                return real_open(path, flags, **keywords)
+            except FileNotFoundError:
+                # A concurrent process installs the store right after the probe.
+                backup_root.mkdir(mode=0o700)
+                raise
+
+        return real_open(path, flags, **keywords)
+
+    monkeypatch.setattr(privacy_service.os, "open", creating_open)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str(backup_root.absolute())]

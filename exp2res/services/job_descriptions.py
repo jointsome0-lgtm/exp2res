@@ -18,6 +18,7 @@ from exp2res.config import load_workspace_config
 from exp2res.domain.models import JobDescription, validate_free_text
 from exp2res.domain.results import AffectedIds, EntityIdGroup
 from exp2res.errors import (
+    IdCollisionError,
     InvalidInputError,
     LLMInvocationError,
     OperationCancelledError,
@@ -203,6 +204,22 @@ def show_job_description(
     return selected
 
 
+_RUN_ID_ATTEMPTS = 8
+
+
+def _allocate_run_id(
+    connection: sqlite3.Connection, id_factory: Callable[[str], str]
+) -> str:
+    taken = {
+        row[0] for row in connection.execute("SELECT id FROM processing_runs")
+    }
+    for _attempt in range(_RUN_ID_ATTEMPTS):
+        candidate = id_factory("run")
+        if candidate and candidate not in taken:
+            return candidate
+    raise IdCollisionError()
+
+
 def _committed_outcome(
     *,
     run_id: str,
@@ -238,7 +255,7 @@ def delete_job_description(
     """Run §13.13 rule 10's dependent purge for one vacancy."""
 
     now = clock or (lambda: datetime.now(timezone.utc))
-    orchestration_run_id = (id_factory or new_id)("run")
+    allocate_id = id_factory or new_id
     residual_paths: list[str] = []
     removed_paths: list[str] = []
     held = (
@@ -256,7 +273,7 @@ def delete_job_description(
             workspace,
             held=held,
             job_description_id=job_description_id,
-            orchestration_run_id=orchestration_run_id,
+            allocate_id=allocate_id,
             residual_paths=residual_paths,
             removed_paths=removed_paths,
             committed=committed,
@@ -275,7 +292,7 @@ def _delete_locked(
     *,
     held,
     job_description_id: str,
-    orchestration_run_id: str,
+    allocate_id: Callable[[str], str],
     residual_paths: list[str],
     removed_paths: list[str],
     committed: list[JobDescriptionDeleteOutcome],
@@ -288,6 +305,11 @@ def _delete_locked(
         # §13.13 rule 10 orders managed-path removal before the database
         # transaction, so the writer lock is never held across filesystem I/O
         # and an interrupt between the two leaves no half-open transaction.
+        # §12 rule 11 / §13.13 rule 6: a telemetry ID that collided with a
+        # retained run would abort the transaction and leave the vacancy in
+        # place, so the value is allocated against the retained set with the
+        # same bounded local retry Stage 8 uses.
+        orchestration_run_id = _allocate_run_id(connection, allocate_id)
         removed, backup_residuals = _purge_managed_backups(workspace)
         removed_paths.extend(removed)
         residual_paths.extend(backup_residuals)
