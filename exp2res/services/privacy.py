@@ -33,12 +33,25 @@ def vacuum_residuals(
         return (str(database),)
 
 
-def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+DATABASE_NAME = "exp2res.sqlite"
+
+
+def purge_managed_backups(
+    workspace: Path, *, expected_database: os.stat_result | None = None
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Remove every regular migration backup and report `(removed, residual)`.
 
     Enumeration and removal share one `O_NOFOLLOW` directory-descriptor
     boundary, so a symlinked `backup/` root is never traversed: it is
     refused at the open and reported as one residual path (§13.13 rule 6).
+
+    `expected_database` binds this cleanup to the workspace the caller's
+    writer authority is actually deleting from. The caller stats its database
+    file under the §8.1 writer lock and passes that identity here; if the
+    workspace directory was renamed and replaced in between, the `.exp2res`
+    reached from the path now holds a different database file, the identities
+    disagree, and the store is reported residual instead of a foreign tree
+    being purged while the original's backups survive.
     """
 
     backup_root = workspace / ".exp2res" / "backup"
@@ -52,6 +65,25 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
             ".exp2res", directory_flags | no_follow, dir_fd=workspace_fd
         )
         descriptors.append(marker_fd)
+
+        def database_is_live() -> bool:
+            """Answer whether this marker holds the caller's locked database."""
+
+            if expected_database is None:
+                return True
+            try:
+                current = os.stat(
+                    DATABASE_NAME, dir_fd=marker_fd, follow_symlinks=False
+                )
+            except OSError:
+                return False
+            return (current.st_dev, current.st_ino) == (
+                expected_database.st_dev,
+                expected_database.st_ino,
+            )
+
+        if not database_is_live():
+            return (), (str(backup_root.absolute()),)
         try:
             backup_fd = os.open("backup", directory_flags | no_follow, dir_fd=marker_fd)
         except FileNotFoundError:
@@ -88,14 +120,17 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
             continue in a detached tree while a replacement kept the purged
             vacancy. Each level is therefore matched back to its name before
             removal and again before cleanup is declared complete (§13.14
-            rule 6). The chain ends at the workspace path itself: that path is
-            what the owner named, and §29's local boundary makes anything that
-            can rename it already inside the workspace's own trust boundary.
+            rule 6). The chain is anchored at the bottom by the caller's
+            locked database rather than by the workspace path, so a workspace
+            renamed and replaced under a caller that already holds the writer
+            authority is caught here too.
             """
 
-            return _same_entry(
-                ".exp2res", workspace_fd, marker_fd
-            ) and _same_entry("backup", marker_fd, backup_fd)
+            return (
+                _same_entry(".exp2res", workspace_fd, marker_fd)
+                and _same_entry("backup", marker_fd, backup_fd)
+                and database_is_live()
+            )
 
         if not root_is_live():
             return (), (str(backup_root.absolute()),)

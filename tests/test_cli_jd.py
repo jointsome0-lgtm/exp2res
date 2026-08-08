@@ -1107,3 +1107,103 @@ def test_an_unreadable_backup_entry_is_never_read_as_absence(
     assert result.exit_code == 8
     assert envelope["diagnostic_class"] == "deletion_incomplete"
     assert envelope["residual_paths"] == [str(backup_root.absolute())]
+
+
+def test_a_cleanup_only_cancellation_still_reports_its_removals(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: pre-transaction cleanup outlives an early interrupt."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    backup = backup_root / "schema-10.sqlite"
+    backup.write_bytes(b"Vera Example migration backup")
+
+    def interrupting_run(*_arguments, **_keywords):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(jd_service, "create_processing_run", interrupting_run)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["affected_ids"]["deleted"] == []
+    assert envelope["run_ids"] == []
+    assert envelope["result"]["removed_managed_paths"] == [
+        str(backup.absolute())
+    ]
+    assert not backup.exists()
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 1
+
+
+def test_a_workspace_swapped_under_the_lock_is_never_purged(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 6: cleanup is bound to the locked database's identity."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    backup = backup_root / "schema-10.sqlite"
+    backup.write_bytes(b"Vera Example migration backup")
+    real_stat = privacy_service.os.stat
+    decoy = tmp_path / "decoy.sqlite"
+    decoy.write_bytes(b"")
+
+    def swapped_stat(path, **keywords):
+        if path == privacy_service.DATABASE_NAME:
+            # The marker directory now belongs to a replacement workspace.
+            return real_stat(decoy)
+
+        return real_stat(path, **keywords)
+
+    monkeypatch.setattr(privacy_service.os, "stat", swapped_stat)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["residual_paths"] == [str(backup_root.absolute())]
+    assert envelope["result"]["removed_managed_paths"] == []
+    assert backup.read_bytes() == b"Vera Example migration backup"
+
+
+def test_an_unreadable_database_anchor_refuses_the_purge(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An anchor that cannot be established is never permission to purge."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    backup = backup_root / "schema-10.sqlite"
+    backup.write_bytes(b"Vera Example migration backup")
+    real_stat = jd_service.os.stat
+
+    def refusing_stat(path, **keywords):
+        if str(path).endswith("exp2res.sqlite"):
+            raise PermissionError(13, "Permission denied")
+
+        return real_stat(path, **keywords)
+
+    monkeypatch.setattr(jd_service.os, "stat", refusing_stat)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["residual_paths"] == [str(backup_root.absolute())]
+    assert backup.read_bytes() == b"Vera Example migration backup"

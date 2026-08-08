@@ -63,6 +63,21 @@ class JobDescriptionDeleteOutcome:
     residual_paths: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class JobDescriptionCleanupOutcome:
+    """Managed cleanup that outlived a cancellation before the deletion.
+
+    §13.13 rule 10 removes managed paths before the database transaction, so
+    an interrupt in between leaves the vacancy in place with filesystem work
+    already done. §14.14 rule 6 still requires that work reported, and it
+    cannot travel as a delete outcome: nothing was deleted.
+    """
+
+    selected: JobDescription
+    removed_managed_paths: tuple[str, ...]
+    residual_paths: tuple[str, ...]
+
+
 def _path_key(value: str) -> bytes:
     return os.fsencode(value)
 
@@ -268,6 +283,10 @@ def delete_job_description(
     # checkpoint, result construction, lock and connection teardown — one
     # cancellation boundary instead of a sequence of narrower guarded blocks.
     committed: list[JobDescriptionDeleteOutcome] = []
+    # The same guarantee one step earlier: managed cleanup runs before the
+    # transaction, so its effects have to survive a cancellation that reaches
+    # the command before anything was deleted.
+    cleaned: list[JobDescriptionCleanupOutcome] = []
     try:
         return _delete_locked(
             workspace,
@@ -277,14 +296,20 @@ def delete_job_description(
             residual_paths=residual_paths,
             removed_paths=removed_paths,
             committed=committed,
+            cleaned=cleaned,
             now=now,
         )
     except KeyboardInterrupt:
-        if not committed:
-            raise
         cancelled = OperationCancelledError()
-        cancelled.delete_outcome = committed[-1]
-        raise cancelled from None
+        if committed:
+            cancelled.delete_outcome = committed[-1]
+            raise cancelled from None
+        if cleaned and (
+            cleaned[-1].removed_managed_paths or cleaned[-1].residual_paths
+        ):
+            cancelled.cleanup_outcome = cleaned[-1]
+            raise cancelled from None
+        raise
 
 
 def _delete_locked(
@@ -296,12 +321,25 @@ def _delete_locked(
     residual_paths: list[str],
     removed_paths: list[str],
     committed: list[JobDescriptionDeleteOutcome],
+    cleaned: list[JobDescriptionCleanupOutcome],
     now: Callable[[], datetime],
 ) -> JobDescriptionDeleteOutcome:
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    backup_root = str((workspace / ".exp2res" / "backup").absolute())
     with held as connection:
         selected = get_job_description(connection, job_description_id)
         if selected is None:
             raise SelectorNotFoundError()
+        # Identity of the database this command is about to delete from,
+        # taken under the §8.1 writer authority. Managed cleanup is bound to
+        # it, so a workspace renamed and replaced after the lock cannot make
+        # this command purge one tree while deleting from another.
+        # An unreadable database file means that anchor cannot be established,
+        # which is never treated as permission to purge (§13.13 rule 6).
+        try:
+            database_identity: os.stat_result | None = os.stat(database)
+        except OSError:
+            database_identity = None
         # §13.13 rule 10 orders managed-path removal before the database
         # transaction, so the writer lock is never held across filesystem I/O
         # and an interrupt between the two leaves no half-open transaction.
@@ -310,9 +348,36 @@ def _delete_locked(
         # place, so the value is allocated against the retained set with the
         # same bounded local retry Stage 8 uses.
         orchestration_run_id = _allocate_run_id(connection, allocate_id)
-        removed, backup_residuals = _purge_managed_backups(workspace)
+        try:
+            if database_identity is None:
+                removed, backup_residuals = (), (backup_root,)
+            else:
+                removed, backup_residuals = _purge_managed_backups(
+                    workspace, expected_database=database_identity
+                )
+        except KeyboardInterrupt:
+            # The pass was cut mid-flight, so which names it had already
+            # removed is unknown and the store's state is unproven: the root
+            # is the honest report (§13.13 rule 6).
+            cleaned.append(
+                JobDescriptionCleanupOutcome(
+                    selected=selected,
+                    removed_managed_paths=(),
+                    residual_paths=(backup_root,),
+                )
+            )
+            raise
         removed_paths.extend(removed)
         residual_paths.extend(backup_residuals)
+        cleaned.append(
+            JobDescriptionCleanupOutcome(
+                selected=selected,
+                removed_managed_paths=tuple(
+                    sorted(set(removed_paths), key=_path_key)
+                ),
+                residual_paths=tuple(sorted(set(residual_paths), key=_path_key)),
+            )
+        )
         # §13.13 rule 10 captures every current or historical branch naming
         # this job description, then deletes that branch state before the job
         # description itself. `resume_branches`, `resume_bullets`, and their
@@ -324,7 +389,6 @@ def _delete_locked(
         purged_branches: tuple[PurgedBranch, ...] = ()
         purged_bullet_ids: tuple[str, ...] = ()
         purged_finding_ids: tuple[str, ...] = ()
-        database = workspace / ".exp2res" / "exp2res.sqlite"
         write_ahead_log = str(database.with_name(database.name + "-wal"))
 
         def build_outcome(residuals: Iterable[str]) -> JobDescriptionDeleteOutcome:

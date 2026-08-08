@@ -110,6 +110,7 @@ from exp2res.services.export import export_assessment, require_export_eligible
 from exp2res.services.facts import list_facts, show_fact
 from exp2res.pipeline.stage8 import Stage8Result
 from exp2res.services.job_descriptions import (
+    JobDescriptionCleanupOutcome,
     JobDescriptionDeleteOutcome,
     delete_job_description,
     list_job_descriptions,
@@ -2401,6 +2402,28 @@ def _jd_delete_human_result(deleted: JobDescriptionDeleteOutcome) -> str:
     return "\n".join(lines)
 
 
+def _jd_cleanup_result(cleaned: JobDescriptionCleanupOutcome) -> JdDeleteResult:
+    return JdDeleteResult(
+        selected_job_description=_job_description_projection(cleaned.selected),
+        purged_branches=[],
+        removed_managed_paths=[
+            _render_path(path) for path in cleaned.removed_managed_paths
+        ],
+    )
+
+
+def _jd_cleanup_human_result(cleaned: JobDescriptionCleanupOutcome) -> str:
+    lines = [
+        f"Job description {cleaned.selected.id} was not deleted; managed "
+        "cleanup had already run."
+    ]
+    lines.extend(
+        f"Removed managed path: {path}"
+        for path in _jd_cleanup_result(cleaned).removed_managed_paths
+    )
+    return "\n".join(lines)
+
+
 def _jd_delete_affected(deleted: JobDescriptionDeleteOutcome) -> AffectedIds:
     classes = (
         ("verification_finding", deleted.purged_finding_ids),
@@ -2459,6 +2482,18 @@ def jd_delete(
                 error.residual_paths = list(committed.residual_paths)
                 error.result = _jd_delete_result(committed)
                 error.human_result = _jd_delete_human_result(committed)
+                raise
+            # §14.14 rule 6: managed cleanup ran before the transaction, so
+            # its effects are reported even though nothing was deleted — no
+            # affected IDs and no run, because neither became durable.
+            cleaned = cast(
+                JobDescriptionCleanupOutcome | None,
+                getattr(error, "cleanup_outcome", None),
+            )
+            if cleaned is not None:
+                error.residual_paths = list(cleaned.residual_paths)
+                error.result = _jd_cleanup_result(cleaned)
+                error.human_result = _jd_cleanup_human_result(cleaned)
             raise
         try:
             return _jd_delete_outcome(deleted)
