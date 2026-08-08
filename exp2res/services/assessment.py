@@ -110,7 +110,7 @@ def run_assess_generate(
 
 
 def run_assess_repair(workspace: Path, *, snapshot_id: str) -> Stage6Result:
-    """§13.6 deterministic repair — no LLM execution is built or consented."""
+    """§13.6 deterministic repair — no LLM execution is built."""
 
     require_compatible(workspace)
     return run_assessment_repair(workspace, snapshot_id=snapshot_id)

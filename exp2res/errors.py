@@ -35,13 +35,6 @@ class NonInteractiveInputRequired(InvalidInputError):
     public_message = "Required input was not supplied in non-interactive mode."
 
 
-class OwnerAuthorshipRequired(InvalidInputError):
-    diagnostic_class = "owner_authorship_required"
-    public_message = (
-        "Non-prompt capture requires the explicit --owner-authored affirmation."
-    )
-
-
 class PeriodNotAllowedError(InvalidInputError):
     diagnostic_class = "period_not_allowed"
     public_message = "A period cannot be supplied when precision is unknown."

@@ -63,7 +63,7 @@ a verified mirror and a bullet-pack attempt. Steps use semantic kinds —
 `log_daily`, `log_retro`, `correction_add`, `import`, `jd_add`,
 `logs_delete`, `jd_delete`, and the derived kinds `extract`, `detect`,
 `assess`, `bullets` — that a harness maps to the §14 commands
-(`exp2res log today --file … --project … --owner-authored`, `exp2res log retro`,
+(`exp2res log today --file … --project …`, `exp2res log retro`,
 `exp2res correction add`, `exp2res import <importer> <file>`,
 `exp2res jd add`, `exp2res extract`, the §14.7–§14.10 generation and
 `bullets generate|verify|export` flows, `exp2res logs delete`,

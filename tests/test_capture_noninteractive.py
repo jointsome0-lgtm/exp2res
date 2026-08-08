@@ -1,4 +1,4 @@
-"""§21.52 non-prompt owner-affirmed capture and retro uncertainty tests."""
+"""§21.52 non-prompt owner capture and retro uncertainty tests."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ import exp2res.cli as cli_module
 import exp2res.services.detection as detection_service
 from exp2res.cli import app
 from exp2res.services.logs import list_logs, show_log
-from exp2res.storage.workspace import CONFIG_TEMPLATE
 
 from fakes import FakeContractRunner
 from test_stage3_extraction import SELECTION, budgets
@@ -89,7 +88,6 @@ def test_multiline_file_and_stdin_capture_round_trip_with_unchanged_classes(
             "today",
             "--file",
             str(daily_file),
-            "--owner-authored",
             "--artifact",
             "urn:vera-example:daily",
         ],
@@ -99,7 +97,7 @@ def test_multiline_file_and_stdin_capture_round_trip_with_unchanged_classes(
     daily_stdin_bytes = b"Vera Example daily stdin first line.\n\nDaily stdin second line.\n"
     daily_stdin_result, daily_stdin_envelope = invoke_json(
         workspace,
-        ["log", "today", "--file", "-", "--owner-authored"],
+        ["log", "today", "--file", "-"],
         input=daily_stdin_bytes,
     )
     assert daily_stdin_result.exit_code == 0
@@ -120,7 +118,6 @@ def test_multiline_file_and_stdin_capture_round_trip_with_unchanged_classes(
             "2026-07",
             "--confidence",
             "medium",
-            "--owner-authored",
         ],
     )
     assert retro_file_result.exit_code == 0
@@ -139,7 +136,6 @@ def test_multiline_file_and_stdin_capture_round_trip_with_unchanged_classes(
             "low",
             "--project",
             "Vera Example Migration",
-            "--owner-authored",
             "--artifact",
             "urn:vera-example:retro",
         ],
@@ -157,7 +153,6 @@ def test_multiline_file_and_stdin_capture_round_trip_with_unchanged_classes(
             gap_id,
             "--file",
             "-",
-            "--owner-authored",
             "--artifact",
             "urn:vera-example:answer",
         ],
@@ -213,48 +208,6 @@ def test_multiline_file_and_stdin_capture_round_trip_with_unchanged_classes(
             "manual_claim",
             "artifact_reference",
         ]
-
-
-@pytest.mark.parametrize(
-    "arguments",
-    [
-        ["--yes", "log", "today", "--file", "Vera Example missing.md"],
-        [
-            "log",
-            "retro",
-            "--file",
-            "Vera Example missing.md",
-            "--precision",
-            "month",
-            "--period",
-            "2026-07",
-            "--confidence",
-            "medium",
-        ],
-        [
-            "gaps",
-            "answer",
-            "--gap-id",
-            "gap_vera_example_missing",
-            "--file",
-            "Vera Example missing.md",
-        ],
-    ],
-    ids=["daily-yes-is-not-affirmation", "retro", "gap-answer"],
-)
-def test_missing_owner_authorship_fails_before_every_nonprompt_source_read(
-    workspace: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    arguments: list[str],
-) -> None:
-    """§21.52 / §24.56: affirmation is explicit, uniform, and pre-acquisition."""
-
-    assert "owner_authored" not in CONFIG_TEMPLATE
-    monkeypatch.setenv("EXP2RES_OWNER_AUTHORED", "1")
-    result, envelope = invoke_json(workspace, arguments)
-    assert result.exit_code == 2
-    assert envelope["diagnostic_class"] == "owner_authorship_required"
-    assert list_logs(workspace) == ()
 
 
 def test_interactive_unknown_precision_skips_period_and_stores_null_bounds(
@@ -314,7 +267,6 @@ def test_noninteractive_retro_rejects_unknown_period_and_missing_typed_values(
             "2026-07",
             "--confidence",
             "low",
-            "--owner-authored",
         ],
     )
     assert unknown_period.exit_code == 2
@@ -331,7 +283,6 @@ def test_noninteractive_retro_rejects_unknown_period_and_missing_typed_values(
             "date_range",
             "--confidence",
             "medium",
-            "--owner-authored",
         ],
     )
     assert missing_period.exit_code == 2
@@ -351,7 +302,6 @@ def test_noninteractive_retro_rejects_unknown_period_and_missing_typed_values(
             "2026-07",
             "--confidence",
             "medium",
-            "--owner-authored",
         ],
     )
     assert malformed_range.exit_code == 2
@@ -383,7 +333,6 @@ def test_open_retro_period_round_trips_null_end_without_marker_or_decay(
             "2026-04-01/..",
             "--confidence",
             "medium",
-            "--owner-authored",
         ],
     )
     assert result.exit_code == 0, result.stderr
@@ -454,7 +403,6 @@ def test_invalid_open_period_forms_fail_class_2_without_persistence(
             period,
             "--confidence",
             "medium",
-            "--owner-authored",
         ],
     )
     assert result.exit_code == 2
@@ -477,7 +425,7 @@ def test_stdin_capture_is_bounded_utf8_and_atomic(
 
     result, envelope = invoke_json(
         workspace,
-        ["log", "today", "--file", "-", "--owner-authored"],
+        ["log", "today", "--file", "-"],
         input=payload,
     )
     assert result.exit_code == 2

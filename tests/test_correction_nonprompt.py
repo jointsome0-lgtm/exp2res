@@ -13,7 +13,6 @@ import exp2res.cli as cli_module
 import exp2res.services.lifecycle as lifecycle_service
 from exp2res.cli import app
 from exp2res.services.logs import list_logs, show_log
-from exp2res.storage.workspace import CONFIG_TEMPLATE
 
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
@@ -98,7 +97,6 @@ def test_file_and_stdin_corrections_round_trip_and_copy_placement(
             target.id,
             "--file",
             str(source),
-            "--owner-authored",
             "--artifact",
             "urn:vera-example:correction",
         ],
@@ -133,7 +131,6 @@ def test_file_and_stdin_corrections_round_trip_and_copy_placement(
             corrected.raw_log.id,
             "--file",
             "-",
-            "--owner-authored",
         ],
         input=stdin_bytes,
     )
@@ -183,7 +180,6 @@ def test_explicit_replacements_take_effect_exactly(
             target.id,
             "--file",
             str(source),
-            "--owner-authored",
             *flags,
         ],
     )
@@ -191,48 +187,6 @@ def test_explicit_replacements_take_effect_exactly(
     corrected = show_log(workspace, log_id=created_log_id(envelope))
     assert corrected.raw_log.occurred.precision == expected_precision
     assert corrected.raw_log.project == expected_project
-
-
-@pytest.mark.parametrize(
-    ("arguments", "diagnostic"),
-    [
-        ([], "owner_authorship_required"),
-        (["--precision", "month"], "owner_authorship_required"),
-    ],
-    ids=["bare", "with-replacement-flags"],
-)
-def test_missing_affirmation_fails_before_acquisition(
-    workspace: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    arguments: list[str],
-    diagnostic: str,
-) -> None:
-    """§21.52 / §24.56: affirmation is explicit and pre-acquisition."""
-
-    target = seed_target(workspace)
-    assert "owner_authored" not in CONFIG_TEMPLATE
-    monkeypatch.setenv("EXP2RES_OWNER_AUTHORED", "1")
-    source = tmp_path / "Vera Example unread.md"
-    source.write_text("Vera Example restates the record in full.\n")
-
-    result, envelope = invoke_json(
-        workspace,
-        [
-            "--yes",
-            "correction",
-            "add",
-            "--log-id",
-            target.id,
-            "--file",
-            str(source),
-            *arguments,
-        ],
-    )
-    assert result.exit_code == 2
-    assert envelope["diagnostic_class"] == diagnostic
-    # Nothing beyond the seeded target was written.
-    assert [log.id for log in list_logs(workspace)] == [target.id]
 
 
 @pytest.mark.parametrize(
@@ -277,7 +231,6 @@ def test_project_replacement_and_clear_are_mutually_exclusive(
             target.id,
             "--file",
             str(source),
-            "--owner-authored",
             "--project",
             "Vera Example Replacement",
             "--clear-project",
@@ -319,7 +272,6 @@ def test_temporal_replacement_requires_the_whole_typed_set(
             target.id,
             "--file",
             str(source),
-            "--owner-authored",
             *flags,
         ],
     )
@@ -328,47 +280,22 @@ def test_temporal_replacement_requires_the_whole_typed_set(
     assert [log.id for log in list_logs(workspace)] == [target.id]
 
 
-def test_affirmation_does_not_supply_the_rebuild_consent(
-    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """§21.52 / §14.14 rule 3: --owner-authored never implies --yes."""
-
-    target = seed_target(workspace)
-
-    def refuse_build(_workspace: Path):
-        raise AssertionError("adapter construction ran before cost consent")
-
-    monkeypatch.setattr(lifecycle_service, "build_llm_execution", refuse_build)
-    source = tmp_path / "Vera Example unconsented.md"
-    source.write_text("Vera Example restates the record in full.\n")
-    result, envelope = invoke_json(
-        workspace,
-        [
-            "correction",
-            "add",
-            "--log-id",
-            target.id,
-            "--file",
-            str(source),
-            "--owner-authored",
-        ],
-    )
-    assert result.exit_code == 2
-    assert envelope["diagnostic_class"] == "input_required"
-    assert [log.id for log in list_logs(workspace)] == [target.id]
-
-
-def test_missing_consent_fails_before_the_source_is_read(
+def test_file_correction_reads_stdin_and_runs_without_cost_prompt(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§14.14 rule 3: `--file -` never blocks on a pipe it will not use."""
+    """§14.14 rule 3: capture-triggered model work needs no confirmation."""
 
     target = seed_target(workspace)
+    install_lifecycle_runner(monkeypatch)
 
-    def refuse_read(*_args, **_kwargs):
-        raise AssertionError("the source was acquired before cost consent")
-
-    monkeypatch.setattr(cli_module, "read_correction_source", refuse_read)
+    monkeypatch.setattr(
+        cli_module.typer,
+        "confirm",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("routine model work prompted")
+        ),
+    )
+    raw_text = b"Vera Example correction runs without cost confirmation.\n"
     result, envelope = invoke_json(
         workspace,
         [
@@ -378,13 +305,12 @@ def test_missing_consent_fails_before_the_source_is_read(
             target.id,
             "--file",
             "-",
-            "--owner-authored",
         ],
-        input=b"Vera Example text that must never be consumed.\n",
+        input=raw_text,
     )
-    assert result.exit_code == 2
-    assert envelope["diagnostic_class"] == "input_required"
-    assert [log.id for log in list_logs(workspace)] == [target.id]
+    assert result.exit_code == 0, result.output
+    stored = show_log(workspace, log_id=created_log_id(envelope)).raw_log
+    assert stored.raw_text.encode("utf-8") == raw_text
 
 
 def clear_workspace_timezone(workspace: Path) -> None:
@@ -416,7 +342,6 @@ def test_copied_placement_needs_no_workspace_timezone(
             target.id,
             "--file",
             str(source),
-            "--owner-authored",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -444,7 +369,6 @@ def test_explicit_temporal_replacement_still_requires_the_timezone(
             target.id,
             "--file",
             str(source),
-            "--owner-authored",
             "--precision",
             "month",
             "--period",

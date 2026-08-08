@@ -40,7 +40,6 @@ def test_cli_daily_demo_lists_only_raw_text_free_projection(workspace: Path) -> 
             str(source),
             "--project",
             "K8s Playbook",
-            "--owner-authored",
         ],
     )
     assert captured.exit_code == 0
@@ -78,7 +77,6 @@ def test_file_capture_rejects_blank_project_with_stable_input_diagnostic(
             str(source),
             "--project",
             "   ",
-            "--owner-authored",
         ],
     )
     assert result.exit_code == 2
@@ -89,8 +87,10 @@ def test_file_capture_rejects_blank_project_with_stable_input_diagnostic(
 
 
 def test_noninteractive_capture_and_delete_never_prompt_or_block(workspace: Path) -> None:
-    """§21.41; §24.44: missing prompts/consent fail with exit class 2."""
-    daily, daily_envelope = invoke_json(workspace, ["--no-input", "log", "today"])
+    """§21.41; §24.44: capture input and destructive consent stay distinct."""
+    daily, daily_envelope = invoke_json(
+        workspace, ["--yes", "--no-input", "log", "today"]
+    )
     retro, retro_envelope = invoke_json(workspace, ["--no-input", "log", "retro"])
     assert daily.exit_code == retro.exit_code == 2
     assert daily_envelope["diagnostic_class"] == "input_required"
@@ -100,7 +100,7 @@ def test_noninteractive_capture_and_delete_never_prompt_or_block(workspace: Path
 
     source = VERA_CORPUS / "logs" / "daily-2026-06-20.md"
     captured, envelope = invoke_json(
-        workspace, ["log", "today", "--file", str(source), "--owner-authored"]
+        workspace, ["log", "today", "--file", str(source)]
     )
     log_id = next(
         group["ids"][0]
@@ -150,7 +150,7 @@ def test_confirmed_owner_delete_reports_closed_raw_free_result(workspace: Path) 
     """§21.11 / §21.41; §24.3 / §24.44: deletion envelope is complete and private."""
     source = VERA_CORPUS / "logs" / "daily-2026-06-25.md"
     _, capture_envelope = invoke_json(
-        workspace, ["log", "today", "--file", str(source), "--owner-authored"]
+        workspace, ["log", "today", "--file", str(source)]
     )
     log_id = next(
         group["ids"][0]
@@ -182,7 +182,7 @@ def test_local_time_requires_workspace_config_and_ignores_ambient_timezone(
     monkeypatch.setenv("TZ", "Europe/Moscow")
     source = VERA_CORPUS / "logs" / "daily-2026-06-02.md"
     result, envelope = invoke_json(
-        root, ["log", "today", "--file", str(source), "--owner-authored"]
+        root, ["log", "today", "--file", str(source)]
     )
     assert result.exit_code == 2
     assert envelope["diagnostic_class"] == "workspace_timezone_required"
@@ -203,7 +203,7 @@ def test_literal_credential_config_fails_without_echo(workspace: Path) -> None:
     )
     source = VERA_CORPUS / "logs" / "daily-2026-06-02.md"
     result, envelope = invoke_json(
-        workspace, ["log", "today", "--file", str(source), "--owner-authored"]
+        workspace, ["log", "today", "--file", str(source)]
     )
     assert result.exit_code == 7
     assert envelope["diagnostic_class"] == "configuration_invalid"
@@ -250,7 +250,6 @@ def test_file_capture_validates_timezone_before_source_read(tmp_path: Path) -> N
             "today",
             "--file",
             str(root / "definitely-missing.md"),
-            "--owner-authored",
         ],
     )
     assert result.exit_code == 2

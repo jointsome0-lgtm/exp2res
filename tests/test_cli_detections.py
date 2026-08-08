@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import exp2res.cli as cli_module
 import exp2res.services.detection as detection_service
 from exp2res.cli import app
 from exp2res.storage.repository import (
@@ -238,35 +239,9 @@ def test_generate_replaces_then_retains_complete_sets_and_standard_fields(
     assert len(fake.calls) == 5
 
 
-def test_generate_consent_order_decline_and_zero_input_lazy_runner(
+def test_generate_runs_without_confirmation_and_keeps_zero_input_runner_lazy(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def refuse_build(_workspace: Path):
-        raise AssertionError("adapter construction ran before consent")
-
-    monkeypatch.setattr(detection_service, "build_llm_execution", refuse_build)
-    missing, missing_envelope = invoke_json(
-        workspace, ["detections", "generate"]
-    )
-    assert missing.exit_code == 2
-    assert missing_envelope["diagnostic_class"] == "input_required"
-
-    monkeypatch.setattr("exp2res.cli._noninteractive", lambda _controls: False)
-    declined = runner.invoke(
-        app,
-        [
-            "--json",
-            "--workspace",
-            str(workspace),
-            "detections",
-            "generate",
-        ],
-        input="n\n",
-    )
-    declined_envelope = json.loads(declined.stdout.splitlines()[-1])
-    assert declined.exit_code == 9
-    assert declined_envelope["diagnostic_class"] == "cancelled"
-
     materialized = False
 
     def build_never_runner():
@@ -283,8 +258,15 @@ def test_generate_consent_order_decline_and_zero_input_lazy_runner(
             detection_service.LazyPreflightRunner(build_never_runner),
         ),
     )
+    monkeypatch.setattr(
+        cli_module.typer,
+        "confirm",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("routine model work prompted")
+        ),
+    )
     empty, empty_envelope = invoke_json(
-        workspace, ["--yes", "detections", "generate"]
+        workspace, ["detections", "generate"]
     )
     assert empty.exit_code == 0
     assert empty_envelope["result"] == {
@@ -322,7 +304,6 @@ def test_gap_answer_is_atomic_self_contained_and_fails_closed(
             gap["id"],
             "--file",
             str(answer_file),
-            "--owner-authored",
             "--artifact",
             "https://example.invalid/Vera-Example-gap-artifact",
         ],
@@ -372,7 +353,6 @@ def test_gap_answer_is_atomic_self_contained_and_fails_closed(
             gap["id"],
             "--file",
             str(answer_file),
-            "--owner-authored",
         ],
     )
     assert second.exit_code == 2
@@ -391,7 +371,6 @@ def test_gap_answer_is_atomic_self_contained_and_fails_closed(
             "gap_vera_missing",
             "--file",
             str(tmp_path / "does-not-exist.txt"),
-            "--owner-authored",
         ],
     )
     assert unknown.exit_code == 2
@@ -424,7 +403,6 @@ def test_answered_gap_key_equal_cli_rerun_replaces_without_relinking(
             old_gap_id,
             "--file",
             str(answer_file),
-            "--owner-authored",
         ],
     )
     assert answered.exit_code == 0

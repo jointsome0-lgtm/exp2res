@@ -196,7 +196,6 @@ def test_busy_writer_fails_with_stable_class_and_no_partial_pair(
                 "today",
                 "--file",
                 str(source),
-                "--owner-authored",
             ],
         )
         envelope = json.loads(cli_result.stdout)
@@ -264,7 +263,6 @@ def test_incompatible_workspace_blocks_file_capture_before_source_read(
             "today",
             "--file",
             str(workspace / "definitely-missing.md"),
-            "--owner-authored",
         ],
     )
     assert result.exit_code == 4

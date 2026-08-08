@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import exp2res.cli as cli_module
 import exp2res.pipeline.stage6 as stage6_module
 import exp2res.services.assessment as assessment_service
 import exp2res.services.detection as detection_service
@@ -119,62 +120,60 @@ def test_scope_project_validation_matrix_is_class_2(
     assert envelope["diagnostic_class"] == "invalid_usage"
 
 
-def test_consent_decline_precedes_adapter_construction(
+def test_generate_runs_without_yes_or_confirmation(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    facts = prepare_graph(workspace)
+    response = assessment_response(fact_ids=list(facts))
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
-        lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner([response]),
+        ),
     )
-    missing, envelope = invoke_json(workspace, ["assess", "generate"])
-    assert missing.exit_code == 2
-    assert envelope["diagnostic_class"] == "input_required"
-
-    monkeypatch.setattr("exp2res.cli._noninteractive", lambda _controls: False)
-    declined = runner.invoke(
-        app,
-        ["--json", "--workspace", str(workspace), "assess", "generate"],
-        input="n\n",
+    monkeypatch.setattr(
+        cli_module.typer,
+        "confirm",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("routine model work prompted")
+        ),
     )
-    assert declined.exit_code == 9
-    assert json.loads(declined.stdout.splitlines()[-1])["diagnostic_class"] == "cancelled"
+    result, envelope = invoke_json(workspace, ["assess", "generate"])
+    assert result.exit_code == 0, (result.stderr, envelope)
+    assert len(envelope["run_ids"]) == 1
 
 
-def test_verify_noninteractive_and_declined_consent_precede_adapter(
+def test_verify_runs_without_yes_or_confirmation(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
-
-    def refuse_build(_workspace: Path):
-        raise AssertionError("adapter construction ran before Vera Example consent")
-
-    monkeypatch.setattr(assessment_service, "build_llm_execution", refuse_build)
-    missing, envelope = invoke_json(
+    monkeypatch.setattr(
+        assessment_service,
+        "build_llm_execution",
+        lambda _workspace: (
+            SELECTION,
+            budgets(),
+            FakeContractRunner([verifier_response(), verifier_response()]),
+        ),
+    )
+    monkeypatch.setattr(
+        cli_module.typer,
+        "confirm",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("routine model work prompted")
+        ),
+    )
+    result, envelope = invoke_json(
         workspace, ["assess", "verify", "--snapshot", snapshot_id]
     )
-    assert missing.exit_code == 2
-    assert envelope["diagnostic_class"] == "input_required"
-
-    monkeypatch.setattr("exp2res.cli._noninteractive", lambda _controls: False)
-    declined = runner.invoke(
-        app,
-        [
-            "--json",
-            "--workspace",
-            str(workspace),
-            "assess",
-            "verify",
-            "--snapshot",
-            snapshot_id,
-        ],
-        input="n\n",
-    )
-    assert declined.exit_code == 9
-    assert json.loads(declined.stdout.splitlines()[-1])["diagnostic_class"] == "cancelled"
+    assert result.exit_code == 0, (result.stderr, envelope)
+    assert len(envelope["run_ids"]) == 1
 
 
-def test_verify_missing_selector_precedes_consent_and_adapter(
+def test_verify_missing_selector_precedes_adapter(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
@@ -190,7 +189,7 @@ def test_verify_missing_selector_precedes_consent_and_adapter(
     assert envelope["diagnostic_class"] == "selector_not_found"
 
 
-def test_verify_superseded_selector_precedes_consent_and_adapter(
+def test_verify_superseded_selector_precedes_adapter(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     facts = prepare_graph(workspace)
