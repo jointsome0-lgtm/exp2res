@@ -58,6 +58,26 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
             return (), ()
         descriptors.append(backup_fd)
 
+        def root_is_live() -> bool:
+            """Answer whether the descriptor still is the live `backup` entry.
+
+            Every scan and unlink below travels through this descriptor, so a
+            root renamed out from under it would let the work continue in a
+            detached directory while a replacement kept the purged vacancy.
+            The identity is therefore matched back to the name before removal
+            and again before cleanup is declared complete (§13.14 rule 6).
+            """
+
+            try:
+                named = os.stat("backup", dir_fd=marker_fd, follow_symlinks=False)
+                opened = os.fstat(backup_fd)
+            except OSError:
+                return False
+            return (named.st_dev, named.st_ino) == (opened.st_dev, opened.st_ino)
+
+        if not root_is_live():
+            return (), (str(backup_root.absolute()),)
+
         removed: list[str] = []
         refused: list[str] = []
         with os.scandir(backup_fd) as iterator:
@@ -78,14 +98,23 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
                 # unlink-by-inode, so the check narrows the window to its
                 # minimum rather than closing it; the re-enumeration below is
                 # what proves the outcome.
+                # `O_NONBLOCK` because the name may have become a FIFO since
+                # the stat above: a blocking open would wait for a writer that
+                # never comes instead of skipping the changed entry.
                 entry_fd = os.open(
-                    entry.name, os.O_RDONLY | no_follow, dir_fd=backup_fd
+                    entry.name,
+                    os.O_RDONLY | os.O_NONBLOCK | no_follow,
+                    dir_fd=backup_fd,
                 )
                 try:
                     pinned = os.fstat(entry_fd)
                 finally:
                     os.close(entry_fd)
-                if (pinned.st_dev, pinned.st_ino, pinned.st_nlink) != (
+                if not stat.S_ISREG(pinned.st_mode) or (
+                    pinned.st_dev,
+                    pinned.st_ino,
+                    pinned.st_nlink,
+                ) != (
                     scanned.st_dev,
                     scanned.st_ino,
                     scanned.st_nlink,
@@ -119,6 +148,11 @@ def purge_managed_backups(workspace: Path) -> tuple[tuple[str, ...], tuple[str, 
                 }
         except OSError:
             surviving = {str(backup_root.absolute())}
+        if not root_is_live():
+            # The root moved during the pass, so the surviving-name scan
+            # describes a directory that is no longer the workspace's backup
+            # store: nothing here counts as proven removal.
+            return (), (str(backup_root.absolute()),)
         residuals = sorted({*refused, *surviving}, key=os.fsencode)
         return (
             tuple(path for path in removed if path not in surviving),

@@ -927,3 +927,65 @@ def test_a_backup_directory_flush_failure_is_reported_as_residual(
     assert result.exit_code == 8
     assert envelope["diagnostic_class"] == "deletion_incomplete"
     assert envelope["residual_paths"] == [str(backup_root.absolute())]
+
+
+def test_a_backup_replaced_by_a_fifo_is_skipped_without_blocking(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A changed entry is reported as residual, never waited on."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    backup = backup_root / "pre-migration.sqlite"
+    backup.write_bytes(b"")
+    real_stat = os.stat
+
+    def swapping_stat(path, *args, **keywords):
+        recorded = real_stat(path, *args, **keywords)
+        if path == backup.name and backup.is_file():
+            # The entry becomes a FIFO between the scan and the open.
+            backup.unlink()
+            os.mkfifo(backup, 0o600)
+        return recorded
+
+    monkeypatch.setattr(privacy_service.os, "stat", swapping_stat)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["residual_paths"] == [str(backup.absolute())]
+    assert envelope["result"]["removed_managed_paths"] == []
+
+
+def test_a_cancelled_delete_reports_its_committed_effect_in_human_mode(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the committed lifecycle effect is reported in both modes."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+
+    def interrupt(*_arguments: object, **_keywords: object):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(jd_service, "_delete_checkpoint_residuals", interrupt)
+
+    result = runner.invoke(
+        app,
+        [
+            "--workspace",
+            str(workspace),
+            "--yes",
+            "jd",
+            "delete",
+            "--jd",
+            job_description_id,
+        ],
+    )
+
+    assert result.exit_code == 9
+    assert f"Deleted job description {job_description_id}" in result.stdout

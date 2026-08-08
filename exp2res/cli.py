@@ -536,6 +536,10 @@ def _run_operation(
             warnings=list(getattr(error, "warnings", ()) or ()),
             retry=getattr(error, "retry", None),
             result=getattr(error, "result", None),
+            # §14.14 rule 6: a class-9 exit after a committed lifecycle
+            # boundary reports that effect in both modes, so an error carrying
+            # a committed result may carry its human rendering too.
+            human_result=getattr(error, "human_result", "") or "",
         )
         typer.echo(error.public_message, err=True)
         if not controls.json_output:
@@ -2452,6 +2456,7 @@ def jd_delete(
                 error.run_ids = [committed.run_id]
                 error.residual_paths = list(committed.residual_paths)
                 error.result = _jd_delete_result(committed)
+                error.human_result = _jd_delete_human_result(committed)
             raise
         try:
             return _jd_delete_outcome(deleted)
