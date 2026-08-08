@@ -94,6 +94,7 @@ def test_vera_daily_and_retro_round_trip_with_atomic_manual_evidence(
         "assessment_snapshots",
         "self_claims",
         "verification_findings",
+        "job_descriptions",
     }
     assert stored_retro == (
         "2026-06-01T00:00:00+02:00",

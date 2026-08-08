@@ -133,6 +133,12 @@ GapTrigger = Literal[
     "unclear_artifact_status",
 ]
 
+JDRequirementKind = Literal[
+    "required_skill",
+    "preferred_skill",
+    "responsibility",
+]
+
 CLIResultStatus = Literal["ok", "blocked", "failed", "cancelled"]
 
 ManagedOutputKind = Literal["assessment", "resume"]

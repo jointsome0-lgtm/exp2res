@@ -27,7 +27,7 @@ from exp2res.errors import (
 )
 
 from .schema import (
-    SCHEMA_V10_SQL,
+    SCHEMA_V11_SQL,
     apply_migration_1_to_2,
     apply_migration_2_to_3,
     apply_migration_3_to_4,
@@ -37,10 +37,11 @@ from .schema import (
     apply_migration_7_to_8,
     apply_migration_8_to_9,
     apply_migration_9_to_10,
+    apply_migration_10_to_11,
     create_schema,
 )
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 _CLI_PREAMBLE_RESIDUALS: ContextVar[list[str] | None] = ContextVar(
     "exp2res_cli_preamble_residuals", default=None
@@ -120,6 +121,7 @@ MIGRATION_REGISTRY = (
             connection, workspace
         ),
     ),
+    MigrationStep(10, 11, apply_migration_10_to_11),
 )
 
 
@@ -549,6 +551,7 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
         hydrate_evidence_item,
         hydrate_experience_fact,
         hydrate_gap_question,
+        hydrate_job_description,
         hydrate_raw_log,
         hydrate_assessment_snapshot,
         hydrate_self_claim,
@@ -578,6 +581,8 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
         hydrate_assessment_snapshot(row)
     for row in connection.execute("SELECT * FROM self_claims"):
         hydrate_self_claim(row)
+    for row in connection.execute("SELECT * FROM job_descriptions"):
+        hydrate_job_description(row)
     if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
         raise sqlite3.IntegrityError("foreign key validation failed")
     status = inspect_schema(connection)
@@ -601,7 +606,7 @@ def _validate_migration_target(connection: sqlite3.Connection) -> None:
     scratch = sqlite3.connect(":memory:")
     try:
         scratch.create_function("exp2res_owner_delete", 0, lambda: 0)
-        scratch.executescript(SCHEMA_V10_SQL)
+        scratch.executescript(SCHEMA_V11_SQL)
         expected_entries = schema_entries(scratch)
     finally:
         scratch.close()

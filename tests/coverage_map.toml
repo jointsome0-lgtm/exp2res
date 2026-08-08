@@ -174,12 +174,26 @@ phase = "2"
 note = "Stage 4 plus the CLI and Vera E2 execute the detector-lifecycle blocks; still missing are the generated-voice violation block (no deterministic validator) and the upper-layer clauses — superseding current claims, snapshots, branches, and bullets and reporting their regeneration guidance — whose tables land in later phases"
 
 ["21.24"]
-status = "pending"
-phase = "4"
+status = "covered"
+nodes = [
+  "tests/test_stage8_jd_parsing.py::test_the_model_never_sees_a_service_owned_id_field",
+  "tests/test_stage8_jd_parsing.py::test_an_omitted_model_authored_field_is_a_missing_judgment",
+  "tests/test_stage8_jd_parsing.py::test_happy_path_persists_typed_parse_with_service_assigned_ids",
+  "tests/test_stage8_jd_parsing.py::test_requirement_ids_stay_unique_across_job_descriptions",
+  "tests/test_stage8_jd_parsing.py::test_a_retained_requirement_id_is_never_reallocated",
+  "tests/test_stage8_jd_parsing.py::test_a_final_model_failure_aborts_without_another_call",
+  "tests/test_stage8_jd_parsing.py::test_an_invalid_kind_retries_once_then_fails_without_persistence",
+  "tests/test_stage8_jd_parsing.py::test_a_colliding_requirement_id_is_reallocated_locally",
+]
+note = "Stage 8 proves the one schema retry over an invalid JDRequirementKind, service-assigned requirement IDs absent from the model-visible schema, atomic commit of the validated ParsedJD, local reallocation of a colliding ID, and the atomic abort with no second parser call when allocation or the final model fails; no writer-repair path exists to exercise"
 
 ["21.25"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage8_jd_parsing.py::test_the_faithful_demand_wording_persists_unrewritten",
+]
 phase = "4"
+note = "Stage 8 proves a demanding vacancy's requirement text persists unrewritten as source voice; the generated-voice half - a bullet, claim, or report line asserting the owner meets that demand - waits on the Phase 4 bullet stages, and the retained-source and typed-segment blocks stay with their own producers"
 
 ["21.26"]
 status = "partial"

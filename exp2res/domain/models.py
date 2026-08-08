@@ -22,6 +22,7 @@ from .enums import (
     EvidenceStrength,
     GapPriority,
     GapTrigger,
+    JDRequirementKind,
     OwnershipLevel,
     SelfClaimDimension,
     SourceType,
@@ -590,3 +591,82 @@ class GapQuestion(StrictModel):
     @classmethod
     def question_policy(cls, value: str) -> str:
         return validate_free_text(value, nonempty=True, limit=QUESTION_LIMIT)
+
+
+class JDRequirement(StrictModel):
+    id: str = Field(min_length=1)
+    kind: JDRequirementKind
+    text: str = Field(min_length=1)
+    keywords: list[str] = Field(default_factory=list, max_length=1_000)
+
+    @field_validator("id")
+    @classmethod
+    def structural_id(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("text")
+    @classmethod
+    def text_policy(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True)
+
+    @field_validator("keywords")
+    @classmethod
+    def keyword_policy(cls, value: list[str]) -> list[str]:
+        for member in value:
+            validate_free_text(member, nonempty=True)
+        return value
+
+
+class ParsedJD(StrictModel):
+    requirements: list[JDRequirement] = Field(default_factory=list, max_length=1_000)
+    seniority_signals: list[str] = Field(default_factory=list, max_length=1_000)
+    domain_signals: list[str] = Field(default_factory=list, max_length=1_000)
+    keywords: list[str] = Field(default_factory=list, max_length=1_000)
+    red_flags: list[str] = Field(default_factory=list, max_length=1_000)
+
+    @field_validator("seniority_signals", "domain_signals", "keywords", "red_flags")
+    @classmethod
+    def context_list_policy(cls, value: list[str]) -> list[str]:
+        for member in value:
+            validate_free_text(member, nonempty=True)
+        return value
+
+    @field_validator("requirements")
+    @classmethod
+    def requirement_ids_are_unique(cls, value: list[JDRequirement]) -> list[JDRequirement]:
+        ids = [item.id for item in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate requirement ID")
+        return value
+
+
+class JobDescription(StrictModel):
+    id: str
+    created_at: datetime
+
+    title: Optional[str] = None
+    company: Optional[str] = None
+    raw_text: str
+    parsed: ParsedJD
+
+    @field_validator("id")
+    @classmethod
+    def structural_id(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def created_at_is_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("datetime must carry an offset")
+        return value
+
+    @field_validator("title", "company")
+    @classmethod
+    def text_fields(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else validate_free_text(value, nonempty=True)
+
+    @field_validator("raw_text")
+    @classmethod
+    def raw_text_policy(cls, value: str) -> str:
+        return validate_free_text(value, raw=True, nonempty=True)
