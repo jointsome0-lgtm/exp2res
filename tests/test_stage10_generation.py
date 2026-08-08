@@ -15,6 +15,7 @@ import pytest
 
 from exp2res.errors import (
     BranchNameInvalidError,
+    IntegrityFailureError,
     LLMCancelledError,
     LLMInvocationError,
     OperationCancelledError,
@@ -29,11 +30,13 @@ from exp2res.storage.repository import (
     get_resume_branch,
     list_resume_branches,
     list_resume_bullets_for_branch,
+    update_assessment_snapshot_verification,
 )
 from exp2res.storage.workspace import (
     collect_preamble_residuals,
     connect_database,
     read_database,
+    writer_database,
 )
 
 from conftest import FIXED_NOW
@@ -261,6 +264,31 @@ def test_an_empty_array_persists_nothing_and_blocks(workspace: Path) -> None:
         ).fetchone()
     # §14.14: a class-10 semantic outcome is not an operational failure.
     assert run_status["status"] == "completed"
+
+
+def test_a_broken_aggregate_fails_before_the_eligibility_verdict(
+    workspace: Path,
+) -> None:
+    """§16.11/§14.14: broken stored state is class 7, not a class-2 refusal."""
+
+    ids, _facts, snapshot_id = prepare_anchor(workspace)
+    with writer_database(workspace) as connection:
+        # The members still reduce to `supported`; only the stored aggregate
+        # is wrong, and it is wrong in a way the allowlist would also refuse.
+        update_assessment_snapshot_verification(
+            connection,
+            snapshot_id=snapshot_id,
+            verification_status="unsupported",
+        )
+        connection.commit()
+    exhausted = FakeContractRunner([])
+
+    with pytest.raises(IntegrityFailureError) as caught:
+        run_stage10(workspace, exhausted, ids, snapshot_id=snapshot_id)
+
+    assert caught.value.args == ("snapshot_aggregate_mismatch",)
+    assert caught.value.exit_code == 7
+    assert exhausted.calls == []
 
 
 def test_a_no_bullet_answer_leaves_the_current_branch_in_place(

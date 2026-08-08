@@ -306,15 +306,17 @@ def run_bullet_generation(
             raise SelectorNotFoundError()
         if snapshot.superseded_at is not None:
             raise SnapshotNotCurrentError()
-        if snapshot.verification_status not in STAGE10_ANCHOR_ALLOWLIST:
-            raise AnchorNotEligibleError()
         members = list_self_claims_for_snapshot(connection, snapshot.id)
         if snapshot.verification_status != aggregate_verification_status(
             item.verification_status for item in members
         ):
             # §16.11: every gated consumer re-reduces the aggregate rather than
-            # trusting the stored one.
+            # trusting the stored one. Broken state precedes the eligibility
+            # verdict, because a status that no longer reduces from its own
+            # claims is not a status an ordinary class-2 refusal may report.
             raise IntegrityFailureError("snapshot_aggregate_mismatch")
+        if snapshot.verification_status not in STAGE10_ANCHOR_ALLOWLIST:
+            raise AnchorNotEligibleError()
 
         facts = list_experience_facts(connection)
         selected_facts = _selected_facts(connection, facts)
