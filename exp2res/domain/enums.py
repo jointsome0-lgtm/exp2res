@@ -29,6 +29,19 @@ SelfClaimDimension = Literal[
     "identity_hypothesis",
 ]
 
+# §10 declaration order is normative: §18 renders one bullet-pack section per
+# member in exactly this order, and §13.10 orders bullets by it.
+ResumeTargetSection = Literal[
+    "summary",
+    "professional_experience",
+    "selected_projects",
+    "competitions",
+    "skills",
+    "education",
+]
+
+TargetRoleRelevance = Literal["low", "medium", "high"]
+
 VerificationStatus = Literal[
     "unverified",
     "supported",

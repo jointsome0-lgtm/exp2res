@@ -25,12 +25,14 @@ from exp2res.errors import (
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
+from exp2res.exports.managed import branch_set_paths, remove_branch_sets
 from exp2res.pipeline.stage8 import Stage8Result, run_job_description_parse
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import build_llm_execution
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
+    workspace_database_is_live,
     purge_managed_backups as _purge_managed_backups,
 )
 from exp2res.storage.repository import (
@@ -59,6 +61,7 @@ class JobDescriptionDeleteOutcome:
     purged_branches: tuple[PurgedBranch, ...]
     purged_bullet_ids: tuple[str, ...]
     purged_finding_ids: tuple[str, ...]
+    purged_generation_ids: tuple[str, ...]
     removed_managed_paths: tuple[str, ...]
     residual_paths: tuple[str, ...]
 
@@ -235,6 +238,58 @@ def _allocate_run_id(
     raise IdCollisionError()
 
 
+# §13.13 rule 10's dependent set, always derived from the one vacancy ID.
+# Binding a placeholder per captured row would make a large branch exceed the
+# connection's SQLITE_LIMIT_VARIABLE_NUMBER, and a privacy operation that fails
+# on the size of its own input would leave the vacancy and every dependent
+# generated bullet in place.
+_DEPENDENT_BRANCHES = "SELECT id FROM resume_branches WHERE job_description_id = ?"
+_DEPENDENT_BULLETS = (
+    f"SELECT id FROM resume_bullets WHERE branch_id IN ({_DEPENDENT_BRANCHES})"
+)
+
+
+def _dependent_purge_targets(
+    connection: sqlite3.Connection, job_description_id: str
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Return this vacancy's dependent bullets, findings, and generation IDs."""
+
+    bullet_ids = tuple(
+        row[0]
+        for row in connection.execute(
+            f"{_DEPENDENT_BULLETS} ORDER BY CAST(id AS BLOB)",
+            (job_description_id,),
+        )
+    )
+    finding_ids = tuple(
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM verification_findings "
+            "WHERE target_type = 'resume_bullet' "
+            f"AND target_id IN ({_DEPENDENT_BULLETS}) ORDER BY CAST(id AS BLOB)",
+            (job_description_id,),
+        )
+    )
+    # §14.14 rule 5 reports every invalidated generation ID, and §12 rule 13
+    # shares one ID across a branch and its bullets, so both tables are read.
+    generation_ids = tuple(
+        sorted(
+            {
+                row[0]
+                for statement in (
+                    "SELECT DISTINCT generation_id FROM resume_branches "
+                    "WHERE job_description_id = ?",
+                    "SELECT DISTINCT generation_id FROM resume_bullets "
+                    f"WHERE branch_id IN ({_DEPENDENT_BRANCHES})",
+                )
+                for row in connection.execute(statement, (job_description_id,))
+            },
+            key=lambda value: value.encode("utf-8"),
+        )
+    )
+    return bullet_ids, finding_ids, generation_ids
+
+
 def _committed_outcome(
     *,
     run_id: str,
@@ -242,6 +297,7 @@ def _committed_outcome(
     purged_branches: tuple[PurgedBranch, ...],
     purged_bullet_ids: tuple[str, ...],
     purged_finding_ids: tuple[str, ...],
+    purged_generation_ids: tuple[str, ...],
     removed_paths: Iterable[str],
     residuals: Iterable[str],
 ) -> JobDescriptionDeleteOutcome:
@@ -253,6 +309,7 @@ def _committed_outcome(
         purged_branches=purged_branches,
         purged_bullet_ids=purged_bullet_ids,
         purged_finding_ids=purged_finding_ids,
+        purged_generation_ids=purged_generation_ids,
         removed_managed_paths=tuple(sorted(set(removed_paths), key=_path_key)),
         residual_paths=tuple(sorted(set(residuals), key=_path_key)),
     )
@@ -348,6 +405,24 @@ def _delete_locked(
         # place, so the value is allocated against the retained set with the
         # same bounded local retry Stage 8 uses.
         orchestration_run_id = _allocate_run_id(connection, allocate_id)
+        # §13.13 rule 10 captures every current or historical branch naming this
+        # job description before the transaction, because the captured opaque
+        # IDs are also the only source for the `out/branch/<branch-id>/` half of
+        # the managed removal below: no branch outside this set can own or spare
+        # one of those directories (§12 rule 11).
+        purged_branches = tuple(
+            PurgedBranch(id=row["id"], name=row["name"])
+            for row in connection.execute(
+                "SELECT id, name FROM resume_branches WHERE job_description_id = ? "
+                "ORDER BY CAST(id AS BLOB)",
+                (job_description_id,),
+            )
+        )
+        (
+            purged_bullet_ids,
+            purged_finding_ids,
+            purged_generation_ids,
+        ) = _dependent_purge_targets(connection, job_description_id)
         # The pass reports removals as it makes them, so an interrupt mid-pass
         # still names what it had already unlinked (§14.14 rule 6). What it
         # had yet to reach is unproven, which the root residual states.
@@ -372,6 +447,60 @@ def _delete_locked(
             raise
         removed_paths.extend(removed)
         residual_paths.extend(backup_residuals)
+        # §13.13 rule 10: the exact ID-keyed resume sets of the captured
+        # branches, deduplicated with the backup removal above. A matching,
+        # missing, or invalid manifest never redirects this to a name-derived
+        # path — §13.14 owns exact-path validation and no-follow removal.
+        branch_ids = tuple(branch.id for branch in purged_branches)
+        branch_parent = str((workspace / "out" / "branch").absolute())
+        unlinked_sets: list[str] = []
+        try:
+            existing_branch_sets = branch_set_paths(workspace, branch_ids)
+            if not workspace_database_is_live(workspace, database_identity):
+                # The pathname no longer resolves to the database this command
+                # holds open, so removing anything under it would purge a
+                # foreign tree while this workspace's own sets survive. Every
+                # set is reported residual instead (§13.13 rule 6), exactly as
+                # the backup purge above does on the same mismatch.
+                residual_paths.extend(existing_branch_sets)
+            else:
+                residual_paths.extend(
+                    remove_branch_sets(
+                        workspace, branch_ids, removed_ledger=unlinked_sets
+                    )
+                )
+                # A path counts as removed only when it is proven gone: a
+                # residual may name the parent rather than each child — `out/`
+                # failing canonical-root validation reports one root path — so
+                # the surviving set is re-read instead of inferred from it.
+                surviving = set(branch_set_paths(workspace, branch_ids))
+                removed_paths.extend(
+                    path for path in existing_branch_sets if path not in surviving
+                )
+        except OSError:
+            # §13.13 rule 6: cleanup never blocks the deletion. An unreadable
+            # managed parent is reported residual and the purge continues, or
+            # the owner would be left with both the vacancy and its generated
+            # prose because a directory could not be stat'ed.
+            removed_paths.extend(unlinked_sets)
+            residual_paths.append(branch_parent)
+        except KeyboardInterrupt:
+            # §14.14 rule 6: whatever this pass already unlinked is durable
+            # even though nothing was deleted, and the cleanup-only outcome is
+            # its only carrier.
+            removed_paths.extend(unlinked_sets)
+            cleaned.append(
+                JobDescriptionCleanupOutcome(
+                    selected=selected,
+                    removed_managed_paths=tuple(
+                        sorted(set(removed_paths), key=_path_key)
+                    ),
+                    residual_paths=tuple(
+                        sorted({*residual_paths, branch_parent}, key=_path_key)
+                    ),
+                )
+            )
+            raise
         cleaned.append(
             JobDescriptionCleanupOutcome(
                 selected=selected,
@@ -381,17 +510,6 @@ def _delete_locked(
                 residual_paths=tuple(sorted(set(residual_paths), key=_path_key)),
             )
         )
-        # §13.13 rule 10 captures every current or historical branch naming
-        # this job description, then deletes that branch state before the job
-        # description itself. `resume_branches`, `resume_bullets`, and their
-        # findings arrive with §22 Phase 4's Stages 10-12; until then no branch
-        # can exist, so the captured set is empty, the dependent deletes have
-        # no table to address, and the `out/branch/<branch-id>/` half of the
-        # managed removal above has no ID source. All three join here with
-        # those tables.
-        purged_branches: tuple[PurgedBranch, ...] = ()
-        purged_bullet_ids: tuple[str, ...] = ()
-        purged_finding_ids: tuple[str, ...] = ()
         write_ahead_log = str(database.with_name(database.name + "-wal"))
 
         def build_outcome(residuals: Iterable[str]) -> JobDescriptionDeleteOutcome:
@@ -401,6 +519,7 @@ def _delete_locked(
                 purged_branches=purged_branches,
                 purged_bullet_ids=purged_bullet_ids,
                 purged_finding_ids=purged_finding_ids,
+                purged_generation_ids=purged_generation_ids,
                 removed_paths=removed_paths,
                 residuals=residuals,
             )
@@ -430,6 +549,28 @@ def _delete_locked(
                 prompt_policy_hash=None,
                 input_ids=(job_description_id,),
                 metadata={"mode": "job_description"},
+            )
+            # §13.13 rule 10: findings, then bullets, then the dependent
+            # branches, then the vacancy itself, so no foreign key ever blocks
+            # the privacy operation. Each statement reaches its rows through
+            # the vacancy ID under the writer authority — the same set the
+            # capture above reported — rather than binding one parameter per
+            # captured row. Current assessment views and every
+            # snapshot, claim, and claim finding are untouched: they do not
+            # depend on a job description, and no recompute follows.
+            connection.execute(
+                "DELETE FROM verification_findings "
+                "WHERE target_type = 'resume_bullet' "
+                f"AND target_id IN ({_DEPENDENT_BULLETS})",
+                (job_description_id,),
+            )
+            connection.execute(
+                f"DELETE FROM resume_bullets WHERE branch_id IN ({_DEPENDENT_BRANCHES})",
+                (job_description_id,),
+            )
+            connection.execute(
+                "DELETE FROM resume_branches WHERE job_description_id = ?",
+                (job_description_id,),
             )
             connection.execute(
                 "DELETE FROM job_descriptions WHERE id = ?", (job_description_id,)

@@ -680,7 +680,7 @@ def test_repair_post_commit_interrupt_reports_the_committed_swap(
     )
     assert blocked.exit_code == 10
 
-    def interrupt_cleanup(_workspace, _snapshot_ids):
+    def interrupt_cleanup(*_arguments, **_keywords):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(

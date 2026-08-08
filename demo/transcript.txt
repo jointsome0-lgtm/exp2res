@@ -1,5 +1,5 @@
 Vera Example — deterministic first-mirror demo
-corpus=0.4.0 schema=11 envelope=2
+corpus=0.4.0 schema=12 envelope=2
 mode=no-cost offline canned responses; network/provider calls=0
 workspace=demo/workspace (external temporary workspace; display alias only)
 paths=stored locators are canonical real paths; this checkout root displays as . (display alias only)
@@ -7,7 +7,7 @@ paths=stored locators are canonical real paths; this checkout root displays as .
 == Setup and invented Vera corpus capture ==
 
 $ exp2res init
-Initialized schema version 11 at demo/workspace.
+Initialized schema version 12 at demo/workspace.
 
 Configured demo/workspace timezone: Europe/Berlin
 

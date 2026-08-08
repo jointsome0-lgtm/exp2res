@@ -42,6 +42,7 @@ from exp2res.domain.results import (
     EntityIdGroup,
     FactsListResult,
     GapsListResult,
+    InvalidatedBranch,
     InvalidatedView,
     JdDeleteResult,
     JdListResult,
@@ -89,6 +90,7 @@ from exp2res.services.correction import (
 )
 from exp2res.services.assessment import (
     Stage6Result,
+    Stage7Result,
     list_current_snapshots,
     run_assess_generate,
     run_assess_repair,
@@ -96,6 +98,7 @@ from exp2res.services.assessment import (
     show_snapshot,
 )
 from exp2res.services.detection import (
+    Stage4Result,
     list_current_contradictions,
     list_current_gaps,
     run_detections_generate,
@@ -203,6 +206,7 @@ class Outcome:
     generation_ids: list[str] = field(default_factory=list)
     run_ids: list[str] = field(default_factory=list)
     invalidated_views: list[InvalidatedView] = field(default_factory=list)
+    invalidated_branches: list[InvalidatedBranch] = field(default_factory=list)
     findings: list[VerificationFinding] = field(default_factory=list)
     residual_paths: list[str] = field(default_factory=list)
     warnings: list[ContractWarning] = field(default_factory=list)
@@ -339,6 +343,23 @@ def _invalidated_view_lines(views: list[InvalidatedView]) -> list[str]:
         f"Invalidated assessment view {item.snapshot_id} "
         f"({item.scope}); regenerate with: {item.regeneration_command}"
         for item in views
+    ]
+
+
+def _invalidated_branch_lines(branches: list[InvalidatedBranch]) -> list[str]:
+    """§14.14 rule 5's one human rendering of §13.13 rule 9 branch reports.
+
+    The printed §14.10 shape is deliberately not executable: it keeps a
+    `<new-snapshot-id>` placeholder because a branch needs a current snapshot
+    that exists only after the invalidated view is regenerated.
+    """
+
+    return [
+        f"Invalidated bullet-pack branch {item.name} for job description "
+        f"{item.job_description_id}, generated against assessment view "
+        f"{item.former_view.snapshot_id} ({item.former_view.scope}); "
+        f"regenerate with: {item.regeneration_command_shape}"
+        for item in branches
     ]
 
 
@@ -535,6 +556,9 @@ def _run_operation(
             invalidated_views=list(
                 getattr(error, "invalidated_views", ()) or ()
             ),
+            invalidated_branches=list(
+                getattr(error, "invalidated_branches", ()) or ()
+            ),
             residual_paths=list(getattr(error, "residual_paths", ()) or ()),
             warnings=list(getattr(error, "warnings", ()) or ()),
             retry=getattr(error, "retry", None),
@@ -558,7 +582,10 @@ def _run_operation(
         # JSON path carries the same executable command in the closed field.
         typer.echo(f"Retry: {outcome.retry.command}", err=True)
 
-    view_lines = _invalidated_view_lines(outcome.invalidated_views)
+    view_lines = [
+        *_invalidated_view_lines(outcome.invalidated_views),
+        *_invalidated_branch_lines(outcome.invalidated_branches),
+    ]
     if view_lines:
         outcome.human_result = "\n".join(
             [*([outcome.human_result] if outcome.human_result else []), *view_lines]
@@ -643,7 +670,7 @@ def _run_operation(
         generation_ids=outcome.generation_ids,
         run_ids=outcome.run_ids,
         invalidated_views=outcome.invalidated_views,
-        invalidated_branches=[],
+        invalidated_branches=outcome.invalidated_branches,
         findings=outcome.findings,
         residual_paths=outcome.residual_paths,
         warnings=outcome.warnings,
@@ -816,6 +843,11 @@ def _correction_affected(captured: CorrectionOutcome) -> AffectedIds:
         "contradiction": captured.superseded_contradiction_ids,
         "experience_fact": captured.superseded_fact_ids,
         "gap_question": captured.superseded_gap_ids,
+        # §13.13 rule 4: correction capture supersedes every current branch and
+        # bullet before the rebuild, which never sees them again — so this is
+        # the only composition that can report them.
+        "resume_branch": captured.superseded_branch_ids,
+        "resume_bullet": captured.superseded_bullet_ids,
         "self_claim": captured.superseded_claim_ids,
     }
     return AffectedIds(
@@ -847,12 +879,23 @@ def _views(*collections) -> list[InvalidatedView]:
     ]
 
 
+def _branches(*collections) -> list[InvalidatedBranch]:
+    # §13.13 rule 9 identifies a branch report by the branch name: one command
+    # may supersede the same named branch through several lifecycle steps.
+    by_name = {item.name: item for collection in collections for item in collection}
+    return [
+        by_name[key]
+        for key in sorted(by_name, key=lambda value: value.encode("utf-8"))
+    ]
+
+
 def _decorate_lifecycle_error(
     error: Exp2ResError,
     *,
     base_affected: AffectedIds | None = None,
     base_generation_ids: tuple[str, ...] = (),
     base_invalidated_views: tuple[InvalidatedView, ...] = (),
+    base_invalidated_branches: tuple[InvalidatedBranch, ...] = (),
     base_residual_paths: tuple[str, ...] = (),
     retry: Retry | None = None,
     result=None,
@@ -876,6 +919,12 @@ def _decorate_lifecycle_error(
             progress.invalidated_views if progress else (),
         )
     )
+    error.invalidated_branches = tuple(
+        _branches(
+            base_invalidated_branches,
+            progress.invalidated_branches if progress else (),
+        )
+    )
     error.residual_paths = tuple(
         sorted(
             {*base_residual_paths, *(progress.residual_paths if progress else ())},
@@ -891,9 +940,13 @@ def _lifecycle_outcome(
     recomputed: LifecycleResult,
     *,
     base_invalidated_views: tuple[InvalidatedView, ...] = (),
+    base_invalidated_branches: tuple[InvalidatedBranch, ...] = (),
 ) -> Outcome:
     invalidated_views = _views(
         base_invalidated_views, recomputed.invalidated_views
+    )
+    invalidated_branches = _branches(
+        base_invalidated_branches, recomputed.invalidated_branches
     )
     no_view = (
         "\nNo current assessment view exists; run exp2res assess generate."
@@ -905,6 +958,7 @@ def _lifecycle_outcome(
         generation_ids=list(recomputed.generation_ids),
         run_ids=list(recomputed.run_ids),
         invalidated_views=invalidated_views,
+        invalidated_branches=invalidated_branches,
         residual_paths=list(recomputed.residual_paths),
         warnings=list(recomputed.warnings),
         human_result="Recomputed derived state through Stage 5." + no_view,
@@ -1237,6 +1291,7 @@ def _store_correction(
                     base_affected=_correction_affected(committed),
                     base_generation_ids=committed.superseded_generation_ids,
                     base_invalidated_views=committed.invalidated_views,
+                    base_invalidated_branches=committed.invalidated_branches,
                     base_residual_paths=committed.residual_paths,
                     retry=Retry(
                         command="exp2res recompute --log-id "
@@ -1257,13 +1312,16 @@ def _store_correction(
                 base_affected=_correction_affected(captured),
                 base_generation_ids=captured.superseded_generation_ids,
                 base_invalidated_views=captured.invalidated_views,
+                base_invalidated_branches=captured.invalidated_branches,
                 base_residual_paths=captured.residual_paths,
                 retry=retry,
             )
             raise
 
     lifecycle = _lifecycle_outcome(
-        recomputed, base_invalidated_views=captured.invalidated_views
+        recomputed,
+        base_invalidated_views=captured.invalidated_views,
+        base_invalidated_branches=captured.invalidated_branches,
     )
     lifecycle.affected_ids = _merge_affected(
         _correction_affected(captured), lifecycle.affected_ids
@@ -1332,6 +1390,7 @@ def extract_command(
                 error.affected_ids = committed.affected_ids
                 error.generation_ids = committed.generation_ids
                 error.invalidated_views = committed.invalidated_views
+                error.invalidated_branches = committed.invalidated_branches
                 error.residual_paths = committed.residual_paths
                 error.warnings = committed.warnings
             raise
@@ -1378,6 +1437,20 @@ def _stage3_outcome(extracted: Stage3Result) -> Outcome:
                 ids=list(extracted.superseded_snapshot_ids),
             )
         )
+    if extracted.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(extracted.superseded_branch_ids),
+            )
+        )
+    if extracted.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(extracted.superseded_bullet_ids),
+            )
+        )
     invalidated_views = list(extracted.invalidated_views)
     return Outcome(
         affected_ids=AffectedIds(
@@ -1397,6 +1470,7 @@ def _stage3_outcome(extracted: Stage3Result) -> Outcome:
         ),
         run_ids=[extracted.run_id],
         invalidated_views=invalidated_views,
+        invalidated_branches=list(extracted.invalidated_branches),
         residual_paths=list(extracted.residual_paths),
         warnings=list(extracted.warnings),
         human_result=(
@@ -1483,106 +1557,145 @@ def detections_generate(context: typer.Context) -> None:
         # §14.14 rule 3: compatibility precedes adapter construction; this
         # command has no selector.
         require_compatible(workspace)
-        generated = run_detections_generate(workspace)
-        gaps = list(generated.current_gaps)
-        contradictions = list(generated.current_contradictions)
-        created_gap_ids = list(generated.created_gap_ids)
-        created_contradiction_ids = list(generated.created_contradiction_ids)
-        superseded_gap_ids = list(generated.superseded_gap_ids)
-        superseded_contradiction_ids = list(
-            generated.superseded_contradiction_ids
-        )
-        superseded_groups = _detection_groups(
-            superseded_gap_ids, superseded_contradiction_ids
-        )
-        if generated.superseded_claim_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="self_claim",
-                    ids=list(generated.superseded_claim_ids),
-                )
-            )
-        if generated.superseded_snapshot_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="assessment_snapshot",
-                    ids=list(generated.superseded_snapshot_ids),
-                )
-            )
-        invalidated_views = list(generated.invalidated_views)
-        if generated.short_circuited:
-            human = (
-                "Retained both current detection sets without a provider "
-                "call: the input, model selection, and prompt policy are "
-                "unchanged since the last completed detection run."
-            )
-        elif generated.retained:
-            human = "Retained both current detection sets unchanged."
-        else:
-            replaced = [
-                name
-                for name, kept in (
-                    ("gap", generated.retained_gap_set),
-                    ("contradiction", generated.retained_contradiction_set),
-                )
-                if not kept
-            ]
-            kept_names = [
-                name
-                for name in ("gap", "contradiction")
-                if name not in replaced
-            ]
-            invalidated = (
-                ", ".join(group.entity_type for group in superseded_groups)
-                or "none"
-            )
-            described = (
-                f"Replaced the complete {' and '.join(replaced)} "
-                f"set{'s' if len(replaced) > 1 else ''}"
-            )
-            if kept_names:
-                described += (
-                    f"; retained the {kept_names[0]} set unchanged"
-                )
-            human = (
-                f"{described}. "
-                f"Current gaps ({len(gaps)}): "
-                f"{', '.join(gap.id for gap in gaps) or 'none'}. "
-                f"Current contradictions ({len(contradictions)}): "
-                f"{', '.join(item.id for item in contradictions) or 'none'}. "
-                f"Invalidated artifact classes: {invalidated}."
-            )
-        return Outcome(
-            affected_ids=AffectedIds(
-                created=_detection_groups(
-                    created_gap_ids, created_contradiction_ids
-                ),
-                superseded=superseded_groups,
-                deleted=[],
-            ),
-            generation_ids=sorted(
-                {
-                    *(
-                        [generated.generation_id]
-                        if generated.generation_id is not None
-                        else []
-                    ),
-                    *generated.superseded_generation_ids,
-                },
-                key=lambda value: value.encode("utf-8"),
-            ),
-            run_ids=[generated.run_id],
-            warnings=list(generated.warnings),
-            invalidated_views=invalidated_views,
-            residual_paths=list(generated.residual_paths),
-            result=DetectionsGenerateResult(
-                gaps=gaps,
-                contradictions=contradictions,
-            ),
-            human_result=human,
-        )
+        try:
+            generated = run_detections_generate(workspace)
+        except Exp2ResError as error:
+            # §14.14 rules 5/6: an interrupt after the committed Stage 4 swap
+            # carries the complete result on the error; fold it into the
+            # fields the cancelled envelope reads.
+            carried = getattr(error, "stage_result", None)
+            if isinstance(carried, Stage4Result):
+                committed = _detections_generate_outcome(carried)
+                error.affected_ids = committed.affected_ids
+                error.generation_ids = committed.generation_ids
+                error.run_ids = committed.run_ids
+                error.invalidated_views = committed.invalidated_views
+                error.invalidated_branches = committed.invalidated_branches
+                error.residual_paths = committed.residual_paths
+                error.warnings = committed.warnings
+                error.result = committed.result
+                error.human_result = committed.human_result
+            raise
+        return _detections_generate_outcome(generated)
 
     _run_command(context, "detections generate", operation)
+
+
+def _detections_generate_outcome(generated: Stage4Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted swaps."""
+
+    gaps = list(generated.current_gaps)
+    contradictions = list(generated.current_contradictions)
+    created_gap_ids = list(generated.created_gap_ids)
+    created_contradiction_ids = list(generated.created_contradiction_ids)
+    superseded_gap_ids = list(generated.superseded_gap_ids)
+    superseded_contradiction_ids = list(
+        generated.superseded_contradiction_ids
+    )
+    superseded_groups = _detection_groups(
+        superseded_gap_ids, superseded_contradiction_ids
+    )
+    if generated.superseded_claim_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="self_claim",
+                ids=list(generated.superseded_claim_ids),
+            )
+        )
+    if generated.superseded_snapshot_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="assessment_snapshot",
+                ids=list(generated.superseded_snapshot_ids),
+            )
+        )
+    if generated.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(generated.superseded_branch_ids),
+            )
+        )
+    if generated.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(generated.superseded_bullet_ids),
+            )
+        )
+    invalidated_views = list(generated.invalidated_views)
+    if generated.short_circuited:
+        human = (
+            "Retained both current detection sets without a provider "
+            "call: the input, model selection, and prompt policy are "
+            "unchanged since the last completed detection run."
+        )
+    elif generated.retained:
+        human = "Retained both current detection sets unchanged."
+    else:
+        replaced = [
+            name
+            for name, kept in (
+                ("gap", generated.retained_gap_set),
+                ("contradiction", generated.retained_contradiction_set),
+            )
+            if not kept
+        ]
+        kept_names = [
+            name
+            for name in ("gap", "contradiction")
+            if name not in replaced
+        ]
+        invalidated = (
+            ", ".join(group.entity_type for group in superseded_groups)
+            or "none"
+        )
+        described = (
+            f"Replaced the complete {' and '.join(replaced)} "
+            f"set{'s' if len(replaced) > 1 else ''}"
+        )
+        if kept_names:
+            described += (
+                f"; retained the {kept_names[0]} set unchanged"
+            )
+        human = (
+            f"{described}. "
+            f"Current gaps ({len(gaps)}): "
+            f"{', '.join(gap.id for gap in gaps) or 'none'}. "
+            f"Current contradictions ({len(contradictions)}): "
+            f"{', '.join(item.id for item in contradictions) or 'none'}. "
+            f"Invalidated artifact classes: {invalidated}."
+        )
+    return Outcome(
+        affected_ids=AffectedIds(
+            created=_detection_groups(
+                created_gap_ids, created_contradiction_ids
+            ),
+            superseded=superseded_groups,
+            deleted=[],
+        ),
+        generation_ids=sorted(
+            {
+                *(
+                    [generated.generation_id]
+                    if generated.generation_id is not None
+                    else []
+                ),
+                *generated.superseded_generation_ids,
+            },
+            key=lambda value: value.encode("utf-8"),
+        ),
+        run_ids=[generated.run_id],
+        warnings=list(generated.warnings),
+        invalidated_views=invalidated_views,
+        invalidated_branches=list(generated.invalidated_branches),
+        residual_paths=list(generated.residual_paths),
+        result=DetectionsGenerateResult(
+            gaps=gaps,
+            contradictions=contradictions,
+        ),
+        human_result=human,
+    )
 
 
 def _claim_human_line(claim: SelfClaim) -> str:
@@ -1630,64 +1743,100 @@ def _verification_human_result(
 def assess_generate(context: typer.Context) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
         require_compatible(workspace)
-        generated = run_assess_generate(workspace)
-        assert generated.snapshot is not None and generated.snapshot_id is not None
-        created_groups = [
-            EntityIdGroup(
-                entity_type="assessment_snapshot", ids=[generated.snapshot_id]
-            ),
-            EntityIdGroup(
-                entity_type="self_claim", ids=list(generated.created_claim_ids)
-            ),
-        ]
-        superseded_groups: list[EntityIdGroup] = []
-        if generated.superseded_claim_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="self_claim",
-                    ids=list(generated.superseded_claim_ids),
-                )
-            )
-        if generated.superseded_snapshot_ids:
-            superseded_groups.append(
-                EntityIdGroup(
-                    entity_type="assessment_snapshot",
-                    ids=list(generated.superseded_snapshot_ids),
-                )
-            )
-        prior = (
-            ""
-            if generated.replaced_view is None
-            else f"; superseded {generated.replaced_view.snapshot_id}"
-        )
-        return Outcome(
-            affected_ids=AffectedIds(
-                created=created_groups,
-                superseded=superseded_groups,
-                deleted=[],
-            ),
-            generation_ids=sorted(
-                {
-                    *(
-                        [generated.generation_id]
-                        if generated.generation_id is not None
-                        else []
-                    ),
-                    *generated.superseded_generation_ids,
-                },
-                key=lambda value: value.encode("utf-8"),
-            ),
-            run_ids=[generated.run_id],
-            residual_paths=list(generated.residual_paths),
-            warnings=list(generated.warnings),
-            result=None,
-            human_result=(
-                f"Created {generated.snapshot.id} — {generated.snapshot.title}; "
-                f"{len(generated.claims)} claims{prior}."
-            ),
-        )
+        try:
+            generated = run_assess_generate(workspace)
+        except Exp2ResError as error:
+            # §14.14 rules 5/6: an interrupt after the committed §13.6 swap
+            # carries the complete result on the error; fold it into the
+            # fields the cancelled envelope reads.
+            carried = getattr(error, "stage_result", None)
+            if isinstance(carried, Stage6Result):
+                committed = _assess_generate_outcome(carried)
+                error.affected_ids = committed.affected_ids
+                error.generation_ids = committed.generation_ids
+                error.run_ids = committed.run_ids
+                error.invalidated_branches = committed.invalidated_branches
+                error.residual_paths = committed.residual_paths
+                error.warnings = committed.warnings
+            raise
+        return _assess_generate_outcome(generated)
 
     _run_command(context, "assess generate", operation)
+
+
+def _assess_generate_outcome(generated: Stage6Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted swaps."""
+
+    assert generated.snapshot is not None and generated.snapshot_id is not None
+    created_groups = [
+        EntityIdGroup(
+            entity_type="assessment_snapshot", ids=[generated.snapshot_id]
+        ),
+        EntityIdGroup(
+            entity_type="self_claim", ids=list(generated.created_claim_ids)
+        ),
+    ]
+    superseded_groups: list[EntityIdGroup] = []
+    if generated.superseded_claim_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="self_claim",
+                ids=list(generated.superseded_claim_ids),
+            )
+        )
+    if generated.superseded_snapshot_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="assessment_snapshot",
+                ids=list(generated.superseded_snapshot_ids),
+            )
+        )
+    if generated.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(generated.superseded_branch_ids),
+            )
+        )
+    if generated.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(generated.superseded_bullet_ids),
+            )
+        )
+    prior = (
+        ""
+        if generated.replaced_view is None
+        else f"; superseded {generated.replaced_view.snapshot_id}"
+    )
+    return Outcome(
+        affected_ids=AffectedIds(
+            created=created_groups,
+            superseded=superseded_groups,
+            deleted=[],
+        ),
+        generation_ids=sorted(
+            {
+                *(
+                    [generated.generation_id]
+                    if generated.generation_id is not None
+                    else []
+                ),
+                *generated.superseded_generation_ids,
+            },
+            key=lambda value: value.encode("utf-8"),
+        ),
+        run_ids=[generated.run_id],
+        invalidated_branches=list(generated.invalidated_branches),
+        residual_paths=list(generated.residual_paths),
+        warnings=list(generated.warnings),
+        result=None,
+        human_result=(
+            f"Created {generated.snapshot.id} — {generated.snapshot.title}; "
+            f"{len(generated.claims)} claims{prior}."
+        ),
+    )
 
 
 @assess_app.command("repair")
@@ -1710,6 +1859,7 @@ def assess_repair(
                 error.affected_ids = committed.affected_ids
                 error.generation_ids = committed.generation_ids
                 error.run_ids = committed.run_ids
+                error.invalidated_branches = committed.invalidated_branches
                 error.residual_paths = committed.residual_paths
             raise
         return _repair_outcome(repaired)
@@ -1745,6 +1895,20 @@ def _repair_outcome(repaired: Stage6Result) -> Outcome:
             ids=list(repaired.superseded_snapshot_ids),
         ),
     ]
+    if repaired.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(repaired.superseded_branch_ids),
+            )
+        )
+    if repaired.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(repaired.superseded_bullet_ids),
+            )
+        )
     return Outcome(
         affected_ids=AffectedIds(
             created=created_groups,
@@ -1763,6 +1927,7 @@ def _repair_outcome(repaired: Stage6Result) -> Outcome:
             key=lambda value: value.encode("utf-8"),
         ),
         run_ids=[repaired.run_id],
+        invalidated_branches=list(repaired.invalidated_branches),
         residual_paths=list(repaired.residual_paths),
         result=None,
         human_result=(
@@ -1793,38 +1958,75 @@ def assess_verify(
         if snapshot.superseded_at is not None:
             raise SnapshotNotCurrentError()
 
-        verified = run_assess_verify(workspace, snapshot_id=snapshot_id)
-        findings = list(verified.findings)
-        blocked = verified.snapshot_status in {"unsupported", "rejected"}
-        if blocked:
+        try:
+            verified = run_assess_verify(workspace, snapshot_id=snapshot_id)
+        except Exp2ResError as error:
+            # §14.14 rules 5/6: an interrupt after the committed §13.7 pass
+            # carries the complete result on the error; fold it into the
+            # fields the cancelled envelope reads.
+            carried = getattr(error, "stage_result", None)
+            if isinstance(carried, Stage7Result):
+                committed = _assess_verify_outcome(carried)
+                error.affected_ids = committed.affected_ids
+                error.generation_ids = committed.generation_ids
+                error.run_ids = committed.run_ids
+                error.findings = committed.findings
+                error.invalidated_branches = committed.invalidated_branches
+                error.residual_paths = committed.residual_paths
+            raise
+        if verified.snapshot_status in {"unsupported", "rejected"}:
             typer.echo(
                 "Assessment verification completed, but assessment export is blocked.",
                 err=True,
             )
-        return Outcome(
-            exit_code=10 if blocked else 0,
-            diagnostic_class="verifier_gate_blocked" if blocked else None,
-            affected_ids=AffectedIds(
-                created=[
-                    EntityIdGroup(
-                        entity_type="verification_finding",
-                        ids=[item.id for item in findings],
-                    )
-                ],
-                superseded=[],
-                deleted=[],
-            ),
-            generation_ids=[],
-            run_ids=[verified.run_id],
-            findings=findings,
-            residual_paths=list(verified.residual_paths),
-            result=None,
-            human_result=_verification_human_result(
-                verified.snapshot_id, verified.snapshot_status, findings
-            ),
-        )
+        return _assess_verify_outcome(verified)
 
     _run_command(context, "assess verify", operation)
+
+
+def _assess_verify_outcome(verified: Stage7Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted passes."""
+
+    findings = list(verified.findings)
+    blocked = verified.snapshot_status in {"unsupported", "rejected"}
+    return Outcome(
+        exit_code=10 if blocked else 0,
+        diagnostic_class="verifier_gate_blocked" if blocked else None,
+        affected_ids=AffectedIds(
+            created=[
+                EntityIdGroup(
+                    entity_type="verification_finding",
+                    ids=[item.id for item in findings],
+                )
+            ],
+            # §13.7: a changed verifier state supersedes the branches
+            # anchored to this snapshot, so the envelope reports them.
+            superseded=[
+                group
+                for group in (
+                    EntityIdGroup(
+                        entity_type="resume_branch",
+                        ids=list(verified.superseded_branch_ids),
+                    ),
+                    EntityIdGroup(
+                        entity_type="resume_bullet",
+                        ids=list(verified.superseded_bullet_ids),
+                    ),
+                )
+                if group.ids
+            ],
+            deleted=[],
+        ),
+        generation_ids=list(verified.superseded_generation_ids),
+        run_ids=[verified.run_id],
+        findings=findings,
+        invalidated_branches=list(verified.invalidated_branches),
+        residual_paths=list(verified.residual_paths),
+        result=None,
+        human_result=_verification_human_result(
+            verified.snapshot_id, verified.snapshot_status, findings
+        ),
+    )
 
 
 @assess_app.command("list")
@@ -2124,6 +2326,8 @@ def _delete_affected(deleted: DeleteOutcome) -> AffectedIds:
         ("gap_question", deleted.purged_gap_ids),
         ("contradiction", deleted.purged_contradiction_ids),
         ("verification_finding", deleted.purged_finding_ids),
+        ("resume_bullet", deleted.purged_bullet_ids),
+        ("resume_branch", deleted.purged_branch_ids),
         ("self_claim", deleted.purged_claim_ids),
         ("assessment_snapshot", deleted.purged_snapshot_ids),
         ("raw_log", (deleted.selected_log.id,)),
@@ -2189,6 +2393,7 @@ def logs_delete(
                         base_affected=_delete_affected(committed),
                         base_generation_ids=committed.purged_generation_ids,
                         base_invalidated_views=committed.invalidated_views,
+                        base_invalidated_branches=committed.invalidated_branches,
                         base_residual_paths=committed.residual_paths,
                         retry=retry,
                         result=_delete_result(committed),
@@ -2206,6 +2411,7 @@ def logs_delete(
                     base_affected=base_affected,
                     base_generation_ids=deleted.purged_generation_ids,
                     base_invalidated_views=deleted.invalidated_views,
+                    base_invalidated_branches=deleted.invalidated_branches,
                     base_residual_paths=deleted.residual_paths,
                     retry=retry,
                     result=result,
@@ -2228,6 +2434,9 @@ def logs_delete(
             ),
             invalidated_views=_views(
                 deleted.invalidated_views, lifecycle.invalidated_views
+            ),
+            invalidated_branches=_branches(
+                deleted.invalidated_branches, lifecycle.invalidated_branches
             ),
             warnings=lifecycle.warnings,
             result=result,
@@ -2370,6 +2579,7 @@ def _jd_delete_outcome(deleted: JobDescriptionDeleteOutcome) -> Outcome:
         exit_code=exit_code,
         diagnostic_class="deletion_incomplete" if exit_code else None,
         affected_ids=_jd_delete_affected(deleted),
+        generation_ids=list(deleted.purged_generation_ids),
         run_ids=[deleted.run_id],
         residual_paths=list(deleted.residual_paths),
         result=_jd_delete_result(deleted),
@@ -2478,6 +2688,7 @@ def jd_delete(
             )
             if committed is not None:
                 error.affected_ids = _jd_delete_affected(committed)
+                error.generation_ids = list(committed.purged_generation_ids)
                 error.run_ids = [committed.run_id]
                 error.residual_paths = list(committed.residual_paths)
                 error.result = _jd_delete_result(committed)
@@ -2502,6 +2713,7 @@ def jd_delete(
             # reported even when the interrupt lands in result assembly.
             cancelled = OperationCancelledError()
             cancelled.affected_ids = _jd_delete_affected(deleted)
+            cancelled.generation_ids = list(deleted.purged_generation_ids)
             cancelled.run_ids = [deleted.run_id]
             cancelled.residual_paths = list(deleted.residual_paths)
             cancelled.result = _jd_delete_result(deleted)

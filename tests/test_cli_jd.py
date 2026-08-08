@@ -17,8 +17,12 @@ from exp2res.cli import app
 from exp2res.errors import LLMInvocationError
 from exp2res.storage.workspace import read_database, writer_database
 
+from exp2res.storage.repository import get_job_description
+
 from fakes import FakeContractRunner
+from test_branch_substrate import plant_branch, plant_branch_set
 from test_stage3_extraction import SELECTION, budgets
+from test_stage6_assessment import assessment_response, prepare_graph, run_stage6
 from test_stage8_jd_parsing import VACANCY, ParserIds, parser_response
 
 
@@ -210,8 +214,9 @@ def test_delete_purges_the_record_and_redacts_retained_call_hashes(
     selected = envelope["result"]["selected_job_description"]
     assert selected["id"] == job_description_id
     assert sorted(selected) == ["company", "created_at", "id", "title"]
-    # No branch table exists yet, so no branch can be captured (see the
-    # comment in exp2res/services/job_descriptions.py).
+    # This vacancy has no branch, so the dependent-purge half is empty here;
+    # `test_delete_purges_dependent_branches_bullets_and_managed_sets`
+    # covers a populated one.
     assert envelope["result"]["purged_branches"] == []
     assert envelope["residual_paths"] == []
     assert envelope["affected_ids"]["deleted"] == [
@@ -1309,3 +1314,245 @@ def test_an_interrupt_inside_the_purge_still_names_what_it_removed(
     assert envelope["residual_paths"] == [str(backup_root.absolute())]
     assert not first.exists()
     assert second.exists()
+
+
+class BranchTestIds(ParserIds):
+    """Distinct from `VeraIds`, so the graph and the parse never share a run ID."""
+
+    __test__ = False
+
+    def __call__(self, kind: str) -> str:
+        return "jd_" + super().__call__(kind)
+
+
+def test_delete_purges_dependent_branches_bullets_and_managed_sets(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 10: the branch half of the dependent purge and its report."""
+
+    _result, added = add_job_description(
+        workspace, tmp_path, monkeypatch, ids=BranchTestIds()
+    )
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    with read_database(workspace) as connection:
+        requirement_id = get_job_description(
+            connection, job_description_id
+        ).parsed.requirements[0].id
+
+    ids, facts = prepare_graph(workspace)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    branch_id, bullet_id = plant_branch(
+        workspace,
+        snapshot_id=assessed.snapshot_id,
+        fact_ids=facts,
+        job_description_id=job_description_id,
+        requirement_ids=(requirement_id,),
+    )
+    branch_set = plant_branch_set(workspace, branch_id)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 0
+    assert envelope["result"]["purged_branches"] == [
+        {"id": branch_id, "name": "agent-engineer"}
+    ]
+    assert str(branch_set.absolute()) in envelope["result"]["removed_managed_paths"]
+    assert envelope["residual_paths"] == []
+    deleted = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["deleted"]
+    }
+    assert deleted["resume_branch"] == [branch_id]
+    assert deleted["resume_bullet"] == [bullet_id]
+    assert deleted["job_description"] == [job_description_id]
+    # §14.14 rule 5: the purge invalidates the branch generation, which §12
+    # rule 13 shares with its bullets, so the envelope names it once.
+    assert envelope["generation_ids"] == ["gen_vera_branch_0001"]
+    assert not branch_set.exists()
+
+    with read_database(workspace) as connection:
+        for table in ("job_descriptions", "resume_branches", "resume_bullets"):
+            assert connection.execute(
+                f"SELECT COUNT(*) FROM {table}"
+            ).fetchone()[0] == 0
+        # §13.13 rule 10: the assessment layer does not depend on a job
+        # description, so the anchoring view survives its branch.
+        assert connection.execute(
+            "SELECT COUNT(*) FROM assessment_snapshots WHERE superseded_at IS NULL"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM self_claims WHERE superseded_at IS NULL"
+        ).fetchone()[0] == len(assessed.created_claim_ids)
+
+
+def test_delete_reports_the_dependent_purge_in_human_mode(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.15: both modes report every purged branch and removed path."""
+
+    _result, added = add_job_description(
+        workspace, tmp_path, monkeypatch, ids=BranchTestIds()
+    )
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    ids, facts = prepare_graph(workspace)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    branch_id, _bullet_id = plant_branch(
+        workspace,
+        snapshot_id=assessed.snapshot_id,
+        fact_ids=facts,
+        job_description_id=job_description_id,
+        requirement_ids=(),
+        name="Agent Engineer — Example Co",
+    )
+    branch_set = plant_branch_set(workspace, branch_id)
+
+    result = runner.invoke(
+        app,
+        ["--workspace", str(workspace), "--yes", "jd", "delete", "--jd",
+         job_description_id],
+    )
+
+    assert result.exit_code == 0
+    assert "1 dependent branch." in result.stdout
+    assert f"Purged branch: {branch_id}\tAgent Engineer — Example Co" in result.stdout
+    assert f"Removed managed path: {branch_set.absolute()}" in result.stdout
+
+
+def test_a_cancelled_purge_still_reports_the_branch_generation(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rules 5/6: the durable purge reports what it invalidated.
+
+    The interrupt is classified inside the service, which raises the
+    committed outcome, so this is a different composition from the one the
+    completed run takes.
+    """
+
+    _result, added = add_job_description(
+        workspace, tmp_path, monkeypatch, ids=BranchTestIds()
+    )
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    ids, facts = prepare_graph(workspace)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    branch_id, bullet_id = plant_branch(
+        workspace,
+        snapshot_id=assessed.snapshot_id,
+        fact_ids=facts,
+        job_description_id=job_description_id,
+        requirement_ids=(),
+    )
+
+    class InterruptOnCommitReturn:
+        """Commit for real, then raise as the C call returns to Python."""
+
+        def __init__(self, connection) -> None:
+            self._connection = connection
+
+        def __getattr__(self, name: str):
+            return getattr(self._connection, name)
+
+        def commit(self) -> None:
+            self._connection.commit()
+            raise KeyboardInterrupt()
+
+    real_writer = jd_service.writer_database
+
+    @contextmanager
+    def wrapped(target: Path, **keywords):
+        with real_writer(target, **keywords) as connection:
+            yield InterruptOnCommitReturn(connection)
+
+    monkeypatch.setattr(jd_service, "writer_database", wrapped)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["generation_ids"] == ["gen_vera_branch_0001"]
+    deleted = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["deleted"]
+    }
+    assert deleted["resume_branch"] == [branch_id]
+    assert deleted["resume_bullet"] == [bullet_id]
+
+
+def test_an_unreadable_branch_parent_never_blocks_the_purge(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 6: cleanup failure is residual, never a refused deletion."""
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+
+    def unreadable(*_arguments, **_keywords):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(jd_service, "branch_set_paths", unreadable)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert str((workspace / "out" / "branch").absolute()) in (
+        envelope["residual_paths"]
+    )
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0
+
+
+def test_an_interrupt_mid_cleanup_still_reports_what_it_unlinked(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: a removal is durable even when nothing was deleted.
+
+    The interrupt lands before the transaction, so no delete outcome exists
+    to carry the report — the cleanup-only outcome is the sole carrier, and
+    it can only name what the removal pass recorded as it went.
+    """
+
+    _result, added = add_job_description(workspace, tmp_path, monkeypatch)
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    unlinked = workspace / "out" / "branch" / "branch_vera_interrupted"
+    unlinked.mkdir(mode=0o700, parents=True)
+
+    def interrupt_after_one(
+        _workspace: Path, _branch_ids, *, removed_ledger=None
+    ):
+        if removed_ledger is not None:
+            removed_ledger.append(str(unlinked))
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(jd_service, "remove_branch_sets", interrupt_after_one)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert str(unlinked) in envelope["result"]["removed_managed_paths"]
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 1

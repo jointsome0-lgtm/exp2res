@@ -605,43 +605,63 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
     return tuple(sorted(residuals, key=id_key))
 
 
-def assessment_set_paths(
-    workspace: Path, snapshot_ids: tuple[str, ...] | list[str]
+def _managed_set_paths(
+    workspace: Path, entity_ids: tuple[str, ...] | list[str], *, parent_name: str
 ) -> tuple[str, ...]:
     """Report-only paths of existing ID-keyed sets an invalidation affects.
 
     A trigger site records these through the CLI residual sink *before* its
     interruptible post-commit cleanup, so an interrupt between the business
-    commit and `remove_assessment_sets` still reports the retained stale set
-    (§13 stale-export invalidation rule). Envelope assembly drops any
-    reported path that no longer exists, so a completed removal clears its
-    own pending report.
+    commit and the removal still reports the retained stale set (§13
+    stale-export invalidation rule). Envelope assembly drops any reported path
+    that no longer exists, so a completed removal clears its own pending report.
     """
 
-    selected = tuple(sorted(set(snapshot_ids), key=id_key))
+    selected = tuple(sorted(set(entity_ids), key=id_key))
     try:
         _root, out_root = _canonical_roots(workspace)
     except ManagedOutputIncompleteError:
         out_root = (workspace / "out").absolute()
-    parent = out_root / "assessment"
+    parent = out_root / parent_name
     paths = []
-    for snapshot_id in selected:
-        if ENTITY_ID.fullmatch(snapshot_id) is None:
+    for entity_id in selected:
+        if ENTITY_ID.fullmatch(entity_id) is None:
             continue
-        path = parent / snapshot_id
-        if _lstat(path) is not None:
+        path = parent / entity_id
+        try:
+            exists = _lstat(path) is not None
+        except OSError:
+            # Fail closed: an unreadable managed parent is not evidence that
+            # the set is gone, and this report is the only warning an owner
+            # gets about a stale export. Callers run it before the transaction
+            # they are about to commit (§13 stale-export invalidation rule), so
+            # raising here would refuse the swap over a filesystem condition
+            # §13.13 rule 6 classifies as residual.
+            exists = True
+        if exists:
             paths.append(str(path))
     return tuple(paths)
 
 
-def remove_assessment_sets(
-    workspace: Path, snapshot_ids: tuple[str, ...] | list[str]
+def _remove_managed_sets(
+    workspace: Path,
+    entity_ids: tuple[str, ...] | list[str],
+    *,
+    parent_name: str,
+    removed_ledger: list[str] | None = None,
 ) -> tuple[str, ...]:
-    """Remove exactly the selected ID-keyed assessment sets after commit."""
+    """Remove exactly the selected ID-keyed sets after commit.
 
-    selected = tuple(sorted(set(snapshot_ids), key=id_key))
-    for snapshot_id in selected:
-        if ENTITY_ID.fullmatch(snapshot_id) is None:
+    `removed_ledger` receives each set path this pass durably removed — that is,
+    unlinked and then flushed. The return value is only produced once the pass
+    finishes, so a caller that must report durable effects after a cancellation
+    mid-pass has no other way to learn what this function already removed
+    (§14.14 rule 6).
+    """
+
+    selected = tuple(sorted(set(entity_ids), key=id_key))
+    for entity_id in selected:
+        if ENTITY_ID.fullmatch(entity_id) is None:
             raise IntegrityFailureError("managed_output_entity_id_invalid")
     if not selected:
         return ()
@@ -650,30 +670,94 @@ def remove_assessment_sets(
         _root, out_root = _canonical_roots(workspace)
     except ManagedOutputIncompleteError as error:
         return error.residual_paths
-    parent = out_root / "assessment"
-    if _lstat(parent) is None:
-        return ()
+    parent = out_root / parent_name
     try:
+        if _lstat(parent) is None:
+            return ()
         _validate_existing_path(parent, out_root, directory=True)
     except OSError:
-        return tuple(str(parent / snapshot_id) for snapshot_id in selected)
+        # Fail closed for the same reason as the per-entry probe below: a
+        # parent that turns unsearchable after the business commit is a
+        # §13.13 rule 6 residual, never an exception that would cost the
+        # caller the committed result it is holding for the envelope.
+        return tuple(str(parent / entity_id) for entity_id in selected)
 
     residuals: set[str] = set()
-    removed = False
-    for snapshot_id in selected:
-        path = parent / snapshot_id
-        if _lstat(path) is None:
+    unlinked: list[str] = []
+    for entity_id in selected:
+        path = parent / entity_id
+        try:
+            if _lstat(path) is None:
+                continue
+            removed = _remove_entry(path, out_root)
+        except OSError:
+            # Fail closed: this pass runs after the business commit, so an
+            # entry that turns unreadable mid-pass is a §13.13 rule 6 residual,
+            # never an exception that would cost the caller its committed
+            # result.
+            residuals.add(str(path))
             continue
-        if _remove_entry(path, out_root):
-            removed = True
+        if removed:
+            unlinked.append(str(path))
         else:
             residuals.add(str(path))
-    if removed:
+    if unlinked:
         try:
             _fsync_directory(parent, out_root)
         except OSError:
+            # The unlinks are visible but not durable. The returned residual is
+            # lost whenever a later half of the same pass is cancelled, so the
+            # ledger must not claim these removals either.
             residuals.add(str(parent))
+            unlinked = []
+    # Only a flushed removal is banked: an interrupt inside the flush skips this
+    # line for the same reason, and the caller keeps reporting those sets rather
+    # than claiming a removal a crash could undo.
+    if removed_ledger is not None:
+        removed_ledger.extend(unlinked)
     return tuple(sorted(residuals, key=id_key))
+
+
+def assessment_set_paths(
+    workspace: Path, snapshot_ids: tuple[str, ...] | list[str]
+) -> tuple[str, ...]:
+    return _managed_set_paths(workspace, snapshot_ids, parent_name="assessment")
+
+
+def remove_assessment_sets(
+    workspace: Path,
+    snapshot_ids: tuple[str, ...] | list[str],
+    *,
+    removed_ledger: list[str] | None = None,
+) -> tuple[str, ...]:
+    return _remove_managed_sets(
+        workspace,
+        snapshot_ids,
+        parent_name="assessment",
+        removed_ledger=removed_ledger,
+    )
+
+
+def branch_set_paths(
+    workspace: Path, branch_ids: tuple[str, ...] | list[str]
+) -> tuple[str, ...]:
+    """§13.14 rule 1: a resume set lives only at `out/branch/<branch-id>/`."""
+
+    return _managed_set_paths(workspace, branch_ids, parent_name="branch")
+
+
+def remove_branch_sets(
+    workspace: Path,
+    branch_ids: tuple[str, ...] | list[str],
+    *,
+    removed_ledger: list[str] | None = None,
+) -> tuple[str, ...]:
+    return _remove_managed_sets(
+        workspace,
+        branch_ids,
+        parent_name="branch",
+        removed_ledger=removed_ledger,
+    )
 
 
 def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:

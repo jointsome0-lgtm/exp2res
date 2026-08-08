@@ -36,6 +36,46 @@ def vacuum_residuals(
 DATABASE_NAME = "exp2res.sqlite"
 
 
+def workspace_database_is_live(
+    workspace: Path, expected_database: os.stat_result | None
+) -> bool:
+    """Answer whether this pathname still holds the caller's locked database.
+
+    The same anchor `purge_managed_backups` applies to its own tree, for the
+    callers that clean managed output rather than backups: the caller stats
+    its database under the §8.1 writer lock and passes that identity here, so
+    a workspace renamed and replaced in between is refused instead of having a
+    foreign tree cleaned while this workspace's own sets survive. `None` — the
+    caller could not establish the anchor at all — is never treated as a
+    match. The residual window in `purge_managed_backups`'s docstring applies
+    here unchanged.
+    """
+
+    if expected_database is None:
+        return False
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    workspace_fd: int | None = None
+    marker_fd: int | None = None
+    try:
+        workspace_fd = os.open(workspace, directory_flags | no_follow)
+        marker_fd = os.open(".exp2res", directory_flags | no_follow, dir_fd=workspace_fd)
+        current = os.stat(DATABASE_NAME, dir_fd=marker_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    finally:
+        for descriptor in (marker_fd, workspace_fd):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+    return (current.st_dev, current.st_ino) == (
+        expected_database.st_dev,
+        expected_database.st_ino,
+    )
+
+
 def purge_managed_backups(
     workspace: Path,
     *,

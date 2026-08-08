@@ -260,7 +260,7 @@ def test_interrupted_invalidation_reports_the_stale_set_in_the_cancelled_envelop
         ),
     )
 
-    def interrupt_removal(_workspace: Path, snapshot_ids):
+    def interrupt_removal(_workspace: Path, snapshot_ids, **_keywords):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(stage7_module, "remove_assessment_sets", interrupt_removal)
@@ -325,7 +325,7 @@ def test_interrupted_gap_answer_cleanup_reports_the_stale_set(
         )
         connection.commit()
 
-    def interrupt_removal(_workspace: Path, snapshot_ids):
+    def interrupt_removal(_workspace: Path, snapshot_ids, **_keywords):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(
@@ -491,7 +491,7 @@ def test_reverification_cleanup_residual_takes_class_8_over_blocked_findings(
             ),
         ),
     )
-    def fail_removal(_workspace: Path, snapshot_ids):
+    def fail_removal(_workspace: Path, snapshot_ids, **_keywords):
         assert tuple(snapshot_ids) == (generated.snapshot_id,)
         return (residual,)
 
