@@ -53,7 +53,7 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
     - Model-authored values are exactly the fields declared by the applicable §15 output shape.
     - Importer-authored values are exactly the mappings declared by the applicable §19 contract.
     - Owner-authored values include `raw_text`, correction and answer text, and configuration.
-    - Service-owned persisted fields include IDs, timestamps, lifecycle fields, production provenance, paths, entity `metadata`, and the deterministic post-response copies and derivations §15.11's ownership matrix assigns to a producing stage — for example fact `project` and `source_log_ids`, snapshot `summary` and `gap_question_ids`, and bullet `source_log_ids` and `source_self_claim_ids`.
+    - Service-owned persisted fields include IDs, timestamps, lifecycle fields, production provenance, paths, entity `metadata`, and the deterministic post-response copies and derivations §15.11's ownership matrix assigns to a producing stage — for example fact `project` and `source_log_ids`, snapshot `summary` and `gap_question_ids`, and bullet `source_log_ids`. Bullet `source_self_claim_ids` is not among them: §15.11 assigns it to the model as a semantic selection.
 20. A declared verifier `status`, `counterevidence`, `unsupported_phrases`, or `reason` is a model-authored transition result, not direct assignment to the same-named or mapped persisted lifecycle field; the owning service alone validates and applies that result.
 21. Authorship follows the declared shape and operation, not matching key spelling.
 22. A model response that sets a service-owned persisted field outside its declared transition result or sets any undeclared field is invalid structured output.
@@ -65,12 +65,12 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
 28. A metadata key can never carry authority, control, selection, or lifecycle state unless one specification section names both its producer and its consumer, applying to keys the same producer-closure principle reflected in §10's enum domains.
 29. The V1 named keys are:
     - `question_text` and `question_reason` on a gap-answer `RawLog`, produced by §14.7 and consumed by §15.2;
-    - `source_system`, `source_record_id`, and `content_hash` on an imported `RawLog`, produced by a §19.4 importer and consumed only by §19.4's retained-identity duplicate/conflict check;
-    - `content_digest` on an imported `EvidenceItem`, produced by a §19.4 importer and consumed only by §19.4's integrity check at an explicitly authorized §29.4 dereference;
+    - `source_system`, `source_record_id`, and `content_hash` on an imported `RawLog`, produced by a §19 importer and consumed only by §19.4's retained-identity duplicate check;
+    - `content_digest` on an imported `EvidenceItem`, produced by a §19 importer and consumed only by §19.4's integrity check at an explicitly authorized §29.4 dereference;
     - `repaired_from_snapshot_id` on an `AssessmentSnapshot` plus `adopted_rewrite_of_claim_id` on a `SelfClaim`, produced only by §13.6's deterministic repair form and consumed by no V1 operation — inert repair provenance for inspection.
 30. The import identity keys are non-empty structural strings; `content_hash` and `content_digest` are exactly the lowercase SHA-256 hexadecimal forms defined by §19.4.
 31. The digest remains inert for authority, control, selection, and lifecycle purposes.
-32. A §19.4 source metadata object containing a reserved import key for the target entity is invalid rather than overwritten, and the final service-mapped metadata remains subject to the limits below.
+32. A §19 source metadata object containing a reserved import key for the target entity is invalid rather than overwritten, and the final service-mapped metadata remains subject to the limits below.
 33. The same key names from any other producer remain inert.
 34. Every object within entity metadata has at most 16 keys.
 35. A key is non-empty lowercase ASCII snake case matching `^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$` and is at most 64 characters.
@@ -85,13 +85,15 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
     raw_text: at most 1 MiB (1,048,576 UTF-8 bytes) for one source document or payload read into the field
     GapQuestion.question: at most 1,024 UTF-8 bytes
     every other string field: at most 16 KiB (16,384 UTF-8 bytes)
-    each list field: at most 1,000 items
-    each payload: at most 10,000 total objects
+    each list field: at most 1,000 items, except the service-assembled whole-pack lists, which carry no item cap: §15.6's `selected_facts`, and §15.7's `resume_bullets`, `source_facts`, `source_logs`, and `source_self_claims` — each an exact set or union the contract already pins, so a cap could only reject a pack the service itself just persisted
+    each payload: at most 10,000 total objects, except the §15.6 and §15.7 whole-pack payloads, which carry no total-object cap
     JSON nesting: at most 32 levels
-    each warnings list and each findings list: at most 100 entries
+    each warnings list and each findings list: at most 100 entries, except the §15.7 whole-pack `findings` array, which carries one entry per supplied bullet and is bounded only by the list-field limit above
     typed ID lists: duplicate-free under their existing rules
     each string-list member: non-empty
     ```
+
+    The two whole-pack exceptions exist because Stage 10 and Stage 11 assemble their payload from the workspace's own current rows rather than from owner- or source-supplied input. The total-object cap bounds untrusted input; applying it to a service-assembled payload would make an otherwise admissible pack — its per-list limits all satisfied — fail structural preflight with no legal way to shrink it, because A1 leaves exactly one writer call. Provenance fan-out there is bounded by the per-list limits, the current-row selection in §13.10, and §15.10's transport and budget rules.
 
 39. Exceeding a limit is a deterministic local failure:
     - an input fails preflight before any provider call;
@@ -105,7 +107,7 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
 44. An inert metadata string follows free-text hygiene unless a named-key contract types it as structural.
 45. Accepted source text is never normalized or rewritten and retains the byte-for-byte preservation required by §16.12 and §19.
 46. Generated prose is stored as its validated Unicode code points; the service applies no Unicode normalization, and canonical hash bytes remain governed by the serialization rules above.
-47. Comparison identity uses Unicode NFC normalization followed by locale-independent Unicode Default Case Folding only at the named identity points: scope-target and assessment-view/project matching (§14.9, §11.7, §13.6), and branch replacement and selection (§14.10, §11.12).
+47. Comparison identity uses Unicode NFC normalization followed by locale-independent Unicode Default Case Folding only at the named identity points: branch replacement and selection (§14.10, §11.12), and rule 49's stored `project_key` provenance identity (§12 rule 14). A4 retired the scope-target and assessment-view matching point with the project-scoped view.
 48. The separately named leading/trailing whitespace trim in §14.9 still applies.
 49. Project provenance remains copied exactly under §13.3 rule 13. Its comparison identity is computed once at persistence as the §12 rule 14 stored `project_key`. A non-null `project` value must remain non-blank after §14.9's canonicalization (Unicode NFC plus leading/trailing whitespace trim) — a label that canonicalizes to blank fails structural validation at every boundary.
 50. Managed-output path keys are opaque service IDs under §13.14 and never derive from these comparison identities.
@@ -247,7 +249,6 @@ class AssessmentSnapshot(BaseModel):
     created_at: datetime
     superseded_at: Optional[datetime] = None
     scope: AssessmentScope
-    scope_target: Optional[str] = None
     title: str
     summary: str
     gap_question_ids: list[str] = Field(default_factory=list)
@@ -260,7 +261,7 @@ class AssessmentSnapshot(BaseModel):
 
 A snapshot's member claims are exactly the `self_claims` rows whose `snapshot_id` names it (§11.6); the snapshot persists no claim list, and member selection orders by claim ID under §11.6's ordering rule.
 
-For `scope = "project"`, `scope_target` is required and is the canonical §14.9 `--project` value — Unicode NFC, leading/trailing whitespace trimmed, non-blank — persisted before case folding; the assessment writer cannot author or normalize it. For `global` it is `None`. A (`scope`, case-folded canonical `scope_target`) pair is an assessment view, the snapshot replacement identity under §13.6: one snapshot is current per view, and distinct views — `global` and each project target — are simultaneously current. The target remains a user-supplied scope label, not an entity reference; renaming a project starts a new view rather than migrating an old one. `title` is service-derived under §13.6's deterministic rule.
+`scope` is the assessment view and the snapshot replacement identity under §13.6. V1 declares exactly one view, `global` (§10), so at most one assessment snapshot is current at a time — exactly one after a successful Stage 6 swap, and none before the first one or after §13.13 supersedes the sole view (§30's `no_current_view`). `title` is service-derived under §13.6's deterministic rule.
 
 `gap_question_ids` is service-populated under §13.6's exact unanswered-set rule. The field carries references only: the stored unknown content remains the referenced current `GapQuestion.question`, `reason`, `priority`, and target; known-gap assertions belong to §13.6's status-bearing claim output. At the Stage 6 transaction boundary, missing, duplicate, superseded, answered, or omitted gap references fail under §12 rule 10 and the Stage 6 transaction checks.
 
@@ -290,7 +291,7 @@ class ResumeBullet(BaseModel):
 
 The initial `verification_status` values, their owning verifier transitions, and all consumer permissions are defined in §13.10, §13.11, and §16.11.
 
-`source_self_claim_ids` follows the exact-use contract in §13.10/§15.6.
+`source_self_claim_ids` follows the citation contract in §13.10/§15.6.
 
 `matched_jd_requirements` production and validation follow §13.10 and §12 rule 10.
 

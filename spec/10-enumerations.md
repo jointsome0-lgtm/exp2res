@@ -17,6 +17,7 @@
 - `CounterevidenceRefType` types the grounding reference of a §15.5 counterevidence entry.
 - `VerificationTargetRefType` types the persisted target of a §11.14 verifier finding. These three aliases remain separate because they belong to different producers, exactly like the two confidence aliases, even where member sets coincide.
 - `OwnerAttribution` types the §19.3 GitHub payload field asserted by the upstream adapter or owner; §19.3 owns its conservative default and importer strength mapping.
+- `AssessmentScope` types the §11.7 assessment view. V1 declares only `global`; the project-scoped mirror is not a V1 view, and a project value returns only with its own deterministic selection semantics.
 - `CLIResultStatus` types the §14.14 result envelope independently of processing-run status or semantic verification status.
 - `ManagedOutputKind` types the §13.14 managed-output manifest discriminator independently of pipeline stages and CLI command names.
 - `knowledge_state_snapshot` is produced only by the §14.5 `atlas` importer under §19.2; no other V1 flow may assign that strength.
@@ -145,7 +146,6 @@ SelfClaimDimension = Literal[
 
 AssessmentScope = Literal[
     "global",
-    "project",
 ]
 
 ResumeTargetSection = Literal[

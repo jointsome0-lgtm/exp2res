@@ -189,7 +189,7 @@ status = "partial"
 phases = ["2", "3", "4"]
 evals = ["21.26", "21.33"]
 issues = []
-note = "Current Stage 6 tests prove canonical folded project-view identity, simultaneous global/project views, complete current unknown membership, and typed counterevidence rendering; the remaining cross-eval Stage 10 and broader language/rendering halves are pending"
+note = "Current Stage 6 tests prove complete current unknown membership and typed counterevidence rendering, but their view-identity half still exercises the retired folded project view and simultaneous global/project snapshots, so A4's global-only identity is uncovered until the queued code change lands; the remaining cross-eval Stage 10 and broader language/rendering halves are also pending"
 
 ["24.30"]
 status = "partial"
@@ -403,11 +403,11 @@ issues = ["#159", "#171"]
 note = "Covered eval 21.51 proves every owner-capture command surface, ordered atomic persistence and logs-show projection, strict byte-preserving remote URI validation, slash-prefixed drive rejection, shared current-policy prompt reauthorization for captured and imported local paths without row mutation, directory-independent reauthorization of canonically persisted locators captured through relative spellings, remote non-resolution, and both unchanged §9.4 calibration outcomes."
 
 ["24.56"]
-status = "met"
+status = "partial"
 phases = ["0"]
 evals = ["21.52"]
 issues = ["#161", "#163", "#171", "#180"]
-note = "Covered eval 21.52 proves uniform explicit affirmation before acquisition, bounded byte-identical multiline file/stdin capture with unchanged classifications and artifact composition, canonical-real-path external_ref for a relative --file source, the unknown-precision prompt and typed-value carve-outs, and — for corrections — copy-unless-replaced placement and project, whole-typed-set replacement, mutually exclusive project flags, non-prompt-only flag scoping, affirmation kept separate from the rebuild consent, and a copied placement needing no workspace timezone where an explicit replacement still does."
+note = "Eval 21.52 proves bounded byte-identical multiline file/stdin capture with unchanged classifications and artifact composition, canonical-real-path external_ref for a relative --file source, the unknown-precision prompt and typed-value carve-outs, and — for corrections — copy-unless-replaced placement and project, whole-typed-set replacement, mutually exclusive project flags, non-prompt-only flag scoping, and a copied placement needing no workspace timezone where an explicit replacement still does. Partial until A6's CLI change lands: no test yet proves that a non-prompt capture succeeds with no affirmation flag and no confirmation."
 
 ["24.57"]
 status = "met"
@@ -427,14 +427,14 @@ nodes = [
   "tests/test_managed_output.py::test_superseded_manifest_version_is_never_matching_or_overwritten",
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
-note = "The managed set publishes report.html beside report.md with golden-pinned deterministic bytes, one document behind both members, an inert self-contained page under a hash-pinned policy, and residual reporting for a superseded manifest version — all at §13.14's manifest_version 5; §24.59 tracks the §30 mirror view that serves those revalidated bytes, with only the project-scoped and JD-to-bullet-pack views deferred"
+note = "The managed set publishes report.html beside report.md with golden-pinned deterministic bytes, one document behind both members, an inert self-contained page under a hash-pinned policy, and residual reporting for a superseded manifest version — all at the §13.14 manifest_version the shipped build emits; §24.59 tracks the §30 mirror view that serves those revalidated bytes, with only the JD-to-bullet-pack view deferred"
 
 ["24.59"]
-status = "met"
+status = "partial"
 phases = ["3"]
 evals = ["21.57"]
 issues = ["#98", "PR #240", "PR #241"]
-note = "The three #98 pull requests complete the item: the §30 resolution service, the §14.17 loopback transport with its rule 9/10 bounds and receive/processing/emit/drain deadlines, and now the `view serve` command form — bind admission before any socket, the §12.14 gate before bind, exactly two startup URLs on stderr in both modes, route-and-outcome-only progress lines, and the class-9 cancelled envelope. §30's deferred project scope, JD-to-bullet-pack view, and provenance drill-down are outside this item"
+note = "The three #98 pull requests complete the item: the §30 resolution service, the §14.17 loopback transport with its rule 9/10 bounds and receive/processing/emit/drain deadlines, and now the `view serve` command form — bind admission before any socket, the §12.14 gate before bind, exactly two startup URLs on stderr in both modes, route-and-outcome-only progress lines, and the class-9 cancelled envelope. §30's deferred JD-to-bullet-pack view and provenance drill-down are outside this item. Partial after A4: the registered resolver tests still require the `deferred` outcome for `scope=project` and build a project-scoped snapshot, while §21.57 now makes every non-global scope an ordinary unknown selector"
 
 ["24.60"]
 status = "met"

@@ -53,7 +53,7 @@ Rules:
 2. `recorded_at` must always be set.
 3. Occurred precision must always be explicit.
 4. Imported artifacts must keep their source URI/path.
-5. Each accepted source record is persisted atomically as one `RawLog` plus its linked `EvidenceItem` records before the command returns. A §19.4 batch persists every accepted pair in one §8.1 writer transaction or persists none.
+5. Each accepted source record is persisted atomically as one `RawLog` plus its linked `EvidenceItem` records before the command returns. That pair is the whole atomic unit: under §19.4 rule 4 each record commits in its own transaction, and a rejected record never withdraws an accepted one.
 6. A manual daily log, retrospective log, gap answer, or correction receives its linked `EvidenceItem(strength=manual_claim)` when the `RawLog` is persisted; there is no later normalization stage. That item is created and reported first.
     - Each locator accepted through §14's repeatable owner-capture option creates one additional linked item with `strength="artifact_reference"`, `title=None`, `summary="Owner-supplied artifact reference."`, and `metadata={}`.
     - A POSIX path or `file:` URI resolving to one is stored only as its symlink-resolved canonical real path in `path`; any other absolute URI scheme is stored byte-for-byte in `uri`; the unused locator field is `None`.
@@ -250,7 +250,6 @@ Trigger: self-assessment generation in §14.9. Lifecycle recomputation ends at S
 Input:
 
 ```text
-self-assessment scope and scope target from §14.9
 experience_facts
 contradictions
 gap questions
@@ -258,10 +257,9 @@ gap questions
 
 Input selection is structural and service-owned; the writer can neither broaden nor narrow it.
 
-- `global` selects every current fact as subject.
-- `project` selects as subject exactly the current facts whose stored `project_key` (§12 rule 14) equals the case-folded canonical `scope_target` — §14.9's NFC + trim, with the same locale-independent case fold applied to the selector at comparison; a fact with `project = None` is never a subject fact.
-- A project view whose subject set is empty fails the Stage 6 run before any provider call; there is no empty mirror.
-- The complete current unanswered gap set and the complete current contradiction set are never scope-filtered, so cross-target conflicts stay visible to every view; V1 supplies no other out-of-subject fact context.
+- The `global` view (§10) selects every current fact as subject. V1 has no other view.
+- A run whose subject set is empty fails before any provider call; there is no empty mirror.
+- The complete current unanswered gap set and the complete current contradiction set are supplied unfiltered; V1 supplies no other out-of-subject fact context.
 - Every claim's `source_fact_ids` must name only facts supplied to this §15.4 call, and every claim's `source_pattern_labels` must name only patterns of the same response; out-of-context provenance is invalid structured output.
 
 **Pattern extraction happens inside this call, never in a persisted layer.** The §15.4 response carries a required `patterns` list — recurring-pattern working output validated against the supplied facts under §15.4's shape and recurrence rules. Patterns are transport-only: the deterministic §9.4 pattern-cap computation at this stage's boundary consumes them, and then they are discarded — never persisted, hydrated, rendered, exported, or supplied to any later call. Their durable trace is each citing claim's persisted `counter_fact_ids` contrary-role marking (§11.6, §15.4) plus the ordinary §12.15 call telemetry; nothing else survives the boundary.
@@ -281,11 +279,10 @@ Assessment dimensions are the `SelfClaimDimension` values (§10), carried by `Se
 
 At the Stage 6 boundary, each candidate `SelfClaim.confidence` must satisfy §9.4's propagation caps; a candidate above its computed cap is invalid structured output.
 
-Synthesis atomically creates a complete current claim generation and a new current snapshot from one coherent current input generation, then supersedes the prior current snapshot for the same assessment view — (`scope`) for `global`, (`scope`, case-folded canonical `scope_target`) for `project` (§11.7) — and the claims owned by that snapshot.
+Synthesis atomically creates a complete current claim generation and a new current snapshot from one coherent current input generation, then supersedes the prior current snapshot for the same assessment view (`scope`, §11.7) and the claims owned by that snapshot.
 
 - Claim ownership is claim-side: each candidate claim carries the new snapshot's ID in `SelfClaim.snapshot_id` (§11.6), so one row has one owner and current snapshots cannot share claim rows.
 - The transaction validates the §12 Stage 6 checks — every candidate claim names the new snapshot, and the superseded snapshot's claims are superseded in the same swap, leaving no current claim owned by a superseded snapshot.
-- Every other view — the other scope and other project targets — remains current.
 - A superseded snapshot's payload and provenance remain inspectable history after correction but cannot become a processing input.
 
 Every new claim and snapshot starts with `verification_status = "unverified"`. Stage 6 may not pre-authorize its own output; Stage 7 alone assigns semantic claim verdicts and derives the current snapshot status under §16.11.
@@ -306,12 +303,9 @@ counterevidence
 next questions
 ```
 
-For a project-scoped run, Stage 6 copies the canonical non-blank §14.9 `--project` value into `AssessmentSnapshot.scope_target`; the writer receives it as branch-free structural context but cannot rewrite it. For `global`, Stage 6 persists `scope_target = None`.
+Stage 6 derives `AssessmentSnapshot.title` deterministically from the snapshot's own persisted `scope`: the renderer-owned literal `Self-Assessment — Global` for `global`.
 
-Stage 6 also derives `AssessmentSnapshot.title` deterministically from the snapshot's own persisted identity fields: the renderer-owned literal `Self-Assessment — Global` for `global`, and `Self-Assessment — <scope_target>` for `project`, where `<scope_target>` is that snapshot's persisted canonical pre-fold `scope_target`.
-
-- The title is structural view metadata, never writer prose: no model output, owner flag, or configuration participates, and equal persisted (`scope`, `scope_target`) pairs derive equal titles.
-- Like `scope_target` itself, the title carries the generating run's canonical pre-fold selector — a regeneration that re-cases the folded-equal view's selector re-derives both together — so within any snapshot the two fields always agree and §13.14's `snapshot_title` manifest identity stays deterministic per snapshot (§11.7, §15.11).
+- The title is structural view metadata, never writer prose: no model output, owner flag, or configuration participates, and equal persisted `scope` values derive equal titles, so §13.14's `snapshot_title` manifest identity stays deterministic per snapshot (§11.7, §15.11).
 
 Known-gap assertions are emitted as ordinary `SelfClaim(dimension="gap")` rows and receive Stage 7 status.
 
@@ -372,7 +366,7 @@ Verifier checks:
 8. Every verified claim and snapshot satisfies §16.1's current-chain rule; superseded snapshots are inspect-only (§11).
 9. The snapshot preserves the complete current Stage 4 contradiction set; verification cannot hide one by scope filtering, relabeling, or omission.
 10. The §16.11 narrative-summary gate holds.
-11. Each claim stays within the snapshot's scope and scope target supplied as §15.5 structural context; a scoped claim that generalizes beyond its subject receives a non-passing status.
+11. Each claim stays within the subject the snapshot's supplied facts establish; a claim that generalizes beyond that subject receives a non-passing status.
 12. Owner reference follows §16.14; a violating claim is `rejected`.
 13. On every non-summary claim, the `dimension` names what the claim characterizes under §15.4's categorization.
     - A mis-categorizing dimension — an orientation dimension on a capability assertion, or the reverse — is `rejected`, because §17 keys section placement on this field and qualification cannot fix a routing value.
@@ -463,21 +457,22 @@ The exact assessment snapshot selected under §14.10 is mandatory, must be curre
 - If the matching narrative summary guides selection or wording, Stage 10 passes its `supported` member claim and the bullet lists that claim ID.
 - Only supported member claims may guide generation, and §12 validates every bullet's source-claim membership before commit.
 
-For each bullet, Stage 10 service-sets `source_self_claim_ids` to the duplicate-free exact set of self-claims it passed to that bullet's writer invocation — the claims that guided selection or wording — empty iff none did (§15.6, §15.11). The writer cannot consume an unlisted claim because it receives exactly the listed set.
+Each bullet's `source_self_claim_ids` is the duplicate-free set of `supported` snapshot-member self-claims the writer cites as having guided that bullet's selection or wording, empty when none did (§15.6, §15.11). The Stage 10 transaction rejects any member outside the supplied `supported` set or outside the branch snapshot.
 
-Stage 10 calls the §15.6 writer once per planned bullet in an isolated model context.
+Stage 10 calls the §15.6 writer exactly once for the whole pack, and that one invocation returns the complete typed bullet array. An empty array is the writer's valid no-bullet response: the run completes as a §14.14 class-10 `blocked` result, persisting neither branch nor bullet.
 
-- Each invocation contains only facts selected for that bullet, their linked evidence context serialized under §13.3 rule 10, the `supported` snapshot-member self-claims selected for that bullet, explicit branch context, and the typed selected job description.
+- The selected facts are exactly the complete current `ExperienceFact` set, ordered by fact ID ascending. Batching removes the per-bullet input partition that made a narrower service-side relevance selection meaningful, so the service performs no relevance filtering and every implementation sends the same set; relevance judgment belongs to the writer, which grounds each bullet in the facts it cites. A workspace whose complete set does not fit the configured model's declared context bound fails §15.10 rule 5 preflight as `context_overflow` before transport. That is the defined outcome, not a licence to narrow the set: A1 rejected partitioning the pack, so the owner's remedies are a larger-context model in `[llm]`, or fewer current facts through corrections and deletion.
+- The invocation contains those facts, their linked evidence context serialized under §13.3 rule 10, the `supported` snapshot-member self-claims, explicit branch context, and the typed selected job description.
 - The required descriptor substitution and displaced-`RawLog` omission preserve provenance without supplying displaced prose.
-- One invocation can never read another bullet's facts, claims, or output.
+- Stage 10 plans exactly one invocation, so the run's §12.15 telemetry carries one call row (§15.10 rule 7) and no per-bullet plan index exists.
 
-After every planned invocation validates and the service assigns candidate bullet IDs, deterministic service code selects and orders the complete persisted batch before the atomic commit.
+After that invocation validates and the service assigns candidate bullet IDs, deterministic service code selects and orders the complete persisted batch before the atomic commit.
 
 - It retains every valid candidate except exact duplicates and sorts:
     - by `ResumeBullet.target_section` in §10 `ResumeTargetSection` declaration order;
     - then by the earliest position of any `matched_jd_requirements` member in the selected `ParsedJD.requirements` list (an empty match list sorts after every matched bullet);
     - then by the validated `text` value ascending in UTF-8 byte order;
-    - and finally — reachable only between exact-duplicate candidates — by the deterministic Stage 10 plan-invocation index ascending.
+    - and finally — reachable only between exact-duplicate candidates — by the candidate's zero-based index in the §15.6 response's returned `bullets` array, ascending.
 - No random component of an allocated entity ID participates in ordering or retention.
 - Two candidates are exact duplicates only when their validated `text` values are UTF-8 byte-equal after §11 text-hygiene validation; no normalization, case fold, punctuation fold, or semantic judgment participates.
 - The first candidate in that sort order is retained and every later exact duplicate is dropped before persistence.
@@ -487,7 +482,7 @@ After every planned invocation validates and the service assigns candidate bulle
 
 Semantic near-duplicate detection is a named post-V1 check.
 
-- V1 performs no LLM coherence, ordering, deduplication, or rewrite pass after the isolated calls, and §15.6 never receives sibling bullets.
+- V1 performs no second LLM coherence, ordering, deduplication, or rewrite pass over the returned array.
 - Coherence is limited to the deterministic selection, grouping, ordering, exact-duplicate suppression, schema validation, provenance checks, and verifier gates specified here and in §18.
 - Stage 10 commits that complete retained branch/bullet batch atomically or none of it.
 
@@ -526,12 +521,12 @@ The verifier inspects phrases, not only whole bullets.
 
 Stage 11 owns the semantic transition from each current bullet's initial `unverified` status to one §16.11 verdict.
 
-- It validates one §15.7 finding for every current bullet and, for a completed pass, commits the complete branch finding set as one immutable §11.14 row per bullet in the same transaction as the denormalized bullet updates.
+- One §15.7 invocation covers the whole branch and returns one finding for every current bullet; for a completed pass the service commits the complete branch finding set as one immutable §11.14 row per bullet in the same transaction as the denormalized bullet updates.
 - If any finding remains invalid or missing after §15.1, no bullet verification update and no finding row commits; a new branch remains `unverified`, while a failed re-verification against unchanged inputs retains the prior complete verifier state and prior finding history.
 - The failed `processing_runs` row with its `failure_code` is the durable record of that attempt.
 - A branch remains ineligible for verified-bullet-pack export unless every bullet satisfies the applicable §16.11 allowlist.
 
-One Stage 11 invocation performs one semantic verifier pass per current bullet, returns the complete findings to the invoking CLI command, persists the denormalized `verification_status`, `unsupported_phrases`, and `verifier_reason` plus the complete append-only finding history, and terminates.
+One Stage 11 run performs one semantic verifier pass over the complete current bullet set, returns the complete findings to the invoking CLI command, persists the denormalized `verification_status`, `unsupported_phrases`, and `verifier_reason` plus the complete append-only finding history, and terminates.
 
 - It never invokes Stage 10, applies the advisory `suggested_rewrite`, rewrites or drops a bullet, or creates a gap question.
 - The advisory rewrite follows §11.14's inspect-only lifecycle; revised bullet wording requires an explicit Stage 10 generation, which supersedes the prior current branch generation.
@@ -567,7 +562,7 @@ out/assessment/<snapshot-id>/evidence_map.json
 out/assessment/<snapshot-id>/manifest.json
 ```
 
-`<snapshot-id>` is the exported `AssessmentSnapshot.id` in §13.14's service-owned path-key form. No scope or scope-target text contributes a path component. The matching manifest carries the exact assessment-view identity; §13.14 rule 5 owns same-view replacement of prior assessment sets at publication.
+`<snapshot-id>` is the exported `AssessmentSnapshot.id` in §13.14's service-owned path-key form. No view identity or title text contributes a path component. The matching manifest carries the exact assessment-view identity; §13.14 rule 5 owns same-view replacement of prior assessment sets at publication.
 
 Persisted verified-bullet-pack outputs:
 
@@ -575,14 +570,12 @@ Persisted verified-bullet-pack outputs:
 out/branch/<branch-id>/bullet_pack.md
 out/branch/<branch-id>/evidence_map.json
 out/branch/<branch-id>/verification_report.json
-out/branch/<branch-id>/gaps.json
-out/branch/<branch-id>/contradictions.json
 out/branch/<branch-id>/manifest.json
 ```
 
 `<branch-id>` is the exported `ResumeBranch.id` in §13.14's service-owned path-key form. Within the managed-output filesystem shape, `ResumeBranch.name` and every other user-controlled string appear only as manifest data, never in a path component; the dedicated `out/branch/` parent is disjoint from `out/assessment/` without a reserved branch display name.
 
-Every JSON companion above other than `manifest.json` is one closed document: its top-level and nested objects reject undeclared fields, its required `schema_version` is the integer `2` (version 1 carried the removed persisted-signal projections — `source_signal_ids`, `signal_links`, and `SignalLink`), and any missing field, extra field, wrong type, unsupported version, duplicate typed ID, or unresolved typed reference fails export before §13.14 publication. `manifest.json` is independently closed and versioned under §13.14. Field types come from their named §10/§11 owners; these export projections do not create new enum domains or persisted models. The reusable nested projections are defined once here:
+Every JSON companion above other than `manifest.json` is one closed document: its top-level and nested objects reject undeclared fields, its required `schema_version` is the integer `3`, and any missing field, extra field, wrong type, unsupported version, duplicate typed ID, or unresolved typed reference fails export before §13.14 publication. Version 1 carried the removed persisted-signal projections — `source_signal_ids`, `signal_links`, and `SignalLink`; version 2 carried the snapshot `scope_target` field and the retired `gaps.json` and `contradictions.json` bullet-pack companions. `manifest.json` is independently closed and versioned under §13.14. Field types come from their named §10/§11 owners; these export projections do not create new enum domains or persisted models. The reusable nested projections are defined once here:
 
 ```text
 CounterevidenceExport = {statement, source_ref_type, source_ref_id}
@@ -598,7 +591,7 @@ The document field sets are exact:
 ```text
 self_claims.json = {
   schema_version,
-  snapshot: {id, created_at, scope, scope_target, title, verification_status},
+  snapshot: {id, created_at, scope, title, verification_status},
   claims: list[{id, claim, claim_kind, dimension, confidence, verification_status,
                 uncertainty, source_fact_ids, counter_fact_ids,
                 counterevidence: list[CounterevidenceExport]}],
@@ -624,12 +617,6 @@ verification_report.json = {
   schema_version, branch_id,
   findings: list[{bullet_id, verification_status, unsupported_phrases, verifier_reason}]
 }
-
-gaps.json = {schema_version, assessment_snapshot_id, gaps: list[GapExport]}
-contradictions.json = {
-  schema_version, assessment_snapshot_id,
-  contradictions: list[ContradictionExport]
-}
 ```
 
 For an assessment export, `self_claims.json.snapshot.id` and assessment `evidence_map.json.entity_id` both equal the selected `AssessmentSnapshot.id`, and the evidence map's `output_kind` equals the assessment `ManagedOutputKind` member in §10 and its matching §13.14 manifest value.
@@ -637,8 +624,7 @@ For an assessment export, `self_claims.json.snapshot.id` and assessment `evidenc
 For a bullet-pack export:
 
 - bullet-pack `evidence_map.json.entity_id` and `verification_report.json.branch_id` both equal the selected `ResumeBranch.id`;
-- its evidence-map `output_kind` equals the resume `ManagedOutputKind` member in §10 and its matching manifest value;
-- and both `gaps.json.assessment_snapshot_id` and `contradictions.json.assessment_snapshot_id` equal that branch's persisted `assessment_snapshot_id`.
+- and its evidence-map `output_kind` equals the resume `ManagedOutputKind` member in §10 and its matching manifest value.
 
 Any disagreement fails closed. The manifest discriminator is an internal managed-output kind tied to `ResumeBranch`; it is not the product-facing artifact name.
 
@@ -650,7 +636,6 @@ For a bullet-pack export:
 - Each complete `rendered_bullets` row is one evidence-map segment: every sentence or logical line within that exact text inherits the row's complete typed provenance sets, and a bullet whose sentences cannot all be supported by those sets fails verification/export rather than acquiring renderer-authored bridge text.
 - `verification_report.json.findings` contains exactly one row for every `rendered_bullets.bullet_id`, in the same order and with no other ID; every field equals that current bullet's denormalized §11.8 status projection.
 - Append-only §11.14 finding history and `suggested_rewrite` never export.
-- `gaps.json` and `contradictions.json` contain exactly the branch snapshot's referenced current rows, including each gap's current answered marker, without answer prose.
 
 Each evidence map is a complete typed link closure, not free-form explanatory prose.
 
@@ -688,7 +673,7 @@ Export accepts only a current snapshot or branch whose complete current provenan
 - Unexpected missing, inconsistent, status-ineligible, manifest-mismatched, extra, or hash-inconsistent inputs fail closed.
 - Raw-log owner deletion does not leave a partial database graph for export to skip (§13.13 rules 5–6 own the purge-and-rebuild reset); export remains unavailable until recomputation and the explicit §14.9/§14.10 view and branch regenerations succeed.
 
-Assessment export also validates the project scope target and the typed unknown-gap references — resolvable, duplicate-free, current rows — before §17 rendering; a gap answered after synthesis renders as answered-since-synthesis context under §17 and never fails export.
+Assessment export also validates the typed unknown-gap references — resolvable, duplicate-free, current rows — before §17 rendering; a gap answered after synthesis renders as answered-since-synthesis context under §17 and never fails export.
 
 Bullet verification and export recover the Stage 10 job description through `ResumeBranch.job_description_id` and resolve every bullet's `matched_jd_requirements` against that `ParsedJD`. Neither consumer may substitute free-form unknown prose or requirement labels when a typed reference or branch association is absent.
 
@@ -732,9 +717,9 @@ Rules:
 7. The raw-log reset is deliberately global in V1. Selective graph deletion and warn-and-skip are rejected because JSON and implicit dependencies cannot prove that all private derived text was found, and a partial truth model could be mistaken for a complete one.
 8. Raw-log deletion covers only Exp2Res-managed database records, `out/`, and managed §12.14 migration backups.
     - Supplied source files and copies of prior exports outside the managed workspace remain user-controlled; §14.11 reports their known paths but does not delete them.
-9. Invalidated-view reporting: except for rule 10 job-description deletion, whose §14.15 purge report has no regeneration command against the deleted JD, every transaction that supersedes or purges current snapshots and branches — inside this flow or in a direct §14.6/§14.7 generation — captures each affected assessment view — scope, scope target, snapshot ID — and, for each affected branch, its name, retained job-description ID, and anchoring view.
+9. Invalidated-view reporting: except for rule 10 job-description deletion, whose §14.15 purge report has no regeneration command against the deleted JD, every transaction that supersedes or purges current snapshots and branches — inside this flow or in a direct §14.6/§14.7 generation — captures each affected assessment view — scope and snapshot ID — and, for each affected branch, its name, retained job-description ID, and anchoring view.
     - The invoking command reports every invalidated view with its executable §14.9 regeneration command, and every invalidated branch with that captured context plus the §14.10 command shape — a branch command cannot be executable as printed, because §14.10 requires a current `--snapshot` that exists only after its view is regenerated.
-    - Every printed command quotes each argument value with POSIX single-quote shell quoting (an embedded single quote becomes `'\''`), so a target or branch name containing whitespace or shell metacharacters stays copy-paste-safe and selects the exact stored value.
+    - Every printed command quotes each argument value with POSIX single-quote shell quoting (an embedded single quote becomes `'\''`), so a branch name containing whitespace or shell metacharacters stays copy-paste-safe and selects the exact stored value.
     - After raw-log owner deletion this report is command output only, never persisted derived state.
     - A bare `recompute` retried after a crash rebuilds Stages 3–4 and reports that no current assessment view exists, pointing at §14.9; it never infers a desired view set from historical or purged rows.
 10. Job-description deletion is a privacy-first dependent purge, never an FK-blocked request.
@@ -757,10 +742,10 @@ This subsection is the sole managed-output path, manifest, publication, and file
     - Lowercase ASCII single components plus collision-free, never-reused IDs eliminate traversal, dot-segment, reserved-name, confusable-normalization, and case-fold alias classes structurally.
     - Within the managed-output filesystem shape, snapshot title and view identity, and branch name and job-description identity, are manifest data only.
 2. **Closed versioned manifest.** `manifest.json` is strict UTF-8 JSON using §11's validation, datetime, string-hygiene, and `extra = forbid` policy.
-    - Its common fields are exactly `manifest_version` (integer `5`), `output_kind` (`ManagedOutputKind`, §10), `entity_id`, `generation_id`, `produced_by_run_id`, `created_at`, `identity`, `source_ids`, `render_input_sha256`, and `members`.
+    - Its common fields are exactly `manifest_version` (integer `6`), `output_kind` (`ManagedOutputKind`, §10), `entity_id`, `generation_id`, `produced_by_run_id`, `created_at`, `identity`, `source_ids`, `render_input_sha256`, and `members`.
     - `entity_id`, `generation_id`, and `produced_by_run_id` exactly match the exported snapshot or branch and its non-null §12 rule 13 production provenance; `created_at` is the offset-aware manifest creation time.
-    - For the assessment kind, `identity` is exactly `{snapshot_title, scope, scope_target}` and `source_ids` is exactly `{self_claim_ids, experience_fact_ids, evidence_item_ids, raw_log_ids, gap_question_ids, contradiction_ids}`.
-    - For the resume kind, `identity` is exactly `{branch_name, job_description_id, assessment_snapshot_id}` and `source_ids` is exactly `{resume_bullet_ids, assessment_snapshot_ids, job_description_ids, self_claim_ids, experience_fact_ids, evidence_item_ids, raw_log_ids, gap_question_ids, contradiction_ids, jd_requirement_ids}`.
+    - For the assessment kind, `identity` is exactly `{snapshot_title, scope}` and `source_ids` is exactly `{self_claim_ids, experience_fact_ids, evidence_item_ids, raw_log_ids, gap_question_ids, contradiction_ids}`.
+    - For the resume kind, `identity` is exactly `{branch_name, job_description_id, assessment_snapshot_id}` and `source_ids` is exactly `{resume_bullet_ids, assessment_snapshot_ids, job_description_ids, self_claim_ids, experience_fact_ids, evidence_item_ids, raw_log_ids, jd_requirement_ids}`. Gap questions and contradictions left this set with their §13.12 companions: no surviving branch member renders them.
     - Each of the resume kind's `assessment_snapshot_ids` and `job_description_ids` contains exactly the one ID also named by `identity`, and the complete consumed snapshot and job-description projections, including parsed requirement order, participate in `render_input_sha256` below.
     - Every source list is the complete duplicate-free, ID-byte-ordered set actually read to render any member; no source ID is omitted, inferred from prose, or included without being read.
     - These completeness lists are local managed metadata, not a §11 provider, source-acquisition, model-response, or SQLite-hydration boundary, and neither §11's per-list cap nor its total-object cap truncates or rejects an otherwise valid complete manifest; each individual string retains its §11 bound and hygiene.
@@ -768,7 +753,7 @@ This subsection is the sole managed-output path, manifest, publication, and file
     - `render_input_sha256` uses §11's canonical-serialization and lowercase SHA-256 rules over the exact closed, type-tagged render-input bundle read from the export transaction's coherent database snapshot: the selected entity; every source projection consumed by §13.12 and §17 or §18; their storage-level generation and production provenance where applicable; every lifecycle-owned field read by rendering or the §16.11 gate; `manifest_version`; and `output_kind`.
     - Entries are partitioned by canonical entity type and ID-byte-ordered within type.
     - No database value read to render, validate, or gate a member may be excluded, and no filesystem value enters this hash. Thus a gap answer or Stage 7/11 status transition invalidates an old set even when every entity ID and generation ID is unchanged.
-    - The §13.12 members and schemas define the current `manifest_version = 5` rendering contract. Version 1 was the emitted assessment set before `report.html` joined its fixed members; version 2 keyed §17's section rule 5 on `claim_kind` and titled section 3 "Recurring Signals"; version 3 rendered counterevidence as a standalone tenth section without per-claim ID lines or the contradiction origin label; version 4 carried the persisted-signal layer — `self_signal_ids` source lists, `signal_links` companions, and signal fan-outs in §17's sources lines.
+    - The §13.12 members and schemas define the current `manifest_version = 6` rendering contract. Version 1 was the emitted assessment set before `report.html` joined its fixed members; version 2 keyed §17's section rule 5 on `claim_kind` and titled section 3 "Recurring Signals"; version 3 rendered counterevidence as a standalone tenth section without per-claim ID lines or the contradiction origin label; version 4 carried the persisted-signal layer — `self_signal_ids` source lists, `signal_links` companions, and signal fan-outs in §17's sources lines; version 5 carried the assessment scope target and the `gaps.json` and `contradictions.json` bullet-pack companions.
     - Because `manifest_version` is itself part of the bundle hashed above, each bump alone makes every prior-version set non-current. Any later change to a fixed member set, or any rendering-contract change that would change member bytes for an unchanged bundle, requires the next version.
     - A manifest declaring any other version is invalid, so a superseded-version set is never matching, never current, and never overwritten in place; rule 5 aborts publication over it and reports its path as a residual the owner removes.
     - `members` is a filename-byte-ordered list of closed `{name, sha256}` objects. Its names equal the applicable §13.12 fixed member filenames exactly, contain no separator, and exclude `manifest.json`; the final directory contains exactly those regular files plus `manifest.json`, with no extra entry.
@@ -777,7 +762,7 @@ This subsection is the sole managed-output path, manifest, publication, and file
 3. **Matching and currentness.** A structurally valid manifest is *matching* only when its managed parent and directory component agree with `output_kind` and `entity_id`, its entity and production fields agree with the persisted row, its identity and complete source lists agree with the graph used for rendering, its fixed member set is exact, every listed entry is a no-follow regular file, and every member digest matches.
     - A matching manifest may identify a retained historical set for deterministic stale-view cleanup; it is *current output* only when the entity is current, all source rows and generation provenance still match current database state, the applicable §16.11 gate still passes, and recomputing `render_input_sha256` from that same coherent state equals the manifest value.
     - A directory with a missing, invalid, mismatched, member-hash-inconsistent, or render-input-hash-inconsistent manifest is never returned, indexed, or treated as current output.
-    - Assessment-view replacement and stale-set removal compare the manifest's exact (`scope`, case-folded canonical `scope_target`) identity while paths remain ID-keyed.
+    - Assessment-view replacement and stale-set removal compare the manifest's exact `scope` identity while paths remain ID-keyed.
     - A known captured entity-ID path may still require no-follow privacy removal under §13.13; an invalid manifest never authorizes a different path or suppresses residual reporting.
 4. **Complete candidate construction.** Under the §8.1 writer lock, export renders and validates the complete fixed member set in an owner-private candidate sibling inside the applicable managed parent on the same filesystem.
     - Candidate names match the reserved `.exp2res-candidate-<entity-id>-<nonce>` form, where the nonce is 32 service-assigned lowercase hexadecimal ASCII bytes and no user value contributes.

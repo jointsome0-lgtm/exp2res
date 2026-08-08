@@ -4,7 +4,7 @@
 
 Write-time typed-reference and JSON-storage integrity follow §12 rules 2 and 10.
 
-Every current self-claim and resume bullet — and any row entering verification or export — must resolve a complete current chain through at least one fact, one `fact_sources` row with `support_type = direct`, its non-null `EvidenceItem`, and that item's retained `RawLog`. Every current resume branch must resolve its required current assessment snapshot, every bullet must resolve its current branch, and each source self-claim on that bullet must belong to that exact snapshot. `ResumeBullet.source_self_claim_ids` must satisfy §13.10/§15.6's exact-use contract. Superseded rows are exempt inspect-only history: after a lifecycle swap their references legitimately point at superseded targets, which is why §12 rule 9 keeps them out of processing, verification, generation, and export inputs. A resume bullet's `source_log_ids` must equal the distinct raw logs reachable from its `source_fact_ids`; a non-empty but inconsistent ID list fails verification and export. Owner deletion is handled before those consumers run: §13.13's purge-and-rebuild reset (rules 5–6) removes the derived graph rather than leaving vanished private sources as skippable evidence.
+Every current self-claim and resume bullet — and any row entering verification or export — must resolve a complete current chain through at least one fact, one `fact_sources` row with `support_type = direct`, its non-null `EvidenceItem`, and that item's retained `RawLog`. Every current resume branch must resolve its required current assessment snapshot, every bullet must resolve its current branch, and each source self-claim on that bullet must belong to that exact snapshot. `ResumeBullet.source_self_claim_ids` must satisfy §13.10/§15.6's citation contract. Superseded rows are exempt inspect-only history: after a lifecycle swap their references legitimately point at superseded targets, which is why §12 rule 9 keeps them out of processing, verification, generation, and export inputs. A resume bullet's `source_log_ids` must equal the distinct raw logs reachable from its `source_fact_ids`; a non-empty but inconsistent ID list fails verification and export. Owner deletion is handled before those consumers run: §13.13's purge-and-rebuild reset (rules 5–6) removes the derived graph rather than leaving vanished private sources as skippable evidence.
 
 ## §16.2 Mirror Rule
 
@@ -191,7 +191,7 @@ Verification has two orthogonal scopes:
 **Source voice.**
 
 - Source voice is owner or system-of-record material, not an Exp2Res claim.
-- `RawLog.raw_text`, owner-authored gap-answer text, `JobDescription.raw_text`, imported artifact content, and natural-language values in §19 payloads receive structure-only validation at ingestion.
+- `RawLog.raw_text`, owner-captured gap-answer text, `JobDescription.raw_text`, imported artifact content, and natural-language values in §19 payloads receive structure-only validation at ingestion.
 - Voice rules may consult them as evidence.
 - Voice rules must never reject, rewrite, redact, normalize, or block their persistence because of their wording.
 - A retained source may therefore contain flattery terms, permanent-identity wording, diagnostic language, metrics, production claims, or employment language without itself violating §16.

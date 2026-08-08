@@ -13,7 +13,6 @@ Default output:
 
 Snapshot created: <AssessmentSnapshot.created_at as its stored offset-aware ISO 8601 value>
 Scope: <AssessmentSnapshot.scope; AssessmentScope is defined only in §10>
-Scope target: <AssessmentSnapshot.scope_target when present>
 
 ## 1. Summary
 

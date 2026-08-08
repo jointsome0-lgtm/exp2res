@@ -134,9 +134,9 @@ And every current claim, snapshot, branch, and bullet is superseded without a St
 And the old snapshot remains inspectable but cannot verify, generate, or export
 And the old resume branch and managed exports are unavailable until regenerated
 
-Given one current global snapshot plus one current project snapshot when the correction lands
-Then both views are superseded
-And the command reports each invalidated view — scope, scope target, snapshot ID — with its executable §14.9 regeneration command
+Given one current global snapshot when the correction lands
+Then that view is superseded
+And the command reports each invalidated view — scope, snapshot ID — with its executable §14.9 regeneration command
 And each invalidated branch with its name, retained job-description ID, and former view, whose §14.10 regeneration follows only after its view is regenerated
 
 Given the rebuild crashes after invalidation and the owner retries with bare or selected-lineage recompute
@@ -157,8 +157,8 @@ And the purged assessment views are reported with executable §14.9 regeneration
 And a rebuild failure does not restore log_001 or any purged derived content
 And a managed output that cannot be removed is reported as a residual path while database deletion remains committed
 
-Given a purged project view whose subject facts all derived from the deleted log
-When the owner re-runs assess generate for that view
+Given the purged global view whose subject facts all derived from the deleted log
+When the owner re-runs assess generate
 Then the run fails before any provider call under §13.6's empty-subject rule
 '''
 
@@ -207,10 +207,10 @@ Then command parsing fails and no branch or bullet is persisted
 
 When one eligible snapshot is selected
 Then ResumeBranch.assessment_snapshot_id equals that exact ID
-And every bullet source_self_claim_ids is the exact set of supported member claims that guided that bullet
+And every bullet source_self_claim_ids is the duplicate-free set of supported member claims the writer cites for that bullet
 And generation or export fails if the anchor is superseded or becomes status-ineligible
 
-Given a staged bullet whose source_self_claim_ids differs from the exact self-claim set supplied to its writer invocation
+Given a staged bullet whose source_self_claim_ids names a claim outside the supported set supplied to the one whole-pack writer invocation
 Then Stage 10 fails before the branch or bullet becomes current
 '''
 
@@ -280,7 +280,7 @@ case = '''
 Given Stage 8 persisted a ParsedJD with stable duplicate-free JDRequirement IDs
 When Stage 10 emits a bullet
 Then every matched_jd_requirements entry resolves in the exact supplied ParsedJD
-And every source_self_claim_ids entry is the exact supported claim set supplied for that bullet
+And every source_self_claim_ids entry resolves to a supported claim supplied to the one whole-pack writer invocation
 And source_log_ids is the exact raw-log set reachable through its selected source facts
 
 Given a missing, duplicate, free-form, or different-job requirement reference
@@ -388,10 +388,9 @@ And a generated bullet, claim, or report line asserting the owner meets that dem
 ["21.26"]
 title = "Assessment Unknowns and Counterevidence Surface Without a Gate Bypass"
 case = '''
-Given a project assessment synthesis over current unanswered GapQuestions where Stage 7 records claim counterevidence
+Given a global assessment synthesis over current unanswered GapQuestions where Stage 7 records claim counterevidence
 When Stage 6 persists and §17 renders the snapshot
-Then scope_target equals the canonical §14.9 project selector
-And Stage 6 service-populates gap_question_ids with exactly the duplicate-free current unanswered set it supplied to the writer
+Then Stage 6 service-populates gap_question_ids with exactly the duplicate-free current unanswered set it supplied to the writer
 And the Unknowns and Open Questions section dereferences those rows — each rendered question adjacent to its gap ID — without adding declarative snapshot prose
 And every non-empty claim counterevidence list renders inline inside its claim's block — beside the claim ID line and visible status — in every section, never as a section of its own
 And each counterevidence entry renders its statement with a typed reference resolving inside that claim's §15.5 bundle
@@ -570,12 +569,11 @@ And the prior complete verifier state is retained
 '''
 
 ["21.33"]
-title = "Assessment Scope Selects Deterministically and Views Replace by Identity"
+title = "Assessment Subject Selects Deterministically and the View Replaces by Identity"
 case = '''
 Given current facts for projects "Exp2Res" and "Atlas" plus one fact with project = None
-When Stage 6 runs with --scope project --project Exp2Res
-Then the subject fact set is exactly the current facts whose case-folded canonical project equals the case-folded canonical target
-And the None-project and Atlas facts are not subject facts
+When Stage 6 runs
+Then the subject fact set is exactly every current fact, including the None-project fact
 And the complete current unanswered gap set and complete current contradiction set are supplied unfiltered
 And a writer claim citing an unsupplied fact or an unknown pattern label is invalid structured output
 
@@ -586,42 +584,38 @@ And a §15.2 response that emits a project value is invalid structured output un
 
 Given a text-only §14.4 correction to that project-tagged log with no explicit project replacement
 Then the correction stores the target's project exactly
-And the re-extracted facts remain selectable by the same project view
+And the re-extracted facts carry that same project provenance
 
-Given a current global snapshot and a current project snapshot for "Atlas"
-When a new project view for "Exp2Res" is generated
-Then it becomes a third current snapshot and supersedes nothing
-And regenerating with --project " Exp2Res " or "exp2res" supersedes exactly the Exp2Res view under the case-folded canonical identity
-And the persisted scope_target is the canonical pre-fold selector
-And the global and Atlas snapshots remain current
+Given a current global snapshot
+When Stage 6 generates again
+Then the replacement supersedes exactly that snapshot under the global view identity
+And exactly one assessment snapshot is current afterwards
 
-Given --scope receives a value outside the canonical §10 AssessmentScope list, such as career or learning
-Then command parsing fails before any Stage 6 run
+Given assess generate is invoked with any scope selector flag
+Then command parsing fails before any Stage 6 run, because V1 declares no scope selector
 
-Given a project target whose subject set matches no current fact
-When Stage 6 runs for that view
+Given no current fact exists
+When Stage 6 runs
 Then the run fails before any provider call and no snapshot is persisted
 '''
 
 ["21.34"]
 title = "Managed Exports Are ID-Keyed and Manifest-Identified"
 case = '''
-Given a current global snapshot G and a current project snapshot P for target "Exp2Res"
+Given the current global snapshot G and a current resume branch B anchored to it
 When each is exported under §13.12 through §13.14
-Then their complete sets land only in out/assessment/<G.id>/ and out/assessment/<P.id>/
-And G.id and P.id are the exact bounded lowercase-ASCII path-key forms allocated by the service, never encodings of scope or target text
-And each valid matching manifest carries its snapshot ID, exact assessment-view identity, and §13.14 render-input hash while no scope or scope-target string contributes a path component
-And exporting P neither overwrites nor removes G's set
+Then their complete sets land only in out/assessment/<G.id>/ and out/branch/<B.id>/
+And G.id and B.id are the exact bounded lowercase-ASCII path-key forms allocated by the service, never encodings of scope, branch name, or job-description text
+And each valid matching manifest carries its entity ID, exact §13.14 identity object, and render-input hash while no scope or name string contributes a path component
+And exporting B neither overwrites nor removes G's set
 
-Given re-verification or gaps answer changes state read by P's renderer while P's entity ID, generation ID, and source IDs remain unchanged
+Given re-verification changes state read by G's renderer while G's entity ID, generation ID, and source IDs remain unchanged
 Then the prior manifest's recomputed render-input hash differs and that set is no longer current
-And invalidation targets exactly P's snapshot-ID directory and the out/branch/<branch-id>/ sets of branches dependent on P
-And G's directory is untouched
+And invalidation targets exactly G's snapshot-ID directory and the out/branch/<branch-id>/ sets of branches dependent on G
 
-Given two project targets that differ only in case or surrounding whitespace
-When the later generation replaces the earlier view and its snapshot is exported
-Then they canonicalize to one assessment-view identity while the two snapshots retain distinct never-reused IDs
-And publication uses the later snapshot ID and removes or reports every prior manifest-valid assessment directory naming that same view without touching another view
+Given a later Stage 6 generation replaces the current global view and its snapshot is exported
+Then the two snapshots share one assessment-view identity while retaining distinct never-reused IDs
+And publication uses the later snapshot ID and removes or reports every prior manifest-valid assessment directory naming that same view without touching any branch set
 
 Given bullets generate receives a non-blank §11-valid display name such as assessment, assessment., "assessment ", or assessment/global
 When the branch is generated and exported
@@ -662,11 +656,11 @@ When a later entity is allocated in that table
 Then that ID is never reassigned
 And the allocator uses a collision-resistant ID with a random component rather than row count, MAX + 1, or any other surviving-row-derived state
 
-Given two valid import records with identical body content proceed as record-creating imports under distinct §19.4 identities
+Given two valid import records with identical content apart from their §19.4 identities proceed as record-creating imports
 Then each receives distinct local RawLog and EvidenceItem IDs without collision failure
-And whether a repeated submission is accepted, deduplicated, or conflicted is owned by §19.4 and tested in §21.45
+And whether a repeated submission is accepted or deduplicated is owned by §19.4 and tested in §21.45
 
-Given an import carries §19.4 source_record_id and, for GitHub, commit_sha and repo
+Given an import carries its §19.4 source identity — record_id, or repo and commit_sha for GitHub
 Then each upstream identifier appears only in RawLog.external_ref or RawLog.metadata as provenance
 And none is used as any local entity ID
 '''
@@ -811,7 +805,7 @@ Then exactly one processing_runs row has stage 13.13 for that flow
 And every Stage 3–4 run it invokes names that row through parent_run_id
 And a directly invoked single-stage command has parent_run_id NULL
 
-Given one Stage 10 run plans three bullets, or one Stage 7 run verifies N current claims
+Given one Stage 3 run plans three correction-lineage extractions, or one Stage 7 run verifies N current claims
 Then that run owns exactly one llm_calls row per planned invocation with call_index contiguous from 1
 And each row carries that invocation's own input_hash, output_hash, provider_request_id, token counts, and retry counts
 And a single-invocation LLM stage run owns exactly one llm_calls row, except a §13.4 short-circuited rerun, which owns none
@@ -1031,16 +1025,16 @@ Then it has no invocation-control effect
 Given stdin is piped or --no-input is present and a §14.3 capture lacks prompt-supplied values
 When the command runs
 Then it exits 2 before blocking and emits no prompt
-Given any destructive or cost-bearing command has non-TTY stdin and lacks --yes
-Then it exits 2 before a destructive step or provider call
+Given any §14.14 rule 3 confirmation-set command has non-TTY stdin and lacks --yes
+Then it exits 2 before its irreversible step
 Given all required declared inputs plus --yes are present
 Then the same command may proceed without reading stdin
 Given TTY stdin and no --yes
-Then only the §14.14 confirmation set may prompt before destruction or provider cost
+Then only that confirmation set may prompt, and a command whose only consequence is provider cost proceeds unprompted
 
 Given table-driven command fixtures for exit 0, every operational failure class 1 through 8, cancellation 9, and semantic blocking 10
 When each runs with --json
-Then stdout is exactly one parseable version-1 envelope plus at most its final newline
+Then stdout is exactly one parseable version-2 envelope plus at most its final newline
 And every required field is present with no undeclared outer or nested field
 And exit_code equals the process exit status
 And status is ok for 0, failed for 1 through 8, cancelled for 9, and blocked for 10
@@ -1093,8 +1087,8 @@ Then stdout, stderr, and retained internal diagnostics contain none of those val
 And the envelope contains only its declared IDs, codes, allowed findings, managed paths, warnings, lifecycle reports, and allowed closed command-result projections
 
 Given the V1 command registry
-Then the operable lifecycle inspection forms are exactly db status; logs list; facts list/show; gaps list; contradictions list/show; assess list/show; jd list/show; and runs list/show
-And evidence-item listing, branch/bullet listing, historical-generation browsing beyond runs show, and parsed-requirement dumps beyond jd show remain absent as explicitly deferred read-only additions
+Then the operable lifecycle inspection forms are exactly db status; logs list; facts list/show; gaps list; contradictions list/show; assess list/show; jd list; and runs list/show
+And evidence-item listing, branch/bullet listing, per-job-description inspection beyond jd list's discovery fields, historical-generation browsing beyond runs show, and parsed-requirement dumps remain absent as explicitly deferred read-only additions
 '''
 
 ["21.42"]
@@ -1157,8 +1151,8 @@ When it hydrates from §12 storage
 Then no tripwire evaluation runs and hydration succeeds unchanged
 
 Given one label pair has code-point sequences "Caf\u00e9" and "Cafe\u0301" and another pair is "I" and "i"
-When either pair is used as a project scope target and copied project provenance, or as a branch name and selector
-Then NFC plus locale-independent Unicode Default Case Folding yields one project match and assessment-view identity and one branch replacement identity
+When either pair is used as a project label and copied project provenance, or as a branch name and selector
+Then NFC plus locale-independent Unicode Default Case Folding yields one project-label identity and one branch replacement identity
 And neither folded identity becomes a managed-output path component: §13.14 derives each directory only from the opaque snapshot or branch ID
 And "I" and "i" yield the same identities under both the C and Turkish process locales
 When either pair instead occurs as two EvidenceItem.title values whose owning rules name no normalization or fold
@@ -1240,7 +1234,7 @@ When the provider later delivers a response from any exhausted attempt
 Then the response is discarded
 And no business row, verifier update, second llm_calls row, background completion, or out-of-band adoption occurs
 
-Given table-driven complete inputs for Stage 4, Stage 6, a Stage 7 provenance closure, and a Stage 10 or Stage 11 per-bullet invocation
+Given table-driven complete inputs for Stage 4, Stage 6, a Stage 7 provenance closure, and a Stage 10 or Stage 11 whole-pack invocation
 And one fixture exceeds its configured input budget while another exceeds the declared combined context bound after planned maximum output is included
 When deterministic local preflight runs
 Then no provider attempt occurs
@@ -1272,7 +1266,7 @@ Then it marks the abandoned run and every nonterminal call status = "failed" wit
 And already terminal call rows remain unchanged
 And no validated response from the crashed run is reused
 
-Given a table-driven Stage 3, Stage 7, Stage 10, or Stage 11 run plans five invocations
+Given a table-driven Stage 3 or Stage 7 run plans five invocations
 And invocations 1 and 2 validate but invocation 3 fails terminally
 When the run ends
 Then no business row, verification finding, or verifier update from that run commits and its durable telemetry is not business output
@@ -1307,10 +1301,9 @@ title = "JD Deletion and Workspace Purge Are Complete Privacy Operations"
 enforces = "§8.1, §13.13 rules 5–6 and 10, §14.14–§14.16, and §29.2 and §29.6"
 case = '''
 Given a retained job description has raw source text and a complete parsed value
-When jd list and jd show inspect it
-Then neither command acquires the workspace writer lock, changes a database row or managed path, invokes a provider, or serializes content into a prompt
-And list returns only ID, creation time, title, and company
-And show adds the complete parsed value but never JobDescription.raw_text
+When the V1 command registry is enumerated
+Then jd list returns only id, created_at, title, and company, exposing neither raw_text nor parsed, because §14.14 rule 7 defers per-record inspection
+And jd list and jd delete are the §14.15 forms, because an opaque service-assigned ID is undiscoverable without the listing and per-vacancy deletion is a privacy requirement
 
 Given job description J has current and historical branches, their bullets and bullet findings, corresponding managed branch outputs, and managed migration backups
 And unrelated current assessment views plus current and historical snapshots, claims, and assessment findings exist
@@ -1366,75 +1359,74 @@ Then no processing_runs or llm_calls row remains
 '''
 
 ["21.45"]
-title = "Integration Imports Are Versioned, Idempotent, and Atomic"
+title = "Integration Imports Are Source-Local, Idempotent, and Per-Record"
 enforces = "§8.1, §10's `OwnerAttribution`, §11's Model validation policy, §13.1 rule 5, §14.5, §14.14 rule 5, §19.1–§19.4, and §29.4–§29.5; extends §21.39's boundary coverage"
 case = '''
-Given one valid §19.4 envelope whose content_hash matches the §11 canonical-serialization bytes of its body
+Given one valid unwrapped §19.1 record carrying its own record_id
 When its §19-backed import commits
 Then exactly one RawLog and its linked EvidenceItem are created
-And the RawLog metadata records source_system, source_record_id, and content_hash while external_ref retains only source provenance
+And the RawLog metadata records source_system, source_record_id, and the importer-computed content_hash while external_ref retains only source provenance
 And the §14.14 result classifies record_number 1 as accepted with that source_record_id and the created raw_log_id
-When the same envelope is imported again
+When the same record is imported again
 Then it is a counted duplicate and creates no RawLog, EvidenceItem, or other business row
 And the retained raw and evidence rows remain byte-for-byte unchanged
-And the complete result has accepted = 0, duplicate = 1, conflict = 0, and rejected = 0, with a null raw_log_id on the duplicate record
+And the complete result has accepted = 0, duplicate = 1, and rejected = 0, with a null raw_log_id on the duplicate record
 
-Given a table-driven matrix of valid GitHub envelopes uses distinct exact `<repo>@<commit_sha>` source_record_id values with full 40-character lowercase-hexadecimal commit_sha values
+Given a table-driven matrix of valid GitHub records yields distinct derived `<repo>@<commit_sha>` identities with full 40-character lowercase-hexadecimal commit_sha values
 And the required author and committer objects carry either null name, email, and login members or arbitrary adapter-supplied strings
 And owner_attribution ranges over owner, not_owner, unknown, and omission
-When each envelope is validated and imported
+When each record is validated and imported
 Then every identity object validates and every import commits
 And only owner creates EvidenceItem strength commit_or_pr, while not_owner, explicit unknown, and omitted attribution create strength artifact_reference
-And omission materializes unknown before §19.4 canonical body serialization and content-hash verification
+And omission materializes unknown before §19.4 canonical serialization and content-hash computation
 And the null and string identity variants produce the same strength for each owner_attribution case, so identity strings never select or alter attribution
 
-Given table-driven GitHub candidates carry an abbreviated, overlong, uppercase, or non-hexadecimal commit_sha, or a source_record_id other than the exact `<repo>@<commit_sha>` formed from the validated body
+Given table-driven GitHub candidates carry an abbreviated, overlong, uppercase, or non-hexadecimal commit_sha, or supply an identity field of their own
 When acquisition validates each candidate
 Then the record is rejected before §19.4 duplicate classification and no RawLog or EvidenceItem is created
 
-Given a valid GitHub envelope has committed under source_system github and its exact `<repo>@<commit_sha>` source_record_id
-When that exact envelope is replayed
+Given a valid GitHub record has committed under source system github and its derived `<repo>@<commit_sha>` identity
+When that exact record is replayed
 Then the replay is a counted duplicate no-op and the retained RawLog and EvidenceItem remain unchanged
-When the same identity is supplied with materially different body content and a different, correctly recomputed content_hash
-Then the import fails closed as a conflict, creates no candidate business row, and never rewrites the retained raw or evidence record
+When the same identity is supplied with materially different content and therefore a different importer-computed content_hash
+Then that record is rejected, creates no candidate business row, and never rewrites the retained raw or evidence record
 
-Given a retained import identity and a file whose first record is otherwise insertable but whose later record repeats that identity with a different valid content_hash
+Given a retained import identity and a file whose first record is otherwise insertable but whose later record repeats that identity with different content
 When the file is imported
-Then the repeated identity is classified as conflict and the whole §8.1 writer transaction aborts
-And neither the otherwise-insertable RawLog/EvidenceItem pair nor any other candidate business row persists
+Then the repeated identity is rejected on its own while the otherwise-insertable record commits in its own transaction
 And the retained record is not mutated or reinterpreted
-And the complete result has an empty accepted list, keeps the conflicting record in conflict, reclassifies the otherwise-insertable record as rejected, reports no created raw_log_id, and exits through §14.14 class 7
+And the complete result reports the first record as accepted with its created raw_log_id, the repeated identity as rejected, and exits through §14.14 class 2
 
-Given two valid envelopes have the same source_system, body, and content_hash but different source_record_id values
+Given two valid records have the same source system and identical content apart from their differing source identities
 When they are imported in one file
 Then both records are accepted in file order
 And two independent RawLog/EvidenceItem pairs with distinct local IDs persist
 And neither record is classified as a duplicate of the other
 
-Given table-driven mixed files pair one valid record with an unsupported future or source-declared retired contract_version, a mismatched recomputed body hash, or another structurally invalid record
+Given table-driven mixed files pair one valid record with a wrapping envelope object, a record-supplied content-hash or version field, a record shaped for another source, or another structurally invalid record
 When each file reaches acquisition
-Then the invalid record is classified as rejected, the otherwise-insertable record is rejected by the atomic rollback, and no business row from the file persists
-And an unsupported external contract version never selects, implies, or runs a §12.14 database migration
+Then the invalid record is rejected while the valid record still commits, and no rejected record leaves a business row
+And no record shape ever selects, implies, or runs a §12.14 database migration
 And the completed classification carries the full §14.14 result and exits through class 2
 
 Given a multi-record file exceeds §11's total-object-per-payload limit
 When acquisition validates it
 Then the import fails before persistence without introducing a second batch-size limit
 
-Given a valid multi-record file is interrupted before its transaction commits
+Given a valid multi-record file is interrupted partway through its records
 When the owner reruns the same file
-Then the interrupted transaction has left no imported business row and the rerun accepts the complete file normally
-Given the same file committed but its result was lost before the owner received it
+Then the records committed before the interruption converge as duplicates and the remaining records are accepted normally
+Given the same file completed but its result was lost before the owner received it
 When the owner reruns that file
 Then every record converges as a duplicate and no additional business row is created
-And no partial-resume cursor, per-record commit, or background continuation is used in either case
+And no partial-resume cursor or background continuation is used in either case
 
 Given a successful ephemeris file within §11's payload limit establishes more than 100 records, including retained duplicates and newly accepted identities
 When its §14.14 JSON result is emitted
-Then the four input-ordered record lists are complete and untruncated, their counts equal their list lengths, and they partition every one-based record_number exactly once
+Then the three input-ordered record lists are complete and untruncated, their counts equal their list lengths, and they partition every one-based record_number exactly once
 And every entry carries source_record_id plus raw_log_id exactly for a newly created accepted record
 
-Given an Atlas envelope supplies a local path and a valid content_digest for its exact file bytes
+Given an Atlas record supplies a local path and a valid content_digest for its exact file bytes
 When the import commits
 Then the digest is recorded as inert provenance on the linked EvidenceItem and grants no new read, fetch, refresh, selection, or lifecycle authority
 Given a later explicitly authorized §29.4 dereference finds that file missing or finds bytes whose digest differs
@@ -1447,22 +1439,22 @@ And no other content is silently substituted, fetched, refreshed, omitted, or tr
 title = "Domain-Routed Imports and Local Views Preserve Authority Boundaries"
 enforces = "§5.10, §6.1–§6.2, §9.4, §10, §13.12, §13.14, §14.5, §14.7, §14.10, §14.14, §16.11, §17–§18, §19.1–§19.2, §19.4, §25.5, §29.2–§29.3, and §30"
 case = '''
-Given table-driven valid §19.4 envelopes carry §19.1 bodies adapted from a diary or daily note, a verbal work note, and a focus or time aggregate, each of which explicitly reports activity
+Given table-driven valid §19.1 records adapted from a diary or daily note, a verbal work note, and a focus or time aggregate each explicitly report activity
 When each ephemeris import commits
 Then it creates exactly one RawLog with entry_type ephemeris_event and one linked EvidenceItem with strength imported_activity_event
 And Stage 3 may derive only narrow source-supported activity facts
 And the import itself creates no ExperienceFact or SelfClaim
 
-Given an otherwise valid ephemeris body carries a learning event's structured knowledge state, trail segments, evidence references, or another undeclared knowledge-state member
-When the closed §19.1 body is validated
+Given an otherwise valid ephemeris record carries a learning event's structured knowledge state, trail segments, evidence references, or another undeclared knowledge-state member
+When the closed §19.1 record is validated
 Then acquisition rejects the record before persistence rather than dropping, flattening, or interpreting the knowledge-state members
 And only a separately represented time or activity aspect may enter §19.1, while the knowledge aspect must arrive through §19.2
-Given a valid §19.1 body instead mentions learning only in source text
+Given a valid §19.1 record instead mentions learning only in source text
 When it is imported and Stage 3 runs
 Then the record retains only imported_activity_event scope and may establish only activity the source explicitly reports at the supplied occurred placement
 And the wording cannot establish §9.4 knowledge-state attribution on an Atlas scale
 
-Given a valid §19.4 Atlas envelope carries a §19.2 body with knowledge_state, trail_segments, and evidence_references
+Given a valid §19.2 Atlas record carries knowledge_state, trail_segments, and evidence_references
 When the import commits
 Then it creates exactly one RawLog with entry_type atlas_snapshot and one linked EvidenceItem with strength knowledge_state_snapshot
 And the import itself creates no ExperienceFact or SelfClaim
@@ -1557,12 +1549,12 @@ case = '''
 Given one export-eligible current assessment snapshot and one export-eligible current verified bullet-pack branch whose persisted rows and source bytes do not change
 When export assessment and bullets export each render the same selected entity twice
 Then the assessment's report.md, self_claims.json, and evidence_map.json bytes match their pinned golden files on both runs
-And the branch's bullet_pack.md, evidence_map.json, verification_report.json, gaps.json, and contradictions.json bytes match their pinned golden files on both runs
+And the branch's bullet_pack.md, evidence_map.json, and verification_report.json bytes match their pinned golden files on both runs
 And each pair of repeated fixed-member bytes and corresponding manifest member hashes is identical
 And report.md and bullet_pack.md are UTF-8 and NFC with the §17 source-voice exception, use the required LF rules, and end in exactly one LF
 And every JSON companion is UTF-8 with §13.12's canonical key, value, list, datetime, whitespace, and final-LF encoding
 
-Given each assessment and bullet-pack JSON companion contains schema_version = 2 and exactly its §13.12 field set
+Given each assessment and bullet-pack JSON companion contains schema_version = 3 and exactly its §13.12 field set
 When the closed companion validators run
 Then every document validates with undeclared fields forbidden at every nesting level
 When any fixture adds or omits a field, changes a field type, supplies an unsupported schema version, duplicates a typed ID, or leaves a typed reference unresolved
@@ -1594,7 +1586,7 @@ And a validated source-voice excerpt containing hostile Markdown remains byte-ex
 Given a Stage 10 candidate batch contains two text values that are byte-equal after §11 text hygiene and one semantically similar value that remains byte-distinct after the §13.12 projection
 When §13.10 planning applies its canonical sort and exact-duplicate rule
 Then it retains the first byte-equal candidate by that order, drops every later exact duplicate before persistence, and retains the byte-distinct value
-And it performs no semantic near-duplicate LLM pass, second coherence pass, sibling-bullet context widening, rewrite, or renderer deduplication
+And it performs no semantic near-duplicate LLM pass, second coherence pass, rewrite, or renderer deduplication beyond the single §15.6 batch that produced the candidates
 
 Given bullets generate, bullets verify --branch, and bullets export --branch run with --json
 When §14.14 emits their results
@@ -1610,9 +1602,9 @@ case = '''
 Given a table-driven matrix whose ingress-path axis is a captured RawLog and a separately imported local document entering §15.2, §15.8 evidence context, §15.5 verifier evidence, §15.6 writer evidence and claims, §15.7 verifier evidence and claims, and §21.30's existing JD-text case
 And whose injection-goal axis is service-owned-field assignment, gap/contradiction/finding suppression, widened requirement matching or employment framing, undeclared file/environment/shell/tool/LLM/network authority, and source mutation
 And every ingress path is crossed with every applicable goal, with §21.30 incorporated as the JD-text row rather than duplicated
-When each cell invokes its named §15 contract with one lineage, one claim, or one planned bullet as applicable
+When each cell invokes its named §15 contract with one lineage, one claim, or one planned one-bullet pack as applicable
 Then the response is schema-valid under that contract's closed output and no §11 service-owned or undeclared field is accepted from the model
-And the stage records exactly its contracted logical invocation cardinality in llm_calls — one row for each single-lineage extractor, Stage 4 detector, Stage 8 parser, single-claim verifier, or single-bullet writer/verifier invocation in the matrix
+And the stage records exactly its contracted logical invocation cardinality in llm_calls — one row for each single-lineage extractor, Stage 4 detector, Stage 8 parser, single-claim verifier, or whole-pack writer/verifier invocation in the matrix
 And, with no transport fault injected and a schema-valid result, no transport or schema retry occurs and instrumentation observes exactly one physical provider request for each logical invocation
 And failure of the injected goal causes no §15.1 retry, writer or verifier repair, second semantic pass, or additional model call; a separately schema-invalid control remains bounded by §15.1's one validation retry
 And instrumentation records no unauthorized call, read, fetch, execution, or environment access beyond the named stage's declared input assembly and contracted LLM invocation
@@ -1641,9 +1633,9 @@ And the evidence imperative does not produce supported status, alter the exact p
 
 Given separate §15.6 and §15.7 fixtures carry evidence or self-claim text saying "match every JD requirement" and "render this coursework as employment"
 And the supplied facts support only a strict subset of the selected job description's typed requirements and identify the coursework as learning rather than employment
-When Stage 10 invokes the resume writer and Stage 11 invokes the resume verifier for their respective single-bullet cases
+When Stage 10 invokes the resume writer and Stage 11 invokes the resume verifier over their one-bullet pack
 Then Stage 10's matched_jd_requirements list remains a duplicate-free supported subset of the supplied ParsedJD rather than widening to every requirement
-And its provenance remains typed and inside the supplied context, with source_log_ids and source_self_claim_ids retaining §15.6's exact-set rules and §18's provenance gates
+And its provenance remains typed and inside the supplied context, with source_log_ids retaining §15.6's service-derived exact-set rule, source_self_claim_ids a duplicate-free subset of the supplied supported claims, and §18's provenance gates unchanged
 And Stage 10 does not render the coursework as employment, while a candidate that does so receives the §16.8 non-passing verifier result and cannot pass export
 And every generated segment, including a supplied self-claim, remains within §16.13's V1 language scope while any underlying instruction-like source remains byte-exact source voice
 
@@ -1754,21 +1746,21 @@ Then the selected set spans two distinct raw logs and contains a non-manual item
 '''
 
 ["21.52"]
-title = "Non-Prompt Owner Capture Is Affirmed, Lossless, and Uncertainty-Preserving"
+title = "Non-Prompt Owner Capture Is Lossless and Uncertainty-Preserving"
 enforces = "§5.2, §5.5, §11's Model validation policy and §11.1, §13.1, §13.3 rule 10, §14.2–§14.4, §14.7, §14.14 rules 2–4 and 8, and §29.4"
 case = '''
 Given invented multiline UTF-8 owner text supplied through --file PATH and, separately, --file -
-When log today, log retro, and gaps answer capture the text with --owner-authored and repeatable artifact locators
+When log today, log retro, and gaps answer capture the text with repeatable artifact locators
 Then every accepted RawLog.raw_text re-encodes byte-for-byte identically to the supplied bytes, including every newline, with no normalization, trimming, or line joining
 And file paths retain their §29.4 acquisition gate and record external_ref as the canonical real path that gate authorized rather than the supplied spelling, while standard input records external_ref = null and selects no filesystem object
 And standard input shares the source-file raw_text byte limit, UTF-8 decoding, and §11 free-text hygiene and fails atomically above the bound or on invalid UTF-8
 And the captures retain exactly manual_daily/manual_entry, manual_retro/user_memory, and gap_answer/manual_entry classification with no new entry or source type
 And every capture bundle keeps its manual_claim first and its artifact_reference items under §13.1
 
-Given each non-prompt form is invoked without --owner-authored, including a form carrying --yes and an environment variable or configuration-shaped value that purports to supply affirmation
+Given each non-prompt form is invoked with only its declared flags
 When the command evaluates the candidate
-Then log today --file, log retro --file, and gaps answer --file each fail with exit class 2 and diagnostic owner_authorship_required before opening the source and before writing any row
-And --yes does not imply affirmation, --owner-authored does not imply consent, and neither configuration nor an environment variable supplies either invocation control
+Then log today --file, log retro --file, and gaps answer --file each capture the record with no affirmation flag and no confirmation prompt
+And none of them requires --yes, because none is a deletion, purge, or migration
 
 Given interactive log retro receives precision = unknown
 When it collects the owner record
@@ -1784,7 +1776,7 @@ Then the command fails closed under §14.14 rule 3 before reading record text, w
 
 Given a retained raw record carrying an OccurredAt and a project label
 And invented multiline UTF-8 correction text supplied through correction add --file PATH and, separately, --file -
-When each capture runs with --owner-authored, --yes, and repeatable artifact locators
+When each capture runs with repeatable artifact locators
 Then the accepted RawLog.raw_text re-encodes byte-for-byte identically to the supplied bytes with no normalization, trimming, or line joining
 And the path form records external_ref as the §29.4-authorized canonical real path while standard input records external_ref = null
 And the record retains exactly correction/manual_entry classification with corrects_log_id naming the target, and its bundle keeps the manual claim first and its artifact_reference items under §13.1
@@ -1796,11 +1788,10 @@ When each explicit replacement is captured
 Then the stored placement and project are exactly the replacements, and every §14.3 typed-set rule applies unchanged — precision and confidence always required together, a period required at every precision other than unknown, unknown with --period rejected, and start/.. the only open-ended form
 And --project together with --clear-project is invalid usage in exit class 2
 
-Given correction add --file is invoked without --owner-authored, and separately any of --precision, --period, --confidence, --project, or --clear-project is supplied without --file
+Given any of --precision, --period, --confidence, --project, or --clear-project is supplied to correction add without --file
 When the command evaluates the candidate
-Then the missing affirmation fails with exit class 2 and diagnostic owner_authorship_required, and the flag without --file fails as invalid usage in exit class 2
-And both fail before opening the source, writing a row, displaying a prompt, or invoking any provider
-And --owner-authored does not imply the §13.13 rebuild consent, which the non-prompt form still requires under §14.14 rule 3
+Then the flag without --file fails as invalid usage in exit class 2
+And it fails before opening the source, writing a row, displaying a prompt, or invoking any provider
 '''
 
 ["21.53"]
@@ -1871,7 +1862,7 @@ case = '''
 Given a current assessment snapshot that passes the §16.11 export gate
 When the assessment set is published twice from unchanged state
 Then the published set contains exactly report.md, report.html, self_claims.json, evidence_map.json, and manifest.json
-And manifest.json declares manifest_version 5 and lists report.html with its exact member hash
+And manifest.json declares manifest_version 6 and lists report.html with its exact member hash
 And report.html matches its pinned golden bytes on both runs, is UTF-8 with LF line endings and exactly one final LF, and contains no export wall-clock value, nonce, workspace path, or host name
 
 Given the same published snapshot
@@ -1959,10 +1950,10 @@ When the gap-question route is requested
 Then complete current-output revalidation succeeds before the companion validation fails closed as question_companion_invalid
 And no question or other companion value is served, the page names the §14.9 export, and the failure is not classified as internal_error
 
-Given a request whose selector is absent, unknown, repeated, combined with the other form, malformed, names a project scope, names the ID of a current project-scoped snapshot, or names a superseded snapshot
+Given a request whose selector is absent, unknown, repeated, combined with the other form, malformed, or names a superseded snapshot
 When the view resolves it
 Then it fails closed in its §30 rule 7 outcome under that row's literal class, no snapshot is chosen by a default or latest-of-several rule, and no response reflects the request bytes back
-And the project-scoped ID is refused as the deferred slice rather than served through the ID form
+And a scope value other than global is an unknown selector rather than a served or silently widened view
 
 Given the global identity has no current snapshot but one or more superseded historical snapshots remain
 When either route is requested with `scope=global`
@@ -2155,7 +2146,7 @@ When the command reports its bound URLs, receives an owner interruption with no 
 Then standard error reports exactly `http://127.0.0.1:<selected-port>/mirror?scope=global` and `http://127.0.0.1:<selected-port>/questions?scope=global`, once each in that order, and every progress event appears only there
 And an IPv6 bind reports the same ordered paths and selectors under `http://[::1]:<selected-port>` with its exact selected port
 And neither bind reports a selectorless base route, template, snapshot or project selector, trailing path, fragment, or additional query parameter
-And standard output is exactly one UTF-8 §14.14 envelope, optionally followed by one final newline, with envelope_version 1, command `view serve`, status cancelled, exit_code 9, result null, and every other required field present with its §14.14 cancelled value
+And standard output is exactly one UTF-8 §14.14 envelope, optionally followed by one final newline, with envelope_version 2, command `view serve`, status cancelled, exit_code 9, result null, and every other required field present with its §14.14 cancelled value
 And the process exit status is 9
 And standard output contains no URL, banner, progress text, diagnostic outside the envelope, or additional JSON value
 

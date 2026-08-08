@@ -563,12 +563,9 @@ nodes = [
 ]
 
 ["21.52"]
-status = "covered"
+status = "partial"
 nodes = [
   "tests/test_capture_noninteractive.py::test_multiline_file_and_stdin_capture_round_trip_with_unchanged_classes",
-  "tests/test_capture_noninteractive.py::test_missing_owner_authorship_fails_before_every_nonprompt_source_read[daily-yes-is-not-affirmation]",
-  "tests/test_capture_noninteractive.py::test_missing_owner_authorship_fails_before_every_nonprompt_source_read[retro]",
-  "tests/test_capture_noninteractive.py::test_missing_owner_authorship_fails_before_every_nonprompt_source_read[gap-answer]",
   "tests/test_capture_noninteractive.py::test_interactive_unknown_precision_skips_period_and_stores_null_bounds",
   "tests/test_capture_noninteractive.py::test_noninteractive_retro_rejects_unknown_period_and_missing_typed_values",
   "tests/test_capture_noninteractive.py::test_stdin_capture_is_bounded_utf8_and_atomic[oversize]",
@@ -580,8 +577,6 @@ nodes = [
   "tests/test_correction_nonprompt.py::test_explicit_replacements_take_effect_exactly[temporal-set]",
   "tests/test_correction_nonprompt.py::test_explicit_replacements_take_effect_exactly[project-replacement]",
   "tests/test_correction_nonprompt.py::test_explicit_replacements_take_effect_exactly[project-cleared]",
-  "tests/test_correction_nonprompt.py::test_missing_affirmation_fails_before_acquisition[bare]",
-  "tests/test_correction_nonprompt.py::test_missing_affirmation_fails_before_acquisition[with-replacement-flags]",
   "tests/test_correction_nonprompt.py::test_replacement_flags_without_file_are_invalid_usage[temporal]",
   "tests/test_correction_nonprompt.py::test_replacement_flags_without_file_are_invalid_usage[project]",
   "tests/test_correction_nonprompt.py::test_replacement_flags_without_file_are_invalid_usage[clear-project]",
@@ -589,13 +584,11 @@ nodes = [
   "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[partial-set]",
   "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[unknown-with-period]",
   "tests/test_correction_nonprompt.py::test_temporal_replacement_requires_the_whole_typed_set[missing-period]",
-  "tests/test_correction_nonprompt.py::test_affirmation_does_not_supply_the_rebuild_consent",
-  "tests/test_correction_nonprompt.py::test_missing_consent_fails_before_the_source_is_read",
   "tests/test_correction_nonprompt.py::test_copied_placement_needs_no_workspace_timezone",
   "tests/test_correction_nonprompt.py::test_explicit_temporal_replacement_still_requires_the_timezone",
 ]
 phase = "1"
-note = "All four non-prompt capture forms prove explicit pre-acquisition affirmation, multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate; correction proves copy-unless-replaced placement and project, the whole-typed-set replacement rules, mutually exclusive project flags, non-prompt-only flag scoping, and affirmation separate from rebuild consent."
+note = "All four non-prompt capture forms prove multiline file/stdin fidelity and unchanged classification; retro proves the unknown-precision prompt carve-out and fail-closed typed values; stdin proves the shared byte and UTF-8 gate; correction proves copy-unless-replaced placement and project, the whole-typed-set replacement rules, mutually exclusive project flags, and non-prompt-only flag scoping. Partial until A6's CLI change lands: the shipped affirmation and rebuild-consent tests asserted the removed prerequisites and left with the flag, so flagless-success coverage is still missing."
 
 ["21.53"]
 status = "covered"
@@ -648,7 +641,7 @@ nodes = [
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
 phase = "3"
-note = "The published set's fourth member is pinned by golden bytes and its manifest hash at §13.14's manifest_version 5, both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"
+note = "The published set's fourth member is pinned by golden bytes and its manifest hash — still at the shipped manifest_version 5, so §21.55's revised version-6 requirement stays uncovered until the queued implementation and its goldens land — both members render the same text in the same order from one document, the page carries no reference, script, or behavior, hostile values stay text, and a superseded-version set is reported instead of overwritten"
 
 ["21.56"]
 status = "partial"
@@ -661,7 +654,7 @@ phase = "3"
 note = "Offline tests pin the dimension- and status-keyed §17 routing and its totality over the §16.11 exportable statuses; the §13.7 check 13 semantic dimension judgment remains live-only"
 
 ["21.57"]
-status = "covered"
+status = "partial"
 nodes = [
   "tests/test_view_end_to_end.py::test_both_routes_serve_both_selector_forms_over_a_real_socket",
   "tests/test_view_end_to_end.py::test_one_running_server_observes_invalidation_and_the_replacement",
@@ -782,7 +775,7 @@ nodes = [
   "tests/test_cli_view_serve.py::test_quiet_keeps_the_urls_and_drops_the_request_lines",
 ]
 phase = "3"
-note = "The §14.17 command form now lands the last piece: tests/test_view_end_to_end.py serves the published Vera Example set over real loopback HTTP — both routes by both selector forms and a valid one-pass encoded selector, byte-identical mirror members, advisory-writer coexistence, bounded SQLite contention followed by reuse of the same server, the ignored ambient cookie and both fetch-metadata site declarations against the refused foreign origin, the answer/re-export invalidation cycle on one unrestarted server, a forward migration by another build refusing the very next request on that same server as schema_incompatible, the ::1 bind, and the empty question projection — while tests/test_cli_view_serve.py pins the bind admission — including successful binds at both allowed port boundaries, 1024 and 65535, beside the refusals just outside them — the two startup URLs, both startup gates before any socket exists (the incompatible schema as class 4 and a blocked compatibility read as class 5, never relabelled as each other), and the class-9 envelope. tests/test_view_resolution.py keeps the offline state-dependent half and tests/test_view_http.py with tests/test_view_transport.py keep the rule 9 grammar and caps, rule 2 framing, rule 1 authority, rule 10 admission, and the receive/processing/emit/drain deadlines, including a slow trickle through the admission-anchored receive boundary and emit expiry against a client that stops reading a response past the socket buffers"
+note = "The §14.17 command form now lands the last piece: tests/test_view_end_to_end.py serves the published Vera Example set over real loopback HTTP — both routes by both selector forms and a valid one-pass encoded selector, byte-identical mirror members, advisory-writer coexistence, bounded SQLite contention followed by reuse of the same server, the ignored ambient cookie and both fetch-metadata site declarations against the refused foreign origin, the answer/re-export invalidation cycle on one unrestarted server, a forward migration by another build refusing the very next request on that same server as schema_incompatible, the ::1 bind, and the empty question projection — partial after A4, because the registered resolver tests still require the `deferred` outcome for `scope=project` and construct a project-scoped snapshot, while §21.57 now makes every non-global scope an ordinary unknown selector — while tests/test_cli_view_serve.py pins the bind admission — including successful binds at both allowed port boundaries, 1024 and 65535, beside the refusals just outside them — the two startup URLs, both startup gates before any socket exists (the incompatible schema as class 4 and a blocked compatibility read as class 5, never relabelled as each other), and the class-9 envelope. tests/test_view_resolution.py keeps the offline state-dependent half and tests/test_view_http.py with tests/test_view_transport.py keep the rule 9 grammar and caps, rule 2 framing, rule 1 authority, rule 10 admission, and the receive/processing/emit/drain deadlines, including a slow trickle through the admission-anchored receive boundary and emit expiry against a client that stops reading a response past the socket buffers"
 
 ["21.58"]
 status = "partial"
