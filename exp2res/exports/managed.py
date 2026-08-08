@@ -701,10 +701,14 @@ def _remove_managed_sets(
         try:
             _fsync_directory(parent, out_root)
         except OSError:
+            # The unlinks are visible but not durable. The returned residual is
+            # lost whenever a later half of the same pass is cancelled, so the
+            # ledger must not claim these removals either.
             residuals.add(str(parent))
-    # Only a flushed removal is banked: an interrupt inside the flush leaves the
-    # directory entry undurable, so it skips this line and the caller keeps
-    # reporting those sets rather than claiming a removal a crash could undo.
+            unlinked = []
+    # Only a flushed removal is banked: an interrupt inside the flush skips this
+    # line for the same reason, and the caller keeps reporting those sets rather
+    # than claiming a removal a crash could undo.
     if removed_ledger is not None:
         removed_ledger.extend(unlinked)
     return tuple(sorted(residuals, key=id_key))

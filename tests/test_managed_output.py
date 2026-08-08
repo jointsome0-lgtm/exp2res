@@ -350,18 +350,19 @@ def test_an_unstattable_set_is_a_residual_and_never_an_exception(
     assert not first.exists() and second.is_dir()
 
 
-def test_an_interrupted_flush_banks_no_removal(
+def test_an_unflushed_removal_is_never_banked(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A removal is banked only once the directory entry is durable.
 
-    The unlink itself is visible immediately, but a cancellation inside the
-    flush leaves nothing proven against a crash, so the caller must keep
-    reporting the set rather than subtract it from its residual report.
+    The unlink itself is visible immediately, but neither a cancellation nor a
+    failure inside the flush proves anything against a crash — and the returned
+    residual is lost whenever a later half of the same pass is cancelled — so
+    the caller must keep reporting the set rather than subtract it.
     """
 
     assert managed.reconcile_managed_outputs(workspace) == ()
-    planted = _plant_branch_set(workspace, "branch_vera_0001")
+    interrupted = _plant_branch_set(workspace, "branch_vera_0001")
 
     def interrupt_flush(*_arguments, **_keywords):
         raise KeyboardInterrupt()
@@ -374,5 +375,19 @@ def test_an_interrupted_flush_banks_no_removal(
             workspace, ["branch_vera_0001"], removed_ledger=banked
         )
     assert banked == []
-    assert not planted.exists()
+    assert not interrupted.exists()
+
+    failed = _plant_branch_set(workspace, "branch_vera_0002")
+
+    def fail_flush(*_arguments, **_keywords):
+        raise OSError(5, "flush failed")
+
+    monkeypatch.setattr(managed, "_fsync_directory", fail_flush)
+
+    residuals = managed.remove_branch_sets(
+        workspace, ["branch_vera_0002"], removed_ledger=banked
+    )
+    assert residuals == (str(failed.parent),)
+    assert banked == []
+    assert not failed.exists()
 
