@@ -322,7 +322,7 @@ status = "partial"
 phases = ["4"]
 evals = ["21.44"]
 issues = ["#167"]
-note = "Workspace purge is implemented and proven, and the job-description layer now exists in the schema; jd list and jd delete, their dependent branch and bullet purge, and the managed out/branch/ removal await their §14.15 commands and the later Phase 4 branch stages"
+note = "Workspace purge, the §14.15 jd list projection, and jd delete are implemented and proven, including consent, the committed point deletion under a filesystem failure, global call-hash redaction, removed-and-residual managed-path reporting, and an untraversed symlink whose target survives; the dependent branch and bullet purge and the out/branch/ removal await the Phase 4 stages that create those tables"
 
 ["24.48"]
 status = "pending"

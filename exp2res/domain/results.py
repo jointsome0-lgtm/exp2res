@@ -54,6 +54,9 @@ CommandPath = Literal[
     "gaps answer",
     "contradictions list",
     "contradictions show",
+    "jd add",
+    "jd list",
+    "jd delete",
     "view serve",
 ]
 
@@ -173,6 +176,30 @@ class AssessShowResult(StrictModel):
     contradictions: list[Contradiction]
 
 
+class JobDescriptionProjection(StrictModel):
+    """§14.14 rule 5's discovery projection: no `raw_text`, no `parsed`."""
+
+    id: str
+    created_at: datetime
+    title: str | None
+    company: str | None
+
+
+class JdListResult(StrictModel):
+    job_descriptions: list[JobDescriptionProjection]
+
+
+class PurgedBranchProjection(StrictModel):
+    id: str
+    name: str
+
+
+class JdDeleteResult(StrictModel):
+    selected_job_description: JobDescriptionProjection
+    purged_branches: list[PurgedBranchProjection]
+    removed_managed_paths: list[str]
+
+
 class AssessmentExportResult(StrictModel):
     manifest_path: str
     managed_paths: list[str]
@@ -189,6 +216,8 @@ ResultPayload = (
     | ContradictionsResult
     | AssessListResult
     | AssessShowResult
+    | JdListResult
+    | JdDeleteResult
     | AssessmentExportResult
 )
 

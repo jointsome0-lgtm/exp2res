@@ -24,6 +24,7 @@ from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
 from exp2res.domain.models import (
     ExperienceFact,
+    JobDescription,
     OccurredAt,
     SelfClaim,
     VerificationFinding,
@@ -42,10 +43,14 @@ from exp2res.domain.results import (
     FactsListResult,
     GapsListResult,
     InvalidatedView,
+    JdDeleteResult,
+    JdListResult,
+    JobDescriptionProjection,
     LogProjection,
     LogsDeleteResult,
     LogsListResult,
     LogsShowResult,
+    PurgedBranchProjection,
     Retry,
     SchemaProjection,
     SchemaResult,
@@ -103,6 +108,15 @@ from exp2res.services.extraction import (
 )
 from exp2res.services.export import export_assessment, require_export_eligible
 from exp2res.services.facts import list_facts, show_fact
+from exp2res.pipeline.stage8 import Stage8Result
+from exp2res.services.job_descriptions import (
+    JobDescriptionCleanupOutcome,
+    JobDescriptionDeleteOutcome,
+    delete_job_description,
+    list_job_descriptions,
+    run_jd_add_file,
+    show_job_description,
+)
 from exp2res.services.logs import DeleteOutcome, delete_log, list_logs, show_log
 from exp2res.services.lifecycle import (
     LifecycleResult,
@@ -151,6 +165,9 @@ contradictions_app = typer.Typer(
 )
 assess_app = typer.Typer(help="Generate and inspect self-assessment views.")
 export_app = typer.Typer(help="Publish deterministic managed exports.")
+jd_app = typer.Typer(
+    help="Add, list, and owner-delete job descriptions."
+)
 workspace_app = typer.Typer(help="Manage the whole initialized workspace.")
 view_app = typer.Typer(help="Serve the read-only local views on loopback.")
 app.add_typer(db_app, name="db")
@@ -163,6 +180,7 @@ app.add_typer(gaps_app, name="gaps")
 app.add_typer(contradictions_app, name="contradictions")
 app.add_typer(assess_app, name="assess")
 app.add_typer(export_app, name="export")
+app.add_typer(jd_app, name="jd")
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(view_app, name="view")
 
@@ -199,6 +217,8 @@ class Outcome:
         | ContradictionsResult
         | AssessListResult
         | AssessShowResult
+        | JdListResult
+        | JdDeleteResult
         | AssessmentExportResult
         | None
     ) = None
@@ -262,6 +282,47 @@ def _evidence_projection(item) -> EvidenceItemProjection:
         uri=item.uri,
         path=item.path,
         strength=item.strength,
+    )
+
+
+def _render_text(value: str) -> str:
+    """Escape one source-derived string into an unambiguous single line.
+
+    The literal backslash is escaped first, so every escape this renderer
+    introduces stays injective: a control byte and a name that literally
+    spells its escape keep distinct rendered identities. Control characters
+    are then escaped because a legal name may hold a newline, a tab, or a
+    terminal escape sequence, and one record must stay one record in both
+    the envelope and the human rendering. A real character takes the
+    four-digit `\\uNNNN` form, keeping it distinct from the two-digit
+    `\\xNN` an undecodable byte takes in `_render_path`.
+    """
+
+    escaped = value.replace("\\", "\\\\")
+    return "".join(
+        character
+        if not (
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or 0x80 <= ord(character) <= 0x9F
+        )
+        else f"\\u{ord(character):04x}"
+        for character in escaped
+    )
+
+
+def _render_path(path: str) -> str:
+    """Render one filesystem path so the envelope can carry it losslessly.
+
+    Undecodable POSIX names surface as surrogate-escaped strings that neither
+    UTF-8 stdout nor the JSON envelope can encode, so they take the same
+    backslash form as every other escape `_render_text` applies.
+    """
+
+    return (
+        _render_text(path)
+        .encode("utf-8", "surrogateescape")
+        .decode("utf-8", "backslashreplace")
     )
 
 
@@ -383,6 +444,13 @@ def _run_command(
         )
 
 
+# §14.15/§14.16 name `deletion_incomplete` as the residual class for these
+# two commands specifically. `logs delete` is absent because §14.11 routes
+# it through §13.13 rules 6 and 8, where the rebuild republishes managed
+# output and a residual is not necessarily a deletion failure.
+_DESTRUCTIVE_DELETION_COMMANDS = frozenset({"workspace purge", "jd delete"})
+
+
 def _run_operation(
     context: typer.Context,
     command: CommandPath,
@@ -471,6 +539,10 @@ def _run_operation(
             warnings=list(getattr(error, "warnings", ()) or ()),
             retry=getattr(error, "retry", None),
             result=getattr(error, "result", None),
+            # §14.14 rule 6: a class-9 exit after a committed lifecycle
+            # boundary reports that effect in both modes, so an error carrying
+            # a committed result may carry its human rendering too.
+            human_result=getattr(error, "human_result", "") or "",
         )
         typer.echo(error.public_message, err=True)
         if not controls.json_output:
@@ -504,15 +576,9 @@ def _run_operation(
         except OSError:
             pass
         observed_residuals.append(path)
-    # Undecodable POSIX names surface as surrogateescape'd strings that
-    # neither UTF-8 stdout nor the JSON envelope can carry; escape them into
-    # backslash form so the committed result and every residual stay
-    # reportable in both modes.
     residual_paths = sorted(
         {
-            path.encode("utf-8", "surrogateescape").decode(
-                "utf-8", "backslashreplace"
-            )
+            _render_path(path)
             for path in {*outcome.residual_paths, *observed_residuals}
         },
         key=os.fsencode,
@@ -524,9 +590,12 @@ def _run_operation(
         # failed class (1-7) is not a completion and keeps its own code while
         # still reporting the residual paths.
         outcome.exit_code = 8
+        # §14.15/§14.16: a destructive privacy operation reports every
+        # residual as `deletion_incomplete`, whatever produced it — the
+        # command's own cleanup or the writer preamble merged in above.
         outcome.diagnostic_class = (
             "deletion_incomplete"
-            if command == "workspace purge"
+            if command in _DESTRUCTIVE_DELETION_COMMANDS
             else "managed_output_incomplete"
         )
     if residual_paths:
@@ -2179,6 +2248,267 @@ def _purge_affected(purged: PurgeOutcome) -> AffectedIds:
             for entity_type, ids in purged.deleted_ids
         ],
     )
+
+
+def _job_description_projection(
+    job_description: JobDescription,
+) -> JobDescriptionProjection:
+    """§14.15: the discovery projection, with `raw_text` and `parsed` absent."""
+
+    return JobDescriptionProjection(
+        id=job_description.id,
+        created_at=job_description.created_at,
+        title=job_description.title,
+        company=job_description.company,
+    )
+
+
+def _jd_add_affected(parsed: Stage8Result) -> AffectedIds:
+    return AffectedIds(
+        created=[
+            EntityIdGroup(
+                entity_type="job_description",
+                ids=[parsed.job_description_id],
+            )
+        ],
+        superseded=[],
+        deleted=[],
+    )
+
+
+def _jd_add_outcome(parsed: Stage8Result) -> Outcome:
+    requirement_count = len(parsed.requirement_ids)
+    return Outcome(
+        affected_ids=_jd_add_affected(parsed),
+        run_ids=[parsed.run_id],
+        warnings=list(parsed.warnings),
+        # §14.14 rule 5 declares no `jd add` result: the standard envelope
+        # fields carry it, and the parse itself stays unexposed under the
+        # rule 7 per-record-inspection deferral.
+        result=None,
+        human_result=(
+            f"Added job description {parsed.job_description_id} with "
+            f"{requirement_count} typed "
+            f"requirement{'' if requirement_count == 1 else 's'}."
+        ),
+    )
+
+
+@jd_app.command("add")
+def jd_add(
+    context: typer.Context,
+    source_path: str = typer.Argument(..., metavar="PATH"),
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.14 rule 3: compatibility precedes source acquisition and adapter
+        # construction; the service re-checks under its own authority.
+        require_compatible(workspace)
+        parsed = run_jd_add_file(workspace, source_path=source_path)
+        try:
+            return _jd_add_outcome(parsed)
+        except KeyboardInterrupt:
+            # The service returned a durable parse; §14.14 rule 6 keeps it
+            # reported even when the interrupt lands in result assembly.
+            cancelled = OperationCancelledError()
+            cancelled.affected_ids = _jd_add_affected(parsed)
+            cancelled.run_ids = [parsed.run_id]
+            cancelled.warnings = list(parsed.warnings)
+            raise cancelled from None
+
+    _run_command(context, "jd add", operation)
+
+
+@jd_app.command("list")
+def jd_list(context: typer.Context) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        job_descriptions = list(list_job_descriptions(workspace))
+        human = "\n".join(
+            "\t".join(
+                (
+                    item.id,
+                    item.created_at.isoformat(),
+                    # §16.13 permits a tab or newline inside parsed source
+                    # text; unescaped, one record could pose as several.
+                    _render_text(item.title) if item.title else "-",
+                    _render_text(item.company) if item.company else "-",
+                )
+            )
+            for item in job_descriptions
+        )
+        return Outcome(
+            result=JdListResult(
+                job_descriptions=[
+                    _job_description_projection(item) for item in job_descriptions
+                ]
+            ),
+            human_result=human or "No job descriptions.",
+        )
+
+    _run_command(context, "jd list", operation)
+
+
+def _jd_delete_result(deleted: JobDescriptionDeleteOutcome) -> JdDeleteResult:
+    return JdDeleteResult(
+        selected_job_description=_job_description_projection(deleted.selected),
+        purged_branches=[
+            PurgedBranchProjection(id=branch.id, name=branch.name)
+            for branch in deleted.purged_branches
+        ],
+        # Undecodable POSIX names reach here surrogate-escaped from
+        # `os.scandir`; the envelope serializes with `ensure_ascii=False`, so
+        # the same rendering the residual finalizer applies keeps a committed
+        # removal reportable instead of failing stdout encoding.
+        removed_managed_paths=[
+            _render_path(path) for path in deleted.removed_managed_paths
+        ],
+    )
+
+
+def _jd_delete_outcome(deleted: JobDescriptionDeleteOutcome) -> Outcome:
+    exit_code = 8 if deleted.residual_paths else 0
+    return Outcome(
+        exit_code=exit_code,
+        diagnostic_class="deletion_incomplete" if exit_code else None,
+        affected_ids=_jd_delete_affected(deleted),
+        run_ids=[deleted.run_id],
+        residual_paths=list(deleted.residual_paths),
+        result=_jd_delete_result(deleted),
+        human_result=_jd_delete_human_result(deleted),
+    )
+
+
+def _jd_delete_human_result(deleted: JobDescriptionDeleteOutcome) -> str:
+    # §14.15 requires the same reporting in both modes: the closed result
+    # record is serialized only under `--json`, so every purged branch and
+    # every removed managed path is named here too.
+    lines = [
+        f"Deleted job description {deleted.selected.id}; no derived "
+        "state remained."
+        if not deleted.purged_branches
+        else (
+            f"Deleted job description {deleted.selected.id} and "
+            f"{len(deleted.purged_branches)} dependent branch"
+            f"{'' if len(deleted.purged_branches) == 1 else 'es'}."
+        )
+    ]
+    lines.extend(
+        f"Purged branch: {branch.id}\t{branch.name}"
+        for branch in deleted.purged_branches
+    )
+    lines.extend(
+        f"Removed managed path: {path}"
+        for path in _jd_delete_result(deleted).removed_managed_paths
+    )
+    return "\n".join(lines)
+
+
+def _jd_cleanup_result(cleaned: JobDescriptionCleanupOutcome) -> JdDeleteResult:
+    return JdDeleteResult(
+        selected_job_description=_job_description_projection(cleaned.selected),
+        purged_branches=[],
+        removed_managed_paths=[
+            _render_path(path) for path in cleaned.removed_managed_paths
+        ],
+    )
+
+
+def _jd_cleanup_human_result(cleaned: JobDescriptionCleanupOutcome) -> str:
+    lines = [
+        f"Job description {cleaned.selected.id} was not deleted; managed "
+        "cleanup had already run."
+    ]
+    lines.extend(
+        f"Removed managed path: {path}"
+        for path in _jd_cleanup_result(cleaned).removed_managed_paths
+    )
+    return "\n".join(lines)
+
+
+def _jd_delete_affected(deleted: JobDescriptionDeleteOutcome) -> AffectedIds:
+    classes = (
+        ("verification_finding", deleted.purged_finding_ids),
+        ("resume_bullet", deleted.purged_bullet_ids),
+        (
+            "resume_branch",
+            tuple(branch.id for branch in deleted.purged_branches),
+        ),
+        ("job_description", (deleted.selected.id,)),
+    )
+    return AffectedIds(
+        created=[],
+        superseded=[],
+        deleted=[
+            EntityIdGroup(entity_type=entity_type, ids=list(ids))
+            for entity_type, ids in classes
+            if ids
+        ],
+    )
+
+
+@jd_app.command("delete")
+def jd_delete(
+    context: typer.Context,
+    job_description_id: str = typer.Option(..., "--jd"),
+) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        # §13.13 rule 10 captures the selected projection first, and an
+        # unknown selector must fail before the writer preamble can touch
+        # managed output. The service revalidates it under the writer lock,
+        # so this read cannot race the deletion.
+        selected = show_job_description(
+            workspace, job_description_id=job_description_id
+        )
+        if not controls.yes:
+            if _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            if not typer.confirm(
+                f"Delete job description {selected.id} and every "
+                "verified bullet pack derived from it?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
+        try:
+            deleted = delete_job_description(
+                workspace, job_description_id=job_description_id
+            )
+        except OperationCancelledError as error:
+            committed = cast(
+                JobDescriptionDeleteOutcome | None,
+                getattr(error, "delete_outcome", None),
+            )
+            if committed is not None:
+                error.affected_ids = _jd_delete_affected(committed)
+                error.run_ids = [committed.run_id]
+                error.residual_paths = list(committed.residual_paths)
+                error.result = _jd_delete_result(committed)
+                error.human_result = _jd_delete_human_result(committed)
+                raise
+            # §14.14 rule 6: managed cleanup ran before the transaction, so
+            # its effects are reported even though nothing was deleted — no
+            # affected IDs and no run, because neither became durable.
+            cleaned = cast(
+                JobDescriptionCleanupOutcome | None,
+                getattr(error, "cleanup_outcome", None),
+            )
+            if cleaned is not None:
+                error.residual_paths = list(cleaned.residual_paths)
+                error.result = _jd_cleanup_result(cleaned)
+                error.human_result = _jd_cleanup_human_result(cleaned)
+            raise
+        try:
+            return _jd_delete_outcome(deleted)
+        except KeyboardInterrupt:
+            # The service returned a durable deletion; §14.14 rule 6 keeps it
+            # reported even when the interrupt lands in result assembly.
+            cancelled = OperationCancelledError()
+            cancelled.affected_ids = _jd_delete_affected(deleted)
+            cancelled.run_ids = [deleted.run_id]
+            cancelled.residual_paths = list(deleted.residual_paths)
+            cancelled.result = _jd_delete_result(deleted)
+            cancelled.human_result = _jd_delete_human_result(deleted)
+            raise cancelled from None
+
+    _run_command(context, "jd delete", operation)
 
 
 @workspace_app.command("purge")

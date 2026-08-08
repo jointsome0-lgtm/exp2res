@@ -13,6 +13,7 @@ from typing import Callable, Iterable, Pattern, Sequence, cast
 from pydantic import BaseModel
 
 from exp2res.domain.models import JDRequirement, JobDescription, ParsedJD
+from exp2res.errors import LLMCancelledError
 from exp2res.llm.contracts import ContractWarning
 from exp2res.llm.jd_parser import (
     JD_PARSER_CONTRACT,
@@ -141,6 +142,61 @@ def run_job_description_parse(
         if connection is not None
         else writer_database(workspace, timeout_ms=timeout_ms, reconcile=reconcile)
     )
+    # §14.14 rule 6: the parser's warnings live only in the resolved candidate,
+    # so a cancellation delivered at or after the business commit would
+    # otherwise report a durable job description with none of the advisories
+    # that describe it. The capture spans the whole writer context — commit,
+    # result construction, lock and connection teardown — because the
+    # interrupt can land anywhere in it.
+    resolved_parses: list[_ResolvedParse] = []
+    try:
+        return _run_locked_parse(
+            workspace,
+            held=held,
+            raw_text=raw_text,
+            selection=selection,
+            budgets=budgets,
+            runner=runner,
+            id_factory=id_factory,
+            parent_run_id=parent_run_id,
+            now=now,
+            cli_version=cli_version,
+            capability_check=capability_check,
+            monotonic=monotonic,
+            sleeper=sleeper,
+            jitter=jitter,
+            token_patterns=token_patterns,
+            resolved_credentials=resolved_credentials,
+            resolved_parses=resolved_parses,
+        )
+    except (LLMCancelledError, KeyboardInterrupt) as error:
+        # Only cancellation: a failed run persisted nothing its advisories
+        # could describe.
+        if resolved_parses and not getattr(error, "warnings", None):
+            error.warnings = list(resolved_parses[-1].warnings)
+        raise
+
+
+def _run_locked_parse(
+    workspace: Path,
+    *,
+    held,
+    raw_text: str,
+    selection: LLMSelection,
+    budgets: CallBudgets,
+    runner: ContractRunner,
+    id_factory: Callable[[str], str],
+    parent_run_id: str | None,
+    now: Callable[[], datetime],
+    cli_version: str,
+    capability_check: Callable[[], None] | None,
+    monotonic: Callable[[], float],
+    sleeper: Callable[[float], None],
+    jitter: Callable[[float, float], float] | None,
+    token_patterns: Iterable[Pattern[bytes]] | None,
+    resolved_credentials: Iterable[bytes],
+    resolved_parses: list[_ResolvedParse],
+) -> Stage8Result:
     with held as connection:
         # §15.9: the input is the owner-supplied payload, so no entity ID
         # exists yet and none transits (§29.3). `input_ids` stays empty for
@@ -149,17 +205,24 @@ def run_job_description_parse(
             job_description=JobDescriptionPayload(raw_text=raw_text)
         )
         run_id = id_factory("run")
+        resolve_candidate = _resolve_for(
+            connection=connection,
+            raw_text=raw_text,
+            id_factory=id_factory,
+            clock=now,
+        )
+
+        def resolve(validated: BaseModel) -> object:
+            candidate = resolve_candidate(validated)
+            resolved_parses.append(cast(_ResolvedParse, candidate))
+            return candidate
+
         planned = (
             PlannedCall(
                 input_payload=input_payload,
                 input_ids=(),
                 enrich=None,
-                resolve=_resolve_for(
-                    connection=connection,
-                    raw_text=raw_text,
-                    id_factory=id_factory,
-                    clock=now,
-                ),
+                resolve=resolve,
             ),
         )
 

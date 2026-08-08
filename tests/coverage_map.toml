@@ -436,9 +436,15 @@ nodes = [
   "tests/test_workspace_purge.py::test_interrupt_in_pre_transaction_cleanup_keeps_its_residuals",
   "tests/test_workspace_purge.py::test_busy_final_checkpoint_reports_the_live_database_too",
   "tests/test_workspace_purge.py::test_interrupt_in_cli_result_assembly_still_reports_the_purge",
+  "tests/test_cli_jd.py::test_list_is_the_raw_text_free_discovery_projection",
+  "tests/test_cli_jd.py::test_delete_fails_closed_without_consent_and_keeps_the_record",
+  "tests/test_cli_jd.py::test_delete_purges_the_record_and_redacts_retained_call_hashes",
+  "tests/test_cli_jd.py::test_a_residual_managed_path_keeps_the_deletion_committed",
+  "tests/test_cli_jd.py::test_a_removed_managed_backup_is_reported_by_canonical_path",
+  "tests/test_cli_jd.py::test_a_managed_symlink_is_reported_without_traversal",
 ]
 phase = "4"
-note = "The workspace purge half is proven, including complete schema inventory, consent, retained initialization, SQLite erasure, and residual symlink semantics; jd delete awaits its implementation phase"
+note = "The workspace purge half is proven, including complete schema inventory, consent, retained initialization, SQLite erasure, and residual symlink semantics; jd list's raw-text-free projection, jd delete's consent, committed point deletion, global call-hash redaction, removed-and-residual managed-path reporting, and untraversed symlink now join it, while the dependent branch, bullet, and out/branch/ half waits on the Phase 4 stages that create those tables"
 
 ["21.45"]
 status = "pending"
