@@ -160,10 +160,11 @@ issues = ["#82", "PR #125"]
 note = "Stage 3 tests cover governing-placement inheritance, unsupported precision increases, widening and confidence raises, and selected-support anchored narrowing; Vera E1 checks copied placement through the CLI"
 
 ["24.25"]
-status = "pending"
+status = "partial"
 phases = ["4"]
 evals = ["21.22", "21.24"]
 issues = []
+note = "Stage 8 persists a typed ParsedJD whose JDRequirement IDs are service-assigned, globally unique, and never model-authored; the Stage 10 half - bullets carrying typed matched_jd_requirements references - waits on the later Phase 4 branch and bullet stages"
 
 ["24.26"]
 status = "partial"
@@ -173,16 +174,18 @@ issues = ["#70", "#99", "#182"]
 note = "Stage 4, the public detections command, gap-answer round trip, and Vera E2 prove the detector lifecycle and envelope, with per-set retention, the free short-circuited rerun, and §13.4's either-set dependency-graph supersession of claims and snapshots in its signal-free form; the generated-voice gate and resume branch/bullet invalidation remain for later phases"
 
 ["24.27"]
-status = "pending"
+status = "met"
 phases = ["4"]
 evals = ["21.24"]
 issues = []
+note = "The §15.9 parser schema declares no JobDescription id, no created_at, and no JDRequirement id, so no entity ID exists at call time for the model to author; Stage 8 assigns every one of them after the parse validates and aborts atomically without a second call when allocation or the final model fails"
 
 ["24.28"]
-status = "pending"
+status = "partial"
 phases = ["0", "1", "2", "3", "4", "5"]
 evals = ["21.25"]
 issues = []
+note = "Stage 8 proves the source-voice half at the job-description boundary: a vacancy demanding expert-level experience parses and persists with its wording unrewritten; the generated-voice half - blocking an unsupported bullet, claim, or report line asserting the owner meets that demand - waits on the Phase 4 bullet stages"
 
 ["24.29"]
 status = "partial"
@@ -319,7 +322,7 @@ status = "partial"
 phases = ["4"]
 evals = ["21.44"]
 issues = ["#167"]
-note = "Workspace purge is implemented and proven; job-description inspection and deletion await their later schema and implementation phase"
+note = "Workspace purge is implemented and proven, and the job-description layer now exists in the schema; jd list and jd delete, their dependent branch and bullet purge, and the managed out/branch/ removal await their §14.15 commands and the later Phase 4 branch stages"
 
 ["24.48"]
 status = "pending"

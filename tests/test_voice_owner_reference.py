@@ -10,6 +10,7 @@ from exp2res.llm.assessment_verifier import ASSESSMENT_VERIFIER_INSTRUCTIONS
 from exp2res.llm.assessment_writer import ASSESSMENT_WRITER_INSTRUCTIONS
 from exp2res.llm.detector import DETECTOR_INSTRUCTIONS
 from exp2res.llm.fact_extractor import FACT_EXTRACTOR_INSTRUCTIONS
+from exp2res.llm.jd_parser import JD_PARSER_INSTRUCTIONS
 
 from conftest import REPOSITORY_ROOT
 
@@ -21,6 +22,7 @@ INSTRUCTION_BLOCKS = {
     "gap-contradiction-detector": DETECTOR_INSTRUCTIONS,
     "self-assessment-writer": ASSESSMENT_WRITER_INSTRUCTIONS,
     "assessment-verifier": ASSESSMENT_VERIFIER_INSTRUCTIONS,
+    "job-description-parser": JD_PARSER_INSTRUCTIONS,
 }
 
 # §16.14's example role nouns as word-bounded singular tokens, so a legal
@@ -100,6 +102,18 @@ TWO_HALF_PINS = (
         "§16.9",
         "current evidence suggests",
         "permanent trait",
+    ),
+    (
+        "job-description-parser",
+        "§16.12",
+        "Requirement text states what the vacancy demands",
+        "never asserts, denies, or rates that anyone meets that demand",
+    ),
+    (
+        "job-description-parser",
+        "§16.3",
+        "Demand wording is preserved faithfully",
+        "never soften, inflate, or reinterpret",
     ),
     (
         "fact-extractor",

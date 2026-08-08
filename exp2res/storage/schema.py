@@ -753,6 +753,37 @@ BEGIN
 END;
 """
 
+JOB_DESCRIPTIONS_SQL = """
+CREATE TABLE job_descriptions (
+    id TEXT NOT NULL PRIMARY KEY CHECK (id <> ''),
+    created_at TEXT NOT NULL,
+    title TEXT,
+    company TEXT,
+    raw_text TEXT NOT NULL CHECK (raw_text <> ''),
+    parsed_json TEXT NOT NULL DEFAULT '{}'
+);
+"""
+
+# §11.11: a job description is retained context, not a recomputable
+# interpretation — it carries no `superseded_at` and no lifecycle transition,
+# so every update is a violation the way a `verification_findings` update is.
+JOB_DESCRIPTIONS_UPDATE_GUARD_SQL = """
+CREATE TRIGGER job_descriptions_update_guard
+BEFORE UPDATE ON job_descriptions
+BEGIN
+    SELECT RAISE(ABORT, 'job_description_immutable');
+END;
+"""
+
+JOB_DESCRIPTIONS_DELETE_GUARD_SQL = """
+CREATE TRIGGER job_descriptions_owner_delete_guard
+BEFORE DELETE ON job_descriptions
+WHEN exp2res_owner_delete() <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'job_description_owner_purge_required');
+END;
+"""
+
 SCHEMA_META_SQL = """
 CREATE TABLE schema_meta (
     version INTEGER PRIMARY KEY,
@@ -924,6 +955,18 @@ SCHEMA_V10_SQL = SCHEMA_V9_SQL.replace(
     1,
 )
 
+
+# §22 Phase 4: schema v11 adds the §13.8 job-description layer. The table is
+# created fresh, so no rebuild and no pre-quoted table name is involved.
+SCHEMA_V11_SQL = "\n".join(
+    (
+        SCHEMA_V10_SQL,
+        JOB_DESCRIPTIONS_SQL,
+        JOB_DESCRIPTIONS_UPDATE_GUARD_SQL,
+        JOB_DESCRIPTIONS_DELETE_GUARD_SQL,
+    )
+)
+
 # §14.16 owns one complete, referentially ordered whole-workspace purge.
 # Keeping the inventory beside the current schema makes a newly added table a
 # deliberate compile-time/test-time lifecycle decision instead of a silent
@@ -934,6 +977,7 @@ PURGE_TABLE_ORDER = (
     "assessment_snapshots",
     "gap_questions",
     "contradictions",
+    "job_descriptions",
     "fact_sources",
     "experience_facts",
     "evidence_items",
@@ -953,6 +997,7 @@ PURGE_ENTITY_TABLES = (
     ("assessment_snapshots", "assessment_snapshot"),
     ("self_claims", "self_claim"),
     ("verification_findings", "verification_finding"),
+    ("job_descriptions", "job_description"),
     ("processing_runs", "processing_run"),
 )
 
@@ -960,9 +1005,9 @@ PURGE_ENTITY_TABLES = (
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    if version != 10:
-        raise ValueError("fresh workspaces must use schema version 10")
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V10_SQL)
+    if version != 11:
+        raise ValueError("fresh workspaces must use schema version 11")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V11_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
@@ -1249,5 +1294,20 @@ def apply_migration_9_to_10(connection: Connection) -> None:
     for statement in (
         ASSESSMENT_SNAPSHOTS_V10_UPDATE_GUARD_SQL,
         ASSESSMENT_SNAPSHOTS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+
+def apply_migration_10_to_11(connection: Connection) -> None:
+    """Create the §13.8 job-description layer (§12.14).
+
+    Purely additive: a v10 workspace holds no job description, so there is no
+    row to transform and no existing table to rebuild.
+    """
+
+    for statement in (
+        JOB_DESCRIPTIONS_SQL,
+        JOB_DESCRIPTIONS_UPDATE_GUARD_SQL,
+        JOB_DESCRIPTIONS_DELETE_GUARD_SQL,
     ):
         connection.execute(statement)

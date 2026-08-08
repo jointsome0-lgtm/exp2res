@@ -21,6 +21,7 @@ from exp2res.domain.models import (
     EvidenceItem,
     ExperienceFact,
     GapQuestion,
+    JobDescription,
     OccurredAt,
     RawLog,
     SelfClaim,
@@ -1396,3 +1397,93 @@ def list_raw_logs(connection: sqlite3.Connection) -> tuple[RawLog, ...]:
     logs = [hydrate_raw_log(row) for row in rows]
     logs.sort(key=lambda item: (item.recorded_at.astimezone(timezone.utc), item.id))
     return tuple(logs)
+
+
+def retained_requirement_ids(connection: sqlite3.Connection) -> set[str]:
+    """Return every `JDRequirement.id` held by a retained job description."""
+
+    retained: set[str] = set()
+    for row in connection.execute("SELECT parsed_json FROM job_descriptions"):
+        try:
+            parsed = json.loads(row["parsed_json"])
+        except (json.JSONDecodeError, TypeError) as error:
+            raise HydrationFailureError() from error
+        if not isinstance(parsed, dict):
+            raise HydrationFailureError()
+        for requirement in parsed.get("requirements", ()):
+            if not isinstance(requirement, dict):
+                raise HydrationFailureError()
+            retained.add(requirement.get("id"))
+    return retained
+
+
+def insert_job_description(
+    connection: sqlite3.Connection, job_description: JobDescription
+) -> None:
+    # §12 rule 10: requirement IDs are globally unique, so the candidate is
+    # checked against every retained job description, not only against itself.
+    # §11.13 already rejects an empty or candidate-duplicated ID.
+    retained = retained_requirement_ids(connection)
+    for requirement in job_description.parsed.requirements:
+        if requirement.id in retained:
+            raise IntegrityFailureError("job_description_requirement_id_duplicate")
+    try:
+        connection.execute(
+            """
+            INSERT INTO job_descriptions(
+                id, created_at, title, company, raw_text, parsed_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_description.id,
+                _iso(job_description.created_at),
+                job_description.title,
+                job_description.company,
+                job_description.raw_text,
+                _json(job_description.parsed.model_dump(mode="json")),
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        if "job_descriptions.id" in str(error):
+            raise IdCollisionError() from error
+        raise IntegrityFailureError("job_description_insert_failed") from error
+
+
+def hydrate_job_description(row: sqlite3.Row) -> JobDescription:
+    try:
+        parsed = json.loads(row["parsed_json"])
+    except (json.JSONDecodeError, TypeError) as error:
+        raise HydrationFailureError() from error
+    payload = {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "title": row["title"],
+        "company": row["company"],
+        "raw_text": row["raw_text"],
+        "parsed": parsed,
+    }
+    return _hydrate(JobDescription, payload)
+
+
+def list_job_descriptions(
+    connection: sqlite3.Connection,
+) -> tuple[JobDescription, ...]:
+    rows = connection.execute("SELECT * FROM job_descriptions").fetchall()
+    job_descriptions = [hydrate_job_description(row) for row in rows]
+    job_descriptions.sort(
+        key=lambda item: (
+            item.created_at.astimezone(timezone.utc),
+            item.id.encode("utf-8"),
+        )
+    )
+    return tuple(job_descriptions)
+
+
+def get_job_description(
+    connection: sqlite3.Connection, job_description_id: str
+) -> JobDescription | None:
+    row = connection.execute(
+        "SELECT * FROM job_descriptions WHERE id = ?",
+        (job_description_id,),
+    ).fetchone()
+    return None if row is None else hydrate_job_description(row)

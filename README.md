@@ -80,7 +80,7 @@ make demo-verify
 
 `demo-verify` proves manifest hashes, evidence-map closure through real fact/evidence/log rows, current-generation integrity, the blocked export, the checked transcript, and byte-identical exported members and transcript across two clean reruns. The accessible textual walkthrough is [`demo/transcript.txt`](demo/transcript.txt).
 
-Version pin: Vera corpus `0.4.0`; SQLite schema `10`; CLI `envelope_version = 2`. After any incompatible corpus, schema, envelope, rendering, or command-flow change, regenerate with `python examples/vera/corpus.py generate`, rerun the three make targets, and replace the checked transcript and recording only with output from the new exact deterministic flow.
+Version pin: Vera corpus `0.4.0`; SQLite schema `11`; CLI `envelope_version = 2`. After any incompatible corpus, schema, envelope, rendering, or command-flow change, regenerate with `python examples/vera/corpus.py generate`, rerun the three make targets, and replace the checked transcript and recording only with output from the new exact deterministic flow.
 
 The checked recording is [`demo.cast`](demo.cast). Replay it locally with `asciinema play demo.cast`. Regenerate it after an incompatible demo change with the pinned 110×32 terminal shape:
 
