@@ -12,7 +12,7 @@ import pytest
 
 from exp2res.domain.models import CounterevidenceItem, SelfClaim
 from exp2res.errors import EmptyAssessmentViewError, IntegrityFailureError, LLMInvocationError
-from exp2res.pipeline.stage6 import assessment_view_key, run_assessment_generation
+from exp2res.pipeline.stage6 import run_assessment_generation
 from exp2res.storage.repository import (
     insert_self_claim,
     insert_assessment_snapshot,
@@ -129,18 +129,9 @@ def prepare_graph(workspace: Path):
     return ids, prepare_facts(workspace, ids)
 
 
-def run_stage6(
-    workspace: Path,
-    fake: FakeContractRunner,
-    ids,
-    *,
-    scope: str = "global",
-    target: str | None = None,
-):
+def run_stage6(workspace: Path, fake: FakeContractRunner, ids):
     return run_assessment_generation(
         workspace,
-        scope=scope,
-        scope_target=target,
         selection=SELECTION,
         budgets=budgets(),
         runner=fake,
@@ -254,18 +245,6 @@ def test_gaps_only_global_fails_before_a_call_that_could_only_be_invalid(
             connection.execute("SELECT COUNT(*) FROM processing_runs").fetchone()[0]
             == before
         )
-
-
-def test_empty_project_fails_before_provider_and_new_processing_run(workspace: Path) -> None:
-    prepare_facts(workspace, VeraIds())
-    with read_database(workspace) as connection:
-        before = connection.execute("SELECT COUNT(*) FROM processing_runs").fetchone()[0]
-    fake = FakeContractRunner([])
-    with pytest.raises(EmptyAssessmentViewError):
-        run_stage6(workspace, fake, AssessmentIds(), scope="project", target="Atlas")
-    assert fake.calls == []
-    with read_database(workspace) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM processing_runs").fetchone()[0] == before
 
 
 @pytest.mark.parametrize("narrative_count", [0, 2])
@@ -384,118 +363,33 @@ def test_snapshot_copies_complete_gap_and_contradiction_sets_and_writer_inputs(
     )
 
 
-def test_folded_project_view_replacement_preserves_other_views(workspace: Path) -> None:
+def test_regeneration_replaces_the_sole_view_and_removes_its_stale_set(
+    workspace: Path,
+) -> None:
+    """§11.7/§13.14 rule 5: one view, so every regeneration replaces it."""
+
     ids, facts = prepare_graph(workspace)
     response = assessment_response(fact_ids=list(facts))
-    global_result = run_stage6(workspace, FakeContractRunner([response]), ids)
-    first = run_stage6(
-        workspace,
-        FakeContractRunner([response]),
-        ids,
-        scope="project",
-        target="Vera Example Project",
-    )
-    second = run_stage6(
-        workspace,
-        FakeContractRunner([response]),
-        ids,
-        scope="project",
-        target="vera example project",
-    )
+    first = run_stage6(workspace, FakeContractRunner([response]), ids)
+    stale_set = plant_assessment_set(workspace, first.snapshot_id)
+    second = run_stage6(workspace, FakeContractRunner([response]), ids)
+
     assert second.replaced_view is not None
+    assert second.replaced_view.scope == "global"
     assert second.replaced_view.snapshot_id == first.snapshot_id
+    assert second.superseded_snapshot_ids == (first.snapshot_id,)
+    assert not stale_set.exists()
     with read_database(workspace) as connection:
         current = list_assessment_snapshots(connection)
-    assert {item.id for item in current} == {global_result.snapshot_id, second.snapshot_id}
-    assert len({assessment_view_key(item.scope, item.scope_target) for item in current}) == 2
-    assert second.snapshot is not None
-    assert second.snapshot.scope_target == "vera example project"
+    assert [item.id for item in current] == [second.snapshot_id]
+    assert current[0].scope == "global"
 
 
-def test_global_atlas_and_exp2res_views_coexist_and_only_folded_match_replaces(
+def test_the_global_view_supplies_every_current_fact_and_no_context_facts(
     workspace: Path,
 ) -> None:
-    ids = VeraIds()
-    facts_by_project: dict[str, str] = {}
-    for index, project in enumerate(("Atlas", "Exp2Res")):
-        log, items = add_log(
-            workspace,
-            log_id=f"log_vera_three_views_{index}",
-            recorded_at=FIXED_NOW,
-            raw_text=f"Vera Example {project} view evidence.",
-            occurred=exact_day(15),
-            item_specs=((f"evi_vera_three_views_{index}", "manual_claim"),),
-            project=project,
-        )
-        result = run_stage3(
-            workspace,
-            FakeContractRunner([fact_response([items[0].id])]),
-            ids,
-            log_id=log.id,
-        )
-        facts_by_project[project] = result.created[0]
-    global_view = run_stage6(
-        workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=list(facts_by_project.values()))]
-        ),
-        ids,
-    )
-    atlas_view = run_stage6(
-        workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=[facts_by_project["Atlas"]])]
-        ),
-        ids,
-        scope="project",
-        target="Atlas",
-    )
-    exp2res_view = run_stage6(
-        workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=[facts_by_project["Exp2Res"]])]
-        ),
-        ids,
-        scope="project",
-        target="Exp2Res",
-    )
-    assert exp2res_view.superseded_snapshot_ids == ()
-    assessment_parent = workspace / "out" / "assessment"
-    assessment_parent.mkdir(mode=0o700, exist_ok=True)
-    view_sets = {
-        snapshot_id: assessment_parent / snapshot_id
-        for snapshot_id in (
-            global_view.snapshot_id,
-            atlas_view.snapshot_id,
-            exp2res_view.snapshot_id,
-        )
-    }
-    for path in view_sets.values():
-        path.mkdir(mode=0o700)
-        (path / "Vera Example stale member").write_text(
-            "Vera Example stale member\n", encoding="utf-8"
-        )
-    replacement = run_stage6(
-        workspace,
-        FakeContractRunner(
-            [assessment_response(fact_ids=[facts_by_project["Exp2Res"]])]
-        ),
-        ids,
-        scope="project",
-        target="exp2res",
-    )
-    assert replacement.superseded_snapshot_ids == (exp2res_view.snapshot_id,)
-    assert not view_sets[exp2res_view.snapshot_id].exists()
-    assert view_sets[global_view.snapshot_id].is_dir()
-    assert view_sets[atlas_view.snapshot_id].is_dir()
-    with read_database(workspace) as connection:
-        current_ids = {item.id for item in list_assessment_snapshots(connection)}
-    assert current_ids == {global_view.snapshot_id, atlas_view.snapshot_id, replacement.snapshot_id}
+    """§13.6: the sole view's subject is every current fact, ID-ordered."""
 
-
-def test_project_input_uses_stored_key_and_supplies_no_cross_project_context(
-    workspace: Path,
-) -> None:
     ids = VeraIds()
     created: list[str] = []
     for index, project in enumerate((" Exp2Res ", "Atlas", None)):
@@ -515,17 +409,12 @@ def test_project_input_uses_stored_key_and_supplies_no_cross_project_context(
             log_id=log.id,
         )
         created.extend(result.created)
-    with read_database(workspace) as connection:
-        rows = connection.execute(
-            "SELECT id, project_key FROM experience_facts WHERE superseded_at IS NULL"
-        ).fetchall()
-    subject_id = next(row["id"] for row in rows if row["project_key"] == "exp2res")
-    fake = FakeContractRunner([assessment_response(fact_ids=[subject_id])])
-    run_stage6(workspace, fake, ids, scope="project", target="Exp2Res")
+    fake = FakeContractRunner([assessment_response(fact_ids=created)])
+    run_stage6(workspace, fake, ids)
     payload = json.loads(fake.calls[0].serialized_input)
-    # §13.6: V1 supplies no out-of-subject fact context, so the project view
-    # carries exactly its own subject facts.
-    assert [item["id"] for item in payload["facts"]] == [subject_id]
+    assert payload["scope"] == "global"
+    assert "scope_target" not in payload
+    assert [item["id"] for item in payload["facts"]] == sorted(created)
     assert "context_facts" not in payload
 
 
@@ -718,20 +607,13 @@ def test_stage3_replacement_and_log_delete_cover_assessment_lifecycle(
     assert deleted.invalidated_views[0].snapshot_id == assessed2.snapshot_id
 
 
-@pytest.mark.parametrize(
-    ("target", "expected"),
-    [
-        ("Vera Example Space", "--project 'Vera Example Space'"),
-        ("Vera Example's View", "--project 'Vera Example'\"'\"'s View'"),
-    ],
-)
-def test_project_invalidation_commands_are_posix_quoted(
-    target: str, expected: str
-) -> None:
+def test_invalidation_names_the_selectorless_regeneration_command() -> None:
+    """§14.9/§13.13 rule 9: one view, so the command carries no selector."""
+
     from exp2res.domain.results import invalidated_view
 
-    report = invalidated_view(scope="project", scope_target=target, snapshot_id="snapshot_vera")
-    assert expected in report.regeneration_command
+    report = invalidated_view(scope="global", snapshot_id="snapshot_vera")
+    assert report.regeneration_command == "exp2res assess generate"
 
 
 def test_cited_pattern_counter_facts_persist_as_the_claim_marking(

@@ -15,7 +15,7 @@ TemporalPrecision = Literal[
 TemporalConfidence = Literal["low", "medium", "high", "unknown"]
 Confidence = Literal["low", "medium", "high", "unknown"]
 
-AssessmentScope = Literal["global", "project"]
+AssessmentScope = Literal["global"]
 
 SelfClaimDimension = Literal[
     "technical_skill",

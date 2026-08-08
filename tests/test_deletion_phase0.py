@@ -143,7 +143,6 @@ def _persist_claim(workspace: Path, fact_id: str) -> SelfClaim:
         id="snapshot_" + "f" * 32,
         created_at=FIXED_NOW,
         scope="global",
-        scope_target=None,
         title="Self-Assessment — Global",
         summary=summary,
         verification_status="unverified",

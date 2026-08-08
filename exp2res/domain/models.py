@@ -429,7 +429,6 @@ class AssessmentSnapshot(StrictModel):
     created_at: datetime
     superseded_at: Optional[datetime] = None
     scope: AssessmentScope
-    scope_target: Optional[str] = None
     title: str
     summary: str
     gap_question_ids: list[str] = Field(default_factory=list, max_length=1_000)
@@ -441,11 +440,6 @@ class AssessmentSnapshot(StrictModel):
     @classmethod
     def structural_id(cls, value: str) -> str:
         return validate_structural(value)
-
-    @field_validator("scope_target")
-    @classmethod
-    def scope_target_policy(cls, value: Optional[str]) -> Optional[str]:
-        return None if value is None else validate_structural(value)
 
     @field_validator("created_at", "superseded_at")
     @classmethod
@@ -472,18 +466,6 @@ class AssessmentSnapshot(StrictModel):
     @classmethod
     def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
         return validate_metadata(value)
-
-    @model_validator(mode="after")
-    def scope_shape(self) -> "AssessmentSnapshot":
-        if (self.scope == "project") != (self.scope_target is not None):
-            raise ValueError("scope and scope target disagree")
-        if self.scope_target is not None:
-            canonical = unicodedata.normalize("NFC", self.scope_target).strip()
-            if not canonical_project_key(self.scope_target):
-                raise ValueError("scope target canonicalizes to blank")
-            if self.scope_target != canonical:
-                raise ValueError("scope target is not canonical NFC+trim form")
-        return self
 
 
 class VerificationFinding(StrictModel):

@@ -287,20 +287,15 @@ def build_assessment_document(graph: AssessmentExportGraph) -> ReportDocument:
     blocks[7].extend(_contradiction_blocks(graph))
     blocks[9].extend(_gap_blocks(graph))
 
-    header: list[Line] = [
-        (
-            Key("Snapshot created", emphasized=False),
-            Val(graph.snapshot_created_at_text, "token"),
-        ),
-        (Key("Scope", emphasized=False), Val(snapshot.scope, "token")),
-    ]
-    if snapshot.scope_target is not None:
-        header.append(
-            (Key("Scope target", emphasized=False), Val(snapshot.scope_target))
-        )
     return ReportDocument(
         title=TITLE,
-        header=tuple(header),
+        header=(
+            (
+                Key("Snapshot created", emphasized=False),
+                Val(graph.snapshot_created_at_text, "token"),
+            ),
+            (Key("Scope", emphasized=False), Val(snapshot.scope, "token")),
+        ),
         sections=tuple(
             Section(heading=heading, blocks=tuple(blocks[number]))
             for number, heading in enumerate(HEADINGS, start=1)

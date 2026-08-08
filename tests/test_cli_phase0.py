@@ -135,7 +135,7 @@ def test_json_workspace_failure_is_one_closed_envelope(tmp_path: Path) -> None:
     )
     envelope = json.loads(result.stdout)
     assert result.exit_code == 3
-    assert envelope["envelope_version"] == 1
+    assert envelope["envelope_version"] == 2
     assert envelope["command"] == "logs list"
     assert envelope["workspace"] is None
     assert envelope["diagnostic_class"] == "workspace_not_found"

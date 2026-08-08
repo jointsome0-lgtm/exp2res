@@ -16,7 +16,6 @@ from exp2res.domain.models import (
     ExperienceFact,
     GapQuestion,
     StrictModel,
-    canonical_project_key,
     validate_free_text,
     validate_structural,
 )
@@ -30,7 +29,6 @@ def _id_key(value: str) -> bytes:
 
 class AssessmentWriterInput(StrictModel):
     scope: AssessmentScope
-    scope_target: str | None
     facts: list[ExperienceFact] = Field(max_length=1_000)
     gaps: list[GapQuestion] = Field(max_length=1_000)
     contradictions: list[Contradiction] = Field(max_length=1_000)
@@ -41,19 +39,6 @@ class AssessmentWriterInput(StrictModel):
         if value != sorted(value, key=lambda item: _id_key(item.id)):  # type: ignore[attr-defined]
             raise ValueError("objects must be ordered by ID bytes")
         return value
-
-    @field_validator("scope_target")
-    @classmethod
-    def scope_target_policy(cls, value: str | None) -> str | None:
-        return None if value is None else validate_structural(value)
-
-    @model_validator(mode="after")
-    def valid_scope_shape(self) -> "AssessmentWriterInput":
-        if (self.scope == "project") != (self.scope_target is not None):
-            raise ValueError("scope and scope target disagree")
-        if self.scope_target is not None and not canonical_project_key(self.scope_target):
-            raise ValueError("scope target canonicalizes to blank")
-        return self
 
 
 class ScratchPattern(StrictModel):
@@ -233,7 +218,7 @@ ASSESSMENT_WRITER_CONTRACT = ContractDefinition(
     contract_id="self-assessment-writer",
     output_model=AssessmentWriterOutput,
     fixed_instructions=ASSESSMENT_WRITER_INSTRUCTIONS,
-    schema_revision="2",
+    schema_revision="3",
     service_owned_fields=frozenset(
         {
             "id",

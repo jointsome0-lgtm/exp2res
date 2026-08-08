@@ -189,7 +189,7 @@ status = "partial"
 phases = ["2", "3", "4"]
 evals = ["21.26", "21.33"]
 issues = []
-note = "Current Stage 6 tests prove complete current unknown membership and typed counterevidence rendering, but their view-identity half still exercises the retired folded project view and simultaneous global/project snapshots, so A4's global-only identity is uncovered until the queued code change lands; the remaining cross-eval Stage 10 and broader language/rendering halves are also pending"
+note = "Current Stage 6 tests prove the global-only view identity, complete current unknown membership, and typed counterevidence rendering; the remaining cross-eval Stage 10 and broader language/rendering halves are pending"
 
 ["24.30"]
 status = "partial"
@@ -416,10 +416,10 @@ evals = ["21.53"]
 issues = ["#160"]
 note = "Covered eval 21.53 proves explicit start/.. capture, marker-free schema-v8 storage and hydration, unbounded and attested interval semantics at both Stage 3 validation boundaries, correction-only re-attestation and closure with retained history, and deterministic as-of rendering."
 ["24.58"]
-status = "partial"
+status = "met"
 phases = ["3"]
 evals = ["21.55"]
-issues = ["#162"]
+issues = ["#162", "#247"]
 nodes = [
   "tests/test_export_html.py::test_both_report_members_render_the_same_content_in_the_same_order",
   "tests/test_export_html.py::test_page_is_self_contained_with_no_reference_script_or_behavior",
@@ -427,14 +427,14 @@ nodes = [
   "tests/test_managed_output.py::test_superseded_manifest_version_is_never_matching_or_overwritten",
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
 ]
-note = "The managed set publishes report.html beside report.md with golden-pinned deterministic bytes, one document behind both members, an inert self-contained page under a hash-pinned policy, and residual reporting for a superseded manifest version — all at the §13.14 manifest_version the shipped build emits; §24.59 tracks the §30 mirror view that serves those revalidated bytes, with only the JD-to-bullet-pack view deferred"
+note = "The managed set publishes report.html beside report.md with golden-pinned deterministic bytes, one document behind both members, an inert self-contained page under a hash-pinned policy, and residual reporting for a superseded manifest version — all at §13.14's manifest_version 6; §24.59 tracks the §30 mirror view that serves those revalidated bytes, with only the JD-to-bullet-pack view deferred"
 
 ["24.59"]
-status = "partial"
+status = "met"
 phases = ["3"]
 evals = ["21.57"]
-issues = ["#98", "PR #240", "PR #241"]
-note = "The three #98 pull requests complete the item: the §30 resolution service, the §14.17 loopback transport with its rule 9/10 bounds and receive/processing/emit/drain deadlines, and now the `view serve` command form — bind admission before any socket, the §12.14 gate before bind, exactly two startup URLs on stderr in both modes, route-and-outcome-only progress lines, and the class-9 cancelled envelope. §30's deferred JD-to-bullet-pack view and provenance drill-down are outside this item. Partial after A4: the registered resolver tests still require the `deferred` outcome for `scope=project` and build a project-scoped snapshot, while §21.57 now makes every non-global scope an ordinary unknown selector"
+issues = ["#98", "PR #240", "PR #241", "#247"]
+note = "The three #98 pull requests complete the item: the §30 resolution service, the §14.17 loopback transport with its rule 9/10 bounds and receive/processing/emit/drain deadlines, and now the `view serve` command form — bind admission before any socket, the §12.14 gate before bind, exactly two startup URLs on stderr in both modes, route-and-outcome-only progress lines, and the class-9 cancelled envelope. §30's deferred JD-to-bullet-pack view and provenance drill-down are outside this item, and every non-global scope is now an ordinary unknown selector"
 
 ["24.60"]
 status = "met"

@@ -4,18 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import unicodedata
 
 from exp2res import __version__
-from exp2res.domain.enums import AssessmentScope
 from exp2res.domain.models import (
     AssessmentSnapshot,
     Contradiction,
     GapQuestion,
     SelfClaim,
-    canonical_project_key,
 )
-from exp2res.errors import InvalidUsageError, LLMInvocationError, SelectorNotFoundError
+from exp2res.errors import LLMInvocationError, SelectorNotFoundError
 from exp2res.pipeline.stage6 import (
     Stage6Result,
     run_assessment_generation,
@@ -58,31 +55,9 @@ def _committed_runs(workspace: Path, run_ids: list[str]) -> tuple[str, ...]:
     return tuple(run_id for run_id in run_ids if run_id in committed)
 
 
-def validate_assessment_selection(
-    *, scope: str, project: str | None
-) -> tuple[AssessmentScope, str | None]:
-    if scope not in {"global", "project"}:
-        raise InvalidUsageError()
-    if scope == "global":
-        if project is not None:
-            raise InvalidUsageError()
-        return "global", None
-    if project is None:
-        raise InvalidUsageError()
-    # §14.9 canonical pre-fold selector: NFC + trim happens here so every
-    # caller, not only the CLI, persists the canonical scope_target.
-    canonical = unicodedata.normalize("NFC", project).strip()
-    if not canonical_project_key(canonical):
-        raise InvalidUsageError()
-    return "project", canonical
+def run_assess_generate(workspace: Path) -> Stage6Result:
+    """§14.9: one declared view, so generation takes no scope selector."""
 
-
-def run_assess_generate(
-    workspace: Path, *, scope: str, project: str | None
-) -> Stage6Result:
-    selected_scope, selected_project = validate_assessment_selection(
-        scope=scope, project=project
-    )
     require_compatible(workspace)
     selection, budgets, runner = build_llm_execution(workspace)
     allocated_runs: list[str] = []
@@ -96,8 +71,6 @@ def run_assess_generate(
     try:
         return run_assessment_generation(
             workspace,
-            scope=selected_scope,
-            scope_target=selected_project,
             selection=selection,
             budgets=budgets,
             runner=runner,

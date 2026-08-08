@@ -88,7 +88,6 @@ def test_vera_e4_cli_assessment_is_navigable_then_regeneration_invalidates(
     assert replaced["invalidated_views"] == [
         {
             "scope": "global",
-            "scope_target": None,
             "snapshot_id": snapshot_id,
             "regeneration_command": "exp2res assess generate",
         }

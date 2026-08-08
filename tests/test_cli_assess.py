@@ -101,23 +101,31 @@ def generate_snapshot(
 @pytest.mark.parametrize(
     "arguments",
     [
-        ["--yes", "assess", "generate", "--scope", "unknown"],
+        ["--yes", "assess", "generate", "--scope", "global"],
         ["--yes", "assess", "generate", "--scope", "project"],
-        ["--yes", "assess", "generate", "--scope", "project", "--project", "  "],
         ["--yes", "assess", "generate", "--project", "Vera Example"],
     ],
 )
-def test_scope_project_validation_matrix_is_class_2(
+def test_the_retired_scope_selectors_are_class_2(
     workspace: Path, arguments: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """§14.9: `assess generate` declares no scope selector after A4.
+
+    The retired flags are rejected by the parser, before the command body and
+    therefore before any adapter is built, so the refusal is the parser's
+    class-2 usage error rather than an envelope.
+    """
+
     monkeypatch.setattr(
         assessment_service,
         "build_llm_execution",
         lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
     )
-    result, envelope = invoke_json(workspace, arguments)
+    result = runner.invoke(
+        app, ["--json", "--workspace", str(workspace), *arguments]
+    )
     assert result.exit_code == 2
-    assert envelope["diagnostic_class"] == "invalid_usage"
+    assert "No such option" in result.stderr
 
 
 def test_generate_runs_without_yes_or_confirmation(
@@ -770,7 +778,6 @@ def test_generate_list_show_and_current_only_replacement(
     assert set(listed["result"]["snapshots"][0]) == {
         "id",
         "scope",
-        "scope_target",
         "verification_status",
         "created_at",
     }
@@ -801,46 +808,6 @@ def test_generate_list_show_and_current_only_replacement(
     assert missing["diagnostic_class"] == "selector_not_found"
 
 
-def test_project_selector_persists_canonical_prefold_value(
-    workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    facts = prepare_graph(workspace)
-    fake = FakeContractRunner(
-        [assessment_response(fact_ids=list(facts))]
-    )
-    monkeypatch.setattr(
-        assessment_service,
-        "build_llm_execution",
-        lambda _workspace: (SELECTION, budgets(), fake),
-    )
-    generated, envelope = invoke_json(
-        workspace,
-        [
-            "--yes",
-            "assess",
-            "generate",
-            "--scope",
-            "project",
-            "--project",
-            "  Vera Example Project  ",
-        ],
-    )
-    assert generated.exit_code == 0, (generated.stderr, envelope)
-    snapshot_id = envelope["affected_ids"]["created"][0]["ids"][0]
-    _shown_result, shown = invoke_json(
-        workspace, ["assess", "show", "--snapshot", snapshot_id]
-    )
-    assert shown["result"]["snapshot"]["scope_target"] == "Vera Example Project"
-
-
-def test_validate_assessment_selection_canonicalizes_for_direct_callers() -> None:
-    scope, target = assessment_service.validate_assessment_selection(
-        scope="project", project="  Verá Example  "
-    )
-    assert scope == "project"
-    assert target == "Verá Example"
-
-
 def test_logs_delete_reports_purged_assessment_groups_and_view(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -868,7 +835,6 @@ def test_logs_delete_reports_purged_assessment_groups_and_view(
     assert groups["self_claim"]
     assert deleted["invalidated_views"][0] == {
         "scope": "global",
-        "scope_target": None,
         "snapshot_id": snapshot_id,
         "regeneration_command": "exp2res assess generate",
     }

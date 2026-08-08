@@ -148,12 +148,8 @@ _TITLES: dict[str, str] = {
 }
 
 _ASSESS_LIST = "exp2res assess list"
-_ASSESS_GENERATE_GLOBAL = "exp2res assess generate --scope global"
+_ASSESS_GENERATE = "exp2res assess generate"
 
-_DEFERRED_PROJECT = (
-    "Only the global assessment view is served. A project-scoped mirror is a "
-    "deferred slice, not a widened selector."
-)
 _SELECTOR_SHAPE = (
     "Exactly one selector is accepted: ?scope=global, or ?snapshot= with one "
     "exact snapshot ID. An absent, unknown, repeated, combined, or malformed "
@@ -410,12 +406,6 @@ def _parse_selector(query: bytes | None) -> _Selector:
     pairs = _split_pairs(query)
     if pairs is None:
         raise _Refusal("invalid_selector", _SELECTOR_SHAPE)
-    # §30 rule 6 names the deferred identity form's target parameter, so the
-    # shape is refused for what it is rather than as an unknown extra.
-    if pairs[0] == (b"scope", b"project") and (
-        len(pairs) == 1 or (len(pairs) == 2 and pairs[1][0] == b"project")
-    ):
-        raise _Refusal("invalid_selector", _DEFERRED_PROJECT)
     if len(pairs) != 1 or pairs[0][0] not in (b"scope", b"snapshot"):
         raise _Refusal("invalid_selector", _SELECTOR_SHAPE)
     name, raw = pairs[0]
@@ -423,8 +413,8 @@ def _parse_selector(query: bytes | None) -> _Selector:
     if value is None:
         raise _Refusal("invalid_selector", _SELECTOR_SHAPE)
     if name == b"scope":
-        if value == "project":
-            raise _Refusal("invalid_selector", _DEFERRED_PROJECT)
+        # §30 rule 3: `global` is the only `AssessmentScope` value, so it is
+        # the only identity this form names.
         if value != "global":
             raise _Refusal("invalid_selector", _SELECTOR_SHAPE)
         return _Selector(scope="global")
@@ -449,28 +439,21 @@ def _resolve_snapshot(connection: sqlite3.Connection, selector: _Selector):
                 "snapshot is history, never a served view.",
                 _ASSESS_LIST,
             ) from error
-        if snapshot.scope != "global" or snapshot.scope_target is not None:
-            # The ID form selects a snapshot, not a wider surface: V1 serves
-            # the global view, so a project-scoped snapshot is the same
-            # deferred slice `?scope=project` names (§30 rule 3).
-            raise _Refusal("invalid_selector", _DEFERRED_PROJECT)
         return snapshot_row, snapshot
 
     # §30 rule 3: the identity form resolves only to the unique current
-    # snapshot of exactly that view — never the newest of several. The
-    # identity is matched in SQL so that no unrelated row, including a
-    # deferred project-scoped one, is hydrated on the way to this view:
-    # state outside the selected view never decides its outcome.
+    # snapshot of exactly that view — never the newest of several. §11.7
+    # admits at most one current snapshot, so both zero and more than one are
+    # fail-closed outcomes rather than a choice.
     current = connection.execute(
-        "SELECT id FROM assessment_snapshots WHERE superseded_at IS NULL "
-        "AND scope = 'global' AND scope_target IS NULL"
+        "SELECT id FROM assessment_snapshots WHERE superseded_at IS NULL"
     ).fetchall()
     if not current:
         raise _Refusal(
             "no_current_view",
             "No current global assessment view exists yet. Generate one, "
             "verify it, and export it.",
-            _ASSESS_GENERATE_GLOBAL,
+            _ASSESS_GENERATE,
         )
     if len(current) > 1:
         # §13.6 admits one current snapshot per view identity and is not a
@@ -508,7 +491,7 @@ def _require_integrity(selector: _Selector, snapshot, claims) -> None:
         "This snapshot does not carry exactly one narrative summary claim "
         "matching its stored summary, so its claim set is broken stored state "
         "rather than a mirror.",
-        _ASSESS_GENERATE_GLOBAL if selector.by_identity else _ASSESS_LIST,
+        _ASSESS_GENERATE if selector.by_identity else _ASSESS_LIST,
     )
 
 
@@ -534,7 +517,7 @@ def _stored_state(selector: _Selector) -> Iterator[None]:
             "This snapshot's stored claim graph breaks an invariant serving "
             "depends on, so there is no coherent assessment to read a view "
             "against.",
-            _ASSESS_GENERATE_GLOBAL if selector.by_identity else _ASSESS_LIST,
+            _ASSESS_GENERATE if selector.by_identity else _ASSESS_LIST,
         ) from error
 
 
@@ -552,7 +535,7 @@ def _require_export_gate(selector: _Selector, snapshot) -> None:
             # A completed negative verdict needs replacement claims, which
             # only generation produces — and generation creates a new ID, so
             # it repairs an identity URL but never an exact-ID one.
-            command = _ASSESS_GENERATE_GLOBAL if selector.by_identity else _ASSESS_LIST
+            command = _ASSESS_GENERATE if selector.by_identity else _ASSESS_LIST
         raise _Refusal(
             "assessment_blocked",
             "This assessment does not pass the verification gate that admits "

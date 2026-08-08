@@ -202,7 +202,6 @@ def _build_bundle(
     input_payload = AssessmentVerifierInput(
         self_claim=claim,
         scope=snapshot.scope,
-        scope_target=snapshot.scope_target,
         scope_facts=list(scope_facts),
         source_facts=list(source_facts),
         source_evidence_items=list(source_evidence),
@@ -342,12 +341,9 @@ def run_assessment_verification(
         )
         _check_snapshot_integrity(connection, snapshot=snapshot, claims=claims)
 
-        view = select_assessment_view(
-            connection, scope=snapshot.scope, scope_target=snapshot.scope_target
-        )
         # §13.5's context facts were the signal layer's own widening; the
         # view now selects one ID-ordered subject set, which is the scope.
-        scope_facts = view.facts
+        scope_facts = select_assessment_view(connection)
         current_facts = {item.id: item for item in list_experience_facts(connection)}
         # §13.7/§15.5: the snapshot's complete current contradiction set —
         # integrity-checked against snapshot.contradiction_ids above — is view

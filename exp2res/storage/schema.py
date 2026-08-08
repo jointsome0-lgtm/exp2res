@@ -883,6 +883,47 @@ SCHEMA_V9_SQL = (
     .replace(SELF_CLAIMS_UPDATE_GUARD_SQL, SELF_CLAIMS_V9_UPDATE_GUARD_SQL, 1)
 )
 
+# §10/§11.7 (A4): schema v10 leaves `AssessmentScope` one member, so the
+# snapshot keeps `scope` as its single-valued view identity and loses
+# `scope_target` and the two shape checks that paired the two columns.
+# The 9→10 rebuild renames `assessment_snapshots_new` into place, and SQLite
+# stores the renamed table's DDL with the name quoted. The fresh schema carries
+# the same quoting so a migrated workspace and a fresh one keep one shape.
+ASSESSMENT_SNAPSHOTS_V10_SQL = (
+    ASSESSMENT_SNAPSHOTS_SQL.replace(
+        "CREATE TABLE assessment_snapshots", 'CREATE TABLE "assessment_snapshots"', 1
+    ).replace(
+        "    scope TEXT NOT NULL CHECK (scope IN ('global', 'project')),\n"
+        "    scope_target TEXT,\n",
+        "    scope TEXT NOT NULL CHECK (scope = 'global'),\n",
+        1,
+    )
+    .replace(
+        ",\n    CHECK ((scope = 'global') = (scope_target IS NULL)),\n"
+        "    CHECK (scope_target IS NULL OR scope_target <> '')\n",
+        "\n",
+        1,
+    )
+)
+
+ASSESSMENT_SNAPSHOTS_V10_NEW_SQL = ASSESSMENT_SNAPSHOTS_V10_SQL.replace(
+    'CREATE TABLE "assessment_snapshots"', "CREATE TABLE assessment_snapshots_new", 1
+)
+
+ASSESSMENT_SNAPSHOTS_V10_UPDATE_GUARD_SQL = (
+    ASSESSMENT_SNAPSHOTS_UPDATE_GUARD_SQL.replace(
+        "    AND NEW.scope_target IS OLD.scope_target\n", "", 1
+    )
+)
+
+SCHEMA_V10_SQL = SCHEMA_V9_SQL.replace(
+    ASSESSMENT_SNAPSHOTS_SQL, ASSESSMENT_SNAPSHOTS_V10_SQL, 1
+).replace(
+    ASSESSMENT_SNAPSHOTS_UPDATE_GUARD_SQL,
+    ASSESSMENT_SNAPSHOTS_V10_UPDATE_GUARD_SQL,
+    1,
+)
+
 # §14.16 owns one complete, referentially ordered whole-workspace purge.
 # Keeping the inventory beside the current schema makes a newly added table a
 # deliberate compile-time/test-time lifecycle decision instead of a silent
@@ -919,9 +960,9 @@ PURGE_ENTITY_TABLES = (
 def create_schema(
     connection: Connection, *, version: int, applied_at: str, app_version: str
 ) -> None:
-    if version != 9:
-        raise ValueError("fresh workspaces must use schema version 9")
-    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V9_SQL)
+    if version != 10:
+        raise ValueError("fresh workspaces must use schema version 10")
+    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA_V10_SQL)
     connection.execute(
         "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
         (version, applied_at, app_version),
@@ -1135,5 +1176,78 @@ def apply_migration_8_to_9(connection: Connection) -> None:
         VERIFICATION_FINDINGS_TARGET_INDEX_SQL,
         VERIFICATION_FINDINGS_UPDATE_GUARD_SQL,
         VERIFICATION_FINDINGS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+
+def apply_migration_9_to_10(connection: Connection) -> None:
+    """Delete the project-scoped assessment views and drop `scope_target`.
+
+    §12.14 registers this as A4's deterministic transform. Unlike the 8→9
+    whole-layer deletion it is selective: every `assessment_snapshots` row
+    whose stored scope is `project` goes, current and superseded alike, with
+    its self-claims and their verification findings, while every global row is
+    retained with every remaining value unchanged. The resume rows anchored to
+    a deleted snapshot and the `out/branch/<branch-id>/` half of the cleanup
+    have no source in this build — §22 Phase 4 has not created
+    `resume_branches` — and join here with that table.
+
+    The two derived tables lose rows rather than shape, so their delete guards
+    stand aside for the transform and are back before it ends. `scope_target`
+    is a column drop, which SQLite takes as a table rebuild, and that rebuild
+    carries the snapshot table's own guards with it.
+    """
+
+    for trigger in (
+        "verification_findings_owner_delete_guard",
+        "self_claims_owner_delete_guard",
+    ):
+        connection.execute(f"DROP TRIGGER {trigger}")
+    connection.execute(
+        """
+        DELETE FROM verification_findings
+        WHERE target_type = 'self_claim' AND target_id IN (
+            SELECT id FROM self_claims WHERE snapshot_id IN (
+                SELECT id FROM assessment_snapshots WHERE scope = 'project'
+            )
+        )
+        """
+    )
+    connection.execute(
+        """
+        DELETE FROM self_claims WHERE snapshot_id IN (
+            SELECT id FROM assessment_snapshots WHERE scope = 'project'
+        )
+        """
+    )
+    for statement in (
+        VERIFICATION_FINDINGS_DELETE_GUARD_SQL,
+        SELF_CLAIMS_DELETE_GUARD_SQL,
+    ):
+        connection.execute(statement)
+
+    connection.execute(ASSESSMENT_SNAPSHOTS_V10_NEW_SQL)
+    connection.execute(
+        """
+        INSERT INTO assessment_snapshots_new(
+            id, created_at, superseded_at, scope, title, summary,
+            gap_question_ids_json, contradiction_ids_json, verification_status,
+            metadata_json, produced_by_run_id, generation_id
+        )
+        SELECT id, created_at, superseded_at, scope, title, summary,
+               gap_question_ids_json, contradiction_ids_json,
+               verification_status, metadata_json, produced_by_run_id,
+               generation_id
+        FROM assessment_snapshots
+        WHERE scope <> 'project'
+        """
+    )
+    connection.execute("DROP TABLE assessment_snapshots")
+    connection.execute(
+        "ALTER TABLE assessment_snapshots_new RENAME TO assessment_snapshots"
+    )
+    for statement in (
+        ASSESSMENT_SNAPSHOTS_V10_UPDATE_GUARD_SQL,
+        ASSESSMENT_SNAPSHOTS_DELETE_GUARD_SQL,
     ):
         connection.execute(statement)

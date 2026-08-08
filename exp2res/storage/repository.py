@@ -580,18 +580,17 @@ def insert_assessment_snapshot(
         connection.execute(
             """
             INSERT INTO assessment_snapshots(
-                id, created_at, superseded_at, scope, scope_target, title,
+                id, created_at, superseded_at, scope, title,
                 summary, gap_question_ids_json, contradiction_ids_json,
                 verification_status, metadata_json, produced_by_run_id,
                 generation_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot.id,
                 _iso(snapshot.created_at),
                 _iso(snapshot.superseded_at),
                 snapshot.scope,
-                snapshot.scope_target,
                 snapshot.title,
                 snapshot.summary,
                 _json(snapshot.gap_question_ids),
@@ -732,7 +731,6 @@ def hydrate_assessment_snapshot(row: sqlite3.Row) -> AssessmentSnapshot:
             "created_at": row["created_at"],
             "superseded_at": row["superseded_at"],
             "scope": row["scope"],
-            "scope_target": row["scope_target"],
             "title": row["title"],
             "summary": row["summary"],
             "gap_question_ids": gap_ids,

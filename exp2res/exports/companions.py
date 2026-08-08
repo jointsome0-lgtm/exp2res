@@ -110,14 +110,13 @@ class SnapshotExport(ExportDocument):
     id: str
     created_at: datetime
     scope: AssessmentScope
-    scope_target: str | None
     title: str
     verification_status: VerificationStatus
 
-    @field_validator("id", "scope_target")
+    @field_validator("id")
     @classmethod
-    def structural_values(cls, value: str | None) -> str | None:
-        return None if value is None else validate_structural(value)
+    def structural_id(cls, value: str) -> str:
+        return validate_structural(value)
 
     @field_validator("title")
     @classmethod
@@ -186,7 +185,7 @@ class SelfClaimExport(ExportDocument):
 
 
 class SelfClaimsDocument(ExportDocument):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     snapshot: SnapshotExport
     claims: list[SelfClaimExport]
     unknowns: list[GapExport]
@@ -252,7 +251,7 @@ class EvidenceLink(ExportDocument):
 
 
 class AssessmentEvidenceMapDocument(ExportDocument):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     output_kind: Literal["assessment"]
     entity_id: str
     rendered_claim_ids: list[str]
@@ -347,12 +346,11 @@ def build_self_claims_document(graph: AssessmentExportGraph) -> SelfClaimsDocume
             )
         )
     return SelfClaimsDocument(
-        schema_version=2,
+        schema_version=3,
         snapshot=SnapshotExport(
             id=snapshot.id,
             created_at=snapshot.created_at,
             scope=snapshot.scope,
-            scope_target=snapshot.scope_target,
             title=normalize_generated_text(snapshot.title),
             verification_status=snapshot.verification_status,
         ),
@@ -368,7 +366,7 @@ def build_evidence_map_document(
     graph: AssessmentExportGraph,
 ) -> AssessmentEvidenceMapDocument:
     return AssessmentEvidenceMapDocument(
-        schema_version=2,
+        schema_version=3,
         output_kind="assessment",
         entity_id=graph.snapshot.value.id,
         rendered_claim_ids=[item.value.id for item in graph.claims],

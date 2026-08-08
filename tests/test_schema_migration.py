@@ -23,6 +23,7 @@ from exp2res.storage.schema import (
     SCHEMA_V6_SQL,
     SCHEMA_V7_SQL,
     SCHEMA_V8_SQL,
+    SCHEMA_V9_SQL,
 )
 from exp2res.storage.workspace import (
     inspect_workspace,
@@ -395,6 +396,172 @@ def v8_workspace(tmp_path: Path, *, name: str = "v8-workspace") -> Path:
     return root
 
 
+def v9_workspace(tmp_path: Path, *, name: str = "v9-workspace") -> Path:
+    """A v9 workspace holding one global and one project-scoped view.
+
+    Both views are current and complete — snapshot, claim, finding — and both
+    have a published set, so the 9→10 step has something to delete, something
+    to retain, and managed output on both sides of that split.
+    """
+
+    root = tmp_path / name
+    root.mkdir()
+    (root / ".exp2res").mkdir(mode=0o700)
+    (root / ".exp2res" / "lock").touch(mode=0o600)
+    (root / "out").mkdir(mode=0o700)
+    configure_timezone(root)
+    database = root / ".exp2res" / "exp2res.sqlite"
+    stamp = FIXED_NOW.isoformat()
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.executescript(SCHEMA_V9_SQL)
+        connection.executemany(
+            "INSERT INTO schema_meta(version, applied_at, app_version) VALUES (?, ?, ?)",
+            tuple(
+                (version, stamp, f"0.1.0-v{version}-fixture")
+                for version in range(1, 10)
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO raw_logs(
+                id, recorded_at, entry_type, source_type, occurred_start,
+                occurred_end, temporal_precision, temporal_confidence, raw_text,
+                project, project_key, external_ref, corrects_log_id, metadata_json
+            ) VALUES (
+                'log_vera_v9', ?, 'manual_daily', 'manual_entry', ?, NULL,
+                'exact_day', 'high', 'Vera Example retained raw record.',
+                'Vera Example Project', 'vera example project', NULL, NULL, '{}'
+            )
+            """,
+            (stamp, stamp),
+        )
+        connection.execute(
+            """
+            INSERT INTO evidence_items(
+                id, created_at, raw_log_id, title, summary, uri, path,
+                strength, metadata_json
+            ) VALUES (
+                'evi_vera_v9', ?, 'log_vera_v9', NULL,
+                'Vera Example retained support.', NULL, NULL,
+                'manual_claim', '{}'
+            )
+            """,
+            (stamp,),
+        )
+        connection.execute(
+            """
+            INSERT INTO processing_runs(
+                id, stage, started_at, status, input_ids_json, output_ids_json,
+                metadata_json
+            ) VALUES (
+                'run_vera_v9', '13.6', ?, 'completed', '[]', '[]', '{}'
+            )
+            """,
+            (stamp,),
+        )
+        connection.execute(
+            """
+            INSERT INTO experience_facts(
+                id, created_at, superseded_at, claim, claim_kind, project,
+                project_key, role, company, context, ownership_level, action,
+                object, outcome, skills_json, technologies_json, themes_json,
+                occurred_start, occurred_end, temporal_precision,
+                temporal_confidence, confidence, metadata_json,
+                produced_by_run_id, generation_id
+            ) VALUES (
+                'fact_vera_v9', ?, NULL, 'Vera Example retained fact.',
+                'observed_fact', 'Vera Example Project', 'vera example project',
+                NULL, NULL, 'independent_project', 'built', 'built',
+                'a fixture', NULL, '[]', '[]', '[]', ?, NULL, 'exact_day',
+                'high', 'medium', '{}', 'run_vera_v9', 'gen_vera_v9'
+            )
+            """,
+            (stamp, stamp),
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_sources(fact_id, evidence_item_id, support_type)
+            VALUES ('fact_vera_v9', 'evi_vera_v9', 'direct')
+            """
+        )
+        for identity, scope, target, title in (
+            ("global", "global", None, "Self-Assessment — Global"),
+            (
+                "project",
+                "project",
+                "Vera Example Project",
+                "Self-Assessment — Vera Example Project",
+            ),
+        ):
+            connection.execute(
+                """
+                INSERT INTO assessment_snapshots(
+                    id, created_at, superseded_at, scope, scope_target, title,
+                    summary, gap_question_ids_json, contradiction_ids_json,
+                    verification_status, metadata_json, produced_by_run_id,
+                    generation_id
+                ) VALUES (?, ?, NULL, ?, ?, ?, ?, '[]', '[]', 'supported',
+                          '{}', 'run_vera_v9', 'gen_vera_v9')
+                """,
+                (
+                    f"snapshot_vera_v9_{identity}",
+                    stamp,
+                    scope,
+                    target,
+                    title,
+                    "Current evidence suggests a provenance-aware workflow.",
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO self_claims(
+                    id, created_at, superseded_at, snapshot_id, claim,
+                    claim_kind, dimension, source_fact_ids_json,
+                    counter_fact_ids_json, confidence, verification_status,
+                    counterevidence_json, uncertainty, metadata_json,
+                    produced_by_run_id, generation_id
+                ) VALUES (?, ?, NULL, ?,
+                    'Current evidence suggests a provenance-aware workflow.',
+                    'narrative_summary', 'trajectory', '["fact_vera_v9"]',
+                    '[]', 'medium', 'supported', '[]', NULL, '{}',
+                    'run_vera_v9', 'gen_vera_v9')
+                """,
+                (
+                    f"claim_vera_v9_{identity}",
+                    stamp,
+                    f"snapshot_vera_v9_{identity}",
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO verification_findings(
+                    id, created_at, produced_by_run_id, target_type, target_id,
+                    status, reason, unsupported_phrases_json,
+                    suggested_rewrite, counterevidence_json
+                ) VALUES (?, ?, 'run_vera_v9', 'self_claim', ?, 'supported',
+                    'The supplied evidence supports the claim.', '[]', NULL,
+                    '[]')
+                """,
+                (
+                    f"finding_vera_v9_{identity}",
+                    stamp,
+                    f"claim_vera_v9_{identity}",
+                ),
+            )
+    database.chmod(0o600)
+    return root
+
+
+def published_set(workspace: Path, snapshot_id: str) -> Path:
+    path = workspace / "out" / "assessment" / snapshot_id
+    path.mkdir(mode=0o700, parents=True)
+    (path / "report.md").write_text("stale", encoding="utf-8")
+    (path / "manifest.json").write_text("{}", encoding="utf-8")
+    return path
+
+
 def sqlite_master_shape(database: Path) -> list[tuple[object, ...]]:
     with sqlite3.connect(database) as connection:
         return sorted(
@@ -455,7 +622,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     assert result.exit_code == 0, result.stderr
     envelope = json.loads(result.stdout)
     schema = envelope["result"]["schema"]
-    assert schema["stored_version"] == 9
+    assert schema["stored_version"] == 10
     assert schema["compatible"] is True
     backup = Path(schema["managed_backup_path"])
     assert backup.is_file()
@@ -473,7 +640,7 @@ def test_cli_migrates_v1_to_v2_with_verified_backup_and_preserved_data(
     with sqlite3.connect(database) as connection:
         assert [
             row[0] for row in connection.execute("SELECT version FROM schema_meta ORDER BY version")
-        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        ] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         tables = {
             row[0]
             for row in connection.execute(
@@ -508,7 +675,7 @@ def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 9
+    assert migrated.stored_version == 10
     backup = Path(migrated.managed_backup_path or "")
     assert backup.is_file()
     assert "exp2res-v2-" in backup.name
@@ -526,7 +693,9 @@ def test_v2_to_v3_backfills_canonical_project_keys_and_keeps_one_backup(
         ]
         assert connection.execute(
             "SELECT version FROM schema_meta ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,)]
+        ).fetchall() == [
+            (1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,)
+        ]
 
 
 def test_fresh_and_migrated_workspaces_have_identical_sqlite_master_shape(
@@ -559,7 +728,7 @@ def test_v8_to_v9_deletes_the_derived_layer_and_its_published_sets(
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 9
+    assert migrated.stored_version == 10
     assert migrated.compatible is True
     # The published set is regenerable output over rows the step deletes, so
     # it goes with them rather than outliving its own database provenance.
@@ -598,7 +767,7 @@ def test_v8_to_v9_deletes_the_derived_layer_and_its_published_sets(
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute(
             "SELECT version FROM schema_meta ORDER BY version"
-        ).fetchall() == [(index,) for index in range(1, 10)]
+        ).fetchall() == [(index,) for index in range(1, 11)]
         # The rebuilt tables keep their §11 lifecycle guards, so the empty
         # derived layer is protected exactly like a populated one.
         assert {
@@ -612,6 +781,115 @@ def test_v8_to_v9_deletes_the_derived_layer_and_its_published_sets(
             "assessment_snapshots_lifecycle_update_guard",
             "verification_findings_update_guard",
         }
+
+
+def test_v9_to_v10_deletes_the_project_views_and_keeps_the_global_one(
+    tmp_path: Path,
+) -> None:
+    """§12.14/issue #247: `AssessmentScope` loses `project`, so its rows go."""
+
+    workspace = v9_workspace(tmp_path)
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    project_set = published_set(workspace, "snapshot_vera_v9_project")
+    global_set = published_set(workspace, "snapshot_vera_v9_global")
+
+    migrated = migrate_workspace(
+        workspace, clock=lambda: FIXED_NOW.replace(day=16)
+    )
+    assert migrated.stored_version == 10
+    assert migrated.compatible is True
+    # The deleted view's set has no provenance left at all, and the retained
+    # view's set carries the superseded `manifest_version` §13.14 rule 5
+    # refuses to overwrite in place, so both are cleared for regeneration.
+    assert not project_set.exists()
+    assert not global_set.exists()
+
+    with sqlite3.connect(database) as connection:
+        connection.create_function("exp2res_owner_delete", 0, lambda: 0)
+        assert connection.execute(
+            "SELECT id, scope, title, verification_status, produced_by_run_id "
+            "FROM assessment_snapshots"
+        ).fetchall() == [
+            (
+                "snapshot_vera_v9_global",
+                "global",
+                "Self-Assessment — Global",
+                "supported",
+                "run_vera_v9",
+            )
+        ]
+        assert [
+            row[0] for row in connection.execute("SELECT id FROM self_claims")
+        ] == ["claim_vera_v9_global"]
+        assert [
+            row[0]
+            for row in connection.execute("SELECT id FROM verification_findings")
+        ] == ["finding_vera_v9_global"]
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(assessment_snapshots)")
+        }
+        assert "scope_target" not in columns
+        assert "scope" in columns
+        # The scope column is single-valued now, so the retired value is
+        # refused by the rebuilt table rather than merely unused.
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE assessment_snapshots SET scope = 'project' WHERE id = ?",
+                ("snapshot_vera_v9_global",),
+            )
+        # The raw and fact layers never depended on the view identity.
+        assert connection.execute(
+            "SELECT raw_text FROM raw_logs WHERE id = 'log_vera_v9'"
+        ).fetchone()[0] == "Vera Example retained raw record."
+        assert connection.execute(
+            "SELECT COUNT(*) FROM experience_facts"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM fact_sources"
+        ).fetchone()[0] == 1
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute(
+            "SELECT version FROM schema_meta ORDER BY version"
+        ).fetchall() == [(index,) for index in range(1, 11)]
+        # The rebuilt snapshot table and the two tables the step deleted rows
+        # from all keep their §11 lifecycle guards.
+        assert {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        } >= {
+            "assessment_snapshots_lifecycle_update_guard",
+            "assessment_snapshots_owner_delete_guard",
+            "self_claims_owner_delete_guard",
+            "verification_findings_owner_delete_guard",
+        }
+
+
+def test_v9_to_v10_reports_a_managed_set_it_cannot_remove(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§12.14: stranded managed output is reported, never silently kept."""
+
+    workspace = v9_workspace(tmp_path)
+    published_set(workspace, "snapshot_vera_v9_global")
+    # A symlink is never followed and never removed, so its path is exactly
+    # the residual the cleanup has to surface.
+    link = workspace / "out" / "assessment" / "snapshot_vera_v9_project"
+    link.symlink_to(tmp_path)
+
+    monkeypatch.chdir(workspace)
+    result = runner.invoke(app, ["--json", "--yes", "db", "migrate"])
+    envelope = json.loads(result.stdout)
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "managed_output_incomplete"
+    assert envelope["residual_paths"] == [str(link)]
+    assert link.is_symlink()
+    # The migration itself still committed: the residual is filesystem-only.
+    assert envelope["result"]["schema"]["stored_version"] == 10
+    assert inspect_workspace(workspace).stored_version == 10
 
 
 def test_v7_to_v8_rebuild_preserves_rows_guards_indexes_and_admits_open_ranges(
@@ -753,7 +1031,7 @@ def test_v7_to_v8_rebuild_preserves_rows_guards_indexes_and_admits_open_ranges(
     migrated = migrate_workspace(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
-    assert migrated.stored_version == 9
+    assert migrated.stored_version == 10
     with sqlite3.connect(database) as connection:
         connection.create_function("exp2res_owner_delete", 0, lambda: 0)
         retained_after = {
@@ -1092,7 +1370,7 @@ def test_post_commit_interrupt_reports_backup_and_leaves_durable_v8(
     assert len(backups) == 1
     assert interrupt_info.value.managed_backup_path == str(backups[0])
     after = inspect_workspace(workspace)
-    assert after.stored_version == 9
+    assert after.stored_version == 10
     assert after.compatible is True
 
 
@@ -1122,7 +1400,7 @@ def test_cli_post_commit_interrupt_envelope_reports_durable_v8_and_backup(
     assert result.exit_code == 9
     envelope = json.loads(result.stdout)
     assert envelope["status"] == "cancelled"
-    assert envelope["result"]["schema"]["stored_version"] == 9
+    assert envelope["result"]["schema"]["stored_version"] == 10
     assert envelope["result"]["schema"]["compatible"] is True
     backup = Path(envelope["result"]["schema"]["managed_backup_path"])
     assert backup.is_file()
@@ -1317,6 +1595,6 @@ def test_exact_shape_preexisting_telemetry_table_migrates(
         workspace, clock=lambda: FIXED_NOW.replace(day=16)
     )
 
-    assert migrated.stored_version == 9
+    assert migrated.stored_version == 10
     assert migrated.compatible is True
     assert table_shape(database, table) == expected_shape

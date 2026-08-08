@@ -180,7 +180,6 @@ def assessment_graph(
         id=snapshot_id,
         created_at=EXPORT_TIME,
         scope="global",
-        scope_target=None,
         title="Self-Assessment — Global",
         summary=summary,
         gap_question_ids=[gap.id],

@@ -38,7 +38,7 @@ def test_companion_encoding_has_canonical_key_order_utc_datetime_and_one_lf() ->
     assert (
         b"Current evidence suggests you deliver deterministic local tools." in encoded
     )
-    assert json.loads(encoded)["schema_version"] == 2
+    assert json.loads(encoded)["schema_version"] == 3
 
     evidence = companion_bytes(build_evidence_map_document(graph))
     assert evidence.startswith(b'{"claim_links":')
@@ -79,10 +79,10 @@ def test_companions_record_the_claim_counter_split() -> None:
 @pytest.mark.parametrize(
     ("model", "payload"),
     [
-        (SelfClaimsDocument, {"schema_version": 1, "extra": True}),
-        (SelfClaimsDocument, {"schema_version": 2}),
-        (AssessmentEvidenceMapDocument, {"schema_version": 1}),
-        (AssessmentEvidenceMapDocument, {"schema_version": 2, "output_kind": "assessment"}),
+        (SelfClaimsDocument, {"schema_version": 2, "extra": True}),
+        (SelfClaimsDocument, {"schema_version": 3}),
+        (AssessmentEvidenceMapDocument, {"schema_version": 2}),
+        (AssessmentEvidenceMapDocument, {"schema_version": 3, "output_kind": "assessment"}),
     ],
 )
 def test_closed_companion_models_reject_extra_missing_and_wrong_version(

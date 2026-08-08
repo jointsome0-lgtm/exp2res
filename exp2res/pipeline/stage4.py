@@ -459,9 +459,7 @@ def run_detection_generation(
             )
             invalidated_views = tuple(
                 invalidated_view(
-                    scope=snapshot.scope,
-                    scope_target=snapshot.scope_target,
-                    snapshot_id=snapshot.id,
+                    scope=snapshot.scope, snapshot_id=snapshot.id
                 )
                 for snapshot in current_snapshots
             )

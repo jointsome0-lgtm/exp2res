@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
-import shlex
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -144,30 +143,21 @@ class ContradictionsResult(StrictModel):
 
 class InvalidatedView(StrictModel):
     scope: AssessmentScope
-    scope_target: str | None
     snapshot_id: str
     regeneration_command: str
 
 
-def invalidated_view(
-    *, scope: AssessmentScope, scope_target: str | None, snapshot_id: str
-) -> InvalidatedView:
-    command = "exp2res assess generate"
-    if scope == "project":
-        assert scope_target is not None
-        command += f" --scope project --project {shlex.quote(scope_target)}"
+def invalidated_view(*, scope: AssessmentScope, snapshot_id: str) -> InvalidatedView:
     return InvalidatedView(
         scope=scope,
-        scope_target=scope_target,
         snapshot_id=snapshot_id,
-        regeneration_command=command,
+        regeneration_command="exp2res assess generate",
     )
 
 
 class SnapshotListItem(StrictModel):
     id: str
     scope: AssessmentScope
-    scope_target: str | None
     verification_status: VerificationStatus
     created_at: datetime
 
@@ -210,7 +200,7 @@ class CLIEnvelope(StrictModel):
         extra="forbid", strict=True, frozen=True, validate_assignment=True
     )
 
-    envelope_version: Literal[1] = 1
+    envelope_version: Literal[2] = 2
     command: CommandPath | None
     status: CLIResultStatus
     exit_code: int
