@@ -831,14 +831,11 @@ def test_v9_to_v10_deletes_the_project_views_and_keeps_the_global_one(
         }
         assert "scope_target" not in columns
         assert "scope" in columns
-        # The scope column is single-valued now, so the retired value is
-        # refused by the rebuilt table rather than merely unused.
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
                 "UPDATE assessment_snapshots SET scope = 'project' WHERE id = ?",
                 ("snapshot_vera_v9_global",),
             )
-        # The raw and fact layers never depended on the view identity.
         assert connection.execute(
             "SELECT raw_text FROM raw_logs WHERE id = 'log_vera_v9'"
         ).fetchone()[0] == "Vera Example retained raw record."
@@ -852,8 +849,6 @@ def test_v9_to_v10_deletes_the_project_views_and_keeps_the_global_one(
         assert connection.execute(
             "SELECT version FROM schema_meta ORDER BY version"
         ).fetchall() == [(index,) for index in range(1, 11)]
-        # The rebuilt snapshot table and the two tables the step deleted rows
-        # from all keep their §11 lifecycle guards.
         assert {
             row[0]
             for row in connection.execute(
@@ -887,7 +882,6 @@ def test_v9_to_v10_reports_a_managed_set_it_cannot_remove(
     assert envelope["diagnostic_class"] == "managed_output_incomplete"
     assert envelope["residual_paths"] == [str(link)]
     assert link.is_symlink()
-    # The migration itself still committed: the residual is filesystem-only.
     assert envelope["result"]["schema"]["stored_version"] == 10
     assert inspect_workspace(workspace).stored_version == 10
 
