@@ -98,7 +98,7 @@ status = "partial"
 phases = ["1", "2", "3", "4"]
 evals = ["21.12"]
 issues = ["#82", "PR #125"]
-note = "Stage 3 service and Vera CLI reruns replace each lineage coherently and supersede downstream claims/snapshots; fact replacement now also supersedes every dependent branch and bullet and removes their managed sets; mixing a generation with downstream bullet generation remains unproven until Stage 10 lands"
+note = "Stage 3 service and Vera CLI reruns replace each lineage coherently and supersede downstream claims/snapshots; fact replacement now also supersedes every dependent branch and bullet and removes their managed sets, and Stage 10 generation now sits downstream of that swap; mixing a fact generation with a bullet generation in one owner sequence is proven only through the substrate triggers, not yet end to end"
 
 ["24.16"]
 status = "pending"
@@ -137,7 +137,7 @@ status = "partial"
 phases = ["3", "4", "5"]
 evals = ["21.18"]
 issues = []
-note = "The Stage 7 assessment-verifier gate now runs through the CLI with no owner confirm, dispute, or override state; Stage 10 gating, Stage 11 resume verification, exports, and exhaustive producer coverage for every SourceType and EvidenceStrength remain"
+note = "The Stage 7 assessment-verifier gate now runs through the CLI with no owner confirm, dispute, or override state, and Stage 10's input gate joins it: only a §16.11-eligible snapshot may anchor a branch, only supported member claims may guide a bullet, and every new bullet starts unverified; Stage 11 resume verification, exports, and exhaustive producer coverage for every SourceType and EvidenceStrength remain"
 
 ["24.22"]
 status = "pending"
@@ -164,7 +164,7 @@ status = "partial"
 phases = ["4"]
 evals = ["21.22", "21.24"]
 issues = []
-note = "Stage 8 persists a typed ParsedJD whose JDRequirement IDs are service-assigned, globally unique, and never model-authored; the Stage 10 half - bullets carrying typed matched_jd_requirements references - waits on the later Phase 4 branch and bullet stages"
+note = "Stage 8 persists a typed ParsedJD whose JDRequirement IDs are service-assigned, globally unique, and never model-authored, and Stage 10 now persists bullets whose matched_jd_requirements resolve in that exact supplied ParsedJD, failing the whole batch atomically on a free-form or different-job reference; the export-side reference rendering waits on Stage 12"
 
 ["24.26"]
 status = "partial"
