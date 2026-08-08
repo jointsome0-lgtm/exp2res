@@ -490,3 +490,94 @@ def test_owner_log_deletion_purges_branches_and_bullets(workspace: Path) -> None
         assert connection.execute(
             "SELECT COUNT(*) FROM resume_bullets"
         ).fetchone()[0] == 0
+
+
+def test_a_bullet_must_carry_its_branch_production_identity(
+    workspace: Path,
+) -> None:
+    """§12 rule 13: branch and bullets are one jointly swapped batch."""
+
+    _ids, facts, snapshot_id, _planted_branch_id = prepare_branch(workspace)
+    branch_id = "branch_vera_identity"
+    with writer_database(workspace) as connection:
+        create_processing_run(
+            connection,
+            run_id="run_vera_identity",
+            stage="13.10",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+            input_ids=facts,
+        )
+        finish_processing_run(
+            connection,
+            run_id="run_vera_identity",
+            finished_at=FIXED_NOW,
+            status="completed",
+            output_ids=(branch_id,),
+        )
+        create_processing_run(
+            connection,
+            run_id="run_vera_identity_other",
+            stage="13.10",
+            started_at=FIXED_NOW,
+            provider=None,
+            model=None,
+            prompt_policy_hash=None,
+            input_ids=facts,
+        )
+        finish_processing_run(
+            connection,
+            run_id="run_vera_identity_other",
+            finished_at=FIXED_NOW,
+            status="completed",
+        )
+        insert_resume_branch(
+            connection,
+            ResumeBranch(
+                id=branch_id,
+                name="identity-branch",
+                assessment_snapshot_id=snapshot_id,
+                job_description_id=JOB_DESCRIPTION_ID,
+                created_at=FIXED_NOW,
+            ),
+            produced_by_run_id="run_vera_identity",
+            generation_id="gen_vera_identity",
+        )
+        candidate = ResumeBullet(
+            id="bullet_vera_identity",
+            created_at=FIXED_NOW,
+            branch_id=branch_id,
+            text="Designed provenance links for an evidence-grounded workflow.",
+            target_section="selected_projects",
+            target_role_relevance="high",
+            matched_jd_requirements=[],
+            source_fact_ids=list(facts),
+            source_log_ids=list(bullet_log_closure(connection, facts)),
+            source_self_claim_ids=[],
+            verification_status="unverified",
+        )
+        with pytest.raises(IntegrityFailureError):
+            insert_resume_bullet(
+                connection,
+                candidate,
+                produced_by_run_id="run_vera_identity_other",
+                generation_id="gen_vera_identity",
+            )
+        with pytest.raises(IntegrityFailureError):
+            insert_resume_bullet(
+                connection,
+                candidate,
+                produced_by_run_id="run_vera_identity",
+                generation_id="gen_vera_identity_other",
+            )
+        # The same candidate under the branch's own identity is accepted, so
+        # the refusals above are about that identity and nothing else.
+        insert_resume_bullet(
+            connection,
+            candidate,
+            produced_by_run_id="run_vera_identity",
+            generation_id="gen_vera_identity",
+        )
+        connection.commit()

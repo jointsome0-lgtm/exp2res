@@ -2663,6 +2663,7 @@ def jd_delete(
             )
             if committed is not None:
                 error.affected_ids = _jd_delete_affected(committed)
+                error.generation_ids = list(committed.purged_generation_ids)
                 error.run_ids = [committed.run_id]
                 error.residual_paths = list(committed.residual_paths)
                 error.result = _jd_delete_result(committed)

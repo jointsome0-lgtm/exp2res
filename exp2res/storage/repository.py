@@ -1621,7 +1621,8 @@ def insert_resume_bullet(
         raise IntegrityFailureError("bullet_initial_verifier_state_invalid")
     branch_row = connection.execute(
         """
-        SELECT superseded_at, assessment_snapshot_id, job_description_id
+        SELECT superseded_at, assessment_snapshot_id, job_description_id,
+               produced_by_run_id, generation_id
         FROM resume_branches WHERE id = ?
         """,
         (bullet.branch_id,),
@@ -1630,6 +1631,14 @@ def insert_resume_bullet(
         raise IntegrityFailureError("bullet_branch_missing")
     if branch_row["superseded_at"] is not None:
         raise IntegrityFailureError("bullet_branch_superseded")
+    # §12 rule 13: a branch and its bullets are one jointly swapped batch, so
+    # they carry the production identity of the single Stage 10 run that wrote
+    # them. A bullet naming another run or generation would make a pack span
+    # several swaps and leave the supersession half-current.
+    if branch_row["produced_by_run_id"] != produced_by_run_id:
+        raise IntegrityFailureError("bullet_production_run_mismatch")
+    if branch_row["generation_id"] != generation_id:
+        raise IntegrityFailureError("bullet_generation_mismatch")
 
     for fact_id in bullet.source_fact_ids:
         row = connection.execute(

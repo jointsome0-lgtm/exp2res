@@ -1426,3 +1426,68 @@ def test_delete_reports_the_dependent_purge_in_human_mode(
     assert "1 dependent branch." in result.stdout
     assert f"Purged branch: {branch_id}\tAgent Engineer — Example Co" in result.stdout
     assert f"Removed managed path: {branch_set.absolute()}" in result.stdout
+
+
+def test_a_cancelled_purge_still_reports_the_branch_generation(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rules 5/6: the durable purge reports what it invalidated.
+
+    The interrupt is classified inside the service, which raises the
+    committed outcome, so this is a different composition from the one the
+    completed run takes.
+    """
+
+    _result, added = add_job_description(
+        workspace, tmp_path, monkeypatch, ids=BranchTestIds()
+    )
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    ids, facts = prepare_graph(workspace)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    branch_id, bullet_id = plant_branch(
+        workspace,
+        snapshot_id=assessed.snapshot_id,
+        fact_ids=facts,
+        job_description_id=job_description_id,
+        requirement_ids=(),
+    )
+
+    class InterruptOnCommitReturn:
+        """Commit for real, then raise as the C call returns to Python."""
+
+        def __init__(self, connection) -> None:
+            self._connection = connection
+
+        def __getattr__(self, name: str):
+            return getattr(self._connection, name)
+
+        def commit(self) -> None:
+            self._connection.commit()
+            raise KeyboardInterrupt()
+
+    real_writer = jd_service.writer_database
+
+    @contextmanager
+    def wrapped(target: Path, **keywords):
+        with real_writer(target, **keywords) as connection:
+            yield InterruptOnCommitReturn(connection)
+
+    monkeypatch.setattr(jd_service, "writer_database", wrapped)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["generation_ids"] == ["gen_vera_branch_0001"]
+    deleted = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["deleted"]
+    }
+    assert deleted["resume_branch"] == [branch_id]
+    assert deleted["resume_bullet"] == [bullet_id]
