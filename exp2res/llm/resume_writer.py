@@ -130,6 +130,11 @@ class ResumeWriterInput(StrictModel):
     ) -> list[SelectedFact]:
         if value != sorted(value, key=lambda item: _id_key(item.fact.id)):
             raise ValueError("selected facts must be ordered by ID bytes")
+        # §13.10 submits the exact current fact set: a repeat is an assembly
+        # defect that would weight one fact's evidence twice on the wire, and
+        # sorted order alone does not catch it.
+        if len({item.fact.id for item in value}) != len(value):
+            raise ValueError("duplicate selected fact")
         if any(item.fact.superseded_at is not None for item in value):
             raise ValueError("selected fact is superseded")
         return value

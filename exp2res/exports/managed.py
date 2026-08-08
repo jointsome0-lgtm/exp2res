@@ -652,10 +652,11 @@ def _remove_managed_sets(
 ) -> tuple[str, ...]:
     """Remove exactly the selected ID-keyed sets after commit.
 
-    `removed_ledger` receives each set path as it is unlinked. The return value
-    is only produced once the pass finishes, so a caller that must report
-    durable effects after a cancellation mid-pass has no other way to learn
-    what this function already removed (§14.14 rule 6).
+    `removed_ledger` receives each set path this pass durably removed — that is,
+    unlinked and then flushed. The return value is only produced once the pass
+    finishes, so a caller that must report durable effects after a cancellation
+    mid-pass has no other way to learn what this function already removed
+    (§14.14 rule 6).
     """
 
     selected = tuple(sorted(set(entity_ids), key=id_key))
@@ -678,22 +679,34 @@ def _remove_managed_sets(
         return tuple(str(parent / entity_id) for entity_id in selected)
 
     residuals: set[str] = set()
-    removed = False
+    unlinked: list[str] = []
     for entity_id in selected:
         path = parent / entity_id
-        if _lstat(path) is None:
+        try:
+            if _lstat(path) is None:
+                continue
+            removed = _remove_entry(path, out_root)
+        except OSError:
+            # Fail closed: this pass runs after the business commit, so an
+            # entry that turns unreadable mid-pass is a §13.13 rule 6 residual,
+            # never an exception that would cost the caller its committed
+            # result.
+            residuals.add(str(path))
             continue
-        if _remove_entry(path, out_root):
-            removed = True
-            if removed_ledger is not None:
-                removed_ledger.append(str(path))
+        if removed:
+            unlinked.append(str(path))
         else:
             residuals.add(str(path))
-    if removed:
+    if unlinked:
         try:
             _fsync_directory(parent, out_root)
         except OSError:
             residuals.add(str(parent))
+    # Only a flushed removal is banked: an interrupt inside the flush leaves the
+    # directory entry undurable, so it skips this line and the caller keeps
+    # reporting those sets rather than claiming a removal a crash could undo.
+    if removed_ledger is not None:
+        removed_ledger.extend(unlinked)
     return tuple(sorted(residuals, key=id_key))
 
 

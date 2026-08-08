@@ -312,3 +312,67 @@ def test_preamble_planted_symlink_candidate_is_reported_once(workspace: Path) ->
     residuals = managed.reconcile_managed_outputs(workspace)
     assert residuals == (str(candidate),)
     assert candidate.is_symlink() and outside.is_dir()
+
+
+def _plant_branch_set(workspace: Path, entity_id: str) -> Path:
+    path = workspace / "out" / "branch" / entity_id
+    path.mkdir(mode=0o700)
+    (path / "manifest.json").write_text("{}\n", encoding="utf-8")
+    return path
+
+
+def test_an_unstattable_set_is_a_residual_and_never_an_exception(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.13 rule 6: this pass runs after the commit, so it never raises.
+
+    An entry that turns unreadable between the pre-commit report and the
+    removal would otherwise cost the caller the committed result it is
+    holding for the envelope.
+    """
+
+    assert managed.reconcile_managed_outputs(workspace) == ()
+    first = _plant_branch_set(workspace, "branch_vera_0001")
+    second = _plant_branch_set(workspace, "branch_vera_0002")
+    real_lstat = managed._lstat
+
+    def refuse_the_second(path: Path):
+        if path == second:
+            raise PermissionError(13, "unreadable")
+        return real_lstat(path)
+
+    monkeypatch.setattr(managed, "_lstat", refuse_the_second)
+
+    residuals = managed.remove_branch_sets(
+        workspace, ["branch_vera_0001", "branch_vera_0002"]
+    )
+    assert residuals == (str(second),)
+    assert not first.exists() and second.is_dir()
+
+
+def test_an_interrupted_flush_banks_no_removal(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A removal is banked only once the directory entry is durable.
+
+    The unlink itself is visible immediately, but a cancellation inside the
+    flush leaves nothing proven against a crash, so the caller must keep
+    reporting the set rather than subtract it from its residual report.
+    """
+
+    assert managed.reconcile_managed_outputs(workspace) == ()
+    planted = _plant_branch_set(workspace, "branch_vera_0001")
+
+    def interrupt_flush(*_arguments, **_keywords):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(managed, "_fsync_directory", interrupt_flush)
+
+    banked: list[str] = []
+    with pytest.raises(KeyboardInterrupt):
+        managed.remove_branch_sets(
+            workspace, ["branch_vera_0001"], removed_ledger=banked
+        )
+    assert banked == []
+    assert not planted.exists()
+
