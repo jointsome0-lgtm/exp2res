@@ -24,6 +24,7 @@ from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
 from exp2res.domain.models import (
     ExperienceFact,
+    JobDescription,
     OccurredAt,
     SelfClaim,
     VerificationFinding,
@@ -42,10 +43,14 @@ from exp2res.domain.results import (
     FactsListResult,
     GapsListResult,
     InvalidatedView,
+    JdDeleteResult,
+    JdListResult,
+    JobDescriptionProjection,
     LogProjection,
     LogsDeleteResult,
     LogsListResult,
     LogsShowResult,
+    PurgedBranchProjection,
     Retry,
     SchemaProjection,
     SchemaResult,
@@ -103,6 +108,12 @@ from exp2res.services.extraction import (
 )
 from exp2res.services.export import export_assessment, require_export_eligible
 from exp2res.services.facts import list_facts, show_fact
+from exp2res.services.job_descriptions import (
+    JobDescriptionDeleteOutcome,
+    delete_job_description,
+    list_job_descriptions,
+    run_jd_add_file,
+)
 from exp2res.services.logs import DeleteOutcome, delete_log, list_logs, show_log
 from exp2res.services.lifecycle import (
     LifecycleResult,
@@ -151,6 +162,9 @@ contradictions_app = typer.Typer(
 )
 assess_app = typer.Typer(help="Generate and inspect self-assessment views.")
 export_app = typer.Typer(help="Publish deterministic managed exports.")
+jd_app = typer.Typer(
+    help="Add, list, and owner-delete job descriptions."
+)
 workspace_app = typer.Typer(help="Manage the whole initialized workspace.")
 view_app = typer.Typer(help="Serve the read-only local views on loopback.")
 app.add_typer(db_app, name="db")
@@ -163,6 +177,7 @@ app.add_typer(gaps_app, name="gaps")
 app.add_typer(contradictions_app, name="contradictions")
 app.add_typer(assess_app, name="assess")
 app.add_typer(export_app, name="export")
+app.add_typer(jd_app, name="jd")
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(view_app, name="view")
 
@@ -199,6 +214,8 @@ class Outcome:
         | ContradictionsResult
         | AssessListResult
         | AssessShowResult
+        | JdListResult
+        | JdDeleteResult
         | AssessmentExportResult
         | None
     ) = None
@@ -2179,6 +2196,169 @@ def _purge_affected(purged: PurgeOutcome) -> AffectedIds:
             for entity_type, ids in purged.deleted_ids
         ],
     )
+
+
+def _job_description_projection(
+    job_description: JobDescription,
+) -> JobDescriptionProjection:
+    """§14.15: the discovery projection, with `raw_text` and `parsed` absent."""
+
+    return JobDescriptionProjection(
+        id=job_description.id,
+        created_at=job_description.created_at,
+        title=job_description.title,
+        company=job_description.company,
+    )
+
+
+@jd_app.command("add")
+def jd_add(
+    context: typer.Context,
+    source_path: str = typer.Argument(..., metavar="PATH"),
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.14 rule 3: compatibility precedes source acquisition and adapter
+        # construction; the service re-checks under its own authority.
+        require_compatible(workspace)
+        parsed = run_jd_add_file(workspace, source_path=source_path)
+        requirement_count = len(parsed.requirement_ids)
+        return Outcome(
+            affected_ids=AffectedIds(
+                created=[
+                    EntityIdGroup(
+                        entity_type="job_description",
+                        ids=[parsed.job_description_id],
+                    )
+                ],
+                superseded=[],
+                deleted=[],
+            ),
+            run_ids=[parsed.run_id],
+            warnings=list(parsed.warnings),
+            # §14.14 rule 5 declares no `jd add` result: the standard envelope
+            # fields carry it, and the parse itself stays unexposed under the
+            # rule 7 per-record-inspection deferral.
+            result=None,
+            human_result=(
+                f"Added job description {parsed.job_description_id} with "
+                f"{requirement_count} typed "
+                f"requirement{'' if requirement_count == 1 else 's'}."
+            ),
+        )
+
+    _run_command(context, "jd add", operation)
+
+
+@jd_app.command("list")
+def jd_list(context: typer.Context) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        job_descriptions = list(list_job_descriptions(workspace))
+        human = "\n".join(
+            "\t".join(
+                (
+                    item.id,
+                    item.created_at.isoformat(),
+                    item.title or "-",
+                    item.company or "-",
+                )
+            )
+            for item in job_descriptions
+        )
+        return Outcome(
+            result=JdListResult(
+                job_descriptions=[
+                    _job_description_projection(item) for item in job_descriptions
+                ]
+            ),
+            human_result=human or "No job descriptions.",
+        )
+
+    _run_command(context, "jd list", operation)
+
+
+def _jd_delete_result(deleted: JobDescriptionDeleteOutcome) -> JdDeleteResult:
+    return JdDeleteResult(
+        selected_job_description=_job_description_projection(deleted.selected),
+        purged_branches=[
+            PurgedBranchProjection(id=branch.id, name=branch.name)
+            for branch in deleted.purged_branches
+        ],
+        removed_managed_paths=list(deleted.removed_managed_paths),
+    )
+
+
+def _jd_delete_affected(deleted: JobDescriptionDeleteOutcome) -> AffectedIds:
+    classes = (
+        ("verification_finding", deleted.purged_finding_ids),
+        ("resume_bullet", deleted.purged_bullet_ids),
+        (
+            "resume_branch",
+            tuple(branch.id for branch in deleted.purged_branches),
+        ),
+        ("job_description", (deleted.selected.id,)),
+    )
+    return AffectedIds(
+        created=[],
+        superseded=[],
+        deleted=[
+            EntityIdGroup(entity_type=entity_type, ids=list(ids))
+            for entity_type, ids in classes
+            if ids
+        ],
+    )
+
+
+@jd_app.command("delete")
+def jd_delete(
+    context: typer.Context,
+    job_description_id: str = typer.Option(..., "--jd"),
+) -> None:
+    def operation(workspace: Path, controls: Controls) -> Outcome:
+        if not controls.yes:
+            if _noninteractive(controls):
+                raise NonInteractiveInputRequired()
+            if not typer.confirm(
+                f"Delete job description {job_description_id} and every "
+                "verified bullet pack derived from it?",
+                err=True,
+            ):
+                return Outcome(exit_code=9, diagnostic_class="cancelled")
+        try:
+            deleted = delete_job_description(
+                workspace, job_description_id=job_description_id
+            )
+        except OperationCancelledError as error:
+            committed = cast(
+                JobDescriptionDeleteOutcome | None,
+                getattr(error, "delete_outcome", None),
+            )
+            if committed is not None:
+                error.affected_ids = _jd_delete_affected(committed)
+                error.run_ids = [committed.run_id]
+                error.residual_paths = list(committed.residual_paths)
+                error.result = _jd_delete_result(committed)
+            raise
+        exit_code = 8 if deleted.residual_paths else 0
+        return Outcome(
+            exit_code=exit_code,
+            diagnostic_class="deletion_incomplete" if exit_code else None,
+            affected_ids=_jd_delete_affected(deleted),
+            run_ids=[deleted.run_id],
+            residual_paths=list(deleted.residual_paths),
+            result=_jd_delete_result(deleted),
+            human_result=(
+                f"Deleted job description {deleted.selected.id}; no derived "
+                "state remained."
+            )
+            if not deleted.purged_branches
+            else (
+                f"Deleted job description {deleted.selected.id} and "
+                f"{len(deleted.purged_branches)} dependent branch"
+                f"{'' if len(deleted.purged_branches) == 1 else 'es'}."
+            ),
+        )
+
+    _run_command(context, "jd delete", operation)
 
 
 @workspace_app.command("purge")
