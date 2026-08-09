@@ -667,7 +667,8 @@ def _verify_branch(
         for row in connection.execute(
             "SELECT id, verification_status, text, target_section, "
             "matched_jd_requirements_json, source_fact_ids_json, "
-            "source_log_ids_json, source_self_claim_ids_json FROM resume_bullets "
+            "source_log_ids_json, source_self_claim_ids_json, "
+            "unsupported_phrases_json, verifier_reason FROM resume_bullets "
             "WHERE branch_id = ? AND superseded_at IS NULL",
             (branch,),
         )
@@ -675,7 +676,12 @@ def _verify_branch(
     if sorted(stored) != sorted(rendered):
         raise AssertionError("Vera Example rendered bullet set is not branch-complete")
     for finding in report.findings:
-        if stored[finding.bullet_id][1] != finding.verification_status:
+        row = stored[finding.bullet_id]
+        if (
+            finding.verification_status,
+            list(finding.unsupported_phrases),
+            finding.verifier_reason,
+        ) != (row[1], json.loads(row[8]), row[9]):
             raise AssertionError(
                 f"Vera Example published verdict is stale: {finding.bullet_id}"
             )

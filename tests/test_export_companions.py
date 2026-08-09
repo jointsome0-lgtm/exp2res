@@ -11,6 +11,7 @@ import pytest
 
 from exp2res.exports.companions import (
     AssessmentEvidenceMapDocument,
+    BulletPackEvidenceMapDocument,
     SelfClaimsDocument,
     build_evidence_map_document,
     build_self_claims_document,
@@ -22,6 +23,7 @@ from exp2res.exports.managed import (
     render_input_sha256,
 )
 
+from conftest import REPOSITORY_ROOT
 from export_helpers import assessment_graph, graph_with_gap_answered
 
 
@@ -90,6 +92,31 @@ def test_closed_companion_models_reject_extra_missing_and_wrong_version(
 ) -> None:
     with pytest.raises(ValidationError):
         model.model_validate(payload)
+
+
+def test_bullet_pack_map_rejects_a_claim_link_no_bullet_cites() -> None:
+    # §21.48: an unused closure member fails export exactly like a missing one,
+    # and a claim link is the one closure list bullets reach by citation.
+    pinned = json.loads(
+        (REPOSITORY_ROOT / "tests" / "goldens" / "branch" / "evidence_map.json")
+        .read_text(encoding="utf-8")
+    )
+    assert BulletPackEvidenceMapDocument.model_validate(pinned)
+
+    uncited = dict(pinned)
+    uncited["claim_links"] = sorted(
+        [
+            *pinned["claim_links"],
+            {
+                "claim_id": "claim_vera_9999",
+                "counter_fact_ids": [],
+                "source_fact_ids": pinned["fact_links"][0]["fact_id"].split(),
+            },
+        ],
+        key=lambda item: item["claim_id"].encode(),
+    )
+    with pytest.raises(ValidationError):
+        BulletPackEvidenceMapDocument.model_validate(uncited)
 
 
 def test_render_input_hash_covers_gap_lifecycle_and_verification_at_same_ids() -> None:

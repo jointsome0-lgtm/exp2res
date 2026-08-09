@@ -360,12 +360,17 @@ class BulletPackEvidenceMapDocument(ExportDocument):
         fact_ids = {item.fact_id for item in self.fact_links}
         evidence_ids = {item.evidence_item_id for item in self.evidence_links}
         reached_facts: set[str] = set()
+        cited_claims: set[str] = set()
         for bullet in self.rendered_bullets:
             if not set(bullet.source_self_claim_ids).issubset(claim_ids):
                 raise ValueError("rendered bullet cites an unlinked claim")
             if not set(bullet.source_fact_ids).issubset(fact_ids):
                 raise ValueError("rendered bullet cites an unlinked fact")
+            cited_claims.update(bullet.source_self_claim_ids)
             reached_facts.update(bullet.source_fact_ids)
+        # An unused claim link is an unused closure member like any other.
+        if cited_claims != claim_ids:
+            raise ValueError("claim links disagree with the cited closure")
         for link in self.claim_links:
             if not set(link.source_fact_ids).issubset(fact_ids):
                 raise ValueError("claim link reaches an unlinked fact")
