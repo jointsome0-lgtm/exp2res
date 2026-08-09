@@ -137,7 +137,7 @@ status = "partial"
 phases = ["3", "4", "5"]
 evals = ["21.18"]
 issues = []
-note = "The Stage 7 assessment-verifier gate now runs through the CLI with no owner confirm, dispute, or override state, and Stage 10's input gate joins it: only a §16.11-eligible snapshot may anchor a branch, only supported member claims may guide a bullet, and every new bullet starts unverified; Stage 11 resume verification, exports, and exhaustive producer coverage for every SourceType and EvidenceStrength remain"
+note = "The Stage 7 assessment-verifier gate now runs through the CLI with no owner confirm, dispute, or override state, Stage 10's input gate joins it — only a §16.11-eligible snapshot may anchor a branch, only supported member claims may guide a bullet, and every new bullet starts unverified — and Stage 11 now completes for the branch projection under the same envelope; exports and exhaustive producer coverage for every SourceType and EvidenceStrength remain"
 
 ["24.22"]
 status = "pending"
@@ -150,7 +150,13 @@ status = "partial"
 phases = ["3", "4"]
 evals = ["21.20"]
 issues = []
-note = "Stage 7 performs one pass per current claim, presents every valid negative finding and advisory rewrite, preserves derived prose, and keeps schema retry separate from semantic verdicts; the Stage 11 bullet half remains"
+nodes = [
+  "tests/test_stage11_bullet_verification.py::test_one_invocation_carries_the_whole_current_bullet_set",
+  "tests/test_stage11_bullet_verification.py::test_the_finding_history_is_immutable_and_the_rewrite_is_advisory",
+  "tests/test_stage11_bullet_verification.py::test_an_incomplete_finding_set_commits_nothing",
+  "tests/test_cli_bullets.py::test_human_mode_presents_the_advisory_rewrite",
+]
+note = "Stage 7 performs one pass per current claim and Stage 11 one whole-pack pass per branch; both present every valid negative finding and advisory rewrite, invoke no writer, preserve derived prose, create no gap, and keep §15.1's schema retry separate from a semantic verdict, so revised wording needs an explicit replacement generation"
 
 ["24.24"]
 status = "met"

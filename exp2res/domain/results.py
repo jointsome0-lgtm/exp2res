@@ -58,6 +58,7 @@ CommandPath = Literal[
     "jd list",
     "jd delete",
     "bullets generate",
+    "bullets verify",
     "view serve",
 ]
 

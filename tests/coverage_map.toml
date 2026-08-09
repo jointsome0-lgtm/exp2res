@@ -122,9 +122,11 @@ nodes = [
   "tests/test_cli_assess.py::test_verify_happy_envelope_and_complete_human_rewrite_presentation",
   "tests/test_cli_assess.py::test_verify_blocked_is_completed_semantic_result",
   "tests/test_vera_replay_verify.py::test_vera_e5_cli_reverification_preserves_complete_finding_history",
+  "tests/test_cli_bullets.py::test_verification_reports_its_findings_through_the_envelope",
+  "tests/test_cli_bullets.py::test_a_bullet_outside_the_export_allowlist_blocks_the_branch",
 ]
 phase = "4"
-note = "Stage 7 now executes through the CLI, returns complete findings, and applies the assessment-export allowlist as a completed code-10 gate; the Stage 10 input gate, Stage 11 bullet verification, both export implementations, and their end-to-end allowlists remain"
+note = "Stage 7 and Stage 11 both now execute through the CLI, return complete findings, and apply their §16.11 consumer allowlist as a completed code-10 gate; the Stage 10 input gate is proven separately, while both export implementations and their end-to-end allowlists remain"
 
 ["21.19"]
 status = "partial"
@@ -147,9 +149,12 @@ nodes = [
   "tests/test_cli_assess.py::test_verify_happy_envelope_and_complete_human_rewrite_presentation",
   "tests/test_cli_assess.py::test_verify_blocked_is_completed_semantic_result",
   "tests/test_vera_replay_verify.py::test_vera_e5_cli_reverification_preserves_complete_finding_history",
+  "tests/test_stage11_bullet_verification.py::test_the_finding_history_is_immutable_and_the_rewrite_is_advisory",
+  "tests/test_stage11_bullet_verification.py::test_an_incomplete_finding_set_commits_nothing",
+  "tests/test_cli_bullets.py::test_human_mode_presents_the_advisory_rewrite",
 ]
 phase = "4"
-note = "Stage 7 proves atomic verifier mechanics, aggregation, durable failed attempts, append-only history, complete CLI finding and rewrite presentation, and the blocked consumer gate without repair; the Stage 11 bullet half remains"
+note = "Stage 7 and Stage 11 both prove atomic verifier mechanics, durable failed attempts, append-only history, complete CLI finding and rewrite presentation, and the blocked consumer gate without repair: no writer runs, the bullet's own prose is untouched, and the advisory rewrite is presented and never applied; the export-side half of the gate waits on Stage 12"
 
 ["21.21"]
 status = "covered"
@@ -342,9 +347,10 @@ nodes = [
   "tests/test_llm_runner.py::test_multi_call_run_appends_contiguous_calls_and_caller_finishes",
   "tests/test_llm_runner.py::test_call_failure_in_a_multi_call_run_fails_the_whole_run",
   "tests/test_llm_runner.py::test_next_writer_reconciles_only_nonterminal_telemetry",
+  "tests/test_stage11_bullet_verification.py::test_one_invocation_carries_the_whole_current_bullet_set",
 ]
 phase = "4"
-note = "Processing-run and per-call telemetry, contiguous call indexes, terminal failure, and abandoned-run reconciliation are covered; produced business rows, generations, findings, and deletion redaction remain"
+note = "Processing-run and per-call telemetry, contiguous call indexes, terminal failure, abandoned-run reconciliation, and §13.11's finding-to-run resolution are covered; the remaining produced business rows, their generations, and deletion redaction remain"
 
 ["21.39"]
 status = "partial"

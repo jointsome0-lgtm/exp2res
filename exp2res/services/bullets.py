@@ -1,4 +1,4 @@
-"""§14.10 verified bullet-pack services (Stage 10)."""
+"""§14.10 verified bullet-pack services (Stages 10-11)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 from exp2res import __version__
 from exp2res.errors import LLMInvocationError
 from exp2res.pipeline.stage10 import Stage10Result, run_bullet_generation
+from exp2res.pipeline.stage11 import Stage11Result, run_bullet_verification
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import build_llm_execution
 from exp2res.storage.workspace import read_database, require_compatible
@@ -46,6 +47,32 @@ def run_bullets_generate(
             workspace,
             job_description_id=job_description_id,
             snapshot_id=snapshot_id,
+            branch_name=branch_name,
+            selection=selection,
+            budgets=budgets,
+            runner=runner,
+            id_factory=tracking_id_factory,
+            cli_version=__version__,
+        )
+    except LLMInvocationError as error:
+        error.run_ids = _committed_runs(workspace, allocated_runs)
+        raise
+
+
+def run_bullets_verify(workspace: Path, *, branch_name: str) -> Stage11Result:
+    require_compatible(workspace)
+    selection, budgets, runner = build_llm_execution(workspace)
+    allocated_runs: list[str] = []
+
+    def tracking_id_factory(kind: str) -> str:
+        value = new_id(kind)
+        if kind == "run":
+            allocated_runs.append(value)
+        return value
+
+    try:
+        return run_bullet_verification(
+            workspace,
             branch_name=branch_name,
             selection=selection,
             budgets=budgets,

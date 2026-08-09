@@ -242,7 +242,7 @@ def _projected_text(value: str) -> str:
     return unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
 
 
-def _validated_branch_name(value: str) -> str:
+def validated_branch_name(value: str) -> str:
     """§14.10's non-blank, §11-hygienic `--branch` value, checked at entry.
 
     The same rule guards `BranchContext` and `ResumeBranch`, but those raise
@@ -358,7 +358,7 @@ def run_bullet_generation(
     """Run the one whole-pack writer call and atomically swap its branch."""
 
     now = clock or (lambda: datetime.now(timezone.utc))
-    branch_name = _validated_branch_name(branch_name)
+    branch_name = validated_branch_name(branch_name)
     # The writer teardown — the final commit, the connection close, and the
     # §8.1 lock release — runs after the guarded block below and can itself
     # be interrupted over a durable swap, so the completed result stays
