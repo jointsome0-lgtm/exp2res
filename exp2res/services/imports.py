@@ -318,18 +318,18 @@ def _cancelled_report(
             # its resolution. Resolving it here keeps the query's visibility
             # a statement about committed rows.
             connection.rollback()
-        committed = committed_import_records(
-            connection,
-            [
-                (record.raw_log_id or "", record.source_record_id, record.content_hash)
-                for record in attempted
-            ],
-        )
+        keys = [
+            (record.raw_log_id or "", record.source_record_id, record.content_hash)
+            for record in attempted
+        ]
+        committed = committed_import_records(connection, keys)
     except sqlite3.Error:
         accepted = tuple(classified["accepted"])
     else:
+        # Matched per candidate, not per ID: two candidates in one run can
+        # hold the same generated ID, and only one of them wrote the row.
         accepted = tuple(
-            record for record in attempted if record.raw_log_id in committed
+            record for record, key in zip(attempted, keys) if key in committed
         )
     return ImportOutcome(
         accepted=accepted,

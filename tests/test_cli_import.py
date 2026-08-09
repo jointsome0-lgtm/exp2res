@@ -846,3 +846,59 @@ def test_a_final_duplicate_survives_the_signal_that_follows_it(
         "rejected": 1,
     }
     assert envelope["result"]["records"]["duplicate"][0]["record_number"] == 2
+
+
+def test_a_repeated_candidate_id_never_hides_the_earlier_commit(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the ID is shared, so the verdict cannot be keyed by it."""
+    counts: dict[str, int] = {}
+
+    def colliding_ids(kind: str) -> str:
+        counts[kind] = counts.get(kind, 0) + 1
+        # Both records in this payload generate the same raw-log ID, so the
+        # second collides with the row the first just wrote.
+        return (
+            "log_shared_0002"
+            if kind == "raw_log"
+            else f"evi_shared_{counts[kind]:04d}"
+        )
+
+    monkeypatch.setattr(
+        cli_module,
+        "import_payload",
+        functools.partial(imports_service.import_payload, id_factory=colliding_ids),
+    )
+    payload = write_payload(
+        tmp_path,
+        "shared-id.jsonl",
+        [
+            ephemeris_record("vera-ephemeris-9900"),
+            ephemeris_record("vera-ephemeris-9901"),
+        ],
+    )
+    persist = imports_service._persist
+    calls = {"count": 0}
+
+    def interrupt_on_the_second_record(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return persist(*args, **kwargs)
+        # The signal lands while the second record's collision unwinds, so
+        # both candidates stay registered under the one shared ID.
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(imports_service, "_persist", interrupt_on_the_second_record)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    # The first record's commit is durable and belongs in the report; the
+    # second candidate shares only its ID.
+    assert "raw_log" in created
+    assert created["raw_log"] == ["log_shared_0002"]
+    assert envelope["result"] is None

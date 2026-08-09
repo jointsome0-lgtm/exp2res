@@ -168,7 +168,7 @@ def insert_evidence_item(connection: sqlite3.Connection, item: EvidenceItem) -> 
 def committed_import_records(
     connection: sqlite3.Connection,
     candidates: Sequence[tuple[str, Optional[str], Optional[str]]],
-) -> set[str]:
+) -> set[tuple[str, Optional[str], Optional[str]]]:
     """Report which candidate records the workspace actually stores as themselves.
 
     §19.4 rule 4 gives each imported record its own transaction, so after an
@@ -177,21 +177,22 @@ def committed_import_records(
     held §8.1 writer lock reports a record whose commit the signal outran and
     never reports a rolled-back candidate.
 
-    Existence of the generated ID is not that fact. A candidate whose ID
-    collided with an already-stored row shares only the ID: the stored row is
-    a different record, and a signal that lands while that collision unwinds
-    can leave the candidate registered. The verdict therefore matches the
-    §19.4 rule 2 pair the importer wrote — identity and rule 3's content hash,
-    read from the same reserved `RawLog.metadata` keys `retained_import_hashes`
-    scans — so a row is this candidate's commit only when it is this record.
-    A manual-capture row carries neither key and matches nothing.
+    Existence of the generated ID is not that fact, and neither is the ID a
+    key. A candidate whose ID collided shares exactly that ID with a row that
+    is a different record, and two candidates in one run can hold the same ID
+    for the same reason — so keying by it would let the later candidate answer
+    for the earlier one's durable commit. Both the comparison and the verdict
+    are therefore per candidate: the §19.4 rule 2 pair the importer wrote —
+    identity and rule 3's content hash, from the same reserved
+    `RawLog.metadata` keys `retained_import_hashes` scans — must match the
+    stored row under that ID. A manual-capture row carries neither key and
+    matches nothing.
     """
 
-    wanted = {
-        raw_log_id: (identity, digest)
-        for raw_log_id, identity, digest in candidates
-    }
-    committed: set[str] = set()
+    wanted: dict[str, set[tuple[Optional[str], Optional[str]]]] = {}
+    for raw_log_id, identity, digest in candidates:
+        wanted.setdefault(raw_log_id, set()).add((identity, digest))
+    committed: set[tuple[str, Optional[str], Optional[str]]] = set()
     ordered = list(wanted)
     for start in range(0, len(ordered), 512):
         chunk = tuple(ordered[start : start + 512])
@@ -207,9 +208,10 @@ def committed_import_records(
             """,
             chunk,
         ):
+            raw_log_id = str(row["id"])
             stored = (row["source_record_id"], row["content_hash"])
-            if stored == wanted[str(row["id"])]:
-                committed.add(str(row["id"]))
+            if stored in wanted[raw_log_id]:
+                committed.add((raw_log_id, *stored))
     return committed
 
 
