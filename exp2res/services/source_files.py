@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import stat
 import sys
-from typing import BinaryIO
+from typing import BinaryIO, Callable
 from urllib.parse import unquote, urlsplit
 
 from exp2res.config import WorkspaceConfig
@@ -29,11 +29,17 @@ from exp2res.errors import (
     ForbiddenPathError,
     InvalidInputError,
     LocatorReauthorizationFailedError,
+    PayloadLocatorError,
 )
 
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
 SLASH_WINDOWS_DRIVE = re.compile(r"^/[A-Za-z]:[\\/]")
 URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+# §29.4 rule 18 admits every scheme but `file` without an allowlist, and RFC
+# 3986 allows a one-character scheme, so `x://host/path` is a legitimate
+# remote locator that `WINDOWS_DRIVE` alone would read as drive `x:`. An
+# authority's `//` never follows a drive letter, which separates the two.
+AUTHORITY_URI = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 URI_COMPONENT = re.compile(
     r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*$"
@@ -103,12 +109,20 @@ class ArtifactLocator:
         return (0 if field == "path" else 1, value.encode("utf-8"))
 
 
-def _forbidden_supplied_form(value: str) -> bool:
-    return (
-        "\\" in value
-        or WINDOWS_DRIVE.match(value) is not None
-        or value.startswith("//")
-    )
+def _forbidden_supplied_form(value: str, *, uri_authority: bool = False) -> bool:
+    """Reject the supplied spellings §29.4 never accepts.
+
+    `uri_authority` belongs to the rule 18 remote form alone, where `x://`
+    is a one-character scheme's authority rather than the drive letter
+    `WINDOWS_DRIVE` would otherwise read. A supplied local path has no such
+    form, so its drive check stays unconditional.
+    """
+
+    if "\\" in value or value.startswith("//"):
+        return True
+    if WINDOWS_DRIVE.match(value) is None:
+        return False
+    return not (uri_authority and AUTHORITY_URI.match(value) is not None)
 
 
 def _case_insensitive_lookup(path: Path) -> bool:
@@ -526,8 +540,12 @@ def reauthorize_prompt_locators(
                     )
                     # A Windows drive letter parses as a one-character scheme,
                     # so the unsupported-form check precedes the remote
-                    # shortcut exactly as capture-time authorization does.
-                    windows_form = _forbidden_supplied_form(child)
+                    # shortcut exactly as capture-time authorization does —
+                    # including its authority distinction, or a locator this
+                    # workspace accepted would fail its own re-check.
+                    windows_form = _forbidden_supplied_form(
+                        child, uri_authority=True
+                    )
                     if scheme is not None and scheme != "file" and not windows_form:
                         continue
                     try:
@@ -566,38 +584,60 @@ def _read_bounded_utf8(stream: BinaryIO) -> str:
         raise failure from error
 
 
-def read_capture_file(
+def _read_unbounded_utf8(stream: BinaryIO) -> str:
+    """Decode a selected payload without the `raw_text` field bound.
+
+    §19.4 rule 4 makes §11's total-object-per-payload limit the whole
+    payload-size bound and forbids a second numeric cap, so a multi-record
+    file legitimately exceeds the 1 MiB one record's text may occupy.
+    """
+
+    try:
+        data = stream.read()
+    except OSError as error:
+        raise InvalidInputError() from error
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        failure = InvalidInputError()
+        failure.diagnostic_class = "input_not_utf8"
+        failure.public_message = "The selected source is not valid UTF-8."
+        raise failure from error
+
+
+def _authorize_selected_file(
     supplied: str, *, config: WorkspaceConfig
-) -> tuple[str, str | None]:
-    if supplied == "-":
-        stream = getattr(sys.stdin, "buffer", None)
-        if stream is None:
-            raise InvalidInputError()
-        return _read_bounded_utf8(stream), None
+) -> tuple[Path, str]:
+    """Apply §29.4 rules 4–14 to one explicitly supplied source path.
+
+    Returns the resolved path to open and the canonical real path a record
+    persists: §14.2 and §14.5 store what this gate authorized, not the
+    supplied spelling, so the record names one filesystem object and the
+    pre-serialization re-check reaches the same verdict from any directory.
+    Validate it before opening, so nothing is read for a record the store
+    could not accept.
+    """
+
     if _forbidden_supplied_form(supplied):
         raise ForbiddenPathError()
-    path = Path(supplied)
     try:
-        resolved = path.resolve(strict=True)
+        resolved = Path(supplied).resolve(strict=True)
     except OSError as error:
         raise InvalidInputError() from error
     folded = _case_insensitive_lookup(resolved)
     if not resolved.is_file() or _mandatory_denied(resolved, folded=folded):
         raise ForbiddenPathError()
-
     if _ignored(resolved, config=config, folded=folded):
         raise ForbiddenPathError()
-
-    # §14.2 persists the canonical real path that §29.4 just authorized, not
-    # the supplied spelling: the record then names one filesystem object, so
-    # the pre-serialization re-check reaches the same verdict from any
-    # directory. Validate it before opening, so nothing is read for a record
-    # the store could not accept.
     try:
-        canonical = validate_posix_path(resolved.as_posix())
+        return resolved, validate_posix_path(resolved.as_posix())
     except (UnicodeError, ValueError, TypeError) as error:
         raise ForbiddenPathError() from error
 
+
+def _read_selected_file(
+    resolved: Path, reader: Callable[[BinaryIO], str]
+) -> str:
     descriptor: int | None = None
     try:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -607,7 +647,7 @@ def read_capture_file(
         if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(opened, current):
             raise ForbiddenPathError()
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            text = _read_bounded_utf8(stream)
+            return reader(stream)
     except ForbiddenPathError:
         raise
     except OSError as error:
@@ -615,4 +655,112 @@ def read_capture_file(
     finally:
         if descriptor is not None:
             os.close(descriptor)
-    return text, canonical
+
+
+def read_capture_file(
+    supplied: str, *, config: WorkspaceConfig
+) -> tuple[str, str | None]:
+    if supplied == "-":
+        stream = getattr(sys.stdin, "buffer", None)
+        if stream is None:
+            raise InvalidInputError()
+        return _read_bounded_utf8(stream), None
+    resolved, canonical = _authorize_selected_file(supplied, config=config)
+    return _read_selected_file(resolved, _read_bounded_utf8), canonical
+
+
+def read_document_file(
+    supplied: str, *, config: WorkspaceConfig
+) -> tuple[str, str]:
+    """Read one §14.5 `import file` document with its canonical real path.
+
+    §14.5 gives this form no standard-input spelling, and it could not have
+    one: the record persists the authorized canonical path in both
+    `RawLog.external_ref` and `EvidenceItem.path`, and standard input names
+    no filesystem object to put there. The canonical path is therefore never
+    `None` here, unlike `read_capture_file`'s.
+    """
+
+    resolved, canonical = _authorize_selected_file(supplied, config=config)
+    return _read_selected_file(resolved, _read_bounded_utf8), canonical
+
+
+def read_payload_file(
+    supplied: str, *, config: WorkspaceConfig
+) -> tuple[str, Path]:
+    """Read one §14.5 payload and return it with its §29.4 rule 8 root.
+
+    The payload root is the selected file's containing directory: it bounds
+    which embedded relative locators are selectable and is never a
+    pattern-matching base.
+    """
+
+    resolved, _ = _authorize_selected_file(supplied, config=config)
+    return _read_selected_file(resolved, _read_unbounded_utf8), resolved.parent
+
+
+def validate_remote_locator(value: str) -> str:
+    """§29.4 rule 18: a complete absolute URI, byte-for-byte unchanged."""
+
+    try:
+        validate_structural(value)
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise ArtifactLocatorInvalidError() from error
+    if _forbidden_supplied_form(value, uri_authority=True):
+        raise ArtifactLocatorUnsupportedPathError()
+    scheme_match = URI_SCHEME.match(value)
+    if scheme_match is None:
+        raise ArtifactLocatorInvalidError()
+    if value[: scheme_match.end() - 1].casefold() == "file":
+        # A local locator reaches persistence only through the acquisition
+        # gate that resolves and authorizes it, never as inert remote text.
+        raise ArtifactLocatorUnsupportedPathError()
+    try:
+        _validate_absolute_uri(value)
+    except ValueError as error:
+        raise ArtifactLocatorInvalidError() from error
+    return value
+
+
+def authorize_payload_locator(
+    value: str, *, payload_root: Path, config: WorkspaceConfig
+) -> str:
+    """Authorize one locator embedded in an import payload (§29.4 rule 8).
+
+    Selection is limited to a relative locator resolving beneath the
+    action's payload root; an absolute locator, a `..` escape, and a symlink
+    target outside that root are all non-selected. Authorization never opens
+    the file or reads a byte, and the returned canonical real path is what
+    the §19 evidence item persists.
+    """
+
+    if _forbidden_supplied_form(value) or WINDOWS_DRIVE.match(value) is not None:
+        raise PayloadLocatorError("payload_locator_path_unsupported")
+    try:
+        validate_posix_path(value)
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise PayloadLocatorError("payload_locator_path_unsupported") from error
+    if URI_SCHEME.match(value) is not None or value.startswith("/"):
+        raise PayloadLocatorError("payload_locator_non_selected")
+    if any(part == ".." for part in PurePosixPath(value).parts):
+        raise PayloadLocatorError("payload_locator_non_selected")
+    try:
+        root = payload_root.resolve(strict=True)
+        resolved = (root / value).resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise PayloadLocatorError("payload_locator_unresolved") from error
+    if not resolved.is_file():
+        raise PayloadLocatorError("payload_locator_unresolved")
+    # Root containment is an acquisition-time authorization check, applied
+    # after symlink resolution so a link inside the root cannot reach out.
+    if resolved != root and root not in resolved.parents:
+        raise PayloadLocatorError("payload_locator_non_selected")
+    folded = _case_insensitive_lookup(resolved)
+    if _mandatory_denied(resolved, folded=folded):
+        raise PayloadLocatorError("payload_locator_denied")
+    if _ignored(resolved, config=config, folded=folded):
+        raise PayloadLocatorError("payload_locator_ignored")
+    try:
+        return validate_posix_path(resolved.as_posix())
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise PayloadLocatorError() from error

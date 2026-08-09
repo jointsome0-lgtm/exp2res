@@ -42,6 +42,10 @@ from exp2res.domain.results import (
     EntityIdGroup,
     FactsListResult,
     GapsListResult,
+    ImportCounts,
+    ImportRecordGroups,
+    ImportRecordResult,
+    ImportResult,
     InvalidatedBranch,
     InvalidatedView,
     JdDeleteResult,
@@ -139,6 +143,12 @@ from exp2res.services.view_server import (
     ViewServer,
     validate_bind,
 )
+from exp2res.services.imports import (
+    ImportOutcome,
+    ImportedRecord,
+    import_design_document,
+    import_payload,
+)
 from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.services.workspace import PurgeOutcome, purge_workspace
 from exp2res.storage.repository import (
@@ -169,6 +179,9 @@ db_app = typer.Typer(help="Inspect or migrate the workspace schema.")
 log_app = typer.Typer(help="Capture a manual record.")
 logs_app = typer.Typer(help="Inspect or owner-delete raw records.")
 correction_app = typer.Typer(help="Correction capture lifecycle.")
+import_app = typer.Typer(
+    help="Import one local §19 source payload or design document."
+)
 facts_app = typer.Typer(help="Inspect current extracted facts.")
 detections_app = typer.Typer(
     help="Generate both complete current detection sets together."
@@ -189,6 +202,7 @@ app.add_typer(db_app, name="db")
 app.add_typer(log_app, name="log")
 app.add_typer(logs_app, name="logs")
 app.add_typer(correction_app, name="correction")
+app.add_typer(import_app, name="import")
 app.add_typer(facts_app, name="facts")
 app.add_typer(detections_app, name="detections")
 app.add_typer(gaps_app, name="gaps")
@@ -225,6 +239,7 @@ class Outcome:
     warnings: list[ContractWarning] = field(default_factory=list)
     result: (
         SchemaResult
+        | ImportResult
         | LogsListResult
         | LogsShowResult
         | LogsDeleteResult
@@ -241,6 +256,11 @@ class Outcome:
     ) = None
     human_result: str = ""
     retry: Retry | None = None
+    # §14.14 rule 4: a nonzero *completion* — today only a fully classified
+    # §19.4 import result with rejections — rather than a rejected input.
+    # Class 8 covers every non-cancelled completion, so a residual observed
+    # beside one promotes exactly as it does for class 0 and class 10.
+    completed_report: bool = False
 
 
 def _status_for(exit_code: int) -> str:
@@ -628,11 +648,12 @@ def _run_operation(
         key=os.fsencode,
     )
     outcome.residual_paths = residual_paths
-    if residual_paths and outcome.exit_code in {0, 10}:
+    if residual_paths and (outcome.exit_code in {0, 10} or outcome.completed_report):
         # §14.14 rule 4: a non-cancelled completion that reports a residual is
-        # class 8, including verifier findings that would otherwise be 10. A
-        # failed class (1-7) is not a completion and keeps its own code while
-        # still reporting the residual paths.
+        # class 8, including verifier findings that would otherwise be 10 and a
+        # §19.4 import report that would otherwise be 2. An operational failure
+        # is not a completion and keeps its own code while still reporting the
+        # residual paths.
         outcome.exit_code = 8
         # §14.15/§14.16: a destructive privacy operation reports every
         # residual as `deletion_incomplete`, whatever produced it — the
@@ -1382,6 +1403,230 @@ def recompute_command(
         return _lifecycle_outcome(recomputed)
 
     _run_command(context, "recompute", operation)
+
+
+def _import_record_group(
+    records: tuple[ImportedRecord, ...],
+) -> list[ImportRecordResult]:
+    return [
+        ImportRecordResult(
+            record_number=record.record_number,
+            source_record_id=record.source_record_id,
+            raw_log_id=record.raw_log_id,
+        )
+        for record in records
+    ]
+
+
+def _import_result(imported: ImportOutcome) -> ImportResult:
+    return ImportResult(
+        counts=ImportCounts(
+            accepted=len(imported.accepted),
+            duplicate=len(imported.duplicate),
+            rejected=len(imported.rejected),
+        ),
+        records=ImportRecordGroups(
+            accepted=_import_record_group(imported.accepted),
+            duplicate=_import_record_group(imported.duplicate),
+            rejected=_import_record_group(imported.rejected),
+        ),
+    )
+
+
+def _import_ending(error: Exp2ResError) -> str:
+    return "cancelled" if isinstance(error, OperationCancelledError) else "failed"
+
+
+def _import_record_line(record: ImportedRecord, outcome_name: str) -> str:
+    return (
+        f"{record.record_number}\t{outcome_name}\t"
+        f"{record.source_record_id or '-'}\t{record.raw_log_id or '-'}"
+    )
+
+
+def _import_created(imported: ImportOutcome) -> AffectedIds:
+    """Report the rows committed accepted records left behind.
+
+    §14.14 rule 5 orders every entity group by its own stable identity, and an
+    entity ID is allocated randomly under §12 rule 11 — so neither group may
+    keep the input order its `result` records are reported in.
+    """
+
+    groups = []
+    for entity_type, ids in (
+        (
+            "evidence_item",
+            [
+                item_id
+                for record in imported.accepted
+                for item_id in record.evidence_item_ids
+            ],
+        ),
+        (
+            "raw_log",
+            [
+                record.raw_log_id
+                for record in imported.accepted
+                if record.raw_log_id is not None
+            ],
+        ),
+    ):
+        if ids:
+            groups.append(
+                EntityIdGroup(
+                    entity_type=entity_type,
+                    ids=sorted(ids, key=lambda value: value.encode("utf-8")),
+                )
+            )
+    return AffectedIds(created=groups, superseded=[], deleted=[])
+
+
+def _import_outcome(imported: ImportOutcome) -> Outcome:
+    """Project one §19.4 classification into its §14.14 envelope.
+
+    Every established record appears exactly once under its input
+    `record_number`, and none of the three lists is ever truncated: §14.14
+    rule 5 exempts local stdout from §11's list caps precisely so a large
+    payload still reports every record.
+    """
+
+    result = _import_result(imported)
+    lines = [
+        f"accepted {result.counts.accepted}, "
+        f"duplicate {result.counts.duplicate}, "
+        f"rejected {result.counts.rejected}"
+    ]
+    for outcome_name, group in (
+        ("accepted", imported.accepted),
+        ("duplicate", imported.duplicate),
+        ("rejected", imported.rejected),
+    ):
+        lines.extend(_import_record_line(record, outcome_name) for record in group)
+    # §14.14 rule 5: a fully classified result with rejections is a completed
+    # report, so it exits through class 2 still carrying its complete result.
+    rejected = result.counts.rejected > 0
+    return Outcome(
+        exit_code=2 if rejected else 0,
+        diagnostic_class="import_records_rejected" if rejected else None,
+        affected_ids=_import_created(imported),
+        result=result,
+        # §14.14 rule 4: this class 2 is a completion, not a rejected input, so
+        # an incomplete managed-output cleanup observed beside it still
+        # promotes to class 8 the way a completed class 0 or 10 does.
+        completed_report=True,
+        human_result="\n".join(lines),
+    )
+
+
+def _import_decorate(error: Exp2ResError) -> None:
+    """Report the committed records an ended import left behind.
+
+    §14.14 rule 6 and §19.4 rule 4: each accepted record commits in its own
+    transaction, so whatever ended the payload — a signal, a classified
+    failure, a teardown fault — the records already committed are a lifecycle
+    boundary this envelope reports. Every ending decorates here, so none of
+    them reports less than the others.
+    """
+
+    committed = cast(ImportOutcome | None, getattr(error, "import_outcome", None))
+    if committed is None:
+        return
+    error.affected_ids = _import_created(committed)
+    if getattr(error, "import_classified", False):
+        # Rule 5 nulls a result only when none exists yet; an interrupt after
+        # the last record leaves a complete one.
+        error.result = _import_result(committed)
+    # Human mode reads no `affected_ids`, so the same boundary is rendered as
+    # the committed records' own lines.
+    error.human_result = "\n".join(
+        [f"{_import_ending(error)}, {len(committed.accepted)} committed"]
+        + [
+            _import_record_line(record, "accepted")
+            for record in committed.accepted
+        ]
+    )
+
+
+def _import_command(
+    context: typer.Context, command: CommandPath, source_system: str, payload: str
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        try:
+            imported = import_payload(
+                workspace, source_system=source_system, payload_path=payload
+            )
+            try:
+                return _import_outcome(imported)
+            except KeyboardInterrupt:
+                # The classification is complete and durable; an interrupt in
+                # result assembly still reports it under §14.14 rule 6.
+                cancelled = OperationCancelledError()
+                cancelled.import_outcome = imported
+                cancelled.import_classified = True
+                raise cancelled from None
+        except Exp2ResError as error:
+            try:
+                _import_decorate(error)
+            except KeyboardInterrupt:
+                # The signal replaced the failure while its boundary was being
+                # rendered. That boundary now belongs to the cancellation, and
+                # rendering it there is the same bounded work.
+                cancelled = OperationCancelledError()
+                cancelled.import_outcome = getattr(error, "import_outcome", None)
+                cancelled.import_classified = getattr(
+                    error, "import_classified", False
+                )
+                _import_decorate(cancelled)
+                raise cancelled from None
+            raise
+
+    _run_command(context, command, operation)
+
+
+@import_app.command("ephemeris")
+def import_ephemeris(
+    context: typer.Context,
+    payload: str = typer.Argument(..., metavar="PATH"),
+) -> None:
+    _import_command(context, "import ephemeris", "ephemeris", payload)
+
+
+@import_app.command("atlas")
+def import_atlas(
+    context: typer.Context,
+    payload: str = typer.Argument(..., metavar="PATH"),
+) -> None:
+    _import_command(context, "import atlas", "atlas", payload)
+
+
+@import_app.command("github")
+def import_github(
+    context: typer.Context,
+    payload: str = typer.Argument(..., metavar="PATH"),
+) -> None:
+    # §14.5 and §19.3: one local payload whose `repo` field names the
+    # repository. Nothing here reaches the network.
+    _import_command(context, "import github", "github", payload)
+
+
+@import_app.command("file")
+def import_file(
+    context: typer.Context,
+    source_path: str = typer.Argument(..., metavar="PATH"),
+    project: str | None = typer.Option(None, "--project"),
+) -> None:
+    # §14.5: not a §19 record, so it goes through neither `_import_command`
+    # nor §14.14 rule 5's `{counts, records}` schema. Unlisted there, it
+    # reports `result = null` with its created IDs in `affected_ids`, exactly
+    # as the §14.2 captures whose record shape it shares do.
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        return _capture_outcome(
+            import_design_document(
+                workspace, source_path=source_path, project=project
+            )
+        )
+
+    _run_command(context, "import file", operation)
 
 
 @app.command("extract")

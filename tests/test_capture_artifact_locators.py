@@ -30,6 +30,7 @@ from exp2res.services.logs import delete_log, show_log
 from exp2res.services.source_files import (
     _ignore_matcher,
     reauthorize_prompt_locators,
+    validate_remote_locator,
 )
 from exp2res.storage.repository import (
     insert_evidence_item,
@@ -464,6 +465,27 @@ def test_relative_capture_locators_persist_canonically_for_any_later_directory(
     ):
         with pytest.raises(LocatorReauthorizationFailedError):
             reauthorize_prompt_locators({field: spelling}, config=config)
+
+
+def test_a_one_character_scheme_survives_prompt_reauthorization(
+    workspace: Path,
+) -> None:
+    """§29.4 rules 15 and 18 agree on what the acquisition gate accepted.
+
+    Only the `//` separates a one-character scheme from a Windows drive, so
+    both gates must read it the same way or a locator this workspace stored
+    would fail its own pre-serialization re-check.
+    """
+
+    config = load_workspace_config(workspace)
+    remote = "x://example.invalid/Vera-Example-remote-artifact"
+    assert validate_remote_locator(remote) == remote
+    reauthorize_prompt_locators(
+        {"external_ref": remote, "uri": remote, "url": remote}, config=config
+    )
+    for drive in ("c:/Vera-Example/artifact", "C:\\Vera-Example\\artifact"):
+        with pytest.raises(LocatorReauthorizationFailedError):
+            reauthorize_prompt_locators({"external_ref": drive}, config=config)
 
 
 def test_remote_persisted_locators_are_not_resolved_again(

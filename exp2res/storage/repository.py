@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import re
 import sqlite3
-from typing import Iterable
+from typing import Iterable, Optional, Sequence
 
 from pydantic import ValidationError
 
@@ -30,6 +31,7 @@ from exp2res.domain.models import (
     VerificationFinding,
     canonical_branch_identity,
     canonical_project_key,
+    validate_structural,
 )
 from exp2res.domain.temporal import (
     confidence_exceeds,
@@ -37,6 +39,11 @@ from exp2res.domain.temporal import (
     placement_supports,
 )
 from exp2res.errors import HydrationFailureError, IdCollisionError, IntegrityFailureError
+
+
+# §11 rule 30 types the imported `content_hash` metadata key as exactly
+# §19.4 rule 3's lowercase SHA-256 hexadecimal form.
+IMPORT_CONTENT_HASH = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -156,6 +163,106 @@ def insert_evidence_item(connection: sqlite3.Connection, item: EvidenceItem) -> 
         if "evidence_items.id" in str(error):
             raise IdCollisionError() from error
         raise IntegrityFailureError() from error
+
+
+def committed_import_records(
+    connection: sqlite3.Connection,
+    candidates: Sequence[tuple[str, Optional[str], Optional[str]]],
+) -> set[tuple[str, Optional[str], Optional[str]]]:
+    """Report which candidate records the workspace actually stores as themselves.
+
+    §19.4 rule 4 gives each imported record its own transaction, so after an
+    interruption the committed set is a fact of the workspace rather than of
+    the classifier's in-memory bookkeeping. Reading it back under the still
+    held §8.1 writer lock reports a record whose commit the signal outran and
+    never reports a rolled-back candidate.
+
+    Existence of the generated ID is not that fact, and neither is the ID a
+    key. A candidate whose ID collided shares exactly that ID with a row that
+    is a different record, and two candidates in one run can hold the same ID
+    for the same reason — so keying by it would let the later candidate answer
+    for the earlier one's durable commit. Both the comparison and the verdict
+    are therefore per candidate: the §19.4 rule 2 pair the importer wrote —
+    identity and rule 3's content hash, from the same reserved
+    `RawLog.metadata` keys `retained_import_hashes` scans — must match the
+    stored row under that ID. A manual-capture row carries neither key and
+    matches nothing.
+    """
+
+    wanted: dict[str, set[tuple[Optional[str], Optional[str]]]] = {}
+    for raw_log_id, identity, digest in candidates:
+        wanted.setdefault(raw_log_id, set()).add((identity, digest))
+    committed: set[tuple[str, Optional[str], Optional[str]]] = set()
+    ordered = list(wanted)
+    for start in range(0, len(ordered), 512):
+        chunk = tuple(ordered[start : start + 512])
+        placeholders = ",".join("?" for _ in chunk)
+        for row in connection.execute(
+            f"""
+            SELECT
+                id,
+                json_extract(metadata_json, '$.source_record_id') AS source_record_id,
+                json_extract(metadata_json, '$.content_hash') AS content_hash
+            FROM raw_logs
+            WHERE id IN ({placeholders})
+            """,
+            chunk,
+        ):
+            raw_log_id = str(row["id"])
+            stored = (row["source_record_id"], row["content_hash"])
+            if stored in wanted[raw_log_id]:
+                committed.add((raw_log_id, *stored))
+    return committed
+
+
+def retained_import_hashes(
+    connection: sqlite3.Connection, source_system: str
+) -> dict[str, str]:
+    """Map one source system's retained §19.4 identities to their hashes.
+
+    Identity lives in `RawLog.metadata`, so the comparison reads the same
+    three reserved keys the importer wrote. §11 rule 29 names this scan as
+    their only consumer, and rule 30 types them: the identity keys are
+    non-empty structural strings and `content_hash` is exactly §19.4 rule 3's
+    lowercase SHA-256 hexadecimal form. Stored state outside that shape is
+    not a verdict an import may reinterpret — §11 rule 39 fails a stored row
+    closed at hydration, and this scan is where these keys are hydrated. An
+    empty stored identity is the case that would otherwise matter most: it
+    matches no computed identity, so the record it belongs to would import a
+    second time as `accepted`. The whole scan precedes the first record's
+    classification, so failing closed here withdraws no accepted record
+    (§19.4 rule 4).
+    """
+
+    retained: dict[str, str] = {}
+    for row in connection.execute(
+        """
+        SELECT
+            json_extract(metadata_json, '$.source_record_id') AS source_record_id,
+            json_extract(metadata_json, '$.content_hash') AS content_hash
+        FROM raw_logs
+        WHERE json_extract(metadata_json, '$.source_system') = ?
+        """,
+        (source_system,),
+    ):
+        identity = row["source_record_id"]
+        digest = row["content_hash"]
+        if not isinstance(identity, str) or not isinstance(digest, str):
+            raise IntegrityFailureError()
+        if IMPORT_CONTENT_HASH.fullmatch(digest) is None:
+            raise IntegrityFailureError()
+        try:
+            validate_structural(identity)
+        except (UnicodeError, ValueError, TypeError) as error:
+            raise IntegrityFailureError() from error
+        # Two retained rows claiming one identity with two hashes leave the
+        # replay verdict — duplicate or conflict — to whichever row SQLite
+        # returned last. An import may not pick one; equal hashes stay
+        # tolerated because they name one unambiguous verdict.
+        if retained.get(identity, digest) != digest:
+            raise IntegrityFailureError()
+        retained[identity] = digest
+    return retained
 
 
 def validate_experience_fact_sources(

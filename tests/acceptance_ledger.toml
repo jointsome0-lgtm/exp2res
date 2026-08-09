@@ -6,10 +6,19 @@ issues = ["#81", "PR #95"]
 note = "Phase 0 proves atomic daily and retrospective RawLog/manual_claim EvidenceItem pairs; the broader typed-provenance eval remains partial until later producers land"
 
 ["24.2"]
-status = "pending"
+status = "partial"
 phases = ["5"]
 evals = ["21.2", "21.3", "21.45", "21.46"]
-issues = []
+nodes = [
+  "tests/test_import_file.py::test_the_document_lands_as_one_typed_stage_one_pair",
+  "tests/test_import_file.py::test_both_locator_spellings_persist_the_one_canonical_path[symlink]",
+  "tests/test_import_file.py::test_both_locator_spellings_persist_the_one_canonical_path[dot-dot]",
+  "tests/test_import_file.py::test_no_managed_source_copy_is_created",
+  "tests/test_import_file.py::test_the_command_reports_a_null_result_with_the_created_pair",
+  "tests/test_vera_replay_import.py::test_the_declared_file_step_records_its_design_document",
+]
+issues = ["#175", "#246"]
+note = "Imported activity and knowledge-state records enter as raw logs and evidence items with no automatic overclaiming: import creates no ExperienceFact or SelfClaim, and an ephemeris record carrying knowledge-state members is rejected; §14.5's fourth form, which is not a §19 record and so has no eval of its own, is proven by the direct nodes above — one typed `design_doc` pair, the canonical real path in both `external_ref` and `EvidenceItem.path`, no managed copy, and §14.14's unlisted-command `result = null`; the Vera corpus now replays every declared import step through the command group, and the Stage 3 scope halves of §21.2 and §21.3 remain unproven"
 
 ["24.3"]
 status = "partial"
@@ -346,16 +355,18 @@ issues = ["#167"]
 note = "Workspace purge, the §14.15 jd list projection, and jd delete are implemented and proven, including consent, the committed point deletion under a filesystem failure, global call-hash redaction, removed-and-residual managed-path reporting, and an untraversed symlink whose target survives; and the dependent branch and bullet purge with its out/branch/ removal is proven in both output modes"
 
 ["24.48"]
-status = "pending"
+status = "partial"
 phases = ["5"]
 evals = ["21.45"]
-issues = []
+issues = ["#175"]
+note = "Closed unwrapped record shapes, (source system, source identity) keying, importer-computed canonical hashing, the GitHub identity derivation and SHA rules, the attribution mapping, and per-record transactions under one writer lock are proven, and the §14.5 command group now emits the complete §14.14 result envelope over them; only an authorized content_digest dereference is still absent"
 
 ["24.49"]
-status = "pending"
+status = "partial"
 phases = ["5"]
 evals = ["21.3", "21.46"]
-issues = []
+issues = ["#175"]
+note = "The §19.1 and §19.2 import halves are proven, including rejection of a directly routed knowledge-state payload and an Atlas snapshot that promotes nothing; the Stage 3 confidence-ceiling halves and the §30 view clauses belong to other rows"
 
 ["24.50"]
 status = "partial"

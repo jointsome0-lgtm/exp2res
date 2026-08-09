@@ -124,14 +124,14 @@
       "clock": "2026-07-13T09:00:00+02:00",
       "expect": {
         "accepted": 0,
-        "batch": "aborted",
-        "conflict": 1,
         "duplicate": 0,
-        "rejected": 0
+        "reason": "retained identity, different content hash (§19.4 rule 2)",
+        "rejected": 1
       },
       "file": "invalid/ephemeris-conflict.jsonl",
       "importer": "ephemeris",
       "kind": "import",
+      "note": "step 9 retained this identity under a different hash; corrected upstream content must arrive under a new identity (§19.4 rule 2)",
       "step": "F1"
     },
     {
@@ -139,12 +139,11 @@
       "clock": "2026-07-13T09:05:00+02:00",
       "expect": {
         "accepted": 0,
-        "conflict": 0,
         "duplicate": 0,
-        "reason": "content_hash mismatch (§19.4 rule 3)",
+        "reason": "commit_sha is not 40 lowercase hex digits (§19.3)",
         "rejected": 1
       },
-      "file": "invalid/github-commit-bad-hash.json",
+      "file": "invalid/github-commit-bad-sha.json",
       "importer": "github",
       "kind": "import",
       "step": "F2"
@@ -154,7 +153,6 @@
       "clock": "2026-07-13T09:10:00+02:00",
       "expect": {
         "accepted": 0,
-        "conflict": 0,
         "duplicate": 0,
         "reason": "summary not byte-exact in text (§19.2)",
         "rejected": 1
@@ -284,7 +282,6 @@
       "clock": "2026-07-06T09:30:00+02:00",
       "expect": {
         "accepted": 3,
-        "conflict": 0,
         "duplicate": 1,
         "rejected": 0
       },
@@ -297,7 +294,6 @@
       "clock": "2026-07-06T09:35:00+02:00",
       "expect": {
         "accepted": 1,
-        "conflict": 0,
         "duplicate": 0,
         "rejected": 0
       },
@@ -310,7 +306,6 @@
       "clock": "2026-07-06T09:40:00+02:00",
       "expect": {
         "accepted": 1,
-        "conflict": 0,
         "duplicate": 0,
         "evidence_strength": "commit_or_pr",
         "rejected": 0
@@ -324,7 +319,6 @@
       "clock": "2026-07-06T09:41:00+02:00",
       "expect": {
         "accepted": 1,
-        "conflict": 0,
         "duplicate": 0,
         "evidence_strength": "artifact_reference",
         "rejected": 0
@@ -376,5 +370,5 @@
       "step": 16
     }
   ],
-  "version": "0.5.0"
+  "version": "1.1.0"
 }

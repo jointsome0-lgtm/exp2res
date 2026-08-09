@@ -37,6 +37,10 @@ CommandPath = Literal[
     "correction add",
     "recompute",
     "extract",
+    "import ephemeris",
+    "import atlas",
+    "import github",
+    "import file",
     "logs list",
     "logs show",
     "logs delete",
@@ -108,6 +112,35 @@ class SelectedLogProjection(LogProjection):
 
 class LogsListResult(StrictModel):
     logs: list[LogProjection]
+
+
+class ImportRecordResult(StrictModel):
+    """§14.14 rule 5's closed §19.4 record projection; no rejection reason.
+
+    `record_number` is this record's stable identity in the report, so a
+    repeated source identity stays a distinct entry.
+    """
+
+    record_number: int
+    source_record_id: str | None
+    raw_log_id: str | None
+
+
+class ImportCounts(StrictModel):
+    accepted: int
+    duplicate: int
+    rejected: int
+
+
+class ImportRecordGroups(StrictModel):
+    accepted: list[ImportRecordResult]
+    duplicate: list[ImportRecordResult]
+    rejected: list[ImportRecordResult]
+
+
+class ImportResult(StrictModel):
+    counts: ImportCounts
+    records: ImportRecordGroups
 
 
 class EvidenceItemProjection(StrictModel):
@@ -256,6 +289,7 @@ class AssessmentExportResult(StrictModel):
 
 ResultPayload = (
     SchemaResult
+    | ImportResult
     | LogsListResult
     | LogsShowResult
     | LogsDeleteResult

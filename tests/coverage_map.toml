@@ -13,8 +13,12 @@ status = "pending"
 phase = "5"
 
 ["21.3"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_imports_phase5.py::test_atlas_snapshot_round_trip_creates_one_pair_and_no_claim",
+]
 phase = "5"
+note = "The §19.2 import half is proven: one atomic RawLog/knowledge_state_snapshot pair, no ExperienceFact or SelfClaim; the Stage 3 mastery half needs an extraction run over an imported snapshot"
 
 ["21.4"]
 status = "pending"
@@ -404,12 +408,14 @@ nodes = [
   "tests/test_capture_phase0.py::test_invalid_temporal_shapes_fail_before_persistence[reversed-range]",
   "tests/test_capture_phase0.py::test_invalid_temporal_shapes_fail_before_persistence[unknown-with-bound]",
   "tests/test_capture_phase0.py::test_oversize_and_forbidden_source_files_leave_no_record",
+  "tests/test_import_file.py::test_an_oversize_document_fails_closed_rather_than_truncating",
+  "tests/test_import_file.py::test_a_non_utf8_document_is_a_typed_rejection",
   "tests/test_llm_runner.py::test_datetime_outputs_validate_through_the_json_boundary",
   "tests/test_llm_runner.py::test_invalid_output_retries_once_then_fails_without_business_effect[extra-key]",
   "tests/test_llm_runner.py::test_invalid_output_retries_once_then_fails_without_business_effect[service-owned-injection]",
 ]
 phase = "5"
-note = "Strict temporal construction, bounded acquisition, closed runner outputs, JSON datetime parsing, and service-owned-field rejection are covered; every later §15 and §19 shape plus stored hydration remain"
+note = "Strict temporal construction, bounded acquisition on both owner-supplied file surfaces — capture and the §14.5 `import file` document — closed runner outputs, JSON datetime parsing, and service-owned-field rejection are covered; every later §15 and §19 shape plus stored hydration remain"
 
 ["21.40"]
 status = "pending"
@@ -527,12 +533,75 @@ phase = "4"
 note = "The workspace purge half is proven, including complete schema inventory, consent, retained initialization, SQLite erasure, and residual symlink semantics; jd list's raw-text-free projection, jd delete's consent, committed point deletion, global call-hash redaction, removed-and-residual managed-path reporting, and untraversed symlink now join it, and jd delete's dependent branch, bullet, and out/branch/ purge is proven in both output modes"
 
 ["21.45"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_imports_phase5.py::test_ephemeris_round_trip_records_identity_and_linked_evidence",
+  "tests/test_imports_phase5.py::test_repeating_a_committed_import_is_a_counted_duplicate_no_op",
+  "tests/test_imports_phase5.py::test_same_identity_with_different_content_is_rejected_not_merged",
+  "tests/test_imports_phase5.py::test_repeated_identity_inside_one_file_rejects_only_the_repeat",
+  "tests/test_imports_phase5.py::test_identical_content_under_distinct_identities_stays_independent",
+  "tests/test_imports_phase5.py::test_one_invalid_record_never_withdraws_the_valid_one[wrapping-envelope-invalid0-record_invalid]",
+  "tests/test_imports_phase5.py::test_one_invalid_record_never_withdraws_the_valid_one[record-supplied-hash-invalid1-record_invalid]",
+  "tests/test_imports_phase5.py::test_one_invalid_record_never_withdraws_the_valid_one[record-supplied-version-invalid2-record_invalid]",
+  "tests/test_imports_phase5.py::test_one_invalid_record_never_withdraws_the_valid_one[foreign-source-record-invalid3-record_source_mismatch]",
+  "tests/test_imports_phase5.py::test_one_invalid_record_never_withdraws_the_valid_one[float-value-invalid6-record_float_value]",
+  "tests/test_imports_phase5.py::test_payload_over_the_object_limit_fails_before_persistence",
+  "tests/test_imports_phase5.py::test_interrupted_file_rerun_converges_as_duplicates",
+  "tests/test_imports_phase5.py::test_atlas_snapshot_round_trip_creates_one_pair_and_no_claim",
+  "tests/test_imports_phase5.py::test_github_attribution_matrix_maps_only_owner_to_commit_evidence[owner-null]",
+  "tests/test_imports_phase5.py::test_github_attribution_matrix_maps_only_owner_to_commit_evidence[owner-strings]",
+  "tests/test_imports_phase5.py::test_github_attribution_matrix_maps_only_owner_to_commit_evidence[not-owner-null]",
+  "tests/test_imports_phase5.py::test_github_attribution_matrix_maps_only_owner_to_commit_evidence[unknown-null]",
+  "tests/test_imports_phase5.py::test_github_attribution_matrix_maps_only_owner_to_commit_evidence[omitted-null]",
+  "tests/test_imports_phase5.py::test_github_attribution_matrix_maps_only_owner_to_commit_evidence[omitted-strings]",
+  "tests/test_imports_phase5.py::test_github_omitted_attribution_hashes_as_explicit_unknown",
+  "tests/test_imports_phase5.py::test_github_malformed_commit_sha_rejects_without_identity[abbreviated-record0]",
+  "tests/test_imports_phase5.py::test_github_malformed_commit_sha_rejects_without_identity[overlong-record1]",
+  "tests/test_imports_phase5.py::test_github_malformed_commit_sha_rejects_without_identity[uppercase-record2]",
+  "tests/test_imports_phase5.py::test_github_malformed_commit_sha_rejects_without_identity[non-hexadecimal-record3]",
+  "tests/test_imports_phase5.py::test_github_supplied_identity_field_is_an_undeclared_field",
+  "tests/test_cli_import.py::test_each_source_form_reports_its_own_command_and_record",
+  "tests/test_cli_import.py::test_a_repeated_record_is_a_duplicate_with_no_raw_log_id",
+  "tests/test_cli_import.py::test_a_classified_rejection_exits_class_two_with_its_complete_result",
+  "tests/test_cli_import.py::test_more_than_a_hundred_records_are_reported_untruncated",
+  "tests/test_cli_import.py::test_a_payload_without_a_record_boundary_reports_a_null_result",
+  "tests/test_cli_import.py::test_human_mode_prints_one_line_for_every_record",
+  "tests/test_cli_import.py::test_an_empty_multi_record_payload_is_a_complete_zero_classification",
+  "tests/test_cli_import.py::test_created_entity_groups_are_ordered_by_their_own_id_identity",
+  "tests/test_cli_import.py::test_a_completed_report_with_a_residual_still_reaches_class_eight",
+  "tests/test_cli_import.py::test_an_interrupted_import_reports_the_records_it_already_committed",
+  "tests/test_cli_import.py::test_a_commit_the_signal_outran_is_still_reported",
+  "tests/test_cli_import.py::test_a_rolled_back_candidate_is_never_reported_as_committed",
+  "tests/test_cli_import.py::test_human_mode_renders_the_committed_records_of_a_cancelled_import",
+  "tests/test_cli_import.py::test_an_interrupt_in_result_assembly_keeps_the_complete_result",
+  "tests/test_cli_import.py::test_a_collided_candidate_never_borrows_the_retained_row_as_its_commit",
+  "tests/test_cli_import.py::test_an_interrupt_before_the_commit_lands_reports_no_row",
+  "tests/test_cli_import.py::test_an_interrupt_in_writer_teardown_still_reports_the_committed_rows",
+  "tests/test_cli_import.py::test_a_classified_failure_keeps_the_records_committed_behind_it",
+  "tests/test_cli_import.py::test_a_non_busy_database_failure_keeps_the_records_committed_behind_it",
+  "tests/test_cli_import.py::test_an_interrupt_before_the_writer_opens_reports_no_classification",
+  "tests/test_cli_import.py::test_a_signal_on_the_final_classification_still_carries_the_result",
+  "tests/test_cli_import.py::test_a_candidate_that_only_shares_an_id_is_never_reported_as_committed",
+  "tests/test_cli_import.py::test_a_final_duplicate_survives_the_signal_that_follows_it",
+  "tests/test_cli_import.py::test_a_repeated_candidate_id_never_hides_the_earlier_commit",
+  "tests/test_cli_import.py::test_a_teardown_fault_still_reports_the_completed_classification",
+  "tests/test_cli_import.py::test_a_signal_during_failure_reporting_keeps_the_same_boundary",
+  "tests/test_cli_import.py::test_an_empty_payload_keeps_its_complete_result_through_a_cancel",
+  "tests/test_vera_replay_import.py::test_every_declared_import_step_produces_its_declared_counts",
+  "tests/test_vera_replay_import.py::test_every_declared_failure_step_fails_for_its_declared_reason",
+]
 phase = "5"
+note = "Service-level classification, identity, hashing, per-record transactions, and the payload object bound are proven for all three importers, and the §14.14 result envelope — command path, exit class, and the untruncated over-100-record lists that partition every record_number — is proven through the CLI group; only the later authorized dereference of a supplied content_digest has no reader yet"
 
 ["21.46"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_imports_phase5.py::test_ephemeris_round_trip_records_identity_and_linked_evidence",
+  "tests/test_imports_phase5.py::test_one_invalid_record_never_withdraws_the_valid_one[knowledge-state-member-invalid5-record_invalid]",
+  "tests/test_imports_phase5.py::test_atlas_snapshot_round_trip_creates_one_pair_and_no_claim",
+]
 phase = "5"
+note = "Domain routing is proven at import: an ephemeris record carrying knowledge-state members is rejected rather than flattened, and a valid Atlas snapshot persists only its atomic pair with no fact or claim; the Stage 3 scope halves and every §30 view clause remain outside this row's phase"
 
 ["21.47"]
 status = "partial"

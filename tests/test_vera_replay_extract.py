@@ -1,9 +1,10 @@
 """Vera E1 replays the manual-capture lineages through the Stage 3 CLI.
 
 The replay intentionally skips ``import`` and ``jd_add`` steps: they seed no
-manual-capture lineage needed by E1, and their integration command paths are a
-later phase. This module's declared E1 scope is the replayed daily/retro/
-correction subset plus one canned §15.2 response per planned lineage.
+manual-capture lineage needed by E1. This module's declared E1 scope is the
+replayed daily/retro/correction subset plus one canned §15.2 response per
+planned lineage; the declared ``import`` steps have their own replay in
+``tests/test_vera_replay_import.py``.
 """
 
 from __future__ import annotations

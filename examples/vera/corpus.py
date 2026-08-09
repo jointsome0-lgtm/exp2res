@@ -11,12 +11,13 @@ Usage:
     python3 examples/vera/corpus.py generate   # (re)write corpus/ tree
     python3 examples/vera/corpus.py check      # verify corpus/ matches, byte for byte
 
-Integration envelopes follow §19.4: ``content_hash`` is SHA-256 over the
-§11 canonical-serialization bytes of ``body`` — object keys sorted by
-code point, no insignificant whitespace, datetime values normalized to
-UTC ``YYYY-MM-DDThh:mm:ss.ffffffZ``, raw UTF-8, minimal JSON escapes.
-The stored fixture values keep their supplied ``+02:00`` offsets; only
-hash bytes normalize (§11, §12 rule 3).
+Import fixtures are source-local §19.1-§19.3 records: no wrapping
+envelope, no shared version field, no record-supplied content hash
+(§19.4 rule 1). The importer computes the §19.4 rule 3 hash itself, so a
+fixture that carried one would be undeclared-field input. Ephemeris and
+Atlas records name their own identity in ``record_id``; a GitHub record
+derives ``<repo>@<commit_sha>`` and has no identity field of its own.
+Stored values keep their supplied ``+02:00`` offsets (§12 rule 3).
 """
 
 from __future__ import annotations
@@ -25,11 +26,10 @@ import hashlib
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 CORPUS_NAME = "vera-example-fixtures"
-CORPUS_VERSION = "0.5.0"
+CORPUS_VERSION = "1.1.0"
 MARKER = "Vera Example"
 PERSONA_SOURCE = "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md"
 ROOT = Path(__file__).resolve().parent / "corpus"
@@ -49,52 +49,10 @@ MARKER_EXEMPT_PATHS = frozenset(
     }
 )
 
-# Fields inside §19 bodies whose values are datetimes for §11 hash
-# normalization. Envelope fields (exported_at) never enter the hash.
-DATETIME_KEYS = {"start", "end", "as_of", "authored_at", "committed_at"}
-
-
-def normalize_for_hash(value, key=None):
-    if isinstance(value, dict):
-        return {k: normalize_for_hash(v, k) for k, v in value.items()}
-    if isinstance(value, list):
-        return [normalize_for_hash(v, key) for v in value]
-    if key in DATETIME_KEYS and isinstance(value, str):
-        text = value[:-1] + "+00:00" if value.endswith("Z") else value
-        parsed = datetime.fromisoformat(text)
-        if parsed.tzinfo is None:
-            raise ValueError(f"datetime {value!r} must be offset-aware (§11)")
-        return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    if isinstance(value, float):
-        raise ValueError("floats are invalid in integration bodies (§19.4 rule 3)")
-    return value
-
-
-def canonical_bytes(value) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
-
-
-def body_hash(body: dict) -> str:
-    return hashlib.sha256(canonical_bytes(normalize_for_hash(body))).hexdigest()
-
 
 def fake_sha(story_key: str) -> str:
     """Deterministic, visibly fabricated 40-hex commit SHA for a story key."""
     return hashlib.sha256(f"{CORPUS_NAME}:{story_key}".encode("utf-8")).hexdigest()[:40]
-
-
-def envelope(source_system: str, source_record_id: str, exported_at: str, body: dict) -> dict:
-    return {
-        "contract_version": 1,
-        "source_system": source_system,
-        "source_record_id": source_record_id,
-        "exported_at": exported_at,
-        "content_hash": body_hash(body),
-        "adapter_version": "selfos-demo-adapter/0.1",
-        "body": body,
-    }
 
 
 def json_file(value) -> str:
@@ -140,12 +98,12 @@ EPHEMERIS_EVENTS = [
         "text": "[Vera Example demo] Resumed drafting the ingress guide.",
     },
 ]
-EPHEMERIS_EXPORTED_AT = "2026-07-06T09:00:00+02:00"
 
 
-def ephemeris_body(event: dict) -> dict:
+def ephemeris_record(event: dict) -> dict:
     return {
         "source": "ephemeris",
+        "record_id": event["key"],
         "domain": "activity",
         "occurred": {
             "start": event["start"],
@@ -158,13 +116,10 @@ def ephemeris_body(event: dict) -> dict:
     }
 
 
-def ephemeris_envelopes():
-    envs = [
-        envelope("ephemeris", e["key"], EPHEMERIS_EXPORTED_AT, ephemeris_body(e))
-        for e in EPHEMERIS_EVENTS
-    ]
-    envs.append(envs[0])  # byte-identical repeat: counted intra-batch duplicate (§19.4 rule 4)
-    return envs
+def ephemeris_records():
+    records = [ephemeris_record(e) for e in EPHEMERIS_EVENTS]
+    records.append(records[0])  # byte-identical repeat: counted duplicate (§19.4 rule 2)
+    return records
 
 
 ATLAS_AS_OF = "2026-07-05T20:00:00+02:00"
@@ -230,9 +185,10 @@ def atlas_artifact() -> str:
     return atlas_text() + "\n"
 
 
-def atlas_body(text: str, summary: str, with_artifact: bool = True) -> dict:
+def atlas_record(record_id: str, text: str, summary: str, with_artifact: bool = True) -> dict:
     return {
         "source": "atlas",
+        "record_id": record_id,
         "domain": "knowledge_state",
         "as_of": ATLAS_AS_OF,
         "occurred": dict(ATLAS_OCCURRED),
@@ -256,13 +212,14 @@ def atlas_body(text: str, summary: str, with_artifact: bool = True) -> dict:
 
 GH1_SHA = fake_sha("gh1-etcd-runbook")
 GH2_SHA = fake_sha("gh2-typo-patch")
-GH_BADHASH_SHA = fake_sha("gh3-bad-hash")
+# Abbreviated on purpose: §19.3 requires the full 40 lowercase hex digits.
+GH_BAD_SHA = fake_sha("gh3-abbreviated-sha")[:12]
 
 VERA_IDENTITY = {"name": "Vera Example", "email": "vera@example.com", "login": "vera-example"}
 SASHA_IDENTITY = {"name": "Sasha Example", "email": "sasha@example.com", "login": "sasha-example"}
 
 
-def github_body(sha: str, message: str, files, author, committer, authored_at, committed_at, attribution) -> dict:
+def github_record(sha: str, message: str, files, author, committer, authored_at, committed_at, attribution) -> dict:
     return {
         "source": "github",
         "repo": REPO,
@@ -278,7 +235,7 @@ def github_body(sha: str, message: str, files, author, committer, authored_at, c
     }
 
 
-GH1_BODY = github_body(
+GH1_RECORD = github_record(
     GH1_SHA,
     "Add etcd backup runbook and a first link-checker script",
     ["runbooks/etcd-backup.md", "tools/check_links.py"],
@@ -288,7 +245,7 @@ GH1_BODY = github_body(
     "2026-06-15T11:20:00+02:00",
     "owner",
 )
-GH2_BODY = github_body(
+GH2_RECORD = github_record(
     GH2_SHA,
     "Fix typos in the kubectl runbook (community patch)",
     ["runbooks/kubectl-troubleshooting.md"],
@@ -298,8 +255,6 @@ GH2_BODY = github_body(
     "2026-06-28T16:40:00+02:00",
     "unknown",
 )
-GH_EXPORTED_AT = "2026-07-06T09:00:00+02:00"
-
 DAILY_LOGS = {
     "logs/daily-2026-06-02.md": """# Daily log — 2026-06-02 — Vera Example
 
@@ -889,20 +844,20 @@ def replay() -> dict:
         {"step": 9, "kind": "import", "importer": "ephemeris",
          "file": "imports/ephemeris-2026-06.jsonl",
          "clock": "2026-07-06T09:30:00+02:00",
-         "expect": {"accepted": 3, "duplicate": 1, "conflict": 0, "rejected": 0}},
+         "expect": {"accepted": 3, "duplicate": 1, "rejected": 0}},
         {"step": 10, "kind": "import", "importer": "atlas",
          "file": "imports/atlas-snapshot-2026-07-05.json",
          "clock": "2026-07-06T09:35:00+02:00",
-         "expect": {"accepted": 1, "duplicate": 0, "conflict": 0, "rejected": 0}},
+         "expect": {"accepted": 1, "duplicate": 0, "rejected": 0}},
         {"step": 11, "kind": "import", "importer": "github",
          "file": "imports/github-commit-2026-06-15.json",
          "clock": "2026-07-06T09:40:00+02:00",
-         "expect": {"accepted": 1, "duplicate": 0, "conflict": 0, "rejected": 0,
+         "expect": {"accepted": 1, "duplicate": 0, "rejected": 0,
                     "evidence_strength": "commit_or_pr"}},
         {"step": 12, "kind": "import", "importer": "github",
          "file": "imports/github-commit-2026-06-28.json",
          "clock": "2026-07-06T09:41:00+02:00",
-         "expect": {"accepted": 1, "duplicate": 0, "conflict": 0, "rejected": 0,
+         "expect": {"accepted": 1, "duplicate": 0, "rejected": 0,
                     "evidence_strength": "artifact_reference"}},
         {"step": 13, "kind": "import", "importer": "file",
          "file": "imports/design-doc-k8s-playbook.md",
@@ -966,17 +921,20 @@ def replay() -> dict:
         {"step": "F1", "kind": "import", "importer": "ephemeris",
          "file": "invalid/ephemeris-conflict.jsonl",
          "after_step": 9, "clock": "2026-07-13T09:00:00+02:00",
-         "expect": {"accepted": 0, "duplicate": 0, "conflict": 1, "rejected": 0,
-                    "batch": "aborted"}},
+         "note": "step 9 retained this identity under a different hash; corrected "
+                 "upstream content must arrive under a new identity (§19.4 rule 2)",
+         "expect": {"accepted": 0, "duplicate": 0, "rejected": 1,
+                    "reason": "retained identity, different content hash "
+                              "(§19.4 rule 2)"}},
         {"step": "F2", "kind": "import", "importer": "github",
-         "file": "invalid/github-commit-bad-hash.json",
+         "file": "invalid/github-commit-bad-sha.json",
          "after_step": 9, "clock": "2026-07-13T09:05:00+02:00",
-         "expect": {"accepted": 0, "duplicate": 0, "conflict": 0, "rejected": 1,
-                    "reason": "content_hash mismatch (§19.4 rule 3)"}},
+         "expect": {"accepted": 0, "duplicate": 0, "rejected": 1,
+                    "reason": "commit_sha is not 40 lowercase hex digits (§19.3)"}},
         {"step": "F3", "kind": "import", "importer": "atlas",
          "file": "invalid/atlas-snapshot-text-mismatch.json",
          "after_step": 9, "clock": "2026-07-13T09:10:00+02:00",
-         "expect": {"accepted": 0, "duplicate": 0, "conflict": 0, "rejected": 1,
+         "expect": {"accepted": 0, "duplicate": 0, "rejected": 1,
                     "reason": "summary not byte-exact in text (§19.2)"}},
     ]
     privacy_epilogue = [
@@ -1028,54 +986,49 @@ def build_files() -> dict:
     for name, response in sorted(DEMO_RESPONSES.items()):
         files[f"llm/{name}"] = json_file(response)
 
-    files["imports/ephemeris-2026-06.jsonl"] = jsonl_file(ephemeris_envelopes())
+    files["imports/ephemeris-2026-06.jsonl"] = jsonl_file(ephemeris_records())
 
     text = atlas_text()
     files["imports/" + ATLAS_ARTIFACT_RELPATH] = atlas_artifact()
     files["imports/atlas-snapshot-2026-07-05.json"] = json_file(
-        envelope("atlas", "vera-atlas-snapshot-2026-07-05", "2026-07-05T21:00:00+02:00",
-                 atlas_body(text, ATLAS_SUMMARY))
+        atlas_record("vera-atlas-snapshot-2026-07-05", text, ATLAS_SUMMARY)
     )
 
-    files["imports/github-commit-2026-06-15.json"] = json_file(
-        envelope("github", f"{REPO}@{GH1_SHA}", GH_EXPORTED_AT, GH1_BODY)
-    )
-    files["imports/github-commit-2026-06-28.json"] = json_file(
-        envelope("github", f"{REPO}@{GH2_SHA}", GH_EXPORTED_AT, GH2_BODY)
-    )
+    files["imports/github-commit-2026-06-15.json"] = json_file(GH1_RECORD)
+    files["imports/github-commit-2026-06-28.json"] = json_file(GH2_RECORD)
     files["imports/design-doc-k8s-playbook.md"] = DESIGN_DOC
 
     files["jds/jd-docs-engineer-examplia.md"] = JD_DOCS
     files["jds/jd-junior-backend-clouddocs.md"] = JD_BACKEND
 
     # invalid/ — deterministic failure fixtures, each one wrong in exactly one way.
-    conflict_body = ephemeris_body(EPHEMERIS_EVENTS[0])
-    conflict_body["text"] = (
+    conflict = ephemeris_record(EPHEMERIS_EVENTS[0])
+    conflict["text"] = (
         "[Vera Example demo] Drafted the etcd backup steps and shipped them to production."
     )
-    files["invalid/ephemeris-conflict.jsonl"] = jsonl_file(
-        [envelope("ephemeris", EPHEMERIS_EVENTS[0]["key"], "2026-07-07T09:00:00+02:00", conflict_body)]
-    )
+    files["invalid/ephemeris-conflict.jsonl"] = jsonl_file([conflict])
 
-    badhash_body = github_body(
-        GH_BADHASH_SHA,
-        "Add ingress TLS runbook draft",
-        ["runbooks/ingress-tls.md"],
-        VERA_IDENTITY,
-        VERA_IDENTITY,
-        "2026-07-01T12:00:00+02:00",
-        "2026-07-01T12:00:00+02:00",
-        "owner",
+    files["invalid/github-commit-bad-sha.json"] = json_file(
+        github_record(
+            GH_BAD_SHA,
+            "Add ingress TLS runbook draft",
+            ["runbooks/ingress-tls.md"],
+            VERA_IDENTITY,
+            VERA_IDENTITY,
+            "2026-07-01T12:00:00+02:00",
+            "2026-07-01T12:00:00+02:00",
+            "owner",
+        )
     )
-    badhash_env = envelope("github", f"{REPO}@{GH_BADHASH_SHA}", GH_EXPORTED_AT, badhash_body)
-    good = badhash_env["content_hash"]
-    badhash_env["content_hash"] = good[:-1] + ("0" if good[-1] != "0" else "1")
-    files["invalid/github-commit-bad-hash.json"] = json_file(badhash_env)
 
     mismatch_summary = ATLAS_SUMMARY + " Extra sentence absent from text."
     files["invalid/atlas-snapshot-text-mismatch.json"] = json_file(
-        envelope("atlas", "vera-atlas-snapshot-2026-07-05-broken", "2026-07-05T21:00:00+02:00",
-                 atlas_body(text, mismatch_summary, with_artifact=False))
+        atlas_record(
+            "vera-atlas-snapshot-2026-07-05-broken",
+            text,
+            mismatch_summary,
+            with_artifact=False,
+        )
     )
 
     files["replay.json"] = json_file(replay())
