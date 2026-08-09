@@ -805,3 +805,44 @@ def test_a_candidate_that_only_shares_an_id_is_never_reported_as_committed(
     # not this candidate's commit however its ID reads.
     assert envelope["affected_ids"]["created"] == []
     assert envelope["result"] is None
+
+
+def test_a_final_duplicate_survives_the_signal_that_follows_it(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5: a classification leaving no row is banked where it is made."""
+    stored = write_payload(
+        tmp_path, "banked-stored.jsonl", [ephemeris_record("vera-ephemeris-9800")]
+    )
+    seeded, _ = _invoke_json(workspace, ["import", "ephemeris", stored])
+    assert seeded.exit_code == 0
+
+    records = [
+        ephemeris_record("vera-ephemeris-9801", domain="knowledge_state"),
+        ephemeris_record("vera-ephemeris-9800"),
+    ]
+    payload = write_payload(tmp_path, "banked.jsonl", records)
+    classify = imports_service._classify
+
+    def interrupt_after_the_last_classification(*args, **kwargs):
+        outcome, record = classify(*args, **kwargs)
+        if record.record_number == len(records):
+            raise KeyboardInterrupt()
+        return outcome, record
+
+    monkeypatch.setattr(
+        imports_service, "_classify", interrupt_after_the_last_classification
+    )
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    # Neither class creates a row, so neither is recoverable from the
+    # workspace; both are still reported because both were decided.
+    assert envelope["result"] is not None
+    assert envelope["result"]["counts"] == {
+        "accepted": 0,
+        "duplicate": 1,
+        "rejected": 1,
+    }
+    assert envelope["result"]["records"]["duplicate"][0]["record_number"] == 2

@@ -163,7 +163,20 @@ def _classify(
     recorded_at: datetime,
     id_factory: IdFactory,
     attempted: list[ImportedRecord],
+    classified: dict[str, list[ImportedRecord]],
 ) -> tuple[str, ImportedRecord]:
+    def bank(outcome: str, result: ImportedRecord) -> tuple[str, ImportedRecord]:
+        """Record one §19.4 rule 5 classification where it is decided.
+
+        A `duplicate` or `rejected` record leaves no row for
+        `committed_import_records` to recover, so banking it in the caller
+        would leave a window in which a signal discards a classification the
+        record had already earned (§14.14 rule 5).
+        """
+
+        classified[outcome].append(result)
+        return outcome, result
+
     number = parsed.record_number
     raw = parsed.value
     # §19.4 rule 5 reports the source identity of a rejected record too, so it
@@ -175,14 +188,17 @@ def _classify(
         contract.raw_identity(raw) if isinstance(raw, dict) else parsed.identity
     )
     if parsed.reason is not None:
-        return "rejected", ImportedRecord(number, identity, reason=parsed.reason)
+        return bank("rejected", ImportedRecord(number, identity, reason=parsed.reason))
     if not isinstance(raw, dict):
-        return "rejected", ImportedRecord(number, None, reason="record_not_object")
+        return bank(
+            "rejected", ImportedRecord(number, None, reason="record_not_object")
+        )
 
     supplied_source = raw.get("source")
     if isinstance(supplied_source, str) and supplied_source != contract.source_system:
-        return "rejected", ImportedRecord(
-            number, identity, reason="record_source_mismatch"
+        return bank(
+            "rejected",
+            ImportedRecord(number, identity, reason="record_source_mismatch"),
         )
     try:
         record = _validated_record(contract, raw)
@@ -192,12 +208,16 @@ def _classify(
     # it here keeps §19.4 rule 5's per-record outcome a property of the
     # classifier rather than of each contract remembering to translate.
     except (ValidationError, OverflowError):
-        return "rejected", ImportedRecord(number, identity, reason="record_invalid")
+        return bank(
+            "rejected",
+            ImportedRecord(number, identity, reason="record_invalid"),
+        )
     try:
         contract.check(record, raw)
     except RecordRejected as rejection:
-        return "rejected", ImportedRecord(
-            number, identity, reason=rejection.reason
+        return bank(
+            "rejected",
+            ImportedRecord(number, identity, reason=rejection.reason),
         )
 
     identity = record.source_identity
@@ -208,23 +228,28 @@ def _classify(
         # canonicalizes to UTC, where a value near the representable edge has
         # no form at all. That is this one record's defect, and rule 4 keeps
         # it from aborting the records already committed behind it.
-        return "rejected", ImportedRecord(
-            number, identity, reason="record_invalid"
+        return bank(
+            "rejected",
+            ImportedRecord(number, identity, reason="record_invalid"),
         )
     stored = retained.get(identity)
     if stored is not None:
         if stored == digest:
-            return "duplicate", ImportedRecord(number, identity)
+            return bank("duplicate", ImportedRecord(number, identity))
         # Corrected upstream content must arrive under a new identity; the
         # retained rows are never mutated and there is no conflict class.
-        return "rejected", ImportedRecord(
-            number, identity, reason="content_hash_conflict"
+        return bank(
+            "rejected",
+            ImportedRecord(number, identity, reason="content_hash_conflict"),
         )
 
     try:
         plan = contract.plan(record, context)
     except RecordRejected as rejection:
-        return "rejected", ImportedRecord(number, identity, reason=rejection.reason)
+        return bank(
+            "rejected",
+            ImportedRecord(number, identity, reason=rejection.reason),
+        )
 
     last_collision: IdCollisionError | None = None
     for _attempt in range(3):
@@ -238,8 +263,9 @@ def _classify(
                 id_factory=id_factory,
             )
         except (ValidationError, ValueError, TypeError, OverflowError):
-            return "rejected", ImportedRecord(
-                number, identity, reason="record_invalid"
+            return bank(
+                "rejected",
+                ImportedRecord(number, identity, reason="record_invalid"),
             )
         candidate = ImportedRecord(
             number,
@@ -264,7 +290,7 @@ def _classify(
             last_collision = error
             continue
         retained[identity] = digest
-        return "accepted", candidate
+        return bank("accepted", candidate)
     raise IdCollisionError() from last_collision
 
 
@@ -370,7 +396,7 @@ def import_payload(
                     connection, contract.source_system
                 )
                 for parsed in parsed_records:
-                    outcome, result = _classify(
+                    _classify(
                         connection,
                         parsed,
                         contract=contract,
@@ -379,8 +405,8 @@ def import_payload(
                         recorded_at=recorded_at,
                         id_factory=id_factory,
                         attempted=attempted,
+                        classified=classified,
                     )
-                    classified[outcome].append(result)
             except sqlite3.OperationalError as error:
                 progress = _cancelled_report(
                     connection, attempted=attempted, classified=classified
