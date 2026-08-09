@@ -1430,6 +1430,10 @@ def _import_result(imported: ImportOutcome) -> ImportResult:
     )
 
 
+def _import_ending(error: Exp2ResError) -> str:
+    return "cancelled" if isinstance(error, OperationCancelledError) else "failed"
+
+
 def _import_record_line(record: ImportedRecord, outcome_name: str) -> str:
     return (
         f"{record.record_number}\t{outcome_name}\t"
@@ -1528,10 +1532,11 @@ def _import_command(
                 cancelled.import_outcome = imported
                 cancelled.import_classified = True
                 raise cancelled from None
-        except OperationCancelledError as error:
-            # §14.14 rule 6: §19.4 rule 4 commits each accepted record in its
-            # own transaction, so the records already committed are a
-            # lifecycle boundary the cancelled envelope reports.
+        except Exp2ResError as error:
+            # §14.14 rule 6 and §19.4 rule 4: each accepted record commits in
+            # its own transaction, so whatever ended the payload — a signal or
+            # a classified failure — the records already committed are a
+            # lifecycle boundary this envelope reports.
             committed = cast(
                 ImportOutcome | None, getattr(error, "import_outcome", None)
             )
@@ -1539,12 +1544,12 @@ def _import_command(
                 error.affected_ids = _import_created(committed)
                 if getattr(error, "import_classified", False):
                     # Rule 5 nulls a result only when none exists yet; an
-                    # interrupt in projection leaves a complete one behind.
+                    # interrupt after the last record leaves a complete one.
                     error.result = _import_result(committed)
                 # Human mode reads no `affected_ids`, so the same boundary is
                 # rendered as the committed records' own lines.
                 error.human_result = "\n".join(
-                    [f"cancelled, {len(committed.accepted)} committed"]
+                    [f"{_import_ending(error)}, {len(committed.accepted)} committed"]
                     + [
                         _import_record_line(record, "accepted")
                         for record in committed.accepted

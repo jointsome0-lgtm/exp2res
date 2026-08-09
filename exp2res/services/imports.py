@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from exp2res.config import load_workspace_config
 from exp2res.domain.models import EvidenceItem, RawLog
 from exp2res.errors import (
+    Exp2ResError,
     IdCollisionError,
     OperationCancelledError,
     WorkspaceBusyError,
@@ -140,10 +141,13 @@ def _persist(
         insert_raw_log(connection, raw_log)
         for evidence_item in evidence_items:
             insert_evidence_item(connection, evidence_item)
+        # Inside the guard: a signal during the commit itself must leave the
+        # transaction resolved, never open behind a raised exception where a
+        # later read could mistake its rows for a committed record.
+        connection.commit()
     except BaseException:
         connection.rollback()
         raise
-    connection.commit()
 
 
 def _classify(
@@ -247,6 +251,10 @@ def _classify(
         try:
             _persist(connection, raw_log=raw_log, evidence_items=evidence_items)
         except IdCollisionError as error:
+            # This candidate's ID belongs to a row that already existed, so
+            # leaving it registered would make the retained row look like
+            # this payload's own commit.
+            attempted.pop()
             last_collision = error
             continue
         retained[identity] = digest
@@ -272,6 +280,12 @@ def _cancelled_report(
     """
 
     try:
+        if connection.in_transaction:
+            # An open transaction at this point is by definition uncommitted:
+            # §19.4 rule 4 gives each record its own, and the signal outran
+            # its resolution. Resolving it here keeps the query's visibility
+            # a statement about committed rows.
+            connection.rollback()
         committed = committed_raw_log_ids(
             connection, [record.raw_log_id or "" for record in attempted]
         )
@@ -322,37 +336,62 @@ def import_payload(
             rejected=tuple(classified["rejected"]),
         )
 
-    with writer_database(workspace, timeout_ms=timeout_ms) as connection:
-        try:
-            # One scan under the §8.1 writer lock: no other writer can add an
-            # imported row while this command runs, so the map stays exact as
-            # each accepted record extends it.
-            retained = retained_import_hashes(connection, contract.source_system)
-            for parsed in parsed_records:
-                outcome, result = _classify(
-                    connection,
-                    parsed,
-                    contract=contract,
-                    context=context,
-                    retained=retained,
-                    recorded_at=recorded_at,
-                    id_factory=id_factory,
-                    attempted=attempted,
+    try:
+        with writer_database(workspace, timeout_ms=timeout_ms) as connection:
+            try:
+                # One scan under the §8.1 writer lock: no other writer can add
+                # an imported row while this command runs, so the map stays
+                # exact as each accepted record extends it.
+                retained = retained_import_hashes(
+                    connection, contract.source_system
                 )
-                classified[outcome].append(result)
-        except sqlite3.OperationalError as error:
-            if "locked" in str(error).lower() or "busy" in str(error).lower():
-                raise WorkspaceBusyError() from error
-            raise
-        except KeyboardInterrupt:
-            # §14.14 rule 6: rule 4 commits each accepted record in its own
-            # transaction, so those records are lifecycle boundaries that
-            # remain committed and are reported rather than restored. The
-            # records the interrupt never reached leave the classification
-            # incomplete, so the caller reports no primary result.
-            cancelled = OperationCancelledError()
-            cancelled.import_outcome = _cancelled_report(
-                connection, attempted=attempted, classified=classified
-            )
-            raise cancelled from None
+                for parsed in parsed_records:
+                    outcome, result = _classify(
+                        connection,
+                        parsed,
+                        contract=contract,
+                        context=context,
+                        retained=retained,
+                        recorded_at=recorded_at,
+                        id_factory=id_factory,
+                        attempted=attempted,
+                    )
+                    classified[outcome].append(result)
+            except sqlite3.OperationalError as error:
+                if "locked" in str(error).lower() or "busy" in str(error).lower():
+                    busy = WorkspaceBusyError()
+                    busy.import_outcome = _cancelled_report(
+                        connection, attempted=attempted, classified=classified
+                    )
+                    raise busy from error
+                raise
+            except KeyboardInterrupt:
+                # §14.14 rule 6: rule 4 commits each accepted record in its
+                # own transaction, so those records are lifecycle boundaries
+                # that remain committed and are reported rather than restored.
+                # The records the interrupt never reached leave the
+                # classification incomplete, so the caller reports no result.
+                cancelled = OperationCancelledError()
+                cancelled.import_outcome = _cancelled_report(
+                    connection, attempted=attempted, classified=classified
+                )
+                raise cancelled from None
+            except Exp2ResError as error:
+                # §19.4 rule 4: a failure fails only its own record and never
+                # withdraws an accepted one, so a classified failure carries
+                # the rows already committed behind it.
+                error.import_outcome = _cancelled_report(
+                    connection, attempted=attempted, classified=classified
+                )
+                raise
+    except KeyboardInterrupt:
+        # The loop finished and the signal landed in `writer_database`
+        # teardown — connection close and §8.1 lock release. The
+        # classification is complete and its committed rows are durable, so
+        # the boundary is still reported; the closed connection is no longer
+        # available to re-read, and the completed classification is exact.
+        cancelled = OperationCancelledError()
+        cancelled.import_outcome = report()
+        cancelled.import_classified = True
+        raise cancelled from None
     return report()

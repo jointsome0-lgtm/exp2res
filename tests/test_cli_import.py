@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import functools
 import json
 from pathlib import Path
 
@@ -9,8 +11,11 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
+import exp2res.services.capture as capture_service
 import exp2res.services.imports as imports_service
 from exp2res.cli import app
+from exp2res.errors import IdCollisionError
+from exp2res.storage.repository import insert_evidence_item, insert_raw_log
 
 from test_imports_phase5 import (
     atlas_record,
@@ -493,3 +498,153 @@ def test_an_interrupt_in_result_assembly_keeps_the_complete_result(
         "rejected": 0,
     }
     assert len(envelope["affected_ids"]["created"]) == 2
+
+
+def test_a_collided_candidate_never_borrows_the_retained_row_as_its_commit(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retried ID belongs to a row that already existed, not to this run."""
+    seeded = write_payload(
+        tmp_path, "seed.jsonl", [ephemeris_record("vera-ephemeris-9001")]
+    )
+    _, seed_envelope = _invoke_json(workspace, ["import", "ephemeris", seeded])
+    taken = seed_envelope["result"]["records"]["accepted"][0]["raw_log_id"]
+
+    payload = write_payload(
+        tmp_path, "collide.jsonl", [ephemeris_record("vera-ephemeris-9002")]
+    )
+    issued = {"count": 0}
+
+    def collide_once(kind: str) -> str:
+        if kind == "raw_log":
+            issued["count"] += 1
+            if issued["count"] == 1:
+                return taken
+        return capture_service.new_id(kind)
+
+    monkeypatch.setattr(cli_module, "import_payload", functools.partial(
+        imports_service.import_payload, id_factory=collide_once
+    ))
+    persist = imports_service._persist
+
+    def interrupt_after_the_collision(*args, **kwargs):
+        if issued["count"] > 1:
+            raise KeyboardInterrupt()
+        return persist(*args, **kwargs)
+
+    monkeypatch.setattr(imports_service, "_persist", interrupt_after_the_collision)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+
+    assert result.exit_code == 9
+    # The retained row is not this payload's commit, so nothing is reported.
+    assert envelope["affected_ids"]["created"] == []
+
+
+def test_an_interrupt_before_the_commit_lands_reports_no_row(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An open transaction is uncommitted, whatever the connection can see."""
+    payload = write_payload(
+        tmp_path, "uncommitted.jsonl", [ephemeris_record("vera-ephemeris-9101")]
+    )
+
+    def insert_then_interrupt(connection, *, raw_log, evidence_items):
+        # The rows exist on this connection and are visible to it, and the
+        # transaction is still open when the signal escapes.
+        connection.execute("BEGIN IMMEDIATE")
+        insert_raw_log(connection, raw_log)
+        for evidence_item in evidence_items:
+            insert_evidence_item(connection, evidence_item)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(imports_service, "_persist", insert_then_interrupt)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["affected_ids"]["created"] == []
+    # Nothing durable survived, so a replay accepts the record outright.
+    replayed, replayed_envelope = _invoke_json(
+        workspace, ["import", "ephemeris", payload]
+    )
+    assert replayed.exit_code == 0
+    assert replayed_envelope["result"]["counts"]["accepted"] == 1
+
+
+def test_an_interrupt_in_writer_teardown_still_reports_the_committed_rows(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: lock release is outside the loop, not outside the report."""
+    payload = write_payload(
+        tmp_path,
+        "teardown.jsonl",
+        [ephemeris_record(f"vera-ephemeris-92{index:02d}") for index in range(2)],
+    )
+    writer = imports_service.writer_database
+
+    @contextmanager
+    def interrupt_on_release(*args, **kwargs):
+        with writer(*args, **kwargs) as connection:
+            yield connection
+        # Connection close and §8.1 lock release have both happened.
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(imports_service, "writer_database", interrupt_on_release)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    assert len(created["raw_log"]) == 2
+    # The classification completed before teardown, so it is reported in full.
+    assert envelope["result"]["counts"] == {
+        "accepted": 2,
+        "duplicate": 0,
+        "rejected": 0,
+    }
+
+
+def test_a_classified_failure_keeps_the_records_committed_behind_it(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§19.4 rule 4: a later failure never withdraws an accepted record."""
+    payload = write_payload(
+        tmp_path,
+        "failing.jsonl",
+        [ephemeris_record(f"vera-ephemeris-93{index:02d}") for index in range(3)],
+    )
+    persist = imports_service._persist
+    calls = {"count": 0}
+
+    def fail_after_two(*args, **kwargs):
+        if calls["count"] == 2:
+            raise IdCollisionError()
+        calls["count"] += 1
+        return persist(*args, **kwargs)
+
+    monkeypatch.setattr(imports_service, "_persist", fail_after_two)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert result.exit_code == 7
+    assert envelope["diagnostic_class"] == "id_collision"
+    # The classification never completed, so no result — but the durable rows
+    # behind the failure are still reported.
+    assert envelope["result"] is None
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    assert len(created["raw_log"]) == 2
+    replayed, replayed_envelope = _invoke_json(
+        workspace, ["import", "ephemeris", payload]
+    )
+    assert replayed_envelope["result"]["counts"] == {
+        "accepted": 1,
+        "duplicate": 2,
+        "rejected": 0,
+    }
+    assert replayed.exit_code == 0
