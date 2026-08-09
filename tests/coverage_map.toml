@@ -120,9 +120,11 @@ nodes = [
   "tests/test_export_service.py::test_assessment_export_gate_matrix_all_eight_statuses[contradicted-True]",
   "tests/test_export_service.py::test_assessment_export_gate_matrix_all_eight_statuses[rejected-False]",
   "tests/test_export_service.py::test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity",
+  "tests/test_stage12_bullet_pack.py::test_a_broken_anchor_is_refused_before_its_allowlist_verdict[stale-aggregate]",
+  "tests/test_stage12_bullet_pack.py::test_a_cited_claim_off_supported_is_a_gate_refusal_not_an_integrity_failure",
 ]
 phase = "4"
-note = "Two of the three consumer columns are now exhaustive: assessment export decides all eight statuses, and verified-bullet-pack export admits only supported while a partially_supported or inferred_but_acceptable snapshot remains the branch anchor through export; unverified blocks both, and a snapshot whose summary prose has no exactly matching narrative_summary claim fails instead of bypassing claim verification. The Stage 10 self-claim column is proven only on its rejection side"
+note = "Two of the three consumer columns are now exhaustive: assessment export decides all eight statuses, and verified-bullet-pack export admits only supported while a partially_supported or inferred_but_acceptable snapshot remains the branch anchor through export; unverified blocks both, and a snapshot whose summary prose has no exactly matching narrative_summary claim fails instead of bypassing claim verification. The Stage 10 self-claim column is proven only on its rejection side, and a cited claim that later leaves supported is proven to be a class-10 gate refusal rather than a class-7 integrity failure"
 
 ["21.17"]
 status = "partial"
@@ -133,9 +135,10 @@ nodes = [
   "tests/test_branch_substrate.py::test_bullet_storage_refuses_an_unverified_claim_and_a_foreign_requirement",
   "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[dead-anchor]",
   "tests/test_stage12_bullet_pack.py::test_the_manifest_identity_and_source_lists_are_the_resume_shape",
+  "tests/test_stage12_bullet_pack.py::test_a_broken_anchor_is_refused_before_its_allowlist_verdict[claim-generation-mismatch]",
 ]
 phase = "4"
-note = "Stage 10 proves the required exact anchor: a missing selector never reaches the stage, an unverified or superseded snapshot is refused before the provider call, the persisted branch carries that exact ID, and a claim outside the supplied supported set fails before the bullet becomes current; Stage 12 now closes the export half, refusing a superseded anchor and naming that one snapshot ID in the manifest identity"
+note = "Stage 10 proves the required exact anchor: a missing selector never reaches the stage, an unverified or superseded snapshot is refused before the provider call, the persisted branch carries that exact ID, and a claim outside the supplied supported set fails before the bullet becomes current; Stage 12 now closes the export half, refusing a superseded anchor, a stored aggregate that no longer reduces from its own claims, and a member claim from another Stage 6 batch, and naming that one snapshot ID in the manifest identity"
 
 ["21.18"]
 status = "partial"
@@ -336,6 +339,7 @@ nodes = [
   "tests/test_stage12_bullet_pack.py::test_the_published_set_is_exactly_the_three_members_and_a_manifest",
   "tests/test_stage12_bullet_pack.py::test_the_manifest_identity_and_source_lists_are_the_resume_shape",
   "tests/test_stage12_bullet_pack.py::test_publishing_a_branch_leaves_its_anchor_snapshot_set_alone",
+  "tests/test_stage12_bullet_pack.py::test_the_hashed_bundle_is_id_ordered_while_the_pack_is_render_ordered",
   "tests/test_cli_bullets.py::test_export_reports_only_the_closed_manifest_path_projection",
 ]
 phase = "4"
@@ -576,11 +580,12 @@ nodes = [
   "tests/test_stage12_bullet_pack.py::test_every_member_is_owner_private_and_ends_in_one_lf",
   "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[ungrounded-bullet]",
   "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[empty-bullet-set]",
+  "tests/test_stage12_bullet_pack.py::test_texts_that_collide_only_after_projection_never_render_twice",
   "tests/test_cli_bullets.py::test_export_reports_only_the_closed_manifest_path_projection",
   "tests/test_cli_bullets.py::test_an_unverified_branch_is_a_blocked_class_10_export",
 ]
 phase = "4"
-note = "The assessment half proves deterministic §17 Markdown, strict §13.12 version-3 companions carrying each claim's source/counter split, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; the bullet-pack half now proves the three members' repeated byte-identical export, §18's every-heading-no-filler render under the §13.10 order recomputed from persisted state, both closed companions' full closure round trip and one same-order finding per bullet, and the §14.14 export envelope in both its ok and class-10 forms — pinned bullet-pack golden files and the Vera E10/E11 replay remain"
+note = "The assessment half proves deterministic §17 Markdown, strict §13.12 version-3 companions carrying each claim's source/counter split, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; the bullet-pack half now proves the three members' repeated byte-identical export, §18's every-heading-no-filler render under the §13.10 order recomputed from persisted state with both the exact-text and post-projection collision rules, both closed companions' full closure round trip and one same-order finding per bullet, and the §14.14 export envelope in both its ok and class-10 forms — pinned bullet-pack golden files and the Vera E10/E11 replay remain"
 
 ["21.49"]
 status = "pending"

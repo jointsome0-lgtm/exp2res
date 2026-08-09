@@ -11,17 +11,24 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import unicodedata
 
 import pytest
 
 from exp2res.domain.enums import ResumeTargetSection
+from exp2res.domain.verification import aggregate_verification_status
 from exp2res.errors import (
     BulletPackExportBlockedError,
     IntegrityFailureError,
     ManagedOutputIncompleteError,
     SelectorNotFoundError,
 )
-from exp2res.exports.branch import load_branch_graph, load_current_branch, render_order
+from exp2res.exports.branch import (
+    branch_render_input_bundle,
+    load_branch_graph,
+    load_current_branch,
+    render_order,
+)
 from exp2res.exports.bullet_pack import render_bullet_pack, section_heading
 from exp2res.exports.companions import (
     build_bullet_pack_evidence_map,
@@ -37,6 +44,7 @@ from exp2res.services.export import export_assessment, export_bullet_pack
 from exp2res.storage.repository import (
     current_branch_by_folded_name,
     list_resume_bullets_for_branch,
+    list_self_claims_for_snapshot,
     update_resume_bullet_verification,
 )
 from exp2res.storage.workspace import read_database, writer_database
@@ -44,7 +52,14 @@ from exp2res.storage.workspace import read_database, writer_database
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
 from test_branch_substrate import BRANCH_NAME, REQUIREMENT_ID
-from test_stage10_generation import BULLET_TEXT, SECOND_TEXT
+from test_stage10_generation import (
+    BULLET_TEXT,
+    SECOND_TEXT,
+    bullet_candidate,
+    prepare_anchor,
+    run_stage10,
+    writer_response,
+)
 from test_stage11_bullet_verification import (
     finding,
     prepare_generated_branch,
@@ -371,9 +386,29 @@ def test_a_lesser_but_eligible_anchor_still_carries_the_pack(
 
     _ids, _facts, snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
     with writer_database(workspace) as connection:
+        # The aggregate is recomputed at export, so the anchor's lesser status
+        # has to come from a real member claim rather than a planted column.
+        # No bullet in this fixture cites a claim, so moving one non-summary
+        # member is enough to reduce the whole snapshot.
+        claims = list_self_claims_for_snapshot(connection, snapshot_id)
+        target = next(
+            claim for claim in claims if claim.claim_kind != "narrative_summary"
+        )
+        connection.execute("DROP TRIGGER self_claims_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE self_claims SET verification_status = ? WHERE id = ?",
+            (status, target.id),
+        )
+        reduced = aggregate_verification_status(
+            [
+                status if claim.id == target.id else claim.verification_status
+                for claim in claims
+            ]
+        )
+        assert reduced == status
         connection.execute(
             "UPDATE assessment_snapshots SET verification_status = ? WHERE id = ?",
-            (status, snapshot_id),
+            (reduced, snapshot_id),
         )
         connection.commit()
 
@@ -534,3 +569,198 @@ def test_the_selector_resolves_a_current_branch_by_its_folded_name(
 
     assert exported.branch_id == branch_id
     assert exported.branch_name == BRANCH_NAME
+
+
+def test_the_hashed_bundle_is_id_ordered_while_the_pack_is_render_ordered(
+    workspace: Path,
+) -> None:
+    """§13.14 rule 2: entries are ID-byte-ordered within each entity type.
+
+    Render order belongs to `bullet_pack.md` and its companions. If it reached
+    the hashed bundle, `render_input_sha256` would depend on which requirement
+    each bullet matched, and another conforming implementation reading the
+    same rows would compute a different digest.
+    """
+
+    _ids, _facts, _snapshot_id, branch_id, _bullet_ids = verified_branch(
+        workspace, texts=[SECOND_TEXT, BULLET_TEXT]
+    )
+
+    graph = branch_graph(workspace, branch_id)
+    bundle = branch_render_input_bundle(graph)
+
+    bundled = [entry.value.id for entry in bundle.resume_bullets]
+    assert bundled == sorted(bundled, key=lambda value: value.encode("utf-8"))
+    # Same rows, both orders present: the bundle carries every rendered bullet.
+    assert set(bundled) == {item.value.id for item in graph.bullets}
+
+
+def test_a_cited_claim_off_supported_is_a_gate_refusal_not_an_integrity_failure(
+    workspace: Path,
+) -> None:
+    """§14.14: membership is integrity, status is a §16.11 consumer gate.
+
+    A claim a later Stage 7 pass moved off `supported` leaves a perfectly
+    coherent graph — nothing disagrees with itself. Reporting class 7 would
+    tell the owner their workspace is damaged when the honest answer is that
+    the pack no longer clears the gate.
+    """
+
+    ids, facts, snapshot_id = prepare_anchor(workspace)
+    with read_database(workspace) as connection:
+        claims = list_self_claims_for_snapshot(connection, snapshot_id)
+    cited = next(claim for claim in claims if claim.claim_kind != "narrative_summary")
+    generated = run_stage10(
+        workspace,
+        FakeContractRunner(
+            [
+                writer_response(
+                    [bullet_candidate(fact_ids=list(facts), claim_ids=[cited.id])]
+                )
+            ]
+        ),
+        ids,
+        snapshot_id=snapshot_id,
+    )
+    run_stage11(
+        workspace,
+        FakeContractRunner(
+            [verifier_response([finding(item) for item in generated.bullet_ids])]
+        ),
+        ids,
+    )
+    assert export_bullet_pack(workspace, branch_name=BRANCH_NAME).branch_id
+
+    with writer_database(workspace) as connection:
+        connection.execute("DROP TRIGGER self_claims_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE self_claims SET verification_status = ? WHERE id = ?",
+            ("needs_clarification", cited.id),
+        )
+        connection.execute(
+            "UPDATE assessment_snapshots SET verification_status = ? WHERE id = ?",
+            (
+                aggregate_verification_status(
+                    [
+                        "needs_clarification"
+                        if claim.id == cited.id
+                        else claim.verification_status
+                        for claim in claims
+                    ]
+                ),
+                snapshot_id,
+            ),
+        )
+        connection.commit()
+
+    with pytest.raises(BulletPackExportBlockedError):
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+
+
+def _damage_stale_aggregate(
+    workspace: Path, branch_id: str, snapshot_id: str
+) -> None:
+    """A stored snapshot status that no longer reduces from its own claims."""
+
+    with writer_database(workspace) as connection:
+        connection.execute(
+            "UPDATE assessment_snapshots SET verification_status = ? WHERE id = ?",
+            ("partially_supported", snapshot_id),
+        )
+        connection.commit()
+
+
+def _damage_claim_generation(
+    workspace: Path, branch_id: str, snapshot_id: str
+) -> None:
+    """A member claim carrying another Stage 6 batch's provenance."""
+
+    with writer_database(workspace) as connection:
+        claims = list_self_claims_for_snapshot(connection, snapshot_id)
+        connection.execute("DROP TRIGGER self_claims_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE self_claims SET generation_id = ? WHERE id = ?",
+            ("gen_vera_other_assessment", claims[0].id),
+        )
+        connection.commit()
+
+
+def _damage_projection_collision(
+    workspace: Path, branch_id: str, snapshot_id: str
+) -> None:
+    """Two byte-distinct stored texts that the §18 projection renders equal."""
+
+    composed = "Documented the café deployment runbook."
+    decomposed = unicodedata.normalize("NFD", composed)
+    # The whole point of the case: distinct bytes, equal projection.
+    assert composed != decomposed
+    assert unicodedata.normalize("NFC", decomposed) == composed
+    with writer_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+        connection.execute("DROP TRIGGER resume_bullets_lifecycle_update_guard")
+        for bullet, text in zip(bullets, (composed, decomposed)):
+            connection.execute(
+                "UPDATE resume_bullets SET text = ? WHERE id = ?", (text, bullet.id)
+            )
+        connection.commit()
+
+
+@pytest.mark.parametrize(
+    ("damage", "diagnostic"),
+    [
+        pytest.param(
+            _damage_stale_aggregate,
+            "snapshot_aggregate_mismatch",
+            id="stale-aggregate",
+        ),
+        pytest.param(
+            _damage_claim_generation,
+            "snapshot_claim_generation_mismatch",
+            id="claim-generation-mismatch",
+        ),
+    ],
+)
+def test_a_broken_anchor_is_refused_before_its_allowlist_verdict(
+    workspace: Path, damage, diagnostic: str
+) -> None:
+    """§16.11's integrity half precedes its status half.
+
+    Both damages leave a stored status inside the anchor allowlist. Trusting
+    it would let a restored or migrated workspace license a pack off an
+    aggregate that no claim set actually produces.
+    """
+
+    _ids, _facts, snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+
+    damage(workspace, branch_id, snapshot_id)
+
+    with pytest.raises(IntegrityFailureError) as raised:
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    # Pin the reason: an earlier check firing would make this test green while
+    # leaving the integrity half of the gate unproven.
+    assert str(raised.value) == diagnostic
+    assert not published(workspace, branch_id).exists()
+
+
+def test_texts_that_collide_only_after_projection_never_render_twice(
+    workspace: Path,
+) -> None:
+    """§18: two IDs may not produce one logical line.
+
+    Stage 10 refuses this collision before persistence, so reaching it means
+    restored or migrated state. The exact-text check alone would pass here:
+    the two stored values really are byte-distinct.
+    """
+
+    _ids, _facts, _snapshot_id, branch_id, _bullet_ids = verified_branch(
+        workspace, texts=[BULLET_TEXT, SECOND_TEXT]
+    )
+
+    _damage_projection_collision(workspace, branch_id, _snapshot_id)
+
+    with pytest.raises(IntegrityFailureError) as raised:
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    # Not `bullet_text_duplicate`: the stored values really are byte-distinct,
+    # so only the projection check can catch this.
+    assert str(raised.value) == "bullet_projection_collision"
+    assert not published(workspace, branch_id).exists()

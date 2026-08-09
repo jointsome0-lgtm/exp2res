@@ -64,8 +64,11 @@ from .graph import (
     StoredRecord,
     _BundleModel,
     _stored,
+    assessment_integrity_failure,
     id_key,
+    load_snapshot_claims,
 )
+from .markdown import normalize_generated_text
 
 
 _SECTION_ORDER = {
@@ -270,6 +273,13 @@ def render_order(
         # current bullets sharing a text would leave the key non-total and the
         # render order dependent on the stored row order.
         raise IntegrityFailureError("bullet_text_duplicate")
+    # Exact-text uniqueness is not enough: §18 renders the LF/NFC projection,
+    # so two byte-distinct stored texts that project equal would publish the
+    # same logical line twice under two IDs. Stage 10 refuses that collision
+    # before persistence; damaged state reaches it here instead.
+    projections = [normalize_generated_text(text) for text in texts]
+    if len(projections) != len(set(projections)):
+        raise IntegrityFailureError("bullet_projection_collision")
     return tuple(ordered)
 
 
@@ -381,12 +391,26 @@ def load_branch_graph(
     if snapshot_row is None:
         raise IntegrityFailureError("branch_snapshot_missing")
     snapshot = hydrate_assessment_snapshot(snapshot_row)
+    # §16.11's integrity half runs before its status half, exactly as the
+    # assessment export does: a stored aggregate that no longer reduces from
+    # its own current claims, a claim set missing its matching
+    # narrative_summary, or a member claim from another Stage 6 batch is
+    # broken state, and reading an allowlist verdict off it would let damaged
+    # state license the pack. This also supplies the checked member set the
+    # cited-claim loop below resolves against.
+    snapshot_record, members = load_snapshot_claims(
+        connection, snapshot_row=snapshot_row, snapshot=snapshot
+    )
+    failure = assessment_integrity_failure(snapshot, members)
+    if failure == "aggregate_mismatch":
+        raise IntegrityFailureError("snapshot_aggregate_mismatch")
+    if failure is not None:
+        raise IntegrityFailureError("snapshot_narrative_gate_failed")
     # §18: the anchor must still be eligible to anchor Stage 10. A snapshot
     # that fell out of the allowlist after generation no longer licenses the
     # pack it fixed the assessment context for.
     if snapshot.verification_status not in STAGE10_ANCHOR_ALLOWLIST:
         raise BulletPackExportBlockedError()
-    snapshot_record = _stored(snapshot_row, snapshot)
 
     bullet_records: list[StoredRecord[ResumeBullet]] = []
     for bullet in ordered:
@@ -404,32 +428,27 @@ def load_branch_graph(
         bullet_records.append(_stored_bullet(connection, bullet))
 
     # §18: a cited claim is a current `supported` member of the branch's own
-    # anchor snapshot, so the snapshot's membership is both lookup and check.
-    members = {
-        claim.id: claim
-        for claim in list_self_claims_for_snapshot(
-            connection, branch.assessment_snapshot_id, current_only=True
-        )
-    }
+    # anchor snapshot, so the checked member set above is both lookup and
+    # membership test — it already refused a superseded or mixed-generation
+    # member, so nothing here can reintroduce one.
+    by_id = {item.value.id: item for item in members}
     claim_ids = {
         claim_id for bullet in ordered for claim_id in bullet.source_self_claim_ids
     }
     claim_records: list[StoredRecord[SelfClaim]] = []
     for claim_id in sorted(claim_ids, key=id_key):
-        claim = members.get(claim_id)
-        if claim is None:
+        record = by_id.get(claim_id)
+        if record is None:
             raise IntegrityFailureError("bullet_claim_not_member")
-        if claim.verification_status not in BULLET_EXPORT_ALLOWLIST:
-            raise IntegrityFailureError("bullet_claim_not_supported")
-        row = connection.execute(
-            "SELECT * FROM self_claims WHERE id = ?", (claim_id,)
-        ).fetchone()
-        if row is None:
-            raise IntegrityFailureError("bullet_claim_not_member")
-        claim_records.append(_stored(row, claim))
+        # Membership is integrity; status is a §16.11 consumer gate. A claim
+        # a later Stage 7 pass moved off `supported` is a coherent graph the
+        # gate refuses, so it owes the caller class 10, not class 7.
+        if record.value.verification_status not in BULLET_EXPORT_ALLOWLIST:
+            raise BulletPackExportBlockedError()
+        claim_records.append(record)
         require_direct_retained_chain(
             connection,
-            claim.source_fact_ids,
+            record.value.source_fact_ids,
             diagnostic="claim_direct_chain_missing",
         )
 
@@ -548,8 +567,14 @@ def branch_render_input_bundle(graph: BranchExportGraph) -> BranchRenderInputBun
 
     Rule 2: no database value read to render, validate, or gate a member may
     be excluded, so a bullet status transition or a snapshot going ineligible
-    invalidates a published set even when every ID is unchanged. Bullets keep
-    §13.10 render order; every other list is ID-byte-ordered by construction.
+    invalidates a published set even when every ID is unchanged.
+
+    Rule 2 also partitions entries by canonical entity type and ID-byte-orders
+    them *within* type, so the bullets are re-sorted by ID here. Render order
+    is a presentation fact of `bullet_pack.md` and its companions; letting it
+    reach the hashed bundle would make the digest depend on which requirement
+    each bullet happened to match, and any other conforming implementation
+    would compute a different `render_input_sha256` for identical state.
     """
 
     return BranchRenderInputBundle(
@@ -566,7 +591,7 @@ def branch_render_input_bundle(graph: BranchExportGraph) -> BranchRenderInputBun
                 generation_id=item.generation_id,
                 produced_by_run_id=item.produced_by_run_id,
             )
-            for item in graph.bullets
+            for item in sorted(graph.bullets, key=lambda item: id_key(item.value.id))
         ],
         assessment_snapshots=[
             SnapshotRenderEntry(
