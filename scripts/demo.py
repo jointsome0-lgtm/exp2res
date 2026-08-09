@@ -639,6 +639,10 @@ def _verify_branch(
     report = VerificationReportDocument.model_validate_json(
         members["verification_report.json"]
     )
+    # §13.12: both companions name the exported branch itself, so a
+    # structurally valid but wrong ID cannot pass as the pack's identity.
+    if evidence_map.entity_id != branch or report.branch_id != branch:
+        raise AssertionError("Vera Example companions name another branch")
     rendered = [item.bullet_id for item in evidence_map.rendered_bullets]
     if [item.bullet_id for item in report.findings] != rendered:
         raise AssertionError("Vera Example verification report is not pack-ordered")

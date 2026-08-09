@@ -119,6 +119,25 @@ def test_bullet_pack_map_rejects_a_claim_link_no_bullet_cites() -> None:
         BulletPackEvidenceMapDocument.model_validate(uncited)
 
 
+@pytest.mark.parametrize("logs", (["raw_log_vera_9999"], []))
+def test_bullet_pack_map_rejects_bullet_logs_outside_its_fact_closure(
+    logs: list[str],
+) -> None:
+    # §21.48: a bullet's logs equal the closure its own facts reach, so an
+    # unresolved reference and a dropped one both fail the document.
+    pinned = json.loads(
+        (REPOSITORY_ROOT / "tests" / "goldens" / "branch" / "evidence_map.json")
+        .read_text(encoding="utf-8")
+    )
+    assert BulletPackEvidenceMapDocument.model_validate(pinned)
+
+    broken = dict(pinned)
+    first, *rest = pinned["rendered_bullets"]
+    broken["rendered_bullets"] = [{**first, "source_log_ids": logs}, *rest]
+    with pytest.raises(ValidationError):
+        BulletPackEvidenceMapDocument.model_validate(broken)
+
+
 def test_render_input_hash_covers_gap_lifecycle_and_verification_at_same_ids() -> None:
     graph = assessment_graph(all_sections=False)
     answered = graph_with_gap_answered(graph, True)

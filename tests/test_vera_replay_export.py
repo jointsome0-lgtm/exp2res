@@ -842,4 +842,5 @@ def test_vera_e11_cli_learning_evidence_never_reaches_production_claims(
     )
     assert blocked_result.exit_code == 10
     assert blocked["diagnostic_class"] == "bullet_pack_export_blocked"
-    assert not (workspace / "out" / "branch" / branch_id).exists()
+    branch_root = workspace / "out" / "branch"
+    assert not branch_root.exists() or not list(branch_root.iterdir())

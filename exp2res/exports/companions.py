@@ -359,6 +359,7 @@ class BulletPackEvidenceMapDocument(ExportDocument):
         claim_ids = {item.claim_id for item in self.claim_links}
         fact_ids = {item.fact_id for item in self.fact_links}
         evidence_ids = {item.evidence_item_id for item in self.evidence_links}
+        fact_logs = {item.fact_id: set(item.source_log_ids) for item in self.fact_links}
         reached_facts: set[str] = set()
         cited_claims: set[str] = set()
         for bullet in self.rendered_bullets:
@@ -366,6 +367,14 @@ class BulletPackEvidenceMapDocument(ExportDocument):
                 raise ValueError("rendered bullet cites an unlinked claim")
             if not set(bullet.source_fact_ids).issubset(fact_ids):
                 raise ValueError("rendered bullet cites an unlinked fact")
+            # §18: a bullet's logs equal — not contain — the closure reached
+            # through its own facts, so an unresolved or surplus log ID fails
+            # the document exactly as it fails the persisted graph.
+            own_logs: set[str] = set()
+            for fact_id in bullet.source_fact_ids:
+                own_logs |= fact_logs[fact_id]
+            if set(bullet.source_log_ids) != own_logs:
+                raise ValueError("rendered bullet logs disagree with its fact closure")
             cited_claims.update(bullet.source_self_claim_ids)
             reached_facts.update(bullet.source_fact_ids)
         # An unused claim link is an unused closure member like any other.
