@@ -662,19 +662,37 @@ def _verify_branch(
     if anchor_status not in STAGE10_ANCHOR_ALLOWLIST:
         raise AssertionError("Vera Example branch anchor is not export-eligible")
 
-    stored = dict(
-        connection.execute(
-            "SELECT id, verification_status FROM resume_bullets "
+    stored = {
+        row[0]: row
+        for row in connection.execute(
+            "SELECT id, verification_status, text, target_section, "
+            "matched_jd_requirements_json, source_fact_ids_json, "
+            "source_log_ids_json, source_self_claim_ids_json FROM resume_bullets "
             "WHERE branch_id = ? AND superseded_at IS NULL",
             (branch,),
-        ).fetchall()
-    )
+        )
+    }
     if sorted(stored) != sorted(rendered):
         raise AssertionError("Vera Example rendered bullet set is not branch-complete")
     for finding in report.findings:
-        if stored[finding.bullet_id] != finding.verification_status:
+        if stored[finding.bullet_id][1] != finding.verification_status:
             raise AssertionError(
                 f"Vera Example published verdict is stale: {finding.bullet_id}"
+            )
+    # §13.12: the pack projects the current rows, so every exported bullet
+    # field is the persisted one rather than merely a valid-looking value.
+    for item in evidence_map.rendered_bullets:
+        row = stored[item.bullet_id]
+        if (
+            item.text,
+            item.target_section,
+            list(item.matched_jd_requirements),
+            list(item.source_fact_ids),
+            list(item.source_log_ids),
+            list(item.source_self_claim_ids),
+        ) != (row[2], row[3], *(json.loads(value) for value in row[4:8])):
+            raise AssertionError(
+                f"Vera Example exported bullet differs from its row: {item.bullet_id}"
             )
 
     pack = members["bullet_pack.md"].decode("utf-8")
