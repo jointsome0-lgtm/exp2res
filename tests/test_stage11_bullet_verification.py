@@ -845,3 +845,20 @@ def test_the_verifier_is_told_what_a_counter_fact_means() -> None:
         RESUME_VERIFIER_INSTRUCTIONS
     )
     assert "may still ground the bullet directly" in RESUME_VERIFIER_INSTRUCTIONS
+
+
+@pytest.mark.parametrize(
+    "clause",
+    [
+        # §16.4: the fail-closed half of the ownership rule.
+        pytest.param("fails closed", id="ownership-unnormalizable"),
+        # §16.6: `impact` is the first member of the protected list.
+        pytest.param("Impact, production, customer", id="impact-language"),
+        # §16.7 rule 3: comparisons run on the UTC instant, not wall clock.
+        pytest.param("by the UTC instant", id="temporal-utc"),
+    ],
+)
+def test_the_instructions_carry_each_16_rule_in_full(clause: str) -> None:
+    """§15.1 rule 11: every §16 rule this contract enforces, in both halves."""
+
+    assert clause in RESUME_VERIFIER_INSTRUCTIONS
