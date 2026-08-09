@@ -881,6 +881,10 @@ def test_the_verifier_is_told_what_a_counter_fact_means() -> None:
         pytest.param("whose prose is not English fails", id="bullet-language"),
         # §16.14: second person is right in a reason and wrong in a bullet.
         pytest.param("or in the second person you would correctly", id="bullet-subject-free"),
+        # §16.4: confidence is not evidence of ownership.
+        pytest.param(
+            "does not change the supported ownership rank", id="ownership-confidence"
+        ),
     ],
 )
 def test_the_instructions_carry_each_16_rule_in_full(clause: str) -> None:
