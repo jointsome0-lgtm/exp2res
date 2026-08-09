@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 CORPUS_NAME = "vera-example-fixtures"
-CORPUS_VERSION = "1.0.0"
+CORPUS_VERSION = "2.0.0"
 MARKER = "Vera Example"
 PERSONA_SOURCE = "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md"
 ROOT = Path(__file__).resolve().parent / "corpus"
@@ -341,7 +341,7 @@ EXTRACT_RESPONSES = [
     {
         "facts": [
             {
-                "claim": "Vera Example drafted the kubectl troubleshooting runbook for the K8s Playbook.",
+                "claim": "Drafted the kubectl troubleshooting runbook for the K8s Playbook.",
                 "claim_kind": "observed_fact",
                 "role": None,
                 "company": None,
@@ -363,7 +363,7 @@ EXTRACT_RESPONSES = [
     {
         "facts": [
             {
-                "claim": "Vera Example outlined an ingress guide and listed TLS gotchas for the playbook.",
+                "claim": "Outlined an ingress guide and listed TLS gotchas for the playbook.",
                 "claim_kind": "observed_fact",
                 "role": None,
                 "company": None,
@@ -385,7 +385,7 @@ EXTRACT_RESPONSES = [
     {
         "facts": [
             {
-                "claim": "Vera Example skipped the rest of a training week after knee pain.",
+                "claim": "Skipped the rest of a training week after knee pain.",
                 "claim_kind": "observed_fact",
                 "role": None,
                 "company": None,
@@ -407,7 +407,7 @@ EXTRACT_RESPONSES = [
     {
         "facts": [
             {
-                "claim": "Vera Example reported finishing the ingress guide and closing its checklist item.",
+                "claim": "Reported finishing the ingress guide and closing its checklist item.",
                 "claim_kind": "observed_fact",
                 "role": None,
                 "company": None,
@@ -429,7 +429,7 @@ EXTRACT_RESPONSES = [
     {
         "facts": [
             {
-                "claim": "Vera Example reported training about three sessions a week during the Strength Basics period.",
+                "claim": "Reported training about three sessions a week during the Strength Basics period.",
                 "claim_kind": "observed_fact",
                 "role": None,
                 "company": None,
@@ -451,7 +451,7 @@ EXTRACT_RESPONSES = [
     {
         "facts": [
             {
-                "claim": "Vera Example completed about six of twelve planned K8s Playbook runbooks in June.",
+                "claim": "Completed about six of twelve planned K8s Playbook runbooks in June.",
                 "claim_kind": "observed_fact",
                 "role": None,
                 "company": None,
@@ -473,7 +473,7 @@ EXTRACT_RESPONSES = [
     {
         "facts": [
             {
-                "claim": "Vera Example resumed drafting the ingress guide after finding placeholder TLS text.",
+                "claim": "Resumed drafting the ingress guide after finding placeholder TLS text.",
                 "claim_kind": "observed_fact",
                 "role": None,
                 "company": None,
@@ -495,7 +495,7 @@ EXTRACT_RESPONSES = [
     {
         "facts": [
             {
-                "claim": "Vera Example copied an instruction-like forum comment into a daily log.",
+                "claim": "Copied an instruction-like forum comment into a daily log.",
                 "claim_kind": "observed_fact",
                 "role": None,
                 "company": None,
@@ -523,7 +523,7 @@ EXTRACT_RESPONSES = [
 DEMO_RESPONSES = {
     "demo-extract-call-01.json": {
         "facts": [{
-            "claim": "Vera Example drafted and validated a kubectl troubleshooting runbook.",
+            "claim": "Drafted and validated a kubectl troubleshooting runbook.",
             "claim_kind": "observed_fact", "role": None, "company": None,
             "context": "independent_project", "ownership_level": "implemented",
             "action": "drafted and validated", "object": "a kubectl troubleshooting runbook",
@@ -536,7 +536,7 @@ DEMO_RESPONSES = {
     },
     "demo-extract-call-02.json": {
         "facts": [{
-            "claim": "Vera Example reported finishing the ingress guide and closing its checklist item.",
+            "claim": "Reported finishing the ingress guide and closing its checklist item.",
             "claim_kind": "observed_fact", "role": None, "company": None,
             "context": "independent_project", "ownership_level": "contributed",
             "action": "reported finishing", "object": "the ingress guide",
@@ -549,7 +549,7 @@ DEMO_RESPONSES = {
     },
     "demo-extract-call-03.json": {
         "facts": [{
-            "claim": "Vera Example resumed the ingress guide after finding placeholder TLS text.",
+            "claim": "Resumed the ingress guide after finding placeholder TLS text.",
             "claim_kind": "observed_fact", "role": None, "company": None,
             "context": "independent_project", "ownership_level": "contributed",
             "action": "resumed drafting", "object": "the ingress guide",
@@ -563,11 +563,11 @@ DEMO_RESPONSES = {
     "demo-detection.json": {
         "gap_questions": [{
             "target_type": "experience_fact", "target_id": "fact_demo_0001",
-            "question": "What external outcome followed Vera Example's runbook validation?",
+            "question": "What external outcome followed your runbook validation?",
             "reason": "missing_metric", "priority": "medium",
         }],
         "contradictions": [{
-            "title": "Vera Example ingress completion conflict",
+            "title": "Ingress completion conflict",
             "description": "One stored log says the guide was finished; a later stored log says placeholder TLS text remained.",
             "left_ref_type": "raw_log", "left_ref_id": "log_demo_0002",
             "right_ref_type": "raw_log", "right_ref_id": "log_demo_0003",
@@ -585,7 +585,7 @@ DEMO_RESPONSES = {
         }],
         "self_claims": [
             {
-                "claim": "Vera Example currently shows an evidence-checking documentation pattern.",
+                "claim": "You currently show an evidence-checking documentation pattern.",
                 "claim_kind": "pattern_signal", "dimension": "working_style",
                 "source_pattern_labels": ["evidence-checked documentation"],
                 "source_fact_ids": [
@@ -595,18 +595,18 @@ DEMO_RESPONSES = {
                 "uncertainty": "The invented evidence covers one small documentation project.",
             },
             {
-                "claim": "Current evidence suggests Vera Example validates claims and retains visible uncertainty.",
+                "claim": "Current evidence suggests you validate claims and retain visible uncertainty.",
                 "claim_kind": "narrative_summary", "dimension": "trajectory",
                 "source_fact_ids": ["fact_demo_0001", "fact_demo_0002", "fact_demo_0003"],
                 "confidence": "medium",
-                "uncertainty": "No external outcome is established by the Vera Example corpus.",
+                "uncertainty": "No external outcome is established by the supplied corpus.",
             },
         ],
         "warnings": [],
     },
     "demo-verification-supported.json": {
         "status": "supported",
-        "reason": "The Vera Example claim resolves to the supplied fact, evidence-item, and raw-log closure.",
+        "reason": "The claim resolves to the supplied fact, evidence-item, and raw-log closure.",
         "unsupported_phrases": [], "counterevidence": [], "suggested_rewrite": None,
     },
     "demo-assessment-overclaim.json": {
@@ -617,14 +617,14 @@ DEMO_RESPONSES = {
         }],
         "self_claims": [
             {
-                "claim": "Vera Example operated production Kubernetes systems for ten years.",
+                "claim": "You operated production Kubernetes systems for ten years.",
                 "claim_kind": "pattern_signal", "dimension": "technical_skill",
                 "source_pattern_labels": ["production Kubernetes operation"],
                 "source_fact_ids": ["fact_demo_0001"], "confidence": "medium",
                 "uncertainty": None,
             },
             {
-                "claim": "Current evidence proves Vera Example is a senior production Kubernetes expert.",
+                "claim": "Current evidence proves you are a senior production Kubernetes expert.",
                 "claim_kind": "narrative_summary", "dimension": "trajectory",
                 "source_fact_ids": ["fact_demo_0001"], "confidence": "medium",
                 "uncertainty": None,
@@ -634,17 +634,17 @@ DEMO_RESPONSES = {
     },
     "demo-verification-rejected.json": {
         "status": "rejected",
-        "reason": "The Vera Example corpus contains no production-tenure or seniority evidence.",
+        "reason": "The supplied corpus contains no production-tenure or seniority evidence.",
         "unsupported_phrases": ["operated production Kubernetes systems for ten years"],
         "counterevidence": [{
-            "statement": "Vera Example only walked steps on an invented toy cluster.",
+            "statement": "You only walked steps on an invented toy cluster.",
             "source_ref_type": "experience_fact", "source_ref_id": "fact_demo_0001",
         }],
-        "suggested_rewrite": "Vera Example drafted and validated a kubectl troubleshooting runbook on an invented toy cluster.",
+        "suggested_rewrite": "You drafted and validated a kubectl troubleshooting runbook on an invented toy cluster.",
     },
     "demo-verification-narrowed.json": {
         "status": "supported",
-        "reason": "The narrower Vera Example evidence-bound summary is supported.",
+        "reason": "The narrower evidence-bound summary is supported.",
         "unsupported_phrases": [], "counterevidence": [], "suggested_rewrite": None,
     },
 }
@@ -867,6 +867,27 @@ def replay() -> dict:
     }
 
 
+def generated_prose_paths() -> set:
+    """The canned §15 responses, which §16.14 bars the marker from.
+
+    Every string these files carry is Exp2Res-generated voice: a fact claim,
+    a gap question, a contradiction title, a self-claim, or a verifier
+    statement. §16.14 forbids the owner's personal name there, so the
+    ecosystem marker cannot appear in a fixture whose whole purpose is to
+    demonstrate the contract that forbids it. Their invented lineage stays
+    checkable another way — the `vera`/`demo` entity IDs they cite, the
+    marker-carrying capture inputs that produce them, and the marker-carrying
+    manifest that pins their hashes. `scripts/check_public_hygiene.py` lists
+    the same paths in `MARKER_EXEMPT_PATHS`, and
+    `tests/test_voice_owner_reference.py` holds the two lists together.
+    """
+
+    return {
+        f"llm/extract-call-{index:02d}.json"
+        for index in range(1, len(EXTRACT_RESPONSES) + 1)
+    } | {f"llm/{name}" for name in DEMO_RESPONSES}
+
+
 def build_files() -> dict:
     files: dict[str, str] = {}
     files.update(DAILY_LOGS)
@@ -927,6 +948,11 @@ def build_files() -> dict:
 
     files["replay.json"] = json_file(replay())
 
+    prose = generated_prose_paths()
+    unknown = prose - set(files)
+    if unknown:
+        raise AssertionError(f"generated-prose path is not generated: {sorted(unknown)}")
+
     manifest = {
         "corpus": CORPUS_NAME,
         "version": CORPUS_VERSION,
@@ -941,6 +967,8 @@ def build_files() -> dict:
     files["manifest.json"] = json_file(manifest)
 
     for path, content in files.items():
+        if path in prose:
+            continue
         if MARKER not in content:
             raise AssertionError(f"fixture {path} lacks the literal marker {MARKER!r}")
     return files

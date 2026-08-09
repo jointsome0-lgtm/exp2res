@@ -2,7 +2,7 @@
   "facts": [
     {
       "action": "skipped",
-      "claim": "Vera Example skipped the rest of a training week after knee pain.",
+      "claim": "Skipped the rest of a training week after knee pain.",
       "claim_kind": "observed_fact",
       "company": null,
       "confidence": "medium",
