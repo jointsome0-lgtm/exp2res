@@ -885,6 +885,10 @@ def test_the_verifier_is_told_what_a_counter_fact_means() -> None:
         pytest.param(
             "does not change the supported ownership rank", id="ownership-confidence"
         ),
+        # §16.7 rule 2: no temporal expression, no precision claim.
+        pytest.param("makes no precision claim", id="undated-bullet"),
+        # §16.13: source-named tokens compare under NFC, not byte-for-byte.
+        pytest.param("compared under NFC", id="token-nfc"),
     ],
 )
 def test_the_instructions_carry_each_16_rule_in_full(clause: str) -> None:
