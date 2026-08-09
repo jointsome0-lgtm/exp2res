@@ -2778,6 +2778,9 @@ def _carry_generated_pack(error: Exp2ResError, generated: Stage10Result) -> None
     error.invalidated_branches = committed.invalidated_branches
     error.residual_paths = committed.residual_paths
     error.warnings = committed.warnings
+    # Human mode renders only `human_result`, so without it the durable swap
+    # would be reported to `--json` callers alone.
+    error.human_result = committed.human_result
 
 
 def _bullets_generate_outcome(generated: Stage10Result) -> Outcome:

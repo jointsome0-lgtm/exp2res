@@ -297,268 +297,293 @@ def run_bullet_generation(
 
     now = clock or (lambda: datetime.now(timezone.utc))
     branch_name = _validated_branch_name(branch_name)
-    with writer_database(workspace, timeout_ms=timeout_ms, reconcile=True) as connection:
-        job_description = get_job_description(connection, job_description_id)
-        if job_description is None:
-            raise SelectorNotFoundError()
-        snapshot = get_assessment_snapshot(connection, snapshot_id, current_only=False)
-        if snapshot is None:
-            raise SelectorNotFoundError()
-        if snapshot.superseded_at is not None:
-            raise SnapshotNotCurrentError()
-        members = list_self_claims_for_snapshot(connection, snapshot.id)
-        if snapshot.verification_status != aggregate_verification_status(
-            item.verification_status for item in members
-        ):
-            # §16.11: every gated consumer re-reduces the aggregate rather than
-            # trusting the stored one. Broken state precedes the eligibility
-            # verdict, because a status that no longer reduces from its own
-            # claims is not a status an ordinary class-2 refusal may report.
-            raise IntegrityFailureError("snapshot_aggregate_mismatch")
-        if snapshot.verification_status not in STAGE10_ANCHOR_ALLOWLIST:
-            raise AnchorNotEligibleError()
-
-        facts = list_experience_facts(connection)
-        selected_facts = _selected_facts(connection, facts)
-        supported = tuple(
-            sorted(
-                (item for item in members if item.verification_status == "supported"),
-                key=lambda item: _id_key(item.id),
+    # The writer teardown — the final commit, the connection close, and the
+    # §8.1 lock release — runs after the guarded block below and can itself
+    # be interrupted over a durable swap, so the completed result stays
+    # recoverable until this function has actually returned it.
+    completed: Stage10Result | None = None
+    try:
+        with writer_database(
+            workspace, timeout_ms=timeout_ms, reconcile=True
+        ) as connection:
+            job_description = get_job_description(connection, job_description_id)
+            if job_description is None:
+                raise SelectorNotFoundError()
+            snapshot = get_assessment_snapshot(
+                connection, snapshot_id, current_only=False
             )
-        )
-        input_payload = ResumeWriterInput(
-            branch=BranchContext(
-                name=branch_name,
-                job_description_id=job_description.id,
-                assessment_snapshot_id=snapshot.id,
-                assessment_scope=snapshot.scope,
-            ),
-            job_description=JobDescriptionContext(
-                id=job_description.id,
-                title=job_description.title,
-                company=job_description.company,
-                parsed=job_description.parsed,
-            ),
-            selected_facts=list(selected_facts),
-            supported_self_claims=list(supported),
-        )
-        run_id = id_factory("run")
-        planned = (
-            PlannedCall(
-                input_payload=input_payload,
-                input_ids=tuple(
-                    sorted(
-                        {
-                            job_description.id,
-                            snapshot.id,
-                            *(item.fact.id for item in selected_facts),
-                            *(claim.id for claim in supported),
-                        },
-                        key=_id_key,
-                    )
-                ),
-                enrich=_enrich_for(input_payload),
-                resolve=_resolve,
-            ),
-        )
+            if snapshot is None:
+                raise SelectorNotFoundError()
+            if snapshot.superseded_at is not None:
+                raise SnapshotNotCurrentError()
+            members = list_self_claims_for_snapshot(connection, snapshot.id)
+            if snapshot.verification_status != aggregate_verification_status(
+                item.verification_status for item in members
+            ):
+                # §16.11: every gated consumer re-reduces the aggregate rather than
+                # trusting the stored one. Broken state precedes the eligibility
+                # verdict, because a status that no longer reduces from its own
+                # claims is not a status an ordinary class-2 refusal may report.
+                raise IntegrityFailureError("snapshot_aggregate_mismatch")
+            if snapshot.verification_status not in STAGE10_ANCHOR_ALLOWLIST:
+                raise AnchorNotEligibleError()
 
-        branch_id: str | None = None
-        bullet_ids: tuple[str, ...] = ()
-        generation_id: str | None = None
-        superseded_generation_ids: set[str] = set()
-        replaced = BranchSupersession()
-        pending_stale_paths: tuple[str, ...] = ()
-        pack_warnings: tuple[ContractWarning, ...] = ()
-
-        def commit(held: sqlite3.Connection, resolved: Sequence[object]) -> Iterable[str]:
-            nonlocal branch_id, bullet_ids, generation_id, replaced
-            nonlocal pending_stale_paths, pack_warnings
-            pack = cast(_ResolvedPack, resolved[0])
-            pack_warnings = pack.warnings
-            requirement_ids = [
-                requirement.id
-                for requirement in job_description.parsed.requirements
-            ]
-            retained = select_persisted_batch(pack.candidates, requirement_ids)
-            projected: dict[str, str] = {}
-            for candidate in retained:
-                projection = _projected_text(candidate.text)
-                if projection in projected:
-                    # §13.10: two distinct retained texts that collapse under
-                    # Stage 12's projection fail the complete batch closed
-                    # rather than render ambiguously.
-                    raise IntegrityFailureError("bullet_projection_collision")
-                projected[projection] = candidate.text
-
-            swap_time = now()
-            if retained:
-                # §15.6's valid empty array is a semantic no-bullet result with
-                # no branch, no bullet, and no partial commit, so the current
-                # branch is replaced only by a batch that actually persists.
-                conflict = current_branch_name_conflict(held, branch_name)
-                if conflict is not None:
-                    # §13.10/§14.10: generating a name that folds equal to a
-                    # current branch's supersedes exactly that branch, so at
-                    # most one generation of the named branch is ever current.
-                    replaced = supersede_branches(
-                        held, (conflict.id,), superseded_at=swap_time
-                    )
-                    superseded_generation_ids.update(
-                        replaced.superseded_generation_ids
-                    )
-
-                new_branch_id = id_factory("branch")
-                generation_id = id_factory("gen")
-                insert_resume_branch(
-                    held,
-                    ResumeBranch(
-                        id=new_branch_id,
-                        name=branch_name,
-                        assessment_snapshot_id=snapshot.id,
-                        job_description_id=job_description.id,
-                        created_at=swap_time,
-                        superseded_at=None,
-                        metadata={},
+            facts = list_experience_facts(connection)
+            selected_facts = _selected_facts(connection, facts)
+            supported = tuple(
+                sorted(
+                    (
+                        item
+                        for item in members
+                        if item.verification_status == "supported"
                     ),
-                    produced_by_run_id=run_id,
-                    generation_id=generation_id,
+                    key=lambda item: _id_key(item.id),
                 )
-                created: list[str] = []
+            )
+            input_payload = ResumeWriterInput(
+                branch=BranchContext(
+                    name=branch_name,
+                    job_description_id=job_description.id,
+                    assessment_snapshot_id=snapshot.id,
+                    assessment_scope=snapshot.scope,
+                ),
+                job_description=JobDescriptionContext(
+                    id=job_description.id,
+                    title=job_description.title,
+                    company=job_description.company,
+                    parsed=job_description.parsed,
+                ),
+                selected_facts=list(selected_facts),
+                supported_self_claims=list(supported),
+            )
+            run_id = id_factory("run")
+            planned = (
+                PlannedCall(
+                    input_payload=input_payload,
+                    input_ids=tuple(
+                        sorted(
+                            {
+                                job_description.id,
+                                snapshot.id,
+                                *(item.fact.id for item in selected_facts),
+                                *(claim.id for claim in supported),
+                            },
+                            key=_id_key,
+                        )
+                    ),
+                    enrich=_enrich_for(input_payload),
+                    resolve=_resolve,
+                ),
+            )
+
+            branch_id: str | None = None
+            bullet_ids: tuple[str, ...] = ()
+            generation_id: str | None = None
+            superseded_generation_ids: set[str] = set()
+            replaced = BranchSupersession()
+            pending_stale_paths: tuple[str, ...] = ()
+            pack_warnings: tuple[ContractWarning, ...] = ()
+
+            def commit(
+                held: sqlite3.Connection, resolved: Sequence[object]
+            ) -> Iterable[str]:
+                nonlocal branch_id, bullet_ids, generation_id, replaced
+                nonlocal pending_stale_paths, pack_warnings
+                pack = cast(_ResolvedPack, resolved[0])
+                pack_warnings = pack.warnings
+                requirement_ids = [
+                    requirement.id
+                    for requirement in job_description.parsed.requirements
+                ]
+                retained = select_persisted_batch(pack.candidates, requirement_ids)
+                projected: dict[str, str] = {}
                 for candidate in retained:
-                    bullet = ResumeBullet(
-                        id=id_factory("bullet"),
-                        created_at=swap_time,
-                        superseded_at=None,
-                        branch_id=new_branch_id,
-                        text=candidate.text,
-                        target_section=candidate.target_section,
-                        target_role_relevance=candidate.target_role_relevance,
-                        matched_jd_requirements=list(
-                            candidate.matched_jd_requirements
-                        ),
-                        source_fact_ids=list(candidate.source_fact_ids),
-                        source_log_ids=list(
-                            bullet_log_closure(held, candidate.source_fact_ids)
-                        ),
-                        source_self_claim_ids=list(candidate.source_self_claim_ids),
-                        verification_status="unverified",
-                    )
-                    insert_resume_bullet(
+                    projection = _projected_text(candidate.text)
+                    if projection in projected:
+                        # §13.10: two distinct retained texts that collapse under
+                        # Stage 12's projection fail the complete batch closed
+                        # rather than render ambiguously.
+                        raise IntegrityFailureError("bullet_projection_collision")
+                    projected[projection] = candidate.text
+
+                swap_time = now()
+                if retained:
+                    # §15.6's valid empty array is a semantic no-bullet result with
+                    # no branch, no bullet, and no partial commit, so the current
+                    # branch is replaced only by a batch that actually persists.
+                    conflict = current_branch_name_conflict(held, branch_name)
+                    if conflict is not None:
+                        # §13.10/§14.10: generating a name that folds equal to a
+                        # current branch's supersedes exactly that branch, so at
+                        # most one generation of the named branch is ever current.
+                        replaced = supersede_branches(
+                            held, (conflict.id,), superseded_at=swap_time
+                        )
+                        superseded_generation_ids.update(
+                            replaced.superseded_generation_ids
+                        )
+
+                    new_branch_id = id_factory("branch")
+                    generation_id = id_factory("gen")
+                    insert_resume_branch(
                         held,
-                        bullet,
+                        ResumeBranch(
+                            id=new_branch_id,
+                            name=branch_name,
+                            assessment_snapshot_id=snapshot.id,
+                            job_description_id=job_description.id,
+                            created_at=swap_time,
+                            superseded_at=None,
+                            metadata={},
+                        ),
                         produced_by_run_id=run_id,
                         generation_id=generation_id,
                     )
-                    created.append(bullet.id)
-                branch_id = new_branch_id
-                bullet_ids = tuple(created)
+                    created: list[str] = []
+                    for candidate in retained:
+                        bullet = ResumeBullet(
+                            id=id_factory("bullet"),
+                            created_at=swap_time,
+                            superseded_at=None,
+                            branch_id=new_branch_id,
+                            text=candidate.text,
+                            target_section=candidate.target_section,
+                            target_role_relevance=candidate.target_role_relevance,
+                            matched_jd_requirements=list(
+                                candidate.matched_jd_requirements
+                            ),
+                            source_fact_ids=list(candidate.source_fact_ids),
+                            source_log_ids=list(
+                                bullet_log_closure(held, candidate.source_fact_ids)
+                            ),
+                            source_self_claim_ids=list(candidate.source_self_claim_ids),
+                            verification_status="unverified",
+                        )
+                        insert_resume_bullet(
+                            held,
+                            bullet,
+                            produced_by_run_id=run_id,
+                            generation_id=generation_id,
+                        )
+                        created.append(bullet.id)
+                    branch_id = new_branch_id
+                    bullet_ids = tuple(created)
 
-            # Pre-commit pending report: an interrupt anywhere in the
-            # commit-to-cleanup window still reports the replaced branch's
-            # retained managed set (§13 stale-export invalidation rule).
-            pending_stale_paths = branch_set_paths(workspace, replaced.branch_ids)
-            report_managed_residuals(pending_stale_paths)
-            created_ids = () if branch_id is None else (branch_id, *bullet_ids)
-            return created_ids
+                # Pre-commit pending report: an interrupt anywhere in the
+                # commit-to-cleanup window still reports the replaced branch's
+                # retained managed set (§13 stale-export invalidation rule).
+                pending_stale_paths = branch_set_paths(workspace, replaced.branch_ids)
+                report_managed_residuals(pending_stale_paths)
+                created_ids = () if branch_id is None else (branch_id, *bullet_ids)
+                return created_ids
 
-        def build_result(
-            residuals: tuple[str, ...],
-            branch: ResumeBranch | None,
-            bullets: tuple[ResumeBullet, ...],
-        ) -> Stage10Result:
-            return Stage10Result(
-                run_id=run_id,
-                branch_name=branch_name,
-                branch_id=branch_id,
-                bullet_ids=bullet_ids,
-                superseded_branch_ids=replaced.branch_ids,
-                superseded_bullet_ids=replaced.bullet_ids,
-                generation_id=generation_id,
-                superseded_generation_ids=tuple(
-                    sorted(superseded_generation_ids, key=_id_key)
-                ),
-                invalidated_branches=replaced.invalidated_branches,
-                residual_paths=residuals,
-                warnings=pack_warnings,
-                branch=branch,
-                bullets=bullets,
-            )
-
-        def committed_pack() -> tuple[ResumeBranch | None, tuple[ResumeBullet, ...]]:
-            if branch_id is None:
-                return None, ()
-            return (
-                get_resume_branch(connection, branch_id),
-                list_resume_bullets_for_branch(connection, branch_id),
-            )
-
-        # One guarded window from the business swap to the end of cleanup:
-        # every interrupt past the durable commit — inside the transaction,
-        # between it and the result read, in the read, or in the cleanup —
-        # owes the caller the same §14.14 rule 6 report.
-        branch: ResumeBranch | None = None
-        bullets: tuple[ResumeBullet, ...] = ()
-        cleaned_sets: list[str] = []
-        returned = False
-        try:
-            run_complete_stage(
-                workspace,
-                connection,
-                stage="13.10",
-                contract=RESUME_WRITER_CONTRACT,
-                selection=selection,
-                budgets=budgets,
-                runner=runner,
-                planned=planned,
-                commit=commit,
-                run_id=run_id,
-                clock=now,
-                cli_version=cli_version,
-                capability_check=capability_check,
-                monotonic=monotonic,
-                sleeper=sleeper,
-                jitter=jitter,
-                token_patterns=token_patterns,
-                resolved_credentials=resolved_credentials,
-            )
-            returned = True
-            # Read the committed rows before the interruptible cleanup below,
-            # so the guard has a complete result to carry.
-            branch, bullets = committed_pack()
-            # §13 stale-export trigger class 1: the swap is already committed,
-            # so cleanup failure or interruption never rolls it back.
-            residual_paths = remove_branch_sets(
-                workspace, replaced.branch_ids, removed_ledger=cleaned_sets
-            )
-        except BaseException as error:
-            # Withdraw the pre-commit pending report only when the rollback is
-            # proven; an interrupt after a durable commit keeps it reported.
-            # The proof reads the table this stage supersedes.
-            withdraw_pending_unless_superseded(
-                connection,
-                pending_stale_paths,
-                replaced.branch_ids,
-                table="resume_branches",
-            )
-            cancelling = isinstance(error, (KeyboardInterrupt, LLMCancelledError))
-            if cancelling and (returned or _run_is_committed(connection, run_id)):
-                # §14.14 rule 6: the class-9 error carries the complete
-                # committed result, and only the sets this pass never reached
-                # stay reported.
-                if branch is None and branch_id is not None:
-                    try:
-                        branch, bullets = committed_pack()
-                    except BaseException:
-                        # A second interrupt inside the recovery read must not
-                        # cost the caller the identifiers already in hand; the
-                        # cancellation is honored by the raise below either way.
-                        pass
-                cancelled = OperationCancelledError()
-                cancelled.stage_result = build_result(
-                    unfinished_stale_paths(pending_stale_paths, cleaned_sets),
-                    branch,
-                    bullets,
+            def build_result(
+                residuals: tuple[str, ...],
+                branch: ResumeBranch | None,
+                bullets: tuple[ResumeBullet, ...],
+            ) -> Stage10Result:
+                return Stage10Result(
+                    run_id=run_id,
+                    branch_name=branch_name,
+                    branch_id=branch_id,
+                    bullet_ids=bullet_ids,
+                    superseded_branch_ids=replaced.branch_ids,
+                    superseded_bullet_ids=replaced.bullet_ids,
+                    generation_id=generation_id,
+                    superseded_generation_ids=tuple(
+                        sorted(superseded_generation_ids, key=_id_key)
+                    ),
+                    invalidated_branches=replaced.invalidated_branches,
+                    residual_paths=residuals,
+                    warnings=pack_warnings,
+                    branch=branch,
+                    bullets=bullets,
                 )
-                raise cancelled from None
+
+            def committed_pack() -> tuple[
+                ResumeBranch | None, tuple[ResumeBullet, ...]
+            ]:
+                if branch_id is None:
+                    return None, ()
+                return (
+                    get_resume_branch(connection, branch_id),
+                    list_resume_bullets_for_branch(connection, branch_id),
+                )
+
+            # One guarded window from the business swap to the end of cleanup:
+            # every interrupt past the durable commit — inside the transaction,
+            # between it and the result read, in the read, or in the cleanup —
+            # owes the caller the same §14.14 rule 6 report.
+            branch: ResumeBranch | None = None
+            bullets: tuple[ResumeBullet, ...] = ()
+            cleaned_sets: list[str] = []
+            returned = False
+            try:
+                run_complete_stage(
+                    workspace,
+                    connection,
+                    stage="13.10",
+                    contract=RESUME_WRITER_CONTRACT,
+                    selection=selection,
+                    budgets=budgets,
+                    runner=runner,
+                    planned=planned,
+                    commit=commit,
+                    run_id=run_id,
+                    clock=now,
+                    cli_version=cli_version,
+                    capability_check=capability_check,
+                    monotonic=monotonic,
+                    sleeper=sleeper,
+                    jitter=jitter,
+                    token_patterns=token_patterns,
+                    resolved_credentials=resolved_credentials,
+                )
+                returned = True
+                # Read the committed rows before the interruptible cleanup below,
+                # so the guard has a complete result to carry.
+                branch, bullets = committed_pack()
+                # §13 stale-export trigger class 1: the swap is already committed,
+                # so cleanup failure or interruption never rolls it back.
+                residual_paths = remove_branch_sets(
+                    workspace, replaced.branch_ids, removed_ledger=cleaned_sets
+                )
+            except BaseException as error:
+                # Withdraw the pre-commit pending report only when the rollback is
+                # proven; an interrupt after a durable commit keeps it reported.
+                # The proof reads the table this stage supersedes.
+                withdraw_pending_unless_superseded(
+                    connection,
+                    pending_stale_paths,
+                    replaced.branch_ids,
+                    table="resume_branches",
+                )
+                cancelling = isinstance(error, (KeyboardInterrupt, LLMCancelledError))
+                if cancelling and (returned or _run_is_committed(connection, run_id)):
+                    # §14.14 rule 6: the class-9 error carries the complete
+                    # committed result, and only the sets this pass never reached
+                    # stay reported.
+                    if branch is None and branch_id is not None:
+                        try:
+                            branch, bullets = committed_pack()
+                        except BaseException:
+                            # A second interrupt inside the recovery read must not
+                            # cost the caller the identifiers already in hand; the
+                            # cancellation is honored by the raise below either way.
+                            pass
+                    cancelled = OperationCancelledError()
+                    cancelled.stage_result = build_result(
+                        unfinished_stale_paths(pending_stale_paths, cleaned_sets),
+                        branch,
+                        bullets,
+                    )
+                    raise cancelled from None
+                raise
+            completed = build_result(residual_paths, branch, bullets)
+            return completed
+    except KeyboardInterrupt:
+        if completed is None:
             raise
-        return build_result(residual_paths, branch, bullets)
+        cancelled = OperationCancelledError()
+        cancelled.stage_result = completed
+        raise cancelled from None

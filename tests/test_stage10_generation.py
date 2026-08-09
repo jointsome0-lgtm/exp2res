@@ -8,6 +8,7 @@ folded-name replacement, and the no-bullet answer that completes as blocked.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 from pathlib import Path
 
@@ -422,6 +423,38 @@ def test_an_interrupt_in_the_result_read_still_reports_the_swap(
     # Cleanup never started, so the replaced branch's set is still a residual.
     assert str(stale_set) in carried.residual_paths
     assert stale_set.exists()
+
+
+def test_an_interrupt_in_the_writer_teardown_still_reports_the_swap(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the guard outlives the writer lock's own release."""
+
+    ids, facts, snapshot_id = prepare_anchor(workspace)
+    opened = stage10_module.writer_database
+
+    @contextmanager
+    def interrupt_on_teardown(*arguments, **keywords):
+        with opened(*arguments, **keywords) as connection:
+            yield connection
+        # Everything the stage does is done and durable; only the lock release
+        # is left, and that is where the owner's Ctrl-C lands.
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(stage10_module, "writer_database", interrupt_on_teardown)
+    fake = FakeContractRunner(
+        [writer_response([bullet_candidate(fact_ids=list(facts))])]
+    )
+
+    with pytest.raises(OperationCancelledError) as caught:
+        run_stage10(workspace, fake, ids, snapshot_id=snapshot_id)
+
+    carried = caught.value.stage_result
+    assert carried.branch_id is not None
+    assert len(carried.bullet_ids) == 1
+    assert carried.branch is not None
+    with read_database(workspace) as connection:
+        assert len(list_resume_branches(connection, current_only=True)) == 1
 
 
 def test_a_rolled_back_branch_swap_withdraws_its_pending_report(
