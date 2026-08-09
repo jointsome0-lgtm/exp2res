@@ -205,6 +205,12 @@ def retained_import_hashes(
             validate_structural(identity)
         except (UnicodeError, ValueError, TypeError) as error:
             raise IntegrityFailureError() from error
+        # Two retained rows claiming one identity with two hashes leave the
+        # replay verdict — duplicate or conflict — to whichever row SQLite
+        # returned last. An import may not pick one; equal hashes stay
+        # tolerated because they name one unambiguous verdict.
+        if retained.get(identity, digest) != digest:
+            raise IntegrityFailureError()
         retained[identity] = digest
     return retained
 

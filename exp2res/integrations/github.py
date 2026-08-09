@@ -6,7 +6,7 @@ from datetime import datetime
 import re
 from typing import Any, Literal, Mapping, Optional
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 
 from exp2res.domain.enums import OwnerAttribution
 from exp2res.domain.models import (
@@ -109,6 +109,15 @@ class GithubRecord(SourceRecord):
             raise ValueError("upstream times must carry an offset")
         return value
 
+    @model_validator(mode="after")
+    def derived_identity_is_structural(self) -> "GithubRecord":
+        # §19.3 derives the identity from two accepted fields, so the §11 rule
+        # 30 bound on the identity itself is only checkable once both hold: a
+        # `repo` just under the structural limit still concatenates past it,
+        # and that value is what the record persists and reports.
+        validate_structural(self.source_identity)
+        return self
+
     @property
     def source_identity(self) -> str:
         """§19.3's derived identity: no adapter value supplies or overrides it."""
@@ -125,11 +134,15 @@ def raw_identity(raw: Mapping[str, Any]) -> Optional[str]:
         return None
     if REPO_IDENTITY.fullmatch(repo) is None:
         return None
+    identity = f"{repo}@{commit_sha}"
+    # The derived string is what a rejected record reports, so it is the one
+    # held to §11's structural bound: `repo` alone can pass it and still
+    # concatenate past it.
     try:
-        validate_structural(repo)
+        validate_structural(identity)
     except (UnicodeError, ValueError, TypeError):
         return None
-    return f"{repo}@{commit_sha}"
+    return identity
 
 
 def check(record: GithubRecord, raw: Mapping[str, Any]) -> None:

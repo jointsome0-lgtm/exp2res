@@ -14,7 +14,11 @@ from exp2res.domain.models import (
     validate_free_text,
     validate_structural,
 )
-from exp2res.domain.temporal import interval_contains, occurred_interval
+from exp2res.domain.temporal import (
+    UncertaintyInterval,
+    interval_contains,
+    occurred_interval,
+)
 from exp2res.errors import InvalidInputError
 from exp2res.integrations.records import (
     EvidencePlan,
@@ -29,6 +33,21 @@ from exp2res.services.source_files import authorize_payload_locator
 
 CONTENT_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 MAX_LIST_ITEMS = 1_000
+
+
+def _representable_interval(occurred: OccurredAt) -> UncertaintyInterval:
+    """This record's §16.7 interval, or a validation failure when it overflows.
+
+    A bound close enough to `datetime.max` overflows when its precision width
+    is added. `OverflowError` is not a `ValueError`, so Pydantic would let it
+    escape validation entirely and one record would abort the whole import
+    instead of being rejected on its own (§19.4 rule 4).
+    """
+
+    try:
+        return occurred_interval(occurred)
+    except OverflowError as error:
+        raise ValueError("occurred uncertainty interval is unrepresentable") from error
 
 
 class KnowledgeState(StrictModel):
@@ -136,12 +155,12 @@ class AtlasRecord(SourceRecord):
 
     @model_validator(mode="after")
     def temporal_constraints(self) -> "AtlasRecord":
-        snapshot = occurred_interval(self.occurred)
+        snapshot = _representable_interval(self.occurred)
         if snapshot.unbounded:
             raise ValueError("snapshot occurred needs a finite upper bound")
         assert snapshot.end is not None
         for segment in self.trail_segments:
-            interval = occurred_interval(segment.occurred)
+            interval = _representable_interval(segment.occurred)
             if interval.unbounded:
                 raise ValueError("trail segment needs a finite upper bound")
             if not interval_contains(snapshot, interval):

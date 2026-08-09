@@ -918,6 +918,89 @@ def test_retained_import_metadata_outside_its_typed_shape_fails_closed(
     assert len(raw_rows(workspace)) == 1
 
 
+def test_two_retained_rows_claiming_one_identity_fail_closed(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§11 rule 39: an ambiguous retained verdict is not one an import picks."""
+    payload = write_payload(tmp_path, "twins.jsonl", [ephemeris_record()])
+    run_import(workspace, "ephemeris", payload)
+    rows = raw_rows(workspace)
+    assert len(rows) == 1
+
+    metadata = json.loads(rows[0]["metadata_json"])
+    twin = dict(metadata, content_hash="b" * 64)
+    assert twin["content_hash"] != metadata["content_hash"]
+    with database(workspace) as connection:
+        # A second row under one identity is state the importer cannot write:
+        # it stands in for a workspace corrupted outside Exp2Res.
+        connection.execute(
+            """
+            INSERT INTO raw_logs (
+                id, recorded_at, entry_type, source_type, occurred_start,
+                occurred_end, temporal_precision, temporal_confidence,
+                raw_text, project, project_key, external_ref,
+                corrects_log_id, metadata_json
+            )
+            SELECT 'raw_log_vera_example_twin', recorded_at, entry_type,
+                   source_type, occurred_start, occurred_end,
+                   temporal_precision, temporal_confidence, raw_text, project,
+                   project_key, external_ref, corrects_log_id, ?
+            FROM raw_logs WHERE id = ?
+            """,
+            (json.dumps(twin, ensure_ascii=False), rows[0]["id"]),
+        )
+        connection.commit()
+
+    with pytest.raises(IntegrityFailureError):
+        run_import(workspace, "ephemeris", payload)
+    assert len(raw_rows(workspace)) == 2
+
+
+def test_atlas_bound_whose_uncertainty_interval_overflows_is_rejected(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 4: a record's own defect never aborts the whole import.
+
+    A bound this close to `datetime.max` overflows when §16.7's precision
+    width is added, and `OverflowError` is not a `ValueError` Pydantic would
+    turn into a rejection.
+    """
+    record = atlas_record(
+        as_of="9999-12-31T23:59:59+00:00",
+        occurred={
+            "start": "9999-12-31T00:00:00+00:00",
+            "end": None,
+            "precision": "exact_day",
+            "confidence": "high",
+        },
+        trail_segments=[],
+    )
+    payload = write_payload(tmp_path, "overflow.json", record)
+    outcome = run_import(workspace, "atlas", payload)
+
+    assert counts(outcome) == (0, 0, 1)
+    assert outcome.rejected[0].reason == "record_invalid"
+    assert outcome.rejected[0].source_record_id == record["record_id"]
+    assert raw_rows(workspace) == []
+
+
+def test_github_identity_past_the_structural_bound_is_rejected(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§11 rule 30 bounds the derived identity, not only its `repo` half."""
+    oversized = "vera-example-" + "o" * 15_987 + "/" + "n" * 343
+    payload = write_payload(
+        tmp_path, "oversized.json", github_record(repo=oversized)
+    )
+    outcome = run_import(workspace, "github", payload)
+
+    assert counts(outcome) == (0, 0, 1)
+    assert outcome.rejected[0].reason == "record_invalid"
+    # The oversized string is not a value the result envelope could carry.
+    assert outcome.rejected[0].source_record_id is None
+    assert raw_rows(workspace) == []
+
+
 def test_single_record_payload_without_json_has_no_record_boundary(
     workspace: Path, tmp_path: Path
 ) -> None:
