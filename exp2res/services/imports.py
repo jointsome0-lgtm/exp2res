@@ -170,7 +170,12 @@ def _classify(
         )
     try:
         record = _validated_record(contract, raw)
-    except ValidationError:
+    # An `OverflowError` raised inside validation is this record's own value
+    # defect — §11 rule 4 admits offset-aware datetimes with no representable
+    # UTC instant (#271) — and Pydantic converts only `ValueError`. Catching
+    # it here keeps §19.4 rule 5's per-record outcome a property of the
+    # classifier rather than of each contract remembering to translate.
+    except (ValidationError, OverflowError):
         return "rejected", ImportedRecord(number, identity, reason="record_invalid")
     try:
         contract.check(record, raw)

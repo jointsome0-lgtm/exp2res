@@ -50,6 +50,20 @@ def _representable_interval(occurred: OccurredAt) -> UncertaintyInterval:
         raise ValueError("occurred uncertainty interval is unrepresentable") from error
 
 
+def _utc_instant(value: datetime) -> datetime:
+    """This record's UTC comparison instant, or a validation failure.
+
+    The same edge as `_representable_interval`, reached without any
+    precision width: an offset-aware value at the representable boundary
+    has no UTC instant to compare against.
+    """
+
+    try:
+        return value.astimezone(timezone.utc)
+    except OverflowError as error:
+        raise ValueError("as_of has no representable UTC instant") from error
+
+
 class KnowledgeState(StrictModel):
     """One opaque Atlas subject/scale/value triple; no Exp2Res ordering."""
 
@@ -165,7 +179,7 @@ class AtlasRecord(SourceRecord):
                 raise ValueError("trail segment needs a finite upper bound")
             if not interval_contains(snapshot, interval):
                 raise ValueError("snapshot must contain every trail segment")
-        if self.as_of.astimezone(timezone.utc) < snapshot.end:
+        if _utc_instant(self.as_of) < snapshot.end:
             raise ValueError("as_of precedes the snapshot upper bound")
         return self
 

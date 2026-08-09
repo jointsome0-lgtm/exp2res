@@ -984,6 +984,24 @@ def test_atlas_bound_whose_uncertainty_interval_overflows_is_rejected(
     assert raw_rows(workspace) == []
 
 
+def test_atlas_as_of_without_a_utc_instant_is_rejected(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 5: an established record boundary always gets an outcome.
+
+    This edge needs no precision width — the comparison instant alone has no
+    UTC form — so it reaches validation before any hashing does.
+    """
+    record = atlas_record(as_of="0001-01-01T00:00:00+14:00")
+    payload = write_payload(tmp_path, "as-of.json", record)
+    outcome = run_import(workspace, "atlas", payload)
+
+    assert counts(outcome) == (0, 0, 1)
+    assert outcome.rejected[0].reason == "record_invalid"
+    assert outcome.rejected[0].source_record_id == record["record_id"]
+    assert raw_rows(workspace) == []
+
+
 def test_a_datetime_with_no_utc_form_rejects_only_its_own_record(
     workspace: Path, tmp_path: Path
 ) -> None:
