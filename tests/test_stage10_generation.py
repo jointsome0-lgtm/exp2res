@@ -337,7 +337,7 @@ def test_a_claim_without_any_provenance_is_refused(workspace: Path) -> None:
 
     with read_database(workspace) as connection:
         with pytest.raises(IntegrityFailureError) as caught:
-            stage10_module._require_current_claim_facts(connection, (chainless,), ())
+            stage10_module.require_current_claim_facts(connection, (chainless,), ())
 
     assert caught.value.args == ("claim_source_facts_empty",)
 

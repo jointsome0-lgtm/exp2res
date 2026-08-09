@@ -6,7 +6,11 @@ from pathlib import Path
 
 from exp2res import __version__
 from exp2res.errors import LLMInvocationError
-from exp2res.pipeline.stage10 import Stage10Result, run_bullet_generation
+from exp2res.pipeline.stage10 import (
+    Stage10Result,
+    run_bullet_generation,
+    validated_branch_name,
+)
 from exp2res.pipeline.stage11 import Stage11Result, run_bullet_verification
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import build_llm_execution
@@ -61,6 +65,11 @@ def run_bullets_generate(
 
 def run_bullets_verify(workspace: Path, *, branch_name: str) -> Stage11Result:
     require_compatible(workspace)
+    # §14.14 rule 4: `--branch` is boundary text, so its §14.10 hygiene is
+    # settled in exit class 2 before any adapter is built — the same ordering
+    # `run_jd_add` gives vacancy text. *Resolving* the selector stays inside
+    # the stage's own writer transaction, where every sibling command puts it.
+    branch_name = validated_branch_name(branch_name)
     selection, budgets, runner = build_llm_execution(workspace)
     allocated_runs: list[str] = []
 

@@ -260,7 +260,7 @@ def validated_branch_name(value: str) -> str:
     return value
 
 
-def _require_current_claim_facts(
+def require_current_claim_facts(
     connection: sqlite3.Connection,
     claims: Sequence[SelfClaim],
     facts: Sequence[ExperienceFact],
@@ -403,7 +403,7 @@ def run_bullet_generation(
                     key=lambda item: _id_key(item.id),
                 )
             )
-            _require_current_claim_facts(connection, supported, facts)
+            require_current_claim_facts(connection, supported, facts)
             input_payload = ResumeWriterInput(
                 branch=BranchContext(
                     name=branch_name,

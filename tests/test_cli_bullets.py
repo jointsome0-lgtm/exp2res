@@ -491,3 +491,22 @@ def test_an_interrupt_in_verify_result_assembly_still_reports_the_pass(
     with read_database(workspace) as connection:
         stored = list_resume_bullets_for_branch(connection, _branch_id)
     assert [bullet.verification_status for bullet in stored] == ["supported"]
+
+
+def test_branch_hygiene_precedes_adapter_construction_on_verify(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: boundary text is settled before any adapter is built."""
+
+    generated_branch(workspace, monkeypatch)
+
+    def refuse(_workspace):
+        raise AssertionError("the adapter was built for rejected boundary text")
+
+    monkeypatch.setattr(bullets_service, "build_llm_execution", refuse)
+    result, envelope = invoke_json(
+        workspace, ["bullets", "verify", "--branch", "   "]
+    )
+
+    assert result.exit_code == 2, (result.stderr, envelope)
+    assert envelope["diagnostic_class"] == "branch_name_invalid"

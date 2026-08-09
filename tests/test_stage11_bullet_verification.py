@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from exp2res.domain.models import ResumeBullet
+from exp2res.llm.resume_verifier import ResumeVerifierOutput
 from exp2res.errors import (
     BranchNameInvalidError,
     IntegrityFailureError,
@@ -45,12 +46,16 @@ from exp2res.storage.workspace import (
 
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
+from assessment_helpers import VeraIds, prepare_facts
 from test_branch_substrate import (
     BRANCH_NAME,
     JOB_DESCRIPTION_ID,
     REQUIREMENT_ID,
+    anchor_snapshot,
     plant_branch_set,
+    plant_job_description,
 )
+from test_stage6_assessment import assessment_response, run_stage6
 from test_stage3_extraction import SELECTION, add_log, budgets, month
 from test_stage10_generation import (
     BULLET_TEXT,
@@ -108,6 +113,22 @@ def prepare_generated_branch(
     )
     assert generated.branch_id is not None
     return ids, facts, snapshot_id, generated.branch_id, generated.bullet_ids
+
+
+def prepare_paired_anchor(workspace: Path):
+    """`prepare_anchor`, but on two logs so a displacement leaves a chain."""
+
+    ids = VeraIds()
+    facts = prepare_facts(workspace, ids, count=2)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    assert assessed.snapshot_id is not None
+    anchor_snapshot(workspace, assessed.snapshot_id)
+    plant_job_description(workspace)
+    return ids, facts, assessed.snapshot_id
 
 
 def run_stage11(
@@ -206,9 +227,22 @@ def test_a_displaced_record_keeps_its_identity_and_loses_its_object(
 ) -> None:
     """§13.3 rule 10: displacement withholds prose, never provenance."""
 
-    ids, _facts, _snapshot, branch_id, bullet_ids = prepare_generated_branch(workspace)
+    # Two facts on two logs: §16.1 still wants one retained direct chain at the
+    # end of the bullet's closure, so the displaceable record is the *second*
+    # one — a single-log pack has nothing left to stand on once it is gone.
+    ids, facts, snapshot_id = prepare_paired_anchor(workspace)
+    generated = run_stage10(
+        workspace,
+        FakeContractRunner(
+            [writer_response([bullet_candidate(fact_ids=list(facts))])]
+        ),
+        ids,
+        snapshot_id=snapshot_id,
+    )
+    branch_id, bullet_ids = generated.branch_id, generated.bullet_ids
     with read_database(workspace) as connection:
         bullets = list_resume_bullets_for_branch(connection, branch_id)
+    assert len(bullets[0].source_log_ids) > 1
     displaced = bullets[0].source_log_ids[0]
     # A stored correction displaces the owning record directly, leaving the
     # branch current: §13.13 rule 4's supersession belongs to the §14.4
@@ -231,6 +265,10 @@ def test_a_displaced_record_keeps_its_identity_and_loses_its_object(
     payload = json.loads(fake.calls[0].serialized_input)
     assert displaced in payload["resume_bullets"][0]["source_log_ids"]
     assert displaced not in {item["id"] for item in payload["source_logs"]}
+    # The retained half of the same closure still transits as an object.
+    assert {item["id"] for item in payload["source_logs"]} == set(
+        bullets[0].source_log_ids
+    ) - {displaced}
 
 
 def test_an_incomplete_finding_set_commits_nothing(workspace: Path) -> None:
@@ -695,3 +733,39 @@ def test_a_cited_claim_that_lost_supported_fails_before_the_call(
     with pytest.raises(IntegrityFailureError):
         run_stage11(workspace, fake, ids)
     assert fake.calls == []
+
+
+def test_a_pack_whose_direct_chain_is_all_displaced_never_reaches_a_verdict(
+    workspace: Path,
+) -> None:
+    """§16.1: the chain's last link is a *retained* raw log, not just an ID."""
+
+    ids, _facts, _snapshot, branch_id, _bullet_ids = prepare_generated_branch(
+        workspace
+    )
+    with read_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+    assert len(bullets[0].source_log_ids) == 1
+    add_log(
+        workspace,
+        log_id="log_vera_stage11_last_chain",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example self-contained corrected sole workflow statement.",
+        occurred=month(),
+        item_specs=(("evi_vera_stage11_last_chain", "manual_claim"),),
+        corrects_log_id=bullets[0].source_log_ids[0],
+    )
+
+    fake = FakeContractRunner([])
+    with pytest.raises(IntegrityFailureError):
+        run_stage11(workspace, fake, ids)
+    assert fake.calls == []
+
+
+def test_the_findings_array_carries_the_rule_38_cap() -> None:
+    """§11 rule 38: only §15.7's *input* arrays are exempt from the cap."""
+
+    field = ResumeVerifierOutput.model_fields["findings"]
+    assert any(
+        getattr(item, "max_length", None) == 1_000 for item in field.metadata
+    )

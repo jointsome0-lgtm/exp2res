@@ -150,7 +150,12 @@ class ResumeVerifierOutput(StrictModel):
     # §15.7: exactly one finding per supplied bullet. Which bullets those are
     # is the invocation's own input, so the per-call check lives in Stage 11's
     # enrichment; the schema carries only the shape.
-    findings: list[ResumeVerifierFinding]
+    #
+    # §11 rule 38's per-list cap applies here: the rule's exception list names
+    # the §15.7 *input* arrays only, because those are sets the service just
+    # assembled from its own persisted state. A response array is model output
+    # at an external boundary, so it carries the ordinary bound.
+    findings: list[ResumeVerifierFinding] = Field(max_length=1_000)
 
 
 RESUME_VERIFIER_INSTRUCTIONS = (

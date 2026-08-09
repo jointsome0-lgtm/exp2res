@@ -51,6 +51,7 @@ from exp2res.storage.repository import (
     get_job_description,
     get_raw_log,
     insert_verification_finding,
+    list_experience_facts,
     list_resume_bullets_for_branch,
     list_self_claims_for_snapshot,
     list_verification_findings,
@@ -69,7 +70,7 @@ from .orchestration import (
     run_complete_stage,
     unfinished_stale_paths,
 )
-from .stage10 import validated_branch_name
+from .stage10 import require_current_claim_facts, validated_branch_name
 
 
 @dataclass(frozen=True)
@@ -193,6 +194,43 @@ def require_consistent_bullets(
             raise IntegrityFailureError("bullet_log_closure_mismatch")
 
 
+def require_direct_retained_chain(
+    connection: sqlite3.Connection,
+    fact_ids: Sequence[str],
+    *,
+    diagnostic: str,
+) -> None:
+    """§16.1: a row entering verification reaches one live direct chain.
+
+    Hydration already refuses a fact with no `direct` `fact_sources` row, and
+    `require_consistent_bullets` already pins the log closure. Neither reaches
+    this: a fact's direct evidence may sit on a record a correction displaced,
+    leaving the chain complete in identity but with no retained `RawLog` at its
+    end — which is the one thing §16.1 names as the chain's last link.
+    """
+
+    for fact_id in fact_ids:
+        reached = connection.execute(
+            """
+            SELECT 1
+            FROM fact_sources AS source
+            JOIN evidence_items AS item ON item.id = source.evidence_item_id
+            JOIN raw_logs AS log ON log.id = item.raw_log_id
+            WHERE source.fact_id = ?
+              AND source.support_type = 'direct'
+              AND NOT EXISTS (
+                SELECT 1 FROM raw_logs AS correction
+                WHERE correction.corrects_log_id = log.id
+              )
+            LIMIT 1
+            """,
+            (fact_id,),
+        ).fetchone()
+        if reached is not None:
+            return
+    raise IntegrityFailureError(diagnostic)
+
+
 def _build_bundle(
     connection: sqlite3.Connection,
     *,
@@ -218,6 +256,16 @@ def _build_bundle(
         if fact.superseded_at is not None:
             raise IntegrityFailureError("bullet_fact_superseded")
         source_facts.append(fact)
+
+    # §16.1 binds each bullet on its own closure, so the check is per bullet
+    # rather than over the pack's union: one well-grounded bullet may not
+    # stand in for a sibling whose own direct evidence is all displaced.
+    for bullet in bullets:
+        require_direct_retained_chain(
+            connection,
+            bullet.source_fact_ids,
+            diagnostic="bullet_direct_chain_missing",
+        )
 
     evidence_context = project_evidence_context(
         connection, source_facts, missing_diagnostic="bullet_evidence_missing"
@@ -255,6 +303,22 @@ def _build_bundle(
             # gate would then have to refuse.
             raise IntegrityFailureError("bullet_claim_not_supported")
         source_claims.append(claim)
+
+    if source_claims:
+        # §16.1 binds the cited claim's own chain too, and Stage 10 owes the
+        # same check before it hands a claim to the writer — so this is that
+        # check, on the same rows, one stage later.
+        require_current_claim_facts(
+            connection,
+            source_claims,
+            list_experience_facts(connection, current_only=True),
+        )
+        for claim in source_claims:
+            require_direct_retained_chain(
+                connection,
+                claim.source_fact_ids,
+                diagnostic="claim_direct_chain_missing",
+            )
 
     input_payload = ResumeVerifierInput(
         resume_bullets=list(bullets),
