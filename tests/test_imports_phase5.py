@@ -14,6 +14,7 @@ from exp2res.errors import (
     ForbiddenPathError,
     ImportPayloadInvalidError,
     ImportPayloadTooLargeError,
+    IntegrityFailureError,
 )
 from exp2res.services.imports import ImportOutcome, import_payload
 
@@ -821,6 +822,46 @@ def test_github_supplied_identity_field_is_an_undeclared_field(
     assert counts(outcome) == (0, 0, 1)
     assert outcome.rejected[0].source_record_id == f"vera-example/playbook@{COMMIT_SHA}"
     assert raw_rows(workspace) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "key", "corrupt"),
+    [
+        ("non-hexadecimal-hash", "content_hash", "Vera Example not a digest"),
+        ("uppercase-hash", "content_hash", "A" * 64),
+        ("empty-identity", "source_record_id", ""),
+    ],
+)
+def test_retained_import_metadata_outside_its_typed_shape_fails_closed(
+    workspace: Path, tmp_path: Path, name: str, key: str, corrupt: str
+) -> None:
+    """§11 rules 30 and 39: this scan hydrates the import identity keys.
+
+    The empty identity is the case with teeth: it matches no computed
+    identity, so without this the record would import a second time as
+    `accepted` against corrupt retained state.
+    """
+    payload = write_payload(tmp_path, f"{name}.jsonl", [ephemeris_record()])
+    run_import(workspace, "ephemeris", payload)
+    rows = raw_rows(workspace)
+    assert len(rows) == 1
+
+    metadata = json.loads(rows[0]["metadata_json"])
+    metadata[key] = corrupt
+    with database(workspace) as connection:
+        # §5.3's automation-immutability trigger is exactly what stops a
+        # writer from producing this state; the test has to defeat it to
+        # stand in for a workspace corrupted outside Exp2Res.
+        connection.execute("DROP TRIGGER raw_logs_automation_update_guard")
+        connection.execute(
+            "UPDATE raw_logs SET metadata_json = ? WHERE id = ?",
+            (json.dumps(metadata, ensure_ascii=False), rows[0]["id"]),
+        )
+        connection.commit()
+
+    with pytest.raises(IntegrityFailureError):
+        run_import(workspace, "ephemeris", payload)
+    assert len(raw_rows(workspace)) == 1
 
 
 def test_single_record_payload_without_json_has_no_record_boundary(

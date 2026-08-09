@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import re
 import sqlite3
 from typing import Iterable
 
@@ -30,6 +31,7 @@ from exp2res.domain.models import (
     VerificationFinding,
     canonical_branch_identity,
     canonical_project_key,
+    validate_structural,
 )
 from exp2res.domain.temporal import (
     confidence_exceeds,
@@ -37,6 +39,11 @@ from exp2res.domain.temporal import (
     placement_supports,
 )
 from exp2res.errors import HydrationFailureError, IdCollisionError, IntegrityFailureError
+
+
+# §11 rule 30 types the imported `content_hash` metadata key as exactly
+# §19.4 rule 3's lowercase SHA-256 hexadecimal form.
+IMPORT_CONTENT_HASH = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -164,8 +171,17 @@ def retained_import_hashes(
     """Map one source system's retained §19.4 identities to their hashes.
 
     Identity lives in `RawLog.metadata`, so the comparison reads the same
-    three reserved keys the importer wrote. A retained row missing its hash
-    is stored state no import may reinterpret.
+    three reserved keys the importer wrote. §11 rule 29 names this scan as
+    their only consumer, and rule 30 types them: the identity keys are
+    non-empty structural strings and `content_hash` is exactly §19.4 rule 3's
+    lowercase SHA-256 hexadecimal form. Stored state outside that shape is
+    not a verdict an import may reinterpret — §11 rule 39 fails a stored row
+    closed at hydration, and this scan is where these keys are hydrated. An
+    empty stored identity is the case that would otherwise matter most: it
+    matches no computed identity, so the record it belongs to would import a
+    second time as `accepted`. The whole scan precedes the first record's
+    classification, so failing closed here withdraws no accepted record
+    (§19.4 rule 4).
     """
 
     retained: dict[str, str] = {}
@@ -183,6 +199,12 @@ def retained_import_hashes(
         digest = row["content_hash"]
         if not isinstance(identity, str) or not isinstance(digest, str):
             raise IntegrityFailureError()
+        if IMPORT_CONTENT_HASH.fullmatch(digest) is None:
+            raise IntegrityFailureError()
+        try:
+            validate_structural(identity)
+        except (UnicodeError, ValueError, TypeError) as error:
+            raise IntegrityFailureError() from error
         retained[identity] = digest
     return retained
 
