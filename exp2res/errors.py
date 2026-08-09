@@ -80,6 +80,32 @@ class ArtifactLocatorIgnoredError(InvalidInputError):
     public_message = "A local artifact locator is excluded by workspace privacy rules."
 
 
+class PayloadLocatorError(InvalidInputError):
+    """§29.4 rule 8's verdict on one locator embedded in an import payload.
+
+    Every case is one §19.4 rule 5 rejected record rather than a command
+    diagnostic, so the case travels on the instance instead of splitting the
+    class into five names no envelope ever carries.
+    """
+
+    diagnostic_class = "payload_locator_invalid"
+    public_message = "An imported payload locator is not selectable."
+
+    def __init__(self, reason: str = "payload_locator_invalid") -> None:
+        super().__init__()
+        self.diagnostic_class = reason
+
+
+class ImportPayloadInvalidError(InvalidInputError):
+    diagnostic_class = "import_payload_invalid"
+    public_message = "The import payload does not establish any source record."
+
+
+class ImportPayloadTooLargeError(InvalidInputError):
+    diagnostic_class = "import_payload_too_large"
+    public_message = "The import payload exceeds the total-object limit."
+
+
 class PublicCheckoutError(InvalidInputError):
     diagnostic_class = "public_checkout_forbidden"
     public_message = "A public engine checkout cannot be initialized as a private workspace."
