@@ -875,6 +875,10 @@ def test_the_verifier_is_told_what_a_counter_fact_means() -> None:
         pytest.param(
             "A rewrite you cannot ground is no rewrite", id="rewrite-grounded"
         ),
+        # §16.12: a finding's reason is generated voice as much as a rewrite is.
+        pytest.param("Your reason is bound", id="reason-grounded"),
+        # §16.13: the bullet's own language is judged, source tokens excepted.
+        pytest.param("whose prose is not English fails", id="bullet-language"),
     ],
 )
 def test_the_instructions_carry_each_16_rule_in_full(clause: str) -> None:
