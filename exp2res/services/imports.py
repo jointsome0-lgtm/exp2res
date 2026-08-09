@@ -328,6 +328,7 @@ def import_payload(
         "rejected": [],
     }
     attempted: list[ImportedRecord] = []
+    classification_complete = False
 
     def report() -> ImportOutcome:
         return ImportOutcome(
@@ -357,14 +358,27 @@ def import_payload(
                         attempted=attempted,
                     )
                     classified[outcome].append(result)
+                # Every record reached a §19.4 rule 5 classification. Only
+                # `writer_database` teardown remains, so a signal past this
+                # point still leaves a complete primary result.
+                classification_complete = True
             except sqlite3.OperationalError as error:
+                progress = _cancelled_report(
+                    connection, attempted=attempted, classified=classified
+                )
                 if "locked" in str(error).lower() or "busy" in str(error).lower():
                     busy = WorkspaceBusyError()
-                    busy.import_outcome = _cancelled_report(
-                        connection, attempted=attempted, classified=classified
-                    )
+                    busy.import_outcome = progress
                     raise busy from error
-                raise
+                # A non-busy operational failure — a full disk, a damaged
+                # file — is still §14.14 class 1, but §19.4 rule 4's committed
+                # records survive it. Raw propagation would reach the CLI's
+                # untyped handler, which reports no boundary at all; the base
+                # class carries the same exit code and diagnostic while
+                # keeping the rows reportable.
+                internal = Exp2ResError()
+                internal.import_outcome = progress
+                raise internal from error
             except KeyboardInterrupt:
                 # §14.14 rule 6: rule 4 commits each accepted record in its
                 # own transaction, so those records are lifecycle boundaries
@@ -385,13 +399,15 @@ def import_payload(
                 )
                 raise
     except KeyboardInterrupt:
-        # The loop finished and the signal landed in `writer_database`
-        # teardown — connection close and §8.1 lock release. The
-        # classification is complete and its committed rows are durable, so
-        # the boundary is still reported; the closed connection is no longer
-        # available to re-read, and the completed classification is exact.
+        # The signal landed outside the record loop: either in
+        # `writer_database` entry — the §8.1 lock wait or the §13.14 preamble,
+        # before any record was read — or in its teardown, after every record
+        # was classified. Only the second has a complete primary result;
+        # §14.14 rule 4 gives the first `result = null`. Either way the
+        # committed rows are durable and reported, and the closed connection
+        # is no longer available to re-read.
         cancelled = OperationCancelledError()
         cancelled.import_outcome = report()
-        cancelled.import_classified = True
+        cancelled.import_classified = classification_complete
         raise cancelled from None
     return report()

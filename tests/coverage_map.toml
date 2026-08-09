@@ -576,6 +576,8 @@ nodes = [
   "tests/test_cli_import.py::test_an_interrupt_before_the_commit_lands_reports_no_row",
   "tests/test_cli_import.py::test_an_interrupt_in_writer_teardown_still_reports_the_committed_rows",
   "tests/test_cli_import.py::test_a_classified_failure_keeps_the_records_committed_behind_it",
+  "tests/test_cli_import.py::test_a_non_busy_database_failure_keeps_the_records_committed_behind_it",
+  "tests/test_cli_import.py::test_an_interrupt_before_the_writer_opens_reports_no_classification",
   "tests/test_vera_replay_import.py::test_every_declared_import_step_produces_its_declared_counts",
   "tests/test_vera_replay_import.py::test_every_declared_failure_step_fails_for_its_declared_reason",
 ]

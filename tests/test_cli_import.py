@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import functools
 import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 from typer.testing import CliRunner
@@ -648,3 +649,74 @@ def test_a_classified_failure_keeps_the_records_committed_behind_it(
         "rejected": 0,
     }
     assert replayed.exit_code == 0
+
+
+def test_a_non_busy_database_failure_keeps_the_records_committed_behind_it(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§19.4 rule 4: a full disk fails its own record, not the durable ones."""
+    payload = write_payload(
+        tmp_path,
+        "full-disk.jsonl",
+        [ephemeris_record(f"vera-ephemeris-94{index:02d}") for index in range(3)],
+    )
+    persist = imports_service._persist
+    calls = {"count": 0}
+
+    def fail_after_two(*args, **kwargs):
+        if calls["count"] == 2:
+            raise sqlite3.OperationalError("database or disk is full")
+        calls["count"] += 1
+        return persist(*args, **kwargs)
+
+    monkeypatch.setattr(imports_service, "_persist", fail_after_two)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    # The exit taxonomy is unchanged: a non-busy operational failure stays
+    # §14.14 class 1, and the incomplete classification carries no result.
+    assert result.exit_code == 1
+    assert envelope["diagnostic_class"] == "internal_error"
+    assert envelope["result"] is None
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    assert len(created["raw_log"]) == 2
+    replayed, replayed_envelope = _invoke_json(
+        workspace, ["import", "ephemeris", payload]
+    )
+    assert replayed.exit_code == 0
+    assert replayed_envelope["result"]["counts"] == {
+        "accepted": 1,
+        "duplicate": 2,
+        "rejected": 0,
+    }
+
+
+def test_an_interrupt_before_the_writer_opens_reports_no_classification(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: a cancel before any record is read has no result."""
+    payload = write_payload(
+        tmp_path,
+        "unopened.jsonl",
+        [ephemeris_record(f"vera-ephemeris-95{index:02d}") for index in range(2)],
+    )
+
+    @contextmanager
+    def interrupt_on_entry(*args, **kwargs):
+        # The §8.1 lock wait and the §13.14 preamble both run here, before
+        # the first record is classified.
+        raise KeyboardInterrupt()
+        yield  # pragma: no cover - unreachable, keeps the generator shape
+
+    monkeypatch.setattr(imports_service, "writer_database", interrupt_on_entry)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    # No record was ever classified, so a complete zero-count result would be
+    # a claim the run never earned.
+    assert envelope["result"] is None
+    assert envelope["affected_ids"]["created"] == []
