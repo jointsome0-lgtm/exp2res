@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import ConfigDict, field_validator, model_validator
 
@@ -16,6 +16,7 @@ from exp2res.domain.enums import (
     DetectionRefType,
     GapPriority,
     GapTrigger,
+    ResumeTargetSection,
     SelfClaimDimension,
     VerificationStatus,
 )
@@ -27,6 +28,9 @@ from exp2res.domain.models import (
 
 from .graph import AssessmentExportGraph, id_key
 from .markdown import normalize_generated_text
+
+if TYPE_CHECKING:  # pragma: no cover - `branch` imports this module's siblings
+    from .branch import BranchExportGraph
 
 
 class ExportDocument(StrictModel):
@@ -284,6 +288,145 @@ class AssessmentEvidenceMapDocument(ExportDocument):
         return self
 
 
+class RenderedBulletExport(ExportDocument):
+    bullet_id: str
+    text: str
+    target_section: ResumeTargetSection
+    matched_jd_requirements: list[str]
+    source_self_claim_ids: list[str]
+    source_fact_ids: list[str]
+    source_log_ids: list[str]
+
+    @field_validator("bullet_id")
+    @classmethod
+    def structural_id(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("text")
+    @classmethod
+    def normalized_text(cls, value: str) -> str:
+        return _projected_text(value)
+
+    @field_validator(
+        "matched_jd_requirements",
+        "source_self_claim_ids",
+        "source_fact_ids",
+        "source_log_ids",
+    )
+    @classmethod
+    def unique_ids(cls, value: list[str]) -> list[str]:
+        return _require_unique(value)
+
+    @model_validator(mode="after")
+    def grounded_bullet(self) -> "RenderedBulletExport":
+        # §18: a bullet with no fact or no log has no closure to render from,
+        # and the export projection is where that becomes visible to a reader.
+        if not self.source_fact_ids or not self.source_log_ids:
+            raise ValueError("rendered bullet has no provenance")
+        return self
+
+
+class BulletPackEvidenceMapDocument(ExportDocument):
+    schema_version: Literal[3]
+    output_kind: Literal["resume"]
+    entity_id: str
+    rendered_bullets: list[RenderedBulletExport]
+    claim_links: list[ClaimLink]
+    fact_links: list[FactLink]
+    evidence_links: list[EvidenceLink]
+
+    @field_validator("entity_id")
+    @classmethod
+    def structural_entity_id(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @model_validator(mode="after")
+    def complete_ordered_links(self) -> "BulletPackEvidenceMapDocument":
+        # `rendered_bullets` carries §13.10 render order, so it is checked for
+        # duplicates only; the three link lists are closures and stay ordered.
+        bullet_ids = [item.bullet_id for item in self.rendered_bullets]
+        if not bullet_ids or len(bullet_ids) != len(set(bullet_ids)):
+            raise ValueError("rendered bullets are empty or duplicated")
+        for ids in (
+            [item.claim_id for item in self.claim_links],
+            [item.fact_id for item in self.fact_links],
+            [item.evidence_item_id for item in self.evidence_links],
+        ):
+            if len(ids) != len(set(ids)) or ids != sorted(ids, key=id_key):
+                raise ValueError("evidence-map links are duplicate or unordered")
+        # §13.12: every rendered bullet round-trips through the typed links, so
+        # each cited claim and each reached fact carries its own closure row.
+        claim_ids = {item.claim_id for item in self.claim_links}
+        fact_ids = {item.fact_id for item in self.fact_links}
+        evidence_ids = {item.evidence_item_id for item in self.evidence_links}
+        reached_facts: set[str] = set()
+        for bullet in self.rendered_bullets:
+            if not set(bullet.source_self_claim_ids).issubset(claim_ids):
+                raise ValueError("rendered bullet cites an unlinked claim")
+            if not set(bullet.source_fact_ids).issubset(fact_ids):
+                raise ValueError("rendered bullet cites an unlinked fact")
+            reached_facts.update(bullet.source_fact_ids)
+        for link in self.claim_links:
+            if not set(link.source_fact_ids).issubset(fact_ids):
+                raise ValueError("claim link reaches an unlinked fact")
+            reached_facts.update(link.source_fact_ids)
+        # An unused extra member fails export exactly like a missing one.
+        if reached_facts != fact_ids:
+            raise ValueError("fact links disagree with the reached closure")
+        reached_evidence: set[str] = set()
+        reached_logs: set[str] = set()
+        for link in self.fact_links:
+            reached_evidence.update(link.evidence_item_ids)
+            reached_logs.update(link.source_log_ids)
+        if reached_evidence != evidence_ids:
+            raise ValueError("evidence links disagree with the reached closure")
+        if reached_logs != {item.raw_log_id for item in self.evidence_links}:
+            raise ValueError("evidence links disagree with the reached logs")
+        return self
+
+
+class FindingExport(ExportDocument):
+    bullet_id: str
+    verification_status: VerificationStatus
+    unsupported_phrases: list[str]
+    verifier_reason: str | None
+
+    @field_validator("bullet_id")
+    @classmethod
+    def structural_id(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("unsupported_phrases")
+    @classmethod
+    def normalized_phrases(cls, value: list[str]) -> list[str]:
+        # A model-authored ordered string list: §13.12 keeps persisted order,
+        # so only the projection normalization is applied here.
+        return [_projected_text(item) for item in value]
+
+    @field_validator("verifier_reason")
+    @classmethod
+    def normalized_reason(cls, value: str | None) -> str | None:
+        return None if value is None else _projected_text(value)
+
+
+class VerificationReportDocument(ExportDocument):
+    schema_version: Literal[3]
+    branch_id: str
+    findings: list[FindingExport]
+
+    @field_validator("branch_id")
+    @classmethod
+    def structural_id(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @model_validator(mode="after")
+    def unique_findings(self) -> "VerificationReportDocument":
+        ids = [item.bullet_id for item in self.findings]
+        if not ids or len(ids) != len(set(ids)):
+            raise ValueError("findings are empty or duplicated")
+        return self
+
+
 def _gap_export(item) -> GapExport:
     return GapExport(
         id=item.id,
@@ -389,6 +532,83 @@ def build_evidence_map_document(
         evidence_links=[
             EvidenceLink(evidence_item_id=item.id, raw_log_id=item.raw_log_id)
             for item in graph.evidence_items
+        ],
+    )
+
+
+def build_bullet_pack_evidence_map(
+    graph: "BranchExportGraph",
+) -> BulletPackEvidenceMapDocument:
+    return BulletPackEvidenceMapDocument(
+        schema_version=3,
+        output_kind="resume",
+        entity_id=graph.branch.value.id,
+        # §13.10 render order, recomputed by the graph — not ID order.
+        rendered_bullets=[
+            RenderedBulletExport(
+                bullet_id=item.value.id,
+                text=normalize_generated_text(item.value.text),
+                target_section=item.value.target_section,
+                matched_jd_requirements=sorted(
+                    item.value.matched_jd_requirements, key=id_key
+                ),
+                source_self_claim_ids=sorted(
+                    item.value.source_self_claim_ids, key=id_key
+                ),
+                source_fact_ids=sorted(item.value.source_fact_ids, key=id_key),
+                source_log_ids=sorted(item.value.source_log_ids, key=id_key),
+            )
+            for item in graph.bullets
+        ],
+        claim_links=[
+            ClaimLink(
+                claim_id=item.value.id,
+                source_fact_ids=sorted(item.value.source_fact_ids, key=id_key),
+                counter_fact_ids=sorted(item.value.counter_fact_ids, key=id_key),
+            )
+            for item in graph.claims
+        ],
+        fact_links=[
+            FactLink(
+                fact_id=item.value.id,
+                evidence_item_ids=sorted(item.value.evidence_item_ids, key=id_key),
+                source_log_ids=sorted(item.value.source_log_ids, key=id_key),
+            )
+            for item in graph.facts
+        ],
+        evidence_links=[
+            EvidenceLink(evidence_item_id=item.id, raw_log_id=item.raw_log_id)
+            for item in graph.evidence_items
+        ],
+    )
+
+
+def build_verification_report(graph: "BranchExportGraph") -> VerificationReportDocument:
+    """Project each bullet's denormalized §11.8 status onto the report.
+
+    §13.12: one row per rendered bullet in the same order and with no other
+    ID. Append-only §11.14 finding history and `suggested_rewrite` never
+    export, so nothing here reads the `verification_findings` table.
+    """
+
+    return VerificationReportDocument(
+        schema_version=3,
+        branch_id=graph.branch.value.id,
+        findings=[
+            FindingExport(
+                bullet_id=item.value.id,
+                verification_status=item.value.verification_status,
+                unsupported_phrases=[
+                    normalize_generated_text(phrase)
+                    for phrase in item.value.unsupported_phrases
+                ],
+                verifier_reason=(
+                    None
+                    if item.value.verifier_reason is None
+                    else normalize_generated_text(item.value.verifier_reason)
+                ),
+            )
+            for item in graph.bullets
         ],
     )
 

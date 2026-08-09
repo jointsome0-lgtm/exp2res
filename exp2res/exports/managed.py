@@ -19,9 +19,16 @@ from exp2res.domain.enums import AssessmentScope
 from exp2res.domain.models import StrictModel, validate_free_text, validate_structural
 from exp2res.errors import IntegrityFailureError, ManagedOutputIncompleteError
 
+from .branch import (
+    BranchExportGraph,
+    branch_render_input_bundle,
+)
+from .bullet_pack import render_bullet_pack
 from .companions import (
+    build_bullet_pack_evidence_map,
     build_evidence_map_document,
     build_self_claims_document,
+    build_verification_report,
     companion_bytes,
 )
 from .graph import AssessmentExportGraph, id_key, render_input_bundle
@@ -45,6 +52,16 @@ _MEMBER_NAMES = (
     "self_claims.json",
 )
 _ALL_NAMES = (*_MEMBER_NAMES, "manifest.json")
+_RESUME_MEMBER_NAMES = (
+    "bullet_pack.md",
+    "evidence_map.json",
+    "verification_report.json",
+)
+_RESUME_ALL_NAMES = (*_RESUME_MEMBER_NAMES, "manifest.json")
+# §13.14 rule 1: the two reserved parents, and the managed kind each publishes.
+# `branch` holds the `resume` kind because §14.10 keeps the persisted entity
+# names while the product-facing artifact is the verified bullet pack.
+_PARENT_KIND = {"assessment": "assessment", "branch": "resume"}
 
 
 class _ManifestModel(StrictModel):
@@ -139,6 +156,114 @@ class AssessmentManifest(_ManifestModel):
         return self
 
 
+class ResumeIdentity(_ManifestModel):
+    branch_name: str
+    job_description_id: str
+    assessment_snapshot_id: str
+
+    @field_validator("branch_name")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        return validate_free_text(value, nonempty=True)
+
+    @field_validator("job_description_id", "assessment_snapshot_id")
+    @classmethod
+    def valid_ids(cls, value: str) -> str:
+        return validate_structural(value)
+
+
+class ResumeSourceIds(_ManifestModel):
+    resume_bullet_ids: list[str]
+    assessment_snapshot_ids: list[str]
+    job_description_ids: list[str]
+    self_claim_ids: list[str]
+    experience_fact_ids: list[str]
+    evidence_item_ids: list[str]
+    raw_log_ids: list[str]
+    jd_requirement_ids: list[str]
+
+    @field_validator("*")
+    @classmethod
+    def duplicate_free_sorted(cls, value: list[str]) -> list[str]:
+        for item in value:
+            validate_structural(item)
+        if len(value) != len(set(value)):
+            raise ValueError("duplicate source ID")
+        if value != sorted(value, key=id_key):
+            raise ValueError("source IDs are not byte ordered")
+        return value
+
+
+class ResumeManifestMember(_ManifestModel):
+    name: Literal["bullet_pack.md", "evidence_map.json", "verification_report.json"]
+    sha256: str
+
+    @field_validator("sha256")
+    @classmethod
+    def lowercase_sha256(cls, value: str) -> str:
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError("invalid SHA-256")
+        return value
+
+
+class ResumeManifest(_ManifestModel):
+    manifest_version: Literal[6]
+    output_kind: Literal["resume"]
+    entity_id: str
+    generation_id: str
+    produced_by_run_id: str
+    created_at: datetime
+    identity: ResumeIdentity
+    source_ids: ResumeSourceIds
+    render_input_sha256: str
+    members: list[ResumeManifestMember]
+
+    @field_validator("entity_id")
+    @classmethod
+    def valid_entity_id(cls, value: str) -> str:
+        if not ENTITY_ID.fullmatch(value):
+            raise ValueError("invalid managed-output entity ID")
+        return value
+
+    @field_validator("generation_id", "produced_by_run_id")
+    @classmethod
+    def valid_production_ids(cls, value: str) -> str:
+        return validate_structural(value)
+
+    @field_validator("created_at")
+    @classmethod
+    def aware_created_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("manifest datetime must carry an offset")
+        return value
+
+    @field_validator("render_input_sha256")
+    @classmethod
+    def valid_render_hash(cls, value: str) -> str:
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError("invalid render-input SHA-256")
+        return value
+
+    @model_validator(mode="after")
+    def exact_member_set(self) -> "ResumeManifest":
+        names = [item.name for item in self.members]
+        if names != sorted(_RESUME_MEMBER_NAMES, key=id_key):
+            raise ValueError("manifest member set or order is invalid")
+        return self
+
+    @model_validator(mode="after")
+    def identity_matches_source_ids(self) -> "ResumeManifest":
+        # §13.14 rule 2: each of these lists holds exactly the one ID the
+        # identity names, so a manifest can never claim two anchors.
+        if self.source_ids.assessment_snapshot_ids != [
+            self.identity.assessment_snapshot_id
+        ]:
+            raise ValueError("snapshot source list disagrees with identity")
+        if self.source_ids.job_description_ids != [self.identity.job_description_id]:
+            raise ValueError("job-description source list disagrees with identity")
+        return self
+
+
 def validate_entity_id(value: str) -> None:
     if not ENTITY_ID.fullmatch(value):
         raise IntegrityFailureError("managed_output_entity_id_invalid")
@@ -199,8 +324,56 @@ def build_assessment_manifest(
     )
 
 
-def manifest_bytes(manifest: AssessmentManifest) -> bytes:
+def manifest_bytes(manifest: AssessmentManifest | ResumeManifest) -> bytes:
     return canonical_json_bytes(manifest.model_dump(mode="python")) + b"\n"
+
+
+def branch_member_bytes(graph: BranchExportGraph) -> dict[str, bytes]:
+    return {
+        "bullet_pack.md": render_bullet_pack(graph),
+        "evidence_map.json": companion_bytes(build_bullet_pack_evidence_map(graph)),
+        "verification_report.json": companion_bytes(build_verification_report(graph)),
+    }
+
+
+def branch_render_input_sha256(graph: BranchExportGraph) -> str:
+    bundle = branch_render_input_bundle(graph)
+    return canonical_hash(bundle.model_dump(mode="python"))
+
+
+def build_branch_manifest(
+    graph: BranchExportGraph,
+    members: dict[str, bytes],
+    *,
+    created_at: datetime,
+) -> ResumeManifest:
+    if created_at.tzinfo is None or created_at.utcoffset() is None:
+        raise IntegrityFailureError("manifest_created_at_naive")
+    if set(members) != set(_RESUME_MEMBER_NAMES):
+        raise IntegrityFailureError("resume_member_set_invalid")
+    branch = graph.branch.value
+    return ResumeManifest(
+        manifest_version=6,
+        output_kind="resume",
+        entity_id=branch.id,
+        generation_id=graph.branch.generation_id,
+        produced_by_run_id=graph.branch.produced_by_run_id,
+        created_at=created_at,
+        identity=ResumeIdentity(
+            branch_name=branch.name,
+            job_description_id=branch.job_description_id,
+            assessment_snapshot_id=branch.assessment_snapshot_id,
+        ),
+        source_ids=ResumeSourceIds(**graph.source_ids()),
+        render_input_sha256=branch_render_input_sha256(graph),
+        members=[
+            ResumeManifestMember(
+                name=name,
+                sha256=hashlib.sha256(members[name]).hexdigest(),
+            )
+            for name in sorted(_RESUME_MEMBER_NAMES, key=id_key)
+        ],
+    )
 
 
 def _lstat(path: Path):
@@ -494,27 +667,42 @@ def _directory_names(path: Path, out_root: Path) -> list[str]:
         os.close(descriptor)
 
 
-def _inspect_set(path: Path, parent: Path, out_root: Path) -> AssessmentManifest | None:
+def _inspect_set(
+    path: Path, parent: Path, out_root: Path
+) -> AssessmentManifest | ResumeManifest | None:
+    """Read one managed set and return its manifest only when it matches.
+
+    §13.14 rule 3 binds a set to its parent: the managed kind is decided by
+    which reserved parent the set sits under, never by the manifest's own
+    `output_kind`, so a resume manifest planted under `out/assessment/` — or
+    the reverse — is never matching and never current.
+    """
+
+    kind = _PARENT_KIND.get(parent.name)
+    if kind is None:
+        return None
+    model = AssessmentManifest if kind == "assessment" else ResumeManifest
+    all_names = _ALL_NAMES if kind == "assessment" else _RESUME_ALL_NAMES
     try:
         _validate_existing_path(parent, out_root, directory=True)
         _validate_existing_path(path, out_root, directory=True)
         if stat.S_IMODE(path.lstat().st_mode) != 0o700:
             return None
         names = _directory_names(path, out_root)
-        if names != sorted(_ALL_NAMES, key=id_key):
+        if names != sorted(all_names, key=id_key):
             return None
         manifest_path = path / "manifest.json"
         if stat.S_IMODE(manifest_path.lstat().st_mode) != 0o600:
             return None
         stored_manifest = _read_regular(manifest_path, out_root)
-        manifest = AssessmentManifest.model_validate_json(stored_manifest)
+        manifest = model.model_validate_json(stored_manifest)
         if stored_manifest != manifest_bytes(manifest):
             return None
         path_entity = path.name
         reserved = _CANDIDATE.fullmatch(path.name) or _ROLLBACK.fullmatch(path.name)
         if reserved is not None:
             path_entity = reserved.group("entity")
-        if manifest.entity_id != path_entity or manifest.output_kind != "assessment":
+        if manifest.entity_id != path_entity or manifest.output_kind != kind:
             return None
         for member in manifest.members:
             member_path = path / member.name
@@ -930,13 +1118,12 @@ def _candidate_cleanup(path: Path, out_root: Path) -> None:
 def _build_candidate(
     parent: Path,
     out_root: Path,
-    graph: AssessmentExportGraph,
+    entity_id: str,
     members: dict[str, bytes],
-    manifest: AssessmentManifest,
+    manifest: AssessmentManifest | ResumeManifest,
+    member_names: tuple[str, ...],
 ) -> Path:
-    candidate = parent / (
-        f".exp2res-candidate-{graph.snapshot.value.id}-{secrets.token_hex(16)}"
-    )
+    candidate = parent / f".exp2res-candidate-{entity_id}-{secrets.token_hex(16)}"
     try:
         _mkdir_private(candidate, out_root)
     except BaseException:
@@ -944,7 +1131,7 @@ def _build_candidate(
             raise ManagedOutputIncompleteError((str(candidate),)) from None
         raise
     try:
-        for name in sorted(_MEMBER_NAMES, key=id_key):
+        for name in sorted(member_names, key=id_key):
             _write_private_file(candidate / name, members[name], out_root)
         _write_private_file(candidate / "manifest.json", manifest_bytes(manifest), out_root)
         if _inspect_set(candidate, parent, out_root) != manifest:
@@ -990,30 +1177,6 @@ def _manifest_matches_current(
     )
 
 
-def _matching_current_manifest(
-    final_path: Path,
-    parent: Path,
-    out_root: Path,
-    graph: AssessmentExportGraph,
-) -> AssessmentManifest | None:
-    manifest = _inspect_set(final_path, parent, out_root)
-    if manifest is None or not _manifest_matches_current(manifest, graph):
-        return None
-    return manifest
-
-
-def _matching_prior_manifest(
-    final_path: Path,
-    parent: Path,
-    out_root: Path,
-    graph: AssessmentExportGraph,
-) -> AssessmentManifest | None:
-    manifest = _inspect_set(final_path, parent, out_root)
-    if manifest is None or not _manifest_matches_prior(manifest, graph):
-        return None
-    return manifest
-
-
 def _remove_stale_same_view(
     parent: Path,
     out_root: Path,
@@ -1057,65 +1220,70 @@ def _member_bytes_equal(
     final_path: Path,
     out_root: Path,
     members: dict[str, bytes],
+    member_names: tuple[str, ...] = _MEMBER_NAMES,
 ) -> bool:
     try:
         return all(
             _read_regular(final_path / name, out_root) == members[name]
-            for name in _MEMBER_NAMES
+            for name in member_names
         )
     except OSError:
         return False
 
 
-def publish_assessment(
-    workspace: Path,
-    graph: AssessmentExportGraph,
+def _publish_set(
     *,
-    clock=None,
-) -> tuple[AssessmentManifest, tuple[str, ...]]:
-    """Publish and revalidate one complete assessment set under §13.14."""
+    out_root: Path,
+    parent: Path,
+    entity_id: str,
+    members: dict[str, bytes],
+    candidate_manifest,
+    member_names: tuple[str, ...],
+    all_names: tuple[str, ...],
+    matches_prior,
+    matches_current,
+    render_hash: str,
+):
+    """Run §13.14 rules 4–8 for one already rendered and validated set.
 
-    validate_entity_id(graph.snapshot.value.id)
-    out_root, parent, _branch = _ensure_managed_parents(workspace)
-    now = (clock or (lambda: datetime.now(timezone.utc)))()
-    members = assessment_member_bytes(graph)
-    candidate_manifest = build_assessment_manifest(graph, members, created_at=now)
+    Both managed kinds share this body verbatim. What differs between them —
+    which members exist, what makes a prior manifest replaceable, and how the
+    render hash is computed — arrives as parameters, so the candidate,
+    rollback, restoration, and post-commit rules cannot drift apart between an
+    assessment set and a bullet pack.
+    """
 
-    _remove_stale_same_view(parent, out_root, candidate_manifest)
-    candidate = _build_candidate(parent, out_root, graph, members, candidate_manifest)
-    final_path = parent / graph.snapshot.value.id
+    candidate = _build_candidate(
+        parent, out_root, entity_id, members, candidate_manifest, member_names
+    )
+    final_path = parent / entity_id
     rollback: Path | None = None
     published = False
     try:
-        prior_manifest: AssessmentManifest | None = None
         if _lstat(final_path) is not None:
-            prior_manifest = _matching_prior_manifest(
-                final_path, parent, out_root, graph
-            )
-            if prior_manifest is None:
+            prior_manifest = _inspect_set(final_path, parent, out_root)
+            if prior_manifest is None or not matches_prior(prior_manifest):
                 raise ManagedOutputIncompleteError((str(final_path),))
             if (
                 prior_manifest.source_ids == candidate_manifest.source_ids
                 and prior_manifest.render_input_sha256
                 == candidate_manifest.render_input_sha256
-                and _member_bytes_equal(final_path, out_root, members)
+                and _member_bytes_equal(final_path, out_root, members, member_names)
             ):
                 _candidate_cleanup(candidate, out_root)
                 try:
                     _fsync_directory(parent, out_root)
                 except OSError as error:
                     raise ManagedOutputIncompleteError((str(parent),)) from error
-                manifest = prior_manifest
                 paths = tuple(
-                    str(final_path / name)
-                    for name in sorted(_ALL_NAMES, key=id_key)
+                    str(final_path / name) for name in sorted(all_names, key=id_key)
                 )
-                return manifest, paths
+                return prior_manifest, paths
 
             # §13.14 rule 5 portable fallback: native directory exchange is
             # deliberately unavailable in V1.
             rollback = parent / (
-                f".exp2res-rollback-{graph.snapshot.value.id}-{secrets.token_hex(16)}"
+                f".exp2res-rollback-{entity_id}-{secrets.token_hex(16)}"
             )
             try:
                 _rename(final_path, rollback)
@@ -1159,14 +1327,122 @@ def publish_assessment(
             residual = str(rollback) if rollback is not None else str(final_path)
             raise ManagedOutputIncompleteError((residual,)) from error
 
-        current = _matching_current_manifest(final_path, parent, out_root, graph)
-        if current is None or current.render_input_sha256 != render_input_sha256(graph):
+        current = _inspect_set(final_path, parent, out_root)
+        if (
+            current is None
+            or not matches_current(current)
+            or current.render_input_sha256 != render_hash
+        ):
             raise ManagedOutputIncompleteError((str(final_path),))
         paths = tuple(
-            str(final_path / name) for name in sorted(_ALL_NAMES, key=id_key)
+            str(final_path / name) for name in sorted(all_names, key=id_key)
         )
         return current, paths
     except BaseException:
         if not published and _lstat(candidate) is not None:
             _candidate_cleanup(candidate, out_root)
         raise
+
+
+def publish_assessment(
+    workspace: Path,
+    graph: AssessmentExportGraph,
+    *,
+    clock=None,
+) -> tuple[AssessmentManifest, tuple[str, ...]]:
+    """Publish and revalidate one complete assessment set under §13.14."""
+
+    validate_entity_id(graph.snapshot.value.id)
+    out_root, parent, _branch = _ensure_managed_parents(workspace)
+    now = (clock or (lambda: datetime.now(timezone.utc)))()
+    members = assessment_member_bytes(graph)
+    candidate_manifest = build_assessment_manifest(graph, members, created_at=now)
+
+    _remove_stale_same_view(parent, out_root, candidate_manifest)
+    return _publish_set(
+        out_root=out_root,
+        parent=parent,
+        entity_id=graph.snapshot.value.id,
+        members=members,
+        candidate_manifest=candidate_manifest,
+        member_names=_MEMBER_NAMES,
+        all_names=_ALL_NAMES,
+        matches_prior=lambda manifest: isinstance(manifest, AssessmentManifest)
+        and _manifest_matches_prior(manifest, graph),
+        matches_current=lambda manifest: isinstance(manifest, AssessmentManifest)
+        and _manifest_matches_current(manifest, graph),
+        render_hash=render_input_sha256(graph),
+    )
+
+
+def _branch_manifest_matches_prior(
+    manifest: ResumeManifest, graph: BranchExportGraph
+) -> bool:
+    """Recognize a prior set for this same branch generation.
+
+    A branch is replaced by name, not in place: Stage 10 supersedes the old
+    branch and allocates a new ID, and §13.13 removes that old ID-keyed set.
+    So a prior set at *this* path is a re-export of this same branch, and only
+    its render-sensitive parts — the source closure and the render hash — may
+    legitimately have moved underneath it.
+    """
+
+    branch = graph.branch.value
+    return not (
+        manifest.entity_id != branch.id
+        or manifest.generation_id != graph.branch.generation_id
+        or manifest.produced_by_run_id != graph.branch.produced_by_run_id
+        or manifest.identity
+        != ResumeIdentity(
+            branch_name=branch.name,
+            job_description_id=branch.job_description_id,
+            assessment_snapshot_id=branch.assessment_snapshot_id,
+        )
+    )
+
+
+def publish_branch(
+    workspace: Path,
+    graph: BranchExportGraph,
+    *,
+    clock=None,
+) -> tuple[ResumeManifest, tuple[str, ...]]:
+    """Publish and revalidate one complete verified bullet pack under §13.14.
+
+    There is no same-view sweep here: rule 5's enumeration is the assessment
+    kind's replacement rule, while a branch's replacement identity is the
+    folded name Stage 10 resolves, whose superseded set §13.13 already removed
+    through `remove_branch_sets`.
+    """
+
+    validate_entity_id(graph.branch.value.id)
+    out_root, _assessment, parent = _ensure_managed_parents(workspace)
+    now = (clock or (lambda: datetime.now(timezone.utc)))()
+    members = branch_member_bytes(graph)
+    candidate_manifest = build_branch_manifest(graph, members, created_at=now)
+    render_hash = branch_render_input_sha256(graph)
+
+    def matches_prior(manifest) -> bool:
+        return isinstance(manifest, ResumeManifest) and _branch_manifest_matches_prior(
+            manifest, graph
+        )
+
+    def matches_current(manifest) -> bool:
+        return (
+            matches_prior(manifest)
+            and manifest.source_ids == ResumeSourceIds(**graph.source_ids())
+            and manifest.render_input_sha256 == render_hash
+        )
+
+    return _publish_set(
+        out_root=out_root,
+        parent=parent,
+        entity_id=graph.branch.value.id,
+        members=members,
+        candidate_manifest=candidate_manifest,
+        member_names=_RESUME_MEMBER_NAMES,
+        all_names=_RESUME_ALL_NAMES,
+        matches_prior=matches_prior,
+        matches_current=matches_current,
+        render_hash=render_hash,
+    )

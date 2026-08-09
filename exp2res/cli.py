@@ -88,7 +88,7 @@ from exp2res.services.correction import (
     read_correction_source,
     validate_correction_selection,
 )
-from exp2res.pipeline.stage10 import Stage10Result
+from exp2res.pipeline.stage10 import Stage10Result, validated_branch_name
 from exp2res.pipeline.stage11 import Stage11Result
 from exp2res.services.bullets import run_bullets_generate, run_bullets_verify
 from exp2res.services.assessment import (
@@ -112,7 +112,11 @@ from exp2res.services.extraction import (
     run_extract,
     validate_extract_selection,
 )
-from exp2res.services.export import export_assessment, require_export_eligible
+from exp2res.services.export import (
+    export_assessment,
+    export_bullet_pack,
+    require_export_eligible,
+)
 from exp2res.services.facts import list_facts, show_fact
 from exp2res.pipeline.stage8 import Stage8Result
 from exp2res.services.job_descriptions import (
@@ -139,6 +143,7 @@ from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.services.workspace import PurgeOutcome, purge_workspace
 from exp2res.storage.repository import (
     BULLET_EXPORT_ALLOWLIST,
+    current_branch_by_folded_name,
     get_assessment_snapshot,
 )
 from exp2res.storage.workspace import (
@@ -2904,6 +2909,45 @@ def bullets_verify(
             raise cancelled from None
 
     _run_command(context, "bullets verify", operation)
+
+
+@bullets_app.command("export")
+def bullets_export(
+    context: typer.Context,
+    branch_name: str = typer.Option(..., "--branch"),
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.14 rule 3: resolve the selector read-only before the writer path,
+        # so an unknown branch reports class 2 even where a managed-output
+        # residual would stop publication with class 8. The export service
+        # re-resolves and re-validates the stored rows under the writer lock.
+        require_compatible(workspace)
+        validated = validated_branch_name(branch_name)
+        with read_database(workspace) as connection:
+            selected = current_branch_by_folded_name(connection, validated)
+        if selected is None:
+            raise SelectorNotFoundError()
+
+        exported = export_bullet_pack(workspace, branch_name=branch_name)
+        result = AssessmentExportResult(
+            manifest_path=exported.manifest_path,
+            managed_paths=exported.managed_paths,
+        )
+        return Outcome(
+            result=result,
+            human_result="\n".join(
+                [
+                    result.manifest_path,
+                    *(
+                        path
+                        for path in result.managed_paths
+                        if path != result.manifest_path
+                    ),
+                ]
+            ),
+        )
+
+    _run_command(context, "bullets export", operation)
 
 
 def _carry_verified_pass(error: Exp2ResError, verified: Stage11Result) -> None:

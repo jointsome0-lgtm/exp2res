@@ -192,6 +192,20 @@ class AssessmentExportBlockedError(Exp2ResError):
     public_message = "Assessment export is blocked by its verification-status gate."
 
 
+class BulletPackExportBlockedError(Exp2ResError):
+    """§14.14 class 10: a §16.11 allowlist refuses the pack, intact or not.
+
+    A bullet or anchor that fell outside its allowlist is a gate verdict on a
+    coherent graph, not damaged state, so it never reports as class 7.
+    """
+
+    exit_code = 10
+    diagnostic_class = "bullet_pack_export_blocked"
+    public_message = (
+        "Verified bullet-pack export is blocked by a verification-status gate."
+    )
+
+
 class MigrationFailedError(IntegrityFailureError):
     """A rolled-back migration is §14.14 class 7, not schema class 4."""
 

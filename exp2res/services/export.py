@@ -1,4 +1,4 @@
-"""Stage 12 assessment-export service substrate (no CLI surface)."""
+"""Stage 12 export services: the assessment set and the verified bullet pack."""
 
 from __future__ import annotations
 
@@ -9,13 +9,18 @@ from exp2res.errors import (
     AssessmentExportBlockedError,
     InvalidInputError,
     ManagedOutputIncompleteError,
+    SelectorNotFoundError,
 )
+from exp2res.exports.branch import load_branch_graph, load_current_branch
 from exp2res.exports.graph import load_assessment_graph, load_current_snapshot
 from exp2res.exports.managed import (
     ENTITY_ID,
     publish_assessment,
+    publish_branch,
     reconcile_managed_outputs as _reconcile_managed_outputs,
 )
+from exp2res.pipeline.stage10 import validated_branch_name
+from exp2res.storage.repository import current_branch_by_folded_name
 from exp2res.storage.workspace import writer_database
 
 
@@ -39,6 +44,14 @@ def require_export_eligible(verification_status: str) -> None:
 
 @dataclass(frozen=True)
 class AssessmentExportResult:
+    manifest_path: str
+    managed_paths: list[str]
+
+
+@dataclass(frozen=True)
+class BulletPackExportResult:
+    branch_id: str
+    branch_name: str
     manifest_path: str
     managed_paths: list[str]
 
@@ -90,6 +103,50 @@ def export_assessment(
         path for path in managed_paths if Path(path).name == "manifest.json"
     )
     return AssessmentExportResult(
+        manifest_path=manifest_path,
+        managed_paths=list(managed_paths),
+    )
+
+
+def export_bullet_pack(
+    workspace: Path,
+    *,
+    branch_name: str,
+    clock=None,
+) -> BulletPackExportResult:
+    """Render, publish, and revalidate one current branch's verified pack."""
+
+    # §14.14 rule 4: selector hygiene precedes workspace and output I/O, the
+    # same treatment `bullets verify` gives the branch name.
+    validated = validated_branch_name(branch_name)
+
+    with writer_database(workspace) as connection:
+        # §15.10 rule 8: export is a later compatible writer, so the default
+        # abandoned-telemetry reconciliation runs before its business operation.
+        residuals = _reconcile_managed_outputs(workspace)
+        if residuals:
+            raise ManagedOutputIncompleteError(residuals)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            selected = current_branch_by_folded_name(connection, validated)
+            if selected is None:
+                raise SelectorNotFoundError()
+            branch_row, branch = load_current_branch(connection, selected.id)
+            graph = load_branch_graph(
+                connection, branch_row=branch_row, branch=branch
+            )
+            _manifest, managed_paths = publish_branch(workspace, graph, clock=clock)
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+
+    manifest_path = next(
+        path for path in managed_paths if Path(path).name == "manifest.json"
+    )
+    return BulletPackExportResult(
+        branch_id=branch.id,
+        branch_name=branch.name,
         manifest_path=manifest_path,
         managed_paths=list(managed_paths),
     )

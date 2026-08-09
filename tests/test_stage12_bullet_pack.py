@@ -1,0 +1,536 @@
+"""Offline §13.12/§18 verified-bullet-pack export tests.
+
+Stage 12 is the only writer of `out/branch/<branch-id>/`, so these hold the
+fixed member set and its byte rules, the §13.10 render order the pack recovers
+from persisted state alone, the closed companion schemas, and — the property
+that keeps a failure from being visible to a reader — that every closed-
+document failure mode refuses *before* anything reaches the final path.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from exp2res.domain.enums import ResumeTargetSection
+from exp2res.errors import (
+    BulletPackExportBlockedError,
+    IntegrityFailureError,
+    ManagedOutputIncompleteError,
+    SelectorNotFoundError,
+)
+from exp2res.exports.branch import load_branch_graph, load_current_branch, render_order
+from exp2res.exports.bullet_pack import render_bullet_pack, section_heading
+from exp2res.exports.companions import (
+    build_bullet_pack_evidence_map,
+    build_verification_report,
+    companion_bytes,
+)
+from exp2res.exports.managed import (
+    ResumeManifest,
+    branch_member_bytes,
+    build_branch_manifest,
+)
+from exp2res.services.export import export_assessment, export_bullet_pack
+from exp2res.storage.repository import (
+    current_branch_by_folded_name,
+    list_resume_bullets_for_branch,
+    update_resume_bullet_verification,
+)
+from exp2res.storage.workspace import read_database, writer_database
+
+from conftest import FIXED_NOW
+from fakes import FakeContractRunner
+from test_branch_substrate import BRANCH_NAME, REQUIREMENT_ID
+from test_stage10_generation import BULLET_TEXT, SECOND_TEXT
+from test_stage11_bullet_verification import (
+    finding,
+    prepare_generated_branch,
+    run_stage11,
+    verifier_response,
+)
+
+
+pytestmark = [pytest.mark.contract, pytest.mark.lifecycle]
+
+
+_MEMBERS = ("bullet_pack.md", "evidence_map.json", "verification_report.json")
+_ALL = (*_MEMBERS, "manifest.json")
+
+
+def verified_branch(workspace: Path, *, texts: list[str] | None = None):
+    """One current branch whose every bullet carries a `supported` verdict."""
+
+    ids, facts, snapshot_id, branch_id, bullet_ids = prepare_generated_branch(
+        workspace, texts=texts
+    )
+    run_stage11(
+        workspace,
+        FakeContractRunner(
+            [verifier_response([finding(bullet_id) for bullet_id in bullet_ids])]
+        ),
+        ids,
+    )
+    return ids, facts, snapshot_id, branch_id, bullet_ids
+
+
+def branch_graph(workspace: Path, branch_id: str):
+    with read_database(workspace) as connection:
+        branch_row, branch = load_current_branch(connection, branch_id)
+        return load_branch_graph(connection, branch_row=branch_row, branch=branch)
+
+
+def published(workspace: Path, branch_id: str) -> Path:
+    return workspace / "out" / "branch" / branch_id
+
+
+def test_the_published_set_is_exactly_the_three_members_and_a_manifest(
+    workspace: Path,
+) -> None:
+    _ids, _facts, _snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+
+    exported = export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+
+    directory = published(workspace, branch_id)
+    assert sorted(item.name for item in directory.iterdir()) == sorted(_ALL)
+    assert exported.manifest_path == str(directory / "manifest.json")
+    assert exported.branch_id == branch_id
+    assert sorted(exported.managed_paths) == sorted(
+        str(directory / name) for name in _ALL
+    )
+
+
+def test_publishing_a_branch_leaves_its_anchor_snapshot_set_alone(
+    workspace: Path,
+) -> None:
+    """§13.14 rule 1: the two managed kinds are keyed independently.
+
+    Only the assessment kind sweeps same-view siblings, because only it has
+    one current view per scope. A branch publication that reached across
+    into `out/assessment/` would silently unpublish the mirror the owner
+    exported minutes earlier.
+    """
+
+    _ids, _facts, snapshot_id, _branch_id, _bullet_ids = verified_branch(workspace)
+    export_assessment(workspace, snapshot_id=snapshot_id)
+    assessment_set = workspace / "out" / "assessment" / snapshot_id
+    before = {item.name: item.read_bytes() for item in assessment_set.iterdir()}
+
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+
+    after = {item.name: item.read_bytes() for item in assessment_set.iterdir()}
+    assert after == before
+
+
+def test_every_member_is_owner_private_and_ends_in_one_lf(workspace: Path) -> None:
+    _ids, _facts, _snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+
+    directory = published(workspace, branch_id)
+    assert directory.stat().st_mode & 0o777 == 0o700
+    for name in _ALL:
+        member = directory / name
+        assert member.stat().st_mode & 0o777 == 0o600
+        data = member.read_bytes()
+        assert data.endswith(b"\n") and not data.endswith(b"\n\n")
+
+
+def test_re_exporting_the_same_branch_state_is_byte_identical(
+    workspace: Path,
+) -> None:
+    """§13.12: the same coherent branch state renders the same member bytes.
+
+    The second export is a fresh render, not a read of the first: it rebuilds
+    every member and compares them against the published set. Equality here is
+    what makes the manifest's member digests a durable identity rather than a
+    record of one particular run.
+    """
+
+    _ids, _facts, _snapshot_id, branch_id, _bullet_ids = verified_branch(
+        workspace, texts=[BULLET_TEXT, SECOND_TEXT]
+    )
+
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    directory = published(workspace, branch_id)
+    first = {name: (directory / name).read_bytes() for name in _MEMBERS}
+    first_manifest = json.loads((directory / "manifest.json").read_text("utf-8"))
+
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    second = {name: (directory / name).read_bytes() for name in _MEMBERS}
+    second_manifest = json.loads((directory / "manifest.json").read_text("utf-8"))
+
+    assert first == second
+    assert first_manifest["members"] == second_manifest["members"]
+    assert (
+        first_manifest["render_input_sha256"]
+        == second_manifest["render_input_sha256"]
+    )
+
+
+def test_the_pack_renders_every_section_heading_and_no_filler(
+    workspace: Path,
+) -> None:
+    _ids, _facts, _snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+
+    graph = branch_graph(workspace, branch_id)
+    rendered = render_bullet_pack(graph).decode("utf-8")
+
+    lines = rendered.split("\n")
+    assert lines[0] == "# Verified Bullet Pack"
+    assert lines[1] == ""
+    headings = [line for line in lines if line.startswith("## ")]
+    assert headings == [
+        f"## {section_heading(section)}"
+        for section in ResumeTargetSection.__args__  # type: ignore[attr-defined]
+    ]
+    # §18: no empty logical line follows the final section, and §13.12 owns
+    # the one final LF.
+    assert rendered.endswith("\n") and not rendered.endswith("\n\n")
+    bullet_lines = [line for line in lines if line.startswith("- ")]
+    assert len(bullet_lines) == len(graph.bullets)
+
+
+def test_the_heading_derivation_is_the_closed_split_and_capitalize(
+    workspace: Path,
+) -> None:
+    assert section_heading("professional_experience") == "Professional Experience"
+    assert section_heading("summary") == "Summary"
+    assert section_heading("selected_projects") == "Selected Projects"
+
+
+def test_the_render_order_is_recomputed_and_not_the_stored_id_order(
+    workspace: Path,
+) -> None:
+    """§13.10 rule 56: Stage 12 recovers the order from persisted state.
+
+    Allocated bullet IDs carry a random component, so the stored ID order and
+    the render order agree only by luck. Sorting the same bullets by ID and by
+    the §13.10 key must therefore be compared against the key, not against
+    whatever the repository happened to return.
+    """
+
+    _ids, _facts, _snapshot_id, branch_id, _bullet_ids = verified_branch(
+        workspace, texts=[SECOND_TEXT, BULLET_TEXT]
+    )
+
+    graph = branch_graph(workspace, branch_id)
+    with read_database(workspace) as connection:
+        stored = list_resume_bullets_for_branch(connection, branch_id)
+
+    expected = render_order(stored, [REQUIREMENT_ID])
+    assert [item.value.id for item in graph.bullets] == [
+        bullet.id for bullet in expected
+    ]
+    # The two candidate texts differ, so the key is total on text bytes alone.
+    assert [item.value.text for item in graph.bullets] == sorted(
+        bullet.text for bullet in stored
+    )
+
+
+def test_the_evidence_map_closes_over_every_rendered_bullet(
+    workspace: Path,
+) -> None:
+    _ids, _facts, _snapshot_id, branch_id, bullet_ids = verified_branch(workspace)
+
+    graph = branch_graph(workspace, branch_id)
+    document = build_bullet_pack_evidence_map(graph)
+
+    assert document.schema_version == 3
+    assert document.output_kind == "resume"
+    assert document.entity_id == branch_id
+    assert [item.bullet_id for item in document.rendered_bullets] == [
+        item.value.id for item in graph.bullets
+    ]
+    reached = {
+        fact_id
+        for bullet in document.rendered_bullets
+        for fact_id in bullet.source_fact_ids
+    }
+    assert reached.issubset({item.fact_id for item in document.fact_links})
+    assert {item.evidence_item_id for item in document.evidence_links} == {
+        item_id
+        for link in document.fact_links
+        for item_id in link.evidence_item_ids
+    }
+
+
+def test_the_report_carries_one_row_per_bullet_in_render_order(
+    workspace: Path,
+) -> None:
+    _ids, _facts, _snapshot_id, branch_id, _bullet_ids = verified_branch(
+        workspace, texts=[BULLET_TEXT, SECOND_TEXT]
+    )
+
+    graph = branch_graph(workspace, branch_id)
+    report = build_verification_report(graph)
+
+    assert report.schema_version == 3
+    assert report.branch_id == branch_id
+    assert [item.bullet_id for item in report.findings] == [
+        item.value.id for item in graph.bullets
+    ]
+    assert {item.verification_status for item in report.findings} == {"supported"}
+
+
+def test_the_report_never_carries_a_suggested_rewrite(workspace: Path) -> None:
+    """§13.12: append-only finding history and rewrites never export."""
+
+    _ids, _facts, _snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+
+    graph = branch_graph(workspace, branch_id)
+    payload = json.loads(companion_bytes(build_verification_report(graph)))
+
+    assert set(payload) == {"schema_version", "branch_id", "findings"}
+    for row in payload["findings"]:
+        assert set(row) == {
+            "bullet_id",
+            "verification_status",
+            "unsupported_phrases",
+            "verifier_reason",
+        }
+
+
+def test_the_manifest_identity_and_source_lists_are_the_resume_shape(
+    workspace: Path,
+) -> None:
+    _ids, _facts, snapshot_id, branch_id, bullet_ids = verified_branch(workspace)
+
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+
+    payload = json.loads(
+        (published(workspace, branch_id) / "manifest.json").read_text("utf-8")
+    )
+    manifest = ResumeManifest.model_validate_json(
+        (published(workspace, branch_id) / "manifest.json").read_bytes()
+    )
+    assert manifest.output_kind == "resume"
+    assert manifest.manifest_version == 6
+    assert manifest.entity_id == branch_id
+    assert manifest.identity.branch_name == BRANCH_NAME
+    assert manifest.identity.assessment_snapshot_id == snapshot_id
+    assert manifest.source_ids.assessment_snapshot_ids == [snapshot_id]
+    assert manifest.source_ids.resume_bullet_ids == sorted(
+        bullet_ids, key=lambda value: value.encode("utf-8")
+    )
+    assert manifest.source_ids.jd_requirement_ids == [REQUIREMENT_ID]
+    assert [item.name for item in manifest.members] == sorted(_MEMBERS)
+
+
+def test_an_unverified_bullet_blocks_the_export(workspace: Path) -> None:
+    """§16.11: only a `supported` bullet may enter the pack."""
+
+    ids, _facts, _snapshot_id, branch_id, bullet_ids = prepare_generated_branch(
+        workspace
+    )
+
+    with pytest.raises(BulletPackExportBlockedError):
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    assert not published(workspace, branch_id).exists()
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["partially_supported", "needs_clarification", "contradicted", "rejected"],
+)
+def test_every_non_supported_status_blocks_the_export(
+    workspace: Path, status: str
+) -> None:
+    _ids, _facts, _snapshot_id, branch_id, bullet_ids = verified_branch(workspace)
+
+    with writer_database(workspace) as connection:
+        update_resume_bullet_verification(
+            connection,
+            bullet_id=bullet_ids[0],
+            verification_status=status,
+            unsupported_phrases=[],
+            verifier_reason="A later transition moved this bullet off supported.",
+        )
+        connection.commit()
+
+    with pytest.raises(BulletPackExportBlockedError):
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    assert not published(workspace, branch_id).exists()
+
+
+@pytest.mark.parametrize(
+    "status", ["partially_supported", "inferred_but_acceptable"]
+)
+def test_a_lesser_but_eligible_anchor_still_carries_the_pack(
+    workspace: Path, status: str
+) -> None:
+    """§16.11: the anchor allowlist is wider than the bullet allowlist.
+
+    The two gates are separate on purpose: a mirror the verifier only
+    partially supported is still an honest anchor, so a branch whose every
+    bullet is `supported` exports over it rather than inheriting the
+    snapshot's weaker verdict.
+    """
+
+    _ids, _facts, snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+    with writer_database(workspace) as connection:
+        connection.execute(
+            "UPDATE assessment_snapshots SET verification_status = ? WHERE id = ?",
+            (status, snapshot_id),
+        )
+        connection.commit()
+
+    result = export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+
+    assert published(workspace, branch_id).is_dir()
+    assert sorted(Path(path).name for path in result.managed_paths) == sorted(_ALL)
+
+
+def _damage_dead_anchor(workspace: Path, branch_id: str, snapshot_id: str) -> None:
+    with writer_database(workspace) as connection:
+        connection.execute(
+            "UPDATE assessment_snapshots SET superseded_at = ? WHERE id = ?",
+            (FIXED_NOW.isoformat(), snapshot_id),
+        )
+        connection.commit()
+
+
+def _damage_mixed_generation(
+    workspace: Path, branch_id: str, snapshot_id: str
+) -> None:
+    with writer_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+        connection.execute("DROP TRIGGER resume_bullets_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE resume_bullets SET generation_id = ? WHERE id = ?",
+            ("gen_vera_other_batch", bullets[0].id),
+        )
+        connection.commit()
+
+
+def _damage_log_closure(workspace: Path, branch_id: str, snapshot_id: str) -> None:
+    with writer_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+        connection.execute("DROP TRIGGER resume_bullets_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE resume_bullets SET source_log_ids_json = ? WHERE id = ?",
+            (json.dumps(["log_vera_not_in_closure"]), bullets[0].id),
+        )
+        connection.commit()
+
+
+def _damage_ungrounded_bullet(
+    workspace: Path, branch_id: str, snapshot_id: str
+) -> None:
+    with writer_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+        connection.execute("DROP TRIGGER resume_bullets_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE resume_bullets SET source_fact_ids_json = ?,"
+            " source_log_ids_json = ? WHERE id = ?",
+            (json.dumps([]), json.dumps([]), bullets[0].id),
+        )
+        connection.commit()
+
+
+def _damage_foreign_requirement(
+    workspace: Path, branch_id: str, snapshot_id: str
+) -> None:
+    with writer_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+        connection.execute("DROP TRIGGER resume_bullets_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE resume_bullets SET matched_jd_requirements_json = ? WHERE id = ?",
+            (json.dumps(["jdreq_vera_other_job"]), bullets[0].id),
+        )
+        connection.commit()
+
+
+def _damage_empty_bullet_set(
+    workspace: Path, branch_id: str, snapshot_id: str
+) -> None:
+    with writer_database(workspace) as connection:
+        connection.execute("DROP TRIGGER resume_bullets_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE resume_bullets SET superseded_at = ? WHERE branch_id = ?",
+            (FIXED_NOW.isoformat(), branch_id),
+        )
+        connection.commit()
+
+
+def _damage_ineligible_status(
+    workspace: Path, branch_id: str, snapshot_id: str
+) -> None:
+    with writer_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+        update_resume_bullet_verification(
+            connection,
+            bullet_id=bullets[0].id,
+            verification_status="rejected",
+            unsupported_phrases=["an unsupported production claim"],
+            verifier_reason="The linked records do not carry this assertion.",
+        )
+        connection.commit()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        pytest.param(_damage_dead_anchor, id="dead-anchor"),
+        pytest.param(_damage_mixed_generation, id="mixed-generation"),
+        pytest.param(_damage_log_closure, id="log-closure-mismatch"),
+        pytest.param(_damage_ungrounded_bullet, id="ungrounded-bullet"),
+        pytest.param(_damage_foreign_requirement, id="foreign-requirement"),
+        pytest.param(_damage_empty_bullet_set, id="empty-bullet-set"),
+        pytest.param(_damage_ineligible_status, id="ineligible-status"),
+    ],
+)
+def test_every_closed_document_failure_writes_nothing_to_out_branch(
+    workspace: Path, damage
+) -> None:
+    """§13.14 rule 8: a pre-commit failure publishes no candidate at all.
+
+    Each damage below makes one of the closed documents unbuildable — a dead
+    anchor, a pack spanning two batches, a closure that no longer equals the
+    reached logs, a bullet grounded in no fact and no log at all, a
+    requirement from another vacancy, an emptied batch, or a bullet outside
+    the §16.11 allowlist. The property under test is not that
+    export raises; it is that the reader never sees a partial set, a
+    candidate, or a rollback sibling left behind by the attempt.
+    """
+
+    _ids, _facts, snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+    parent = workspace / "out" / "branch"
+    # The healthy branch exports, so each failure below is the damage talking.
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    assert published(workspace, branch_id).is_dir()
+
+    # A prior published set would mask "nothing was written", so the export
+    # under test starts from an empty parent.
+    for entry in sorted(parent.iterdir()):
+        for member in sorted(entry.iterdir()):
+            member.unlink()
+        entry.rmdir()
+
+    damage(workspace, branch_id, snapshot_id)
+
+    with pytest.raises((IntegrityFailureError, BulletPackExportBlockedError)):
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+
+    assert not published(workspace, branch_id).exists()
+    assert list(parent.iterdir()) == []
+
+
+def test_an_unknown_branch_is_a_selector_miss(workspace: Path) -> None:
+    verified_branch(workspace)
+
+    with pytest.raises(SelectorNotFoundError):
+        export_bullet_pack(workspace, branch_name="no-such-branch")
+
+
+def test_the_selector_resolves_a_current_branch_by_its_folded_name(
+    workspace: Path,
+) -> None:
+    _ids, _facts, _snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+
+    exported = export_bullet_pack(workspace, branch_name=BRANCH_NAME.upper())
+
+    assert exported.branch_id == branch_id
+    assert exported.branch_name == BRANCH_NAME

@@ -1,4 +1,4 @@
-"""§14.10 `bullets generate` and `bullets verify` CLI behavior."""
+"""§14.10 `bullets generate`, `bullets verify`, and `bullets export` CLI behavior."""
 
 from __future__ import annotations
 
@@ -510,3 +510,132 @@ def test_branch_hygiene_precedes_adapter_construction_on_verify(
 
     assert result.exit_code == 2, (result.stderr, envelope)
     assert envelope["diagnostic_class"] == "branch_name_invalid"
+
+
+def verified_branch(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, str]:
+    """One current branch whose single bullet carries a `supported` verdict."""
+
+    branch_id, bullet_id = generated_branch(workspace, monkeypatch)
+    result, envelope = verify(
+        workspace, monkeypatch, [verifier_response([finding(bullet_id)])]
+    )
+    assert result.exit_code == 0, (result.stderr, envelope)
+    return branch_id, bullet_id
+
+
+def export(workspace: Path, *, branch: str = BRANCH_NAME):
+    return invoke_json(workspace, ["bullets", "export", "--branch", branch])
+
+
+def test_export_reports_only_the_closed_manifest_path_projection(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5: `bullets export` shares `export assessment`'s result."""
+
+    branch_id, _bullet_id = verified_branch(workspace, monkeypatch)
+
+    result, envelope = export(workspace)
+
+    assert result.exit_code == 0, (result.stderr, envelope)
+    assert envelope["command"] == "bullets export"
+    assert envelope["status"] == "ok"
+    assert set(envelope["result"]) == {"manifest_path", "managed_paths"}
+    published = workspace / "out" / "branch" / branch_id
+    assert envelope["result"]["manifest_path"] == str(published / "manifest.json")
+    assert sorted(Path(path).name for path in envelope["result"]["managed_paths"]) == [
+        "bullet_pack.md",
+        "evidence_map.json",
+        "manifest.json",
+        "verification_report.json",
+    ]
+    # Nothing is derived: export publishes a projection of persisted state.
+    assert envelope["affected_ids"]["created"] == []
+    assert envelope["affected_ids"]["superseded"] == []
+
+
+def test_human_mode_lists_the_manifest_before_its_members(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.10: the owner reads the identifying manifest first, then its set."""
+
+    branch_id, _bullet_id = verified_branch(workspace, monkeypatch)
+
+    result = runner.invoke(
+        app, ["--workspace", str(workspace), "bullets", "export", "--branch", BRANCH_NAME]
+    )
+
+    assert result.exit_code == 0, result.stderr
+    published = workspace / "out" / "branch" / branch_id
+    lines = result.stdout.splitlines()
+    assert lines[0] == str(published / "manifest.json")
+    assert sorted(lines[1:]) == sorted(
+        str(published / name)
+        for name in ("bullet_pack.md", "evidence_map.json", "verification_report.json")
+    )
+
+
+def test_an_unverified_branch_is_a_blocked_class_10_export(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§16.11: only `supported` may enter the pack, so the gate refuses."""
+
+    branch_id, _bullet_id = generated_branch(workspace, monkeypatch)
+
+    result, envelope = export(workspace)
+
+    assert result.exit_code == 10, (result.stderr, envelope)
+    assert envelope["status"] == "blocked"
+    assert envelope["diagnostic_class"] == "bullet_pack_export_blocked"
+    assert envelope["result"] is None
+    # A refused gate publishes nothing, so the parent stays empty.
+    assert not (workspace / "out" / "branch" / branch_id).exists()
+
+
+def test_an_unknown_branch_is_a_selector_miss_on_export(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 3: selector resolution precedes the managed-writer path."""
+
+    verified_branch(workspace, monkeypatch)
+
+    result, envelope = export(workspace, branch="no-such-branch")
+
+    assert result.exit_code == 2, (result.stderr, envelope)
+    assert envelope["status"] == "failed"
+    assert envelope["diagnostic_class"] == "selector_not_found"
+
+
+def test_an_invalid_branch_name_fails_in_the_input_class_on_export(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.10: all three bullet-pack forms apply the same non-blank hygiene."""
+
+    verified_branch(workspace, monkeypatch)
+
+    result, envelope = export(workspace, branch="   ")
+
+    assert result.exit_code == 2, (result.stderr, envelope)
+    assert envelope["diagnostic_class"] == "branch_name_invalid"
+
+
+def test_an_unresolved_residual_stops_export_before_publication(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.14/§14.14: a preamble residual is class 8, not a partial export."""
+
+    branch_id, _bullet_id = verified_branch(workspace, monkeypatch)
+    parent = workspace / "out" / "branch"
+    parent.mkdir(mode=0o700, exist_ok=True)
+    outside = workspace.parent / "Vera Example candidate target"
+    outside.mkdir()
+    residual = parent / f".exp2res-candidate-{branch_id}-{'d' * 32}"
+    residual.symlink_to(outside, target_is_directory=True)
+
+    result, envelope = export(workspace)
+
+    assert result.exit_code == 8, (result.stderr, envelope)
+    assert envelope["diagnostic_class"] == "managed_output_incomplete"
+    assert str(residual) in envelope["residual_paths"]
+    assert not (parent / branch_id).exists()

@@ -41,8 +41,12 @@ status = "pending"
 phase = "3"
 
 ["21.9"]
-status = "pending"
-phase = "4"
+status = "covered"
+nodes = [
+  "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[ungrounded-bullet]",
+  "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[log-closure-mismatch]",
+  "tests/test_stage12_bullet_pack.py::test_the_evidence_map_closes_over_every_rendered_bullet",
+]
 
 ["21.10"]
 status = "covered"
@@ -102,8 +106,23 @@ phase = "3"
 note = "Stage 1 proves linked evidence references and atomic candidate persistence; typed derived-stage references, fact_sources, and Stage 6 ownership checks remain"
 
 ["21.16"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage12_bullet_pack.py::test_an_unverified_bullet_blocks_the_export",
+  "tests/test_stage12_bullet_pack.py::test_every_non_supported_status_blocks_the_export[partially_supported]",
+  "tests/test_stage12_bullet_pack.py::test_every_non_supported_status_blocks_the_export[needs_clarification]",
+  "tests/test_stage12_bullet_pack.py::test_every_non_supported_status_blocks_the_export[contradicted]",
+  "tests/test_stage12_bullet_pack.py::test_every_non_supported_status_blocks_the_export[rejected]",
+  "tests/test_stage12_bullet_pack.py::test_a_lesser_but_eligible_anchor_still_carries_the_pack[partially_supported]",
+  "tests/test_stage12_bullet_pack.py::test_a_lesser_but_eligible_anchor_still_carries_the_pack[inferred_but_acceptable]",
+  "tests/test_cli_bullets.py::test_an_unverified_branch_is_a_blocked_class_10_export",
+  "tests/test_export_service.py::test_assessment_export_gate_matrix_all_eight_statuses[unverified-False]",
+  "tests/test_export_service.py::test_assessment_export_gate_matrix_all_eight_statuses[contradicted-True]",
+  "tests/test_export_service.py::test_assessment_export_gate_matrix_all_eight_statuses[rejected-False]",
+  "tests/test_export_service.py::test_fresh_reduction_mismatch_and_narrative_invariant_fail_integrity",
+]
 phase = "4"
+note = "Two of the three consumer columns are now exhaustive: assessment export decides all eight statuses, and verified-bullet-pack export admits only supported while a partially_supported or inferred_but_acceptable snapshot remains the branch anchor through export; unverified blocks both, and a snapshot whose summary prose has no exactly matching narrative_summary claim fails instead of bypassing claim verification. The Stage 10 self-claim column is proven only on its rejection side"
 
 ["21.17"]
 status = "partial"
@@ -112,9 +131,11 @@ nodes = [
   "tests/test_stage10_generation.py::test_one_invocation_carries_the_complete_current_set",
   "tests/test_branch_substrate.py::test_a_branch_may_only_anchor_a_snapshot_the_verifier_passed",
   "tests/test_branch_substrate.py::test_bullet_storage_refuses_an_unverified_claim_and_a_foreign_requirement",
+  "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[dead-anchor]",
+  "tests/test_stage12_bullet_pack.py::test_the_manifest_identity_and_source_lists_are_the_resume_shape",
 ]
 phase = "4"
-note = "Stage 10 proves the required exact anchor: a missing selector never reaches the stage, an unverified or superseded snapshot is refused before the provider call, the persisted branch carries that exact ID, and a claim outside the supplied supported set fails before the bullet becomes current; the export half of the ineligible-anchor clause waits on Stage 12"
+note = "Stage 10 proves the required exact anchor: a missing selector never reaches the stage, an unverified or superseded snapshot is refused before the provider call, the persisted branch carries that exact ID, and a claim outside the supplied supported set fails before the bullet becomes current; Stage 12 now closes the export half, refusing a superseded anchor and naming that one snapshot ID in the manifest identity"
 
 ["21.18"]
 status = "partial"
@@ -124,9 +145,12 @@ nodes = [
   "tests/test_vera_replay_verify.py::test_vera_e5_cli_reverification_preserves_complete_finding_history",
   "tests/test_cli_bullets.py::test_verification_reports_its_findings_through_the_envelope",
   "tests/test_cli_bullets.py::test_a_bullet_outside_the_export_allowlist_blocks_the_branch",
+  "tests/test_cli_bullets.py::test_an_unverified_branch_is_a_blocked_class_10_export",
+  "tests/test_stage12_bullet_pack.py::test_the_report_carries_one_row_per_bullet_in_render_order",
+  "tests/test_cli_export_assessment.py::test_export_assessment_closed_success_envelope_needs_no_yes",
 ]
 phase = "4"
-note = "Stage 7 and Stage 11 both now execute through the CLI, return complete findings, and apply their §16.11 consumer allowlist as a completed code-10 gate; the Stage 10 input gate is proven separately, while both export implementations and their end-to-end allowlists remain"
+note = "Stage 7 and Stage 11 both now execute through the CLI, return complete findings, and apply their §16.11 consumer allowlist as a completed code-10 gate, and both export implementations refuse a projection whose verifier pass has not completed; the Stage 10 input gate is proven separately, while exhaustive producer coverage for every SourceType and EvidenceStrength value remains"
 
 ["21.19"]
 status = "partial"
@@ -174,9 +198,12 @@ nodes = [
   "tests/test_stage10_generation.py::test_a_reference_outside_the_supplied_context_fails_the_response",
   "tests/test_branch_substrate.py::test_bullet_storage_requires_the_exact_service_derived_log_closure",
   "tests/test_branch_substrate.py::test_bullet_storage_refuses_an_unverified_claim_and_a_foreign_requirement",
+  "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[foreign-requirement]",
+  "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[log-closure-mismatch]",
+  "tests/test_stage12_bullet_pack.py::test_the_render_order_is_recomputed_and_not_the_stored_id_order",
 ]
 phase = "4"
-note = "Stage 10 proves a persisted bullet's matched_jd_requirements resolve in the exact supplied ParsedJD and its source_log_ids are the service-derived closure of its selected facts; a free-form or different-job reference fails the whole batch atomically before anything becomes current, and the omitted-job_description_id candidate shape is proven at the storage boundary"
+note = "Stage 10 proves a persisted bullet's matched_jd_requirements resolve in the exact supplied ParsedJD and its source_log_ids are the service-derived closure of its selected facts; a free-form or different-job reference fails the whole batch atomically before anything becomes current, the omitted-job_description_id candidate shape is proven at the storage boundary, and Stage 12 now re-resolves both reference sets at export, refusing a foreign requirement and recovering the §13.10 render order from the requirement positions alone"
 
 ["21.23"]
 status = "partial"
@@ -306,9 +333,13 @@ nodes = [
   "tests/test_branch_substrate.py::test_view_regeneration_supersedes_only_its_dependent_branches",
   "tests/test_stage10_generation.py::test_a_generated_name_replaces_exactly_the_branch_it_folds_onto",
   "tests/test_stage10_generation.py::test_a_no_bullet_answer_leaves_the_current_branch_in_place",
+  "tests/test_stage12_bullet_pack.py::test_the_published_set_is_exactly_the_three_members_and_a_manifest",
+  "tests/test_stage12_bullet_pack.py::test_the_manifest_identity_and_source_lists_are_the_resume_shape",
+  "tests/test_stage12_bullet_pack.py::test_publishing_a_branch_leaves_its_anchor_snapshot_set_alone",
+  "tests/test_cli_bullets.py::test_export_reports_only_the_closed_manifest_path_projection",
 ]
 phase = "4"
-note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; Stage 10 now proves the folded-identity replacement itself, superseding exactly the branch a generated name folds onto and removing that branch's set while the owner's exact new spelling is stored, and proves that a semantic no-bullet answer replaces nothing, leaving the prior generation and its published set current; publishing a branch set with its manifest waits on Stage 12"
+note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; Stage 10 now proves the folded-identity replacement itself, superseding exactly the branch a generated name folds onto and removing that branch's set while the owner's exact new spelling is stored, and proves that a semantic no-bullet answer replaces nothing; Stage 12 now publishes the branch set at exactly out/branch/<branch-id>/ under a manifest carrying the branch ID, the closed §13.14 resume identity, and the render-input hash, without touching the anchor snapshot's set"
 
 ["21.35"]
 status = "partial"
@@ -504,9 +535,12 @@ nodes = [
   "tests/test_cli_export_assessment.py::test_non_export_writer_commits_but_preamble_residual_forces_class_8",
   "tests/test_deletion_phase0.py::test_logs_delete_removes_every_managed_set_and_reports_cleanup_residual",
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
+  "tests/test_stage12_bullet_pack.py::test_every_member_is_owner_private_and_ends_in_one_lf",
+  "tests/test_stage12_bullet_pack.py::test_publishing_a_branch_leaves_its_anchor_snapshot_set_alone",
+  "tests/test_cli_bullets.py::test_an_unresolved_residual_stops_export_before_publication",
 ]
 phase = "4"
-note = "Assessment publication proves the ID-keyed manifest writer, owner-only modes, atomic candidate/rollback fallback, idempotency, same-view replacement, no-follow residuals, every-writer preamble reporting, stale invalidation, managed deletion, and the CLI boundary; resume-set publication remains"
+note = "Assessment publication proves the ID-keyed manifest writer, owner-only modes, atomic candidate/rollback fallback, idempotency, same-view replacement, no-follow residuals, every-writer preamble reporting, stale invalidation, managed deletion, and the CLI boundary; resume publication now runs the same extracted protocol, publishing 0700/0600 entries under the branch ID alone, refusing to publish behind an unresolved planted-symlink candidate, and never reaching the anchor snapshot's set — the hostile-display-name and crash-injection matrices still run only against the assessment kind"
 
 ["21.48"]
 status = "partial"
@@ -532,9 +566,21 @@ nodes = [
   "tests/test_cli_export_assessment.py::test_export_assessment_closed_success_envelope_needs_no_yes",
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
   "tests/test_demo.py::test_vera_first_mirror_demo_is_closed_current_blocking_and_deterministic",
+  "tests/test_stage12_bullet_pack.py::test_re_exporting_the_same_branch_state_is_byte_identical",
+  "tests/test_stage12_bullet_pack.py::test_the_pack_renders_every_section_heading_and_no_filler",
+  "tests/test_stage12_bullet_pack.py::test_the_heading_derivation_is_the_closed_split_and_capitalize",
+  "tests/test_stage12_bullet_pack.py::test_the_render_order_is_recomputed_and_not_the_stored_id_order",
+  "tests/test_stage12_bullet_pack.py::test_the_evidence_map_closes_over_every_rendered_bullet",
+  "tests/test_stage12_bullet_pack.py::test_the_report_carries_one_row_per_bullet_in_render_order",
+  "tests/test_stage12_bullet_pack.py::test_the_report_never_carries_a_suggested_rewrite",
+  "tests/test_stage12_bullet_pack.py::test_every_member_is_owner_private_and_ends_in_one_lf",
+  "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[ungrounded-bullet]",
+  "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[empty-bullet-set]",
+  "tests/test_cli_bullets.py::test_export_reports_only_the_closed_manifest_path_projection",
+  "tests/test_cli_bullets.py::test_an_unverified_branch_is_a_blocked_class_10_export",
 ]
 phase = "4"
-note = "The assessment half proves deterministic §17 Markdown, strict §13.12 version-2 companions carrying each claim's source/counter split, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; every bullet-pack member remains"
+note = "The assessment half proves deterministic §17 Markdown, strict §13.12 version-3 companions carrying each claim's source/counter split, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; the bullet-pack half now proves the three members' repeated byte-identical export, §18's every-heading-no-filler render under the §13.10 order recomputed from persisted state, both closed companions' full closure round trip and one same-order finding per bullet, and the §14.14 export envelope in both its ok and class-10 forms — pinned bullet-pack golden files and the Vera E10/E11 replay remain"
 
 ["21.49"]
 status = "pending"

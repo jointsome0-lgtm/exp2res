@@ -29,6 +29,14 @@ from exp2res.errors import (
     OperationCancelledError,
     SelectorNotFoundError,
 )
+from exp2res.exports.branch import (
+    current_branch_bullets as _current_bullets,
+    load_branch_pack,
+    require_consistent_bullets,
+    require_current_anchor,
+    require_direct_retained_chain,
+    require_one_generation,
+)
 from exp2res.exports.managed import branch_set_paths, remove_branch_sets
 from exp2res.llm.contracts import (
     ContractValidationError,
@@ -45,11 +53,8 @@ from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
 from exp2res.storage.repository import (
     BULLET_EXPORT_ALLOWLIST,
-    bullet_log_closure,
     current_branch_by_folded_name,
-    get_assessment_snapshot,
     get_experience_fact,
-    get_job_description,
     get_raw_log,
     insert_verification_finding,
     list_experience_facts,
@@ -98,147 +103,6 @@ class _VerifierBundle:
 
 def _id_key(value: str) -> bytes:
     return value.encode("utf-8")
-
-
-def _current_bullets(
-    connection: sqlite3.Connection, branch_id: str
-) -> tuple[ResumeBullet, ...]:
-    bullets = list_resume_bullets_for_branch(connection, branch_id, current_only=True)
-    if not bullets:
-        # Stage 10 never commits a branch without a bullet — an empty writer
-        # array persists neither — so a current branch with no current bullet
-        # is damaged state, not a verifiable pack.
-        raise IntegrityFailureError("branch_bullet_set_empty")
-    require_one_generation(connection, branch_id)
-    return bullets
-
-
-def require_one_generation(connection: sqlite3.Connection, branch_id: str) -> None:
-    """Fail closed on a pack assembled from more than one Stage 10 batch.
-
-    §12 rule 13 makes a branch and its bullets one jointly swapped batch, and
-    `validate_bullet_production` establishes that at insert. The columns
-    carrying it are storage-only — §11 hydration drops them — so a restored or
-    migrated row from another run stays invisible to the loaded objects while
-    making the pack span two swaps, with the supersession half-current.
-    """
-
-    mismatched = connection.execute(
-        """
-        SELECT COUNT(*) AS mismatched
-        FROM resume_bullets AS bullet
-        JOIN resume_branches AS branch ON branch.id = bullet.branch_id
-        WHERE bullet.branch_id = ?
-          AND bullet.superseded_at IS NULL
-          AND (
-            bullet.produced_by_run_id IS NOT branch.produced_by_run_id
-            OR bullet.generation_id IS NOT branch.generation_id
-          )
-        """,
-        (branch_id,),
-    ).fetchone()["mismatched"]
-    if mismatched:
-        raise IntegrityFailureError("bullet_generation_mismatch")
-
-
-def require_current_anchor(
-    connection: sqlite3.Connection, branch: ResumeBranch
-) -> None:
-    """Fail closed on a branch whose §18 assessment anchor no longer resolves.
-
-    `validate_branch_production` establishes a present, current anchor at
-    insert and §13.13 rule 4 supersedes the branch with its snapshot, so a
-    current branch pointing at a missing or superseded one is restored,
-    migrated, or damaged state. `_build_bundle` alone would not see it: a
-    facts-only pack cites no self-claim, so the snapshot's member lookup comes
-    back legitimately empty and the dead anchor stays invisible through the
-    call and into a persisted verdict §18 could not honour.
-    """
-
-    if (
-        get_assessment_snapshot(
-            connection, branch.assessment_snapshot_id, current_only=False
-        )
-        is None
-    ):
-        raise IntegrityFailureError("branch_snapshot_missing")
-    if (
-        get_assessment_snapshot(connection, branch.assessment_snapshot_id) is None
-    ):
-        raise IntegrityFailureError("branch_snapshot_superseded")
-
-
-def require_consistent_bullets(
-    connection: sqlite3.Connection,
-    bullets: Sequence[ResumeBullet],
-    job_description: JobDescription,
-) -> None:
-    """Fail closed on a bullet whose own typed references disagree (§15.7).
-
-    Both relations are §12 rule 10 invariants that `insert_resume_bullet`
-    establishes and no current-row update may change, so reaching either
-    failure means the stored graph disagrees with itself — restored, migrated,
-    or damaged state. Checking them here keeps that state from being charged
-    to a provider and from receiving a semantic verdict §18 would then have to
-    refuse at export.
-    """
-
-    requirement_ids = [
-        requirement.id for requirement in job_description.parsed.requirements
-    ]
-    for bullet in bullets:
-        for requirement_id in bullet.matched_jd_requirements:
-            if requirement_ids.count(requirement_id) != 1:
-                raise IntegrityFailureError("bullet_requirement_unresolved")
-        # §18: `source_log_ids` equals — not contains — the closure reached
-        # through this bullet's own facts. A displaced record contributes its
-        # identity here exactly like a retained one; only the *object* is
-        # withheld, in `_build_bundle` below.
-        #
-        # Equality is on the set, not the list order: `insert_resume_bullet`
-        # compares a sorted copy and stores the caller's own order, so a bullet
-        # that passed the write boundary may legitimately hold the closure
-        # unsorted. Comparing positionally would fail a valid pack.
-        closure = bullet_log_closure(connection, bullet.source_fact_ids)
-        if tuple(sorted(bullet.source_log_ids, key=_id_key)) != closure:
-            raise IntegrityFailureError("bullet_log_closure_mismatch")
-
-
-def require_direct_retained_chain(
-    connection: sqlite3.Connection,
-    fact_ids: Sequence[str],
-    *,
-    diagnostic: str,
-) -> None:
-    """§16.1: a row entering verification reaches one live direct chain.
-
-    Hydration already refuses a fact with no `direct` `fact_sources` row, and
-    `require_consistent_bullets` already pins the log closure. Neither reaches
-    this: a fact's direct evidence may sit on a record a correction displaced,
-    leaving the chain complete in identity but with no retained `RawLog` at its
-    end — which is the one thing §16.1 names as the chain's last link.
-    """
-
-    for fact_id in fact_ids:
-        reached = connection.execute(
-            """
-            SELECT 1
-            FROM fact_sources AS source
-            JOIN evidence_items AS item ON item.id = source.evidence_item_id
-            JOIN raw_logs AS log ON log.id = item.raw_log_id
-            WHERE source.fact_id = ?
-              AND source.support_type = 'direct'
-              AND NOT EXISTS (
-                SELECT 1 FROM raw_logs AS correction
-                WHERE correction.corrects_log_id = log.id
-              )
-            LIMIT 1
-            """,
-            (fact_id,),
-        ).fetchone()
-        if reached is not None:
-            return
-    raise IntegrityFailureError(diagnostic)
 
 
 def _build_bundle(
@@ -547,14 +411,11 @@ def run_bullet_verification(
             branch = current_branch_by_folded_name(connection, branch_name)
             if branch is None:
                 raise SelectorNotFoundError()
-            bullets = _current_bullets(connection, branch.id)
-            # §13.12/§18: both consumers recover the vacancy through the branch's
-            # persisted association, and a missing one fails verification.
-            job_description = get_job_description(connection, branch.job_description_id)
-            if job_description is None:
-                raise IntegrityFailureError("branch_job_description_missing")
-            require_current_anchor(connection, branch)
-            require_consistent_bullets(connection, bullets, job_description)
+            # The one shared pre-transport predicate (#260): Stage 12 runs the
+            # same three checks before writing a managed set, so damaged state
+            # is refused identically whether it would cost a provider call or
+            # a published export.
+            bullets, job_description = load_branch_pack(connection, branch)
 
             prior_state = _verifier_state(bullets)
             bundle = _build_bundle(
