@@ -459,3 +459,35 @@ def test_an_interrupted_invalidation_reports_the_committed_pass(
     with read_database(workspace) as connection:
         bullets = list_resume_bullets_for_branch(connection, branch_id)
     assert bullets[0].verification_status == "supported"
+
+
+def test_an_interrupt_in_verify_result_assembly_still_reports_the_pass(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the whole-branch finding set composes inside the guard."""
+
+    _branch_id, bullet_id = generated_branch(workspace, monkeypatch)
+    compose = cli_module._bullets_verify_outcome
+    attempts: list[object] = []
+
+    def interrupt_first(verified):
+        attempts.append(verified)
+        if len(attempts) == 1:
+            raise KeyboardInterrupt()
+        return compose(verified)
+
+    monkeypatch.setattr(cli_module, "_bullets_verify_outcome", interrupt_first)
+
+    result, envelope = verify(
+        workspace, monkeypatch, [verifier_response([finding(bullet_id)])]
+    )
+
+    assert result.exit_code == 9, (result.stderr, envelope)
+    assert envelope["status"] == "cancelled"
+    assert envelope["run_ids"]
+    assert [item["target_id"] for item in envelope["findings"]] == [bullet_id]
+    # The verdict is durable, so the cancelled envelope reports it rather than
+    # leaving the owner to guess whether the pass landed.
+    with read_database(workspace) as connection:
+        stored = list_resume_bullets_for_branch(connection, _branch_id)
+    assert [bullet.verification_status for bullet in stored] == ["supported"]

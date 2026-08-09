@@ -568,6 +568,10 @@ def _run_operation(
                 getattr(error, "invalidated_branches", ()) or ()
             ),
             residual_paths=list(getattr(error, "residual_paths", ()) or ()),
+            # §14.14 rule 5: findings are committed §11.14 rows, so an error
+            # carrying a durable verification pass reports them exactly like
+            # the affected IDs beside them.
+            findings=list(getattr(error, "findings", ()) or ()),
             warnings=list(getattr(error, "warnings", ()) or ()),
             retry=getattr(error, "retry", None),
             result=getattr(error, "result", None),
@@ -2881,21 +2885,38 @@ def bullets_verify(
             # fields the cancelled envelope reads.
             carried = getattr(error, "stage_result", None)
             if isinstance(carried, Stage11Result):
-                committed = _bullets_verify_outcome(carried)
-                error.affected_ids = committed.affected_ids
-                error.run_ids = committed.run_ids
-                error.findings = committed.findings
-                error.residual_paths = committed.residual_paths
-                error.human_result = committed.human_result
+                _carry_verified_pass(error, carried)
             raise
-        if verified.export_blocked:
-            typer.echo(
-                "Bullet verification completed, but bullet-pack export is blocked.",
-                err=True,
-            )
-        return _bullets_verify_outcome(verified)
+        try:
+            if verified.export_blocked:
+                typer.echo(
+                    "Bullet verification completed, but bullet-pack export is blocked.",
+                    err=True,
+                )
+            return _bullets_verify_outcome(verified)
+        except KeyboardInterrupt:
+            # The service returned a durable pass; §14.14 rule 6 keeps it
+            # reported even when the interrupt lands in result assembly, which
+            # for a whole-branch finding set is not a negligible window.
+            cancelled = OperationCancelledError()
+            cancelled.stage_result = verified
+            _carry_verified_pass(cancelled, verified)
+            raise cancelled from None
 
     _run_command(context, "bullets verify", operation)
+
+
+def _carry_verified_pass(error: Exp2ResError, verified: Stage11Result) -> None:
+    """Fold a committed §13.11 pass into the fields a failed envelope reads."""
+
+    committed = _bullets_verify_outcome(verified)
+    error.affected_ids = committed.affected_ids
+    error.run_ids = committed.run_ids
+    error.findings = committed.findings
+    error.residual_paths = committed.residual_paths
+    # Human mode renders only `human_result`, so without it the durable pass
+    # would be reported to `--json` callers alone.
+    error.human_result = committed.human_result
 
 
 def _bullets_verify_outcome(verified: Stage11Result) -> Outcome:

@@ -25,13 +25,17 @@ from exp2res.pipeline import stage11 as stage11_module
 from exp2res.pipeline.stage11 import (
     require_consistent_bullets,
     require_current_anchor,
+    require_one_generation,
     run_bullet_verification,
 )
 from exp2res.storage.repository import (
+    current_branch_by_folded_name,
     get_job_description,
     get_resume_branch,
     list_resume_bullets_for_branch,
+    list_self_claims_for_snapshot,
     list_verification_findings,
+    update_self_claim_verification,
 )
 from exp2res.storage.workspace import (
     collect_preamble_residuals,
@@ -588,3 +592,106 @@ def test_a_dead_assessment_anchor_fails_before_the_call(workspace: Path) -> None
         assert branch is not None
         with pytest.raises(IntegrityFailureError):
             require_current_anchor(connection, branch)
+
+
+def test_two_current_branches_folding_equal_fail_the_selector(
+    workspace: Path,
+) -> None:
+    """§14.10: an ambiguous folded identity resolves to nothing, not to one."""
+
+    _ids, _facts, _snapshot, branch_id, _bullet_ids = prepare_generated_branch(
+        workspace
+    )
+    with writer_database(workspace) as connection:
+        # The uniqueness invariant is trigger-enforced, so the damaged state a
+        # restore can produce is only reachable with the guard dropped.
+        connection.execute("DROP TRIGGER resume_branches_lifecycle_update_guard")
+        columns = [
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(resume_branches)")
+        ]
+        stored = connection.execute(
+            "SELECT * FROM resume_branches WHERE id = ?", (branch_id,)
+        ).fetchone()
+        twin = {column: stored[column] for column in columns}
+        # The `name` column is unique, so the ambiguity is two *spellings* that
+        # fold to one identity — exactly what §14.10's fold is for.
+        twin["id"] = "branch_vera_folded_twin"
+        twin["name"] = BRANCH_NAME.upper()
+        connection.execute(
+            "INSERT INTO resume_branches ({columns}) VALUES ({binds})".format(
+                columns=", ".join(columns),
+                binds=", ".join(f":{column}" for column in columns),
+            ),
+            twin,
+        )
+        connection.commit()
+
+    with read_database(workspace) as connection:
+        with pytest.raises(IntegrityFailureError):
+            current_branch_by_folded_name(connection, BRANCH_NAME)
+
+
+def test_a_mixed_generation_pack_fails_before_the_call(workspace: Path) -> None:
+    """§12 rule 13: a branch and its bullets are one jointly swapped batch."""
+
+    _ids, _facts, _snapshot, branch_id, bullet_ids = prepare_generated_branch(
+        workspace
+    )
+    with read_database(workspace) as connection:
+        # The healthy pack passes, so the guard is rejecting the mismatch.
+        require_one_generation(connection, branch_id)
+
+    with writer_database(workspace) as connection:
+        connection.execute("DROP TRIGGER resume_bullets_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE resume_bullets SET generation_id = ? WHERE id = ?",
+            ("gen_vera_other_batch", bullet_ids[0]),
+        )
+        connection.commit()
+        with pytest.raises(IntegrityFailureError):
+            require_one_generation(connection, branch_id)
+
+
+def test_a_cited_claim_that_lost_supported_fails_before_the_call(
+    workspace: Path,
+) -> None:
+    """§18: only a supported cited claim may ground an exported bullet."""
+
+    ids, facts, snapshot_id = prepare_anchor(workspace)
+    with read_database(workspace) as connection:
+        claims = list_self_claims_for_snapshot(connection, snapshot_id)
+    assert claims
+    generated = run_stage10(
+        workspace,
+        FakeContractRunner(
+            [
+                writer_response(
+                    [
+                        bullet_candidate(
+                            fact_ids=list(facts), claim_ids=[claims[0].id]
+                        )
+                    ]
+                )
+            ]
+        ),
+        ids,
+        snapshot_id=snapshot_id,
+    )
+    assert generated.bullet_ids
+
+    # Stage 10 checked the same thing at insert, so only a later change — a
+    # re-verification, a restore — can leave the citation standing.
+    with writer_database(workspace) as connection:
+        update_self_claim_verification(
+            connection,
+            claim_id=claims[0].id,
+            verification_status="needs_clarification",
+            counterevidence=[],
+        )
+        connection.commit()
+
+    fake = FakeContractRunner([verifier_response([finding(generated.bullet_ids[0])])])
+    with pytest.raises(IntegrityFailureError):
+        run_stage11(workspace, fake, ids)
+    assert fake.calls == []

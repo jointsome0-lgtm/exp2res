@@ -103,7 +103,36 @@ def _current_bullets(
         # array persists neither — so a current branch with no current bullet
         # is damaged state, not a verifiable pack.
         raise IntegrityFailureError("branch_bullet_set_empty")
+    require_one_generation(connection, branch_id)
     return bullets
+
+
+def require_one_generation(connection: sqlite3.Connection, branch_id: str) -> None:
+    """Fail closed on a pack assembled from more than one Stage 10 batch.
+
+    §12 rule 13 makes a branch and its bullets one jointly swapped batch, and
+    `validate_bullet_production` establishes that at insert. The columns
+    carrying it are storage-only — §11 hydration drops them — so a restored or
+    migrated row from another run stays invisible to the loaded objects while
+    making the pack span two swaps, with the supersession half-current.
+    """
+
+    mismatched = connection.execute(
+        """
+        SELECT COUNT(*) AS mismatched
+        FROM resume_bullets AS bullet
+        JOIN resume_branches AS branch ON branch.id = bullet.branch_id
+        WHERE bullet.branch_id = ?
+          AND bullet.superseded_at IS NULL
+          AND (
+            bullet.produced_by_run_id IS NOT branch.produced_by_run_id
+            OR bullet.generation_id IS NOT branch.generation_id
+          )
+        """,
+        (branch_id,),
+    ).fetchone()["mismatched"]
+    if mismatched:
+        raise IntegrityFailureError("bullet_generation_mismatch")
 
 
 def require_current_anchor(
@@ -219,6 +248,12 @@ def _build_bundle(
         claim = members.get(claim_id)
         if claim is None:
             raise IntegrityFailureError("bullet_claim_outside_branch_snapshot")
+        if claim.verification_status != "supported":
+            # §18 admits only a supported cited claim, and Stage 10 checked the
+            # same thing at insert; membership alone would let a claim whose
+            # status changed underneath ground a `supported` bullet the pack
+            # gate would then have to refuse.
+            raise IntegrityFailureError("bullet_claim_not_supported")
         source_claims.append(claim)
 
     input_payload = ResumeVerifierInput(

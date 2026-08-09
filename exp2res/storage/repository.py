@@ -1590,14 +1590,21 @@ def current_branch_by_folded_name(
 
     One folded identity serves both §14.10 roles: it is what a `--branch`
     selector resolves, and what a Stage 10 generation replaces. Two current
-    branches can never fold equal, so the first match is the only one.
+    branches folding equal is the uniqueness invariant §14.10 rests on, so a
+    second match is restored, migrated, or damaged state and fails closed —
+    silently taking the first would resolve a selector to a vacancy the owner
+    did not name, and a `bullets verify` verdict would land on the wrong pack.
     """
 
     folded = canonical_branch_identity(name)
-    for branch in list_resume_branches(connection, current_only=True):
-        if canonical_branch_identity(branch.name) == folded:
-            return branch
-    return None
+    matches = [
+        branch
+        for branch in list_resume_branches(connection, current_only=True)
+        if canonical_branch_identity(branch.name) == folded
+    ]
+    if len(matches) > 1:
+        raise IntegrityFailureError("branch_folded_name_conflict")
+    return matches[0] if matches else None
 
 
 def current_branch_name_conflict(
