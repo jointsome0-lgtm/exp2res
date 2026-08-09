@@ -694,22 +694,54 @@ def _verify_branch(
         fact = fact_links[fact_id]
         if not fact.evidence_item_ids or not fact.source_log_ids:
             raise AssertionError(f"Vera Example bullet fact closure is incomplete: {fact_id}")
+        if connection.execute(
+            "SELECT 1 FROM experience_facts WHERE id = ? AND superseded_at IS NULL",
+            (fact_id,),
+        ).fetchone() is None:
+            raise AssertionError(
+                f"Vera Example bullet fact is missing or superseded: {fact_id}"
+            )
+        # §13.12: the exported closure must be the persisted one, so every
+        # exported edge is read back from fact_sources and evidence_items
+        # rather than merely resolving to rows that happen to exist.
+        persisted_evidence = {
+            row[0]
+            for row in connection.execute(
+                "SELECT evidence_item_id FROM fact_sources WHERE fact_id = ?",
+                (fact_id,),
+            )
+        }
+        if set(fact.evidence_item_ids) != persisted_evidence:
+            raise AssertionError(
+                f"Vera Example exported fact evidence differs from fact_sources: {fact_id}"
+            )
+        persisted_logs = set()
         for evidence_id in fact.evidence_item_ids:
             link = evidence_links[evidence_id]
-            if link.raw_log_id not in fact.source_log_ids:
-                raise AssertionError("Vera Example bullet evidence/log closure diverged")
-            for table, entity_id, current in (
-                ("experience_facts", fact_id, " AND superseded_at IS NULL"),
-                ("evidence_items", evidence_id, ""),
-                ("raw_logs", link.raw_log_id, ""),
-            ):
-                if connection.execute(
-                    f"SELECT 1 FROM {table} WHERE id = ?{current}", (entity_id,)
-                ).fetchone() is None:
-                    raise AssertionError(
-                        f"Vera Example bullet closure row is missing or "
-                        f"superseded: {entity_id}"
-                    )
+            stored_log = connection.execute(
+                "SELECT raw_log_id FROM evidence_items WHERE id = ?", (evidence_id,)
+            ).fetchone()
+            if stored_log is None:
+                raise AssertionError(
+                    f"Vera Example bullet evidence item is missing: {evidence_id}"
+                )
+            if link.raw_log_id != stored_log[0]:
+                raise AssertionError(
+                    f"Vera Example exported evidence/log edge is not the persisted "
+                    f"one: {evidence_id}"
+                )
+            if connection.execute(
+                "SELECT 1 FROM raw_logs WHERE id = ?", (link.raw_log_id,)
+            ).fetchone() is None:
+                raise AssertionError(
+                    f"Vera Example bullet raw log is missing: {link.raw_log_id}"
+                )
+            persisted_logs.add(stored_log[0])
+        if set(fact.source_log_ids) != persisted_logs:
+            raise AssertionError(
+                f"Vera Example exported fact logs differ from the persisted "
+                f"evidence: {fact_id}"
+            )
 
     for item in evidence_map.rendered_bullets:
         if not item.source_fact_ids:
@@ -723,17 +755,26 @@ def _verify_branch(
             claim = claim_links.get(claim_id)
             if claim is None:
                 raise AssertionError(f"Vera Example bullet claim is unmapped: {claim_id}")
-            if connection.execute(
-                "SELECT 1 FROM self_claims WHERE id = ? AND snapshot_id = ? "
-                "AND superseded_at IS NULL AND verification_status = 'supported'",
+            stored_claim = connection.execute(
+                "SELECT source_fact_ids_json, counter_fact_ids_json FROM self_claims "
+                "WHERE id = ? AND snapshot_id = ? AND superseded_at IS NULL "
+                "AND verification_status = 'supported'",
                 (claim_id, anchor_snapshot),
-            ).fetchone() is None:
+            ).fetchone()
+            if stored_claim is None:
                 raise AssertionError(
                     f"Vera Example bullet claim is not a current supported "
                     f"anchor member: {claim_id}"
                 )
             if not claim.source_fact_ids:
                 raise AssertionError(f"Vera Example bullet claim has no fact closure: {claim_id}")
+            if set(claim.source_fact_ids) != set(
+                json.loads(stored_claim[0])
+            ) or set(claim.counter_fact_ids) != set(json.loads(stored_claim[1])):
+                raise AssertionError(
+                    f"Vera Example exported claim provenance is not the persisted "
+                    f"one: {claim_id}"
+                )
             for fact_id in claim.source_fact_ids:
                 verify_fact_closure(fact_id)
 
