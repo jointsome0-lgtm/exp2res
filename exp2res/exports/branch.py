@@ -117,6 +117,18 @@ def current_branch_bullets(
         # array persists neither — so a current branch with no current bullet
         # is damaged state, not a verifiable pack.
         raise IntegrityFailureError("branch_bullet_set_empty")
+    # §12 rule 13 swaps a branch and its bullets as one batch, and
+    # `supersede_branches` is the only writer of either column — it always
+    # marks the whole set. So a superseded bullet under a current branch is a
+    # half-applied swap, and `current_only` would quietly export the remainder
+    # as a complete pack: fewer bullets, no diagnostic, nothing to notice.
+    superseded = connection.execute(
+        "SELECT COUNT(*) AS superseded FROM resume_bullets "
+        "WHERE branch_id = ? AND superseded_at IS NOT NULL",
+        (branch_id,),
+    ).fetchone()["superseded"]
+    if superseded:
+        raise IntegrityFailureError("bullet_batch_partially_superseded")
     require_one_generation(connection, branch_id)
     return bullets
 
@@ -441,6 +453,25 @@ def load_branch_graph(
         raise IntegrityFailureError("snapshot_aggregate_mismatch")
     if failure is not None:
         raise IntegrityFailureError("snapshot_narrative_gate_failed")
+    # The aggregate the gate below reads is reduced from every member, cited or
+    # not, so every member's own grounding is a gate input too. `supported` on a
+    # claim whose fact is gone or whose chain has no retained log is a stale
+    # verdict, and trusting it would let the same snapshot license a pack here
+    # while `export assessment` refuses it as damaged. The rows read to decide
+    # this join the closure below, so the hash covers them.
+    anchor_fact_ids = {
+        fact_id for item in members for fact_id in item.value.source_fact_ids
+    }
+    ordered_anchor_facts = sorted(anchor_fact_ids, key=id_key)
+    for fact_id in ordered_anchor_facts:
+        fact = get_experience_fact(connection, fact_id)
+        if fact is None or fact.superseded_at is not None:
+            raise IntegrityFailureError("anchor_claim_fact_not_current")
+    require_direct_retained_chain(
+        connection,
+        ordered_anchor_facts,
+        diagnostic="anchor_claim_direct_chain_missing",
+    )
     # §18: the anchor must still be eligible to anchor Stage 10. A snapshot
     # that fell out of the allowlist after generation no longer licenses the
     # pack it fixed the assessment context for.
@@ -585,10 +616,13 @@ def load_branch_graph(
         except IntegrityFailureError as error:
             raise IntegrityFailureError("fact_source_selection_invalid") from error
 
-    # The one reference kind that can leave this export's closure. The shared
-    # loader cascades each target one level — fact -> fact_sources/evidence ->
-    # raw log — and re-checks the same per-fact equality as the closure above,
-    # so a counterevidence target enters the hash as a validated projection.
+    # Two supplemental sources, one channel: a cited claim's counterevidence —
+    # the only reference kind that can leave this closure — and the grounding of
+    # every anchor member, which the gate above already read. The shared loader
+    # cascades each target one level (fact -> fact_sources/evidence -> raw log),
+    # re-checks the same per-fact equality as the closure above, and puts what
+    # it reaches in the hash, so neither can move without invalidating the set.
+    supplemental_refs.setdefault("experience_fact", set()).update(anchor_fact_ids)
     closure = load_supplemental_closure(
         connection,
         supplemental_refs=supplemental_refs,

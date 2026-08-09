@@ -64,6 +64,7 @@ from test_stage10_generation import (
 from test_stage11_bullet_verification import (
     finding,
     prepare_generated_branch,
+    prepare_paired_anchor,
     run_stage11,
     verifier_response,
 )
@@ -897,4 +898,117 @@ def test_a_dangling_counterevidence_reference_stops_the_export(
     with pytest.raises(IntegrityFailureError) as raised:
         export_bullet_pack(workspace, branch_name=BRANCH_NAME)
     assert str(raised.value) == "export_source_reference_invalid"
+    assert not published(workspace, branch_id).exists()
+
+
+def test_a_partially_superseded_bullet_batch_never_exports(
+    workspace: Path,
+) -> None:
+    """§12 rule 13: a branch and its bullets are swapped as one batch.
+
+    `supersede_branches` is the only writer of either column and always marks
+    the whole set, so a superseded bullet under a current branch is a
+    half-applied swap. Selecting only current rows would publish the remainder
+    as a complete pack — a bullet short, with nothing in the output saying so.
+    """
+
+    _ids, _facts, _snapshot_id, branch_id, bullet_ids = verified_branch(
+        workspace, texts=[BULLET_TEXT, SECOND_TEXT]
+    )
+
+    with writer_database(workspace) as connection:
+        connection.execute("DROP TRIGGER resume_bullets_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE resume_bullets SET superseded_at = ? WHERE id = ?",
+            ("2026-02-01T09:00:00+00:00", bullet_ids[0]),
+        )
+        connection.commit()
+
+    with pytest.raises(IntegrityFailureError) as raised:
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    assert str(raised.value) == "bullet_batch_partially_superseded"
+    assert not published(workspace, branch_id).exists()
+
+
+def branch_over_a_partly_cited_anchor(workspace: Path):
+    """A verified branch whose one bullet reaches only the first of two facts.
+
+    Every member claim cites both, so the second fact is reachable only through
+    the anchor's uncited side — the half no companion renders.
+    """
+
+    ids, facts, snapshot_id = prepare_paired_anchor(workspace)
+    generated = run_stage10(
+        workspace,
+        FakeContractRunner(
+            [writer_response([bullet_candidate(fact_ids=[facts[0]])])]
+        ),
+        ids,
+        snapshot_id=snapshot_id,
+    )
+    run_stage11(
+        workspace,
+        FakeContractRunner(
+            [verifier_response([finding(item) for item in generated.bullet_ids])]
+        ),
+        ids,
+    )
+    assert generated.branch_id is not None
+    return facts, snapshot_id, generated.branch_id
+
+
+def test_an_uncited_members_grounding_joins_the_hashed_closure(
+    workspace: Path,
+) -> None:
+    """§13.14 rule 2: what the gate reads is hashed, but not rendered.
+
+    The uncited member's fact is read to decide whether its `supported` verdict
+    still stands, so it belongs to the completeness lists and the hash — and
+    nowhere near the evidence map, which closes over rendered bullets alone.
+    """
+
+    facts, _snapshot_id, branch_id = branch_over_a_partly_cited_anchor(workspace)
+
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+
+    graph = branch_graph(workspace, branch_id)
+    assert [item.value.id for item in graph.facts] == [facts[0]]
+    assert [item.value.id for item in graph.supplemental_facts] == [facts[1]]
+    manifest = json.loads(
+        (published(workspace, branch_id) / "manifest.json").read_text("utf-8")
+    )
+    assert sorted(manifest["source_ids"]["experience_fact_ids"]) == sorted(facts)
+    bundle = branch_render_input_bundle(graph)
+    assert {entry.value.id for entry in bundle.experience_facts} == set(facts)
+    evidence_map = json.loads(
+        (published(workspace, branch_id) / "evidence_map.json").read_text("utf-8")
+    )
+    assert facts[1] not in json.dumps(evidence_map)
+
+
+def test_an_uncited_members_dead_fact_never_licenses_the_pack(
+    workspace: Path,
+) -> None:
+    """§16.11: the aggregate is reduced from every member, so every member's
+    grounding is a gate input.
+
+    A claim whose fact is gone carries a verdict nothing supports any more.
+    Left unchecked, the same snapshot would refuse `export assessment` as
+    damaged while still licensing this pack.
+    """
+
+    facts, _snapshot_id, branch_id = branch_over_a_partly_cited_anchor(workspace)
+
+    with writer_database(workspace) as connection:
+        connection.execute("DROP TRIGGER experience_facts_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE experience_facts SET superseded_at = ? WHERE id = ?",
+            ("2026-02-01T09:00:00+00:00", facts[1]),
+        )
+        connection.commit()
+
+    with pytest.raises(IntegrityFailureError) as raised:
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    # Not a bullet-side diagnostic: no bullet or cited claim reaches this fact.
+    assert str(raised.value) == "anchor_claim_fact_not_current"
     assert not published(workspace, branch_id).exists()
