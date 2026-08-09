@@ -540,8 +540,12 @@ def reauthorize_prompt_locators(
                     )
                     # A Windows drive letter parses as a one-character scheme,
                     # so the unsupported-form check precedes the remote
-                    # shortcut exactly as capture-time authorization does.
-                    windows_form = _forbidden_supplied_form(child)
+                    # shortcut exactly as capture-time authorization does —
+                    # including its authority distinction, or a locator this
+                    # workspace accepted would fail its own re-check.
+                    windows_form = _forbidden_supplied_form(
+                        child, uri_authority=True
+                    )
                     if scheme is not None and scheme != "file" and not windows_form:
                         continue
                     try:

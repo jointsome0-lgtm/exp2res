@@ -984,6 +984,43 @@ def test_atlas_bound_whose_uncertainty_interval_overflows_is_rejected(
     assert raw_rows(workspace) == []
 
 
+def test_a_datetime_with_no_utc_form_rejects_only_its_own_record(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 4: the records behind a defect still get their outcome.
+
+    §11 rule 4 accepts any offset-aware datetime, but §19.4 rule 3 hashes the
+    UTC canonical form, which this instant does not have. The failure lands
+    after earlier records have committed, so it must not abort the run.
+    """
+    edge = {
+        "start": "0001-01-01T00:00:00+14:00",
+        "end": None,
+        "precision": "exact_datetime",
+        "confidence": "high",
+    }
+    payload = write_payload(
+        tmp_path,
+        "utc-edge.jsonl",
+        [
+            ephemeris_record("vera-ephemeris-0031"),
+            ephemeris_record("vera-ephemeris-0032", occurred=edge),
+            ephemeris_record("vera-ephemeris-0033"),
+        ],
+    )
+    outcome = run_import(workspace, "ephemeris", payload)
+
+    assert counts(outcome) == (2, 0, 1)
+    assert outcome.rejected[0].record_number == 2
+    assert outcome.rejected[0].reason == "record_invalid"
+    assert outcome.rejected[0].source_record_id == "vera-ephemeris-0032"
+    assert [record.source_record_id for record in outcome.accepted] == [
+        "vera-ephemeris-0031",
+        "vera-ephemeris-0033",
+    ]
+    assert len(raw_rows(workspace)) == 2
+
+
 def test_github_identity_past_the_structural_bound_is_rejected(
     workspace: Path, tmp_path: Path
 ) -> None:

@@ -180,7 +180,16 @@ def _classify(
         )
 
     identity = record.source_identity
-    digest = content_hash(record)
+    try:
+        digest = content_hash(record)
+    except OverflowError:
+        # §11 rule 4 accepts every offset-aware datetime, but §19.4 rule 3
+        # canonicalizes to UTC, where a value near the representable edge has
+        # no form at all. That is this one record's defect, and rule 4 keeps
+        # it from aborting the records already committed behind it.
+        return "rejected", ImportedRecord(
+            number, identity, reason="record_invalid"
+        )
     stored = retained.get(identity)
     if stored is not None:
         if stored == digest:
@@ -207,7 +216,7 @@ def _classify(
                 recorded_at=recorded_at,
                 id_factory=id_factory,
             )
-        except (ValidationError, ValueError, TypeError):
+        except (ValidationError, ValueError, TypeError, OverflowError):
             return "rejected", ImportedRecord(
                 number, identity, reason="record_invalid"
             )
