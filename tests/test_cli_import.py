@@ -982,3 +982,38 @@ def test_a_signal_during_failure_reporting_keeps_the_same_boundary(
         for group in envelope["affected_ids"]["created"]
     }
     assert len(created["raw_log"]) == 2
+
+
+def test_an_empty_payload_keeps_its_complete_result_through_a_cancel(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§19.4 rule 5: zero established records is a completed classification.
+
+    The parse runs before the writer opens, so an empty payload establishes
+    its record boundaries — all zero of them — no matter where a later signal
+    lands. Rule 5 nulls a result only for a failure *too early to establish
+    input record boundaries*, which this is not, and requires that every
+    completed classification carry its full typed result.
+    """
+    payload = write_payload(tmp_path, "empty-cancel.jsonl", [])
+
+    @contextmanager
+    def interrupt_on_entry(*args, **kwargs):
+        raise KeyboardInterrupt()
+        yield  # pragma: no cover - unreachable, keeps the generator shape
+
+    monkeypatch.setattr(imports_service, "writer_database", interrupt_on_entry)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    # The same established input reports the same result whether or not a
+    # signal arrived: completeness is a property of the outcome, not of timing.
+    assert envelope["result"]["counts"] == {
+        "accepted": 0,
+        "duplicate": 0,
+        "rejected": 0,
+    }
+    uninterrupted, clean = _invoke_json(workspace, ["import", "ephemeris", payload])
+    assert uninterrupted.exit_code == 0
+    assert clean["result"] == envelope["result"]
