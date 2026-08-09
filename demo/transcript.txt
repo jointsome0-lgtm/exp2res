@@ -1,5 +1,5 @@
 Vera Example — deterministic first-mirror demo
-corpus=1.1.0 schema=12 envelope=2
+corpus=2.1.0 schema=12 envelope=2
 mode=no-cost offline canned responses; network/provider calls=0
 workspace=demo/workspace (external temporary workspace; display alias only)
 paths=stored locators are canonical real paths; this checkout root displays as . (display alias only)
@@ -32,7 +32,7 @@ $ exp2res --workspace demo/workspace gaps list
 gap_demo_0001	medium	missing_metric	false
 
 $ exp2res --workspace demo/workspace contradictions show --contradiction-id contradiction_demo_0001
-contradiction_demo_0001	Vera Example ingress completion conflict	2026-07-11T10:05:00+02:00
+contradiction_demo_0001	Ingress completion conflict	2026-07-11T10:05:00+02:00
 
 == Act 1 — rejected overclaim and first-class export refusal ==
 
@@ -51,17 +51,17 @@ Snapshot snapshot_demo_0001: rejected
 Finding finding_demo_0001
 Target claim: claim_demo_0001
 Status: rejected
-Reason: The Vera Example corpus contains no production-tenure or seniority evidence.
+Reason: The supplied corpus contains no production-tenure or seniority evidence.
 Unsupported phrases:
 - operated production Kubernetes systems for ten years
-Suggested rewrite: Vera Example drafted and validated a kubectl troubleshooting runbook on an invented toy cluster.
+Suggested rewrite: You drafted and validated a kubectl troubleshooting runbook on an invented toy cluster.
 Counterevidence:
-- Vera Example only walked steps on an invented toy cluster. [experience_fact:fact_demo_0001]
+- You only walked steps on an invented toy cluster. [experience_fact:fact_demo_0001]
 
 Finding finding_demo_0002
 Target claim: claim_demo_0002
 Status: supported
-Reason: The narrower Vera Example evidence-bound summary is supported.
+Reason: The narrower evidence-bound summary is supported.
 Unsupported phrases:
 - none
 Counterevidence:
@@ -83,7 +83,7 @@ Snapshot snapshot_demo_0002: supported
 Finding finding_demo_0003
 Target claim: claim_demo_0003
 Status: supported
-Reason: The Vera Example claim resolves to the supplied fact, evidence-item, and raw-log closure.
+Reason: The claim resolves to the supplied fact, evidence-item, and raw-log closure.
 Unsupported phrases:
 - none
 Counterevidence:
@@ -92,7 +92,7 @@ Counterevidence:
 Finding finding_demo_0004
 Target claim: claim_demo_0004
 Status: supported
-Reason: The Vera Example claim resolves to the supplied fact, evidence-item, and raw-log closure.
+Reason: The claim resolves to the supplied fact, evidence-item, and raw-log closure.
 Unsupported phrases:
 - none
 Counterevidence:

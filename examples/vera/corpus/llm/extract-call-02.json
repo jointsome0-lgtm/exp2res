@@ -2,7 +2,7 @@
   "facts": [
     {
       "action": "outlined",
-      "claim": "Vera Example outlined an ingress guide and listed TLS gotchas for the playbook.",
+      "claim": "Outlined an ingress guide and listed TLS gotchas for the playbook.",
       "claim_kind": "observed_fact",
       "company": null,
       "confidence": "medium",

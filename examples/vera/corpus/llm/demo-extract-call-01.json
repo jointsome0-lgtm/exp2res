@@ -2,7 +2,7 @@
   "facts": [
     {
       "action": "drafted and validated",
-      "claim": "Vera Example drafted and validated a kubectl troubleshooting runbook.",
+      "claim": "Drafted and validated a kubectl troubleshooting runbook.",
       "claim_kind": "observed_fact",
       "company": null,
       "confidence": "medium",

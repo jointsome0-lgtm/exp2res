@@ -2,7 +2,7 @@
   "facts": [
     {
       "action": "copied",
-      "claim": "Vera Example copied an instruction-like forum comment into a daily log.",
+      "claim": "Copied an instruction-like forum comment into a daily log.",
       "claim_kind": "observed_fact",
       "company": null,
       "confidence": "medium",

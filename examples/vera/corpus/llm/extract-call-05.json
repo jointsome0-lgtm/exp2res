@@ -2,7 +2,7 @@
   "facts": [
     {
       "action": "trained",
-      "claim": "Vera Example reported training about three sessions a week during the Strength Basics period.",
+      "claim": "Reported training about three sessions a week during the Strength Basics period.",
       "claim_kind": "observed_fact",
       "company": null,
       "confidence": "low",

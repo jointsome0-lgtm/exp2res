@@ -108,13 +108,33 @@ MARKER_EXEMPT_PATHS: frozenset[str] = frozenset(
         "tests/goldens/branch/bullet_pack.md",
         "tests/goldens/branch/evidence_map.json",
         "tests/goldens/branch/verification_report.json",
-        # The demo's canned Stage 8, 10, and 11 responses are §16.12 generated
-        # voice the demo persists and publishes — parsed red flags, bullet
-        # prose, and verifier reasons — so §16.14 keeps the synthetic owner's
-        # personal name out of all three. Their invented lineage stays
-        # checkable through the marker-carrying vacancy, logs, and entity IDs
-        # they are generated beside; examples/vera/corpus.py records the same
-        # paths.
+        # The canned §15 responses (#189): every string in them is generated
+        # voice — a fact claim, a gap question, a contradiction title, a
+        # self-claim, or a verifier statement — and §16.14 forbids the
+        # synthetic owner's personal name there, so a fixture demonstrating
+        # the contract cannot also violate it. Invented lineage is still
+        # enforced: each file cites vera/demo entity IDs or is pinned by the
+        # marker-carrying corpus manifest, examples/vera/corpus.py derives
+        # this same set in generated_prose_paths(), and
+        # tests/test_voice_owner_reference.py holds the two lists together
+        # and scans the prose itself.
+        "examples/vera/corpus/llm/extract-call-01.json",
+        "examples/vera/corpus/llm/extract-call-02.json",
+        "examples/vera/corpus/llm/extract-call-03.json",
+        "examples/vera/corpus/llm/extract-call-04.json",
+        "examples/vera/corpus/llm/extract-call-05.json",
+        "examples/vera/corpus/llm/extract-call-06.json",
+        "examples/vera/corpus/llm/extract-call-07.json",
+        "examples/vera/corpus/llm/extract-call-08.json",
+        "examples/vera/corpus/llm/demo-assessment-overclaim.json",
+        "examples/vera/corpus/llm/demo-assessment-supported.json",
+        "examples/vera/corpus/llm/demo-detection.json",
+        "examples/vera/corpus/llm/demo-extract-call-01.json",
+        "examples/vera/corpus/llm/demo-extract-call-02.json",
+        "examples/vera/corpus/llm/demo-extract-call-03.json",
+        "examples/vera/corpus/llm/demo-verification-narrowed.json",
+        "examples/vera/corpus/llm/demo-verification-rejected.json",
+        "examples/vera/corpus/llm/demo-verification-supported.json",
         "examples/vera/corpus/llm/demo-jd-parse.json",
         "examples/vera/corpus/llm/demo-bullets.json",
         "examples/vera/corpus/llm/demo-bullet-verification.json",

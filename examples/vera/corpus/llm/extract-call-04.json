@@ -2,7 +2,7 @@
   "facts": [
     {
       "action": "finished",
-      "claim": "Vera Example reported finishing the ingress guide and closing its checklist item.",
+      "claim": "Reported finishing the ingress guide and closing its checklist item.",
       "claim_kind": "observed_fact",
       "company": null,
       "confidence": "medium",

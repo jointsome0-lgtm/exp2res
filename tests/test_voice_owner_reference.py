@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import re
+import sys
 
 import pytest
 
@@ -38,18 +41,37 @@ FORBIDDEN_OWNER_NOUN_PATTERNS = tuple(
 
 GOLDEN_PROSE_MEMBERS = ("report.md", "report.html", "self_claims.json")
 
-# The §16.12 generated voice a bullet pack run produces: §15.9 parsed red
-# flags, §18 bullet prose, and the verifier reasons beside it — pinned, and as
-# the offline demo's canned Stage 8, 10, and 11 responses. All five are
-# marker-exempt in scripts/check_public_hygiene.py, so this is where their
-# invented-but-owner-free wording is held.
+# The §16.12 generated voice a bullet pack run produces: §18 bullet prose and
+# the verifier reasons that ride into verification_report.json beside it. Both
+# goldens are marker-exempt in scripts/check_public_hygiene.py, so this is where
+# their invented-but-owner-free wording is held; the canned Stage 8, 10, and 11
+# responses behind them are covered by the corpus scan below.
 GENERATED_BULLET_PROSE = (
     "tests/goldens/branch/bullet_pack.md",
     "tests/goldens/branch/verification_report.json",
-    "examples/vera/corpus/llm/demo-jd-parse.json",
-    "examples/vera/corpus/llm/demo-bullets.json",
-    "examples/vera/corpus/llm/demo-bullet-verification.json",
 )
+
+CORPUS_PROSE_DIRECTORY = REPOSITORY_ROOT / "examples" / "vera" / "corpus" / "llm"
+
+
+def load_module(name: str, relative: str):
+    """Import a repository script that is not on the package path."""
+
+    spec = importlib.util.spec_from_file_location(name, REPOSITORY_ROOT / relative)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def string_leaves(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [leaf for item in value.values() for leaf in string_leaves(item)]
+    if isinstance(value, list):
+        return [leaf for item in value for leaf in string_leaves(item)]
+    return []
 
 # §15.1 rule 11: every §16 rule a block encodes carries its licensed form
 # beside the violation. One row per (block, rule): the licensed fragment
@@ -210,3 +232,53 @@ def test_generated_bullet_prose_never_names_the_owner() -> None:
         for pattern in FORBIDDEN_OWNER_NOUN_PATTERNS:
             assert not pattern.search(lowered), (relative, pattern.pattern)
         assert "vera example" not in lowered, relative
+
+
+def test_every_canned_corpus_response_is_generated_voice_only() -> None:
+    """§16.14 (#189): the demo corpus's §15 responses carry no owner name.
+
+    Every string in these files is Exp2Res-generated voice — fact claims,
+    gap questions, contradiction titles, self-claims, verifier reasons,
+    counterevidence statements, suggested rewrites. §16.14 licenses exactly
+    second person and subject-free there, so neither a third-person role
+    noun nor the persona's own name may appear, and that is why the whole
+    directory is marker-exempt rather than marker-carrying.
+    """
+
+    responses = sorted(CORPUS_PROSE_DIRECTORY.glob("*.json"))
+    assert responses, "the canned §15 response corpus is missing"
+    for path in responses:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for leaf in string_leaves(payload):
+            lowered = leaf.lower()
+            for pattern in FORBIDDEN_OWNER_NOUN_PATTERNS:
+                assert not pattern.search(lowered), (path.name, leaf)
+            assert "vera example" not in lowered, (path.name, leaf)
+
+
+def test_the_marker_exemption_covers_exactly_the_generated_prose_corpus() -> None:
+    """The two exemption lists cannot drift apart (#189).
+
+    `examples/vera/corpus.py` derives its exempt set from the response
+    tables it generates, while `scripts/check_public_hygiene.py` keeps a
+    closed literal list by design. Adding a canned response without
+    exempting it — or exempting a fixture that is not generated prose —
+    fails here instead of at whichever checker runs first.
+    """
+
+    corpus = load_module("vera_corpus", "examples/vera/corpus.py")
+    hygiene = load_module("public_hygiene", "scripts/check_public_hygiene.py")
+
+    derived = {
+        f"examples/vera/corpus/{relative}"
+        for relative in corpus.generated_prose_paths()
+    }
+    listed = {
+        path
+        for path in hygiene.MARKER_EXEMPT_PATHS
+        if path.startswith("examples/vera/corpus/")
+    }
+    assert derived == listed
+    assert {path.name for path in CORPUS_PROSE_DIRECTORY.glob("*.json")} == {
+        path.rsplit("/", 1)[1] for path in derived
+    }

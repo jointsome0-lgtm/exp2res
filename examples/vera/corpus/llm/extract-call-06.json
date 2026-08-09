@@ -2,7 +2,7 @@
   "facts": [
     {
       "action": "completed",
-      "claim": "Vera Example completed about six of twelve planned K8s Playbook runbooks in June.",
+      "claim": "Completed about six of twelve planned K8s Playbook runbooks in June.",
       "claim_kind": "observed_fact",
       "company": null,
       "confidence": "medium",
