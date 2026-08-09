@@ -376,15 +376,19 @@ def test_rejected_record_identity_is_reported_when_it_is_itself_valid(
         "identities.jsonl",
         [
             ephemeris_record("vera-ephemeris-0009", text=""),
+            # Rejected by the parse-time scan, not by the model: its identity
+            # is still perfectly usable and must still be reported.
+            ephemeris_record("vera-ephemeris-0010", occurred_hours=1.5),
             ephemeris_record(record_id=""),
             ephemeris_record(record_id=17),
         ],
     )
     outcome = run_import(workspace, "ephemeris", payload)
 
-    assert counts(outcome) == (0, 0, 3)
+    assert counts(outcome) == (0, 0, 4)
     assert [record.source_record_id for record in outcome.rejected] == [
         "vera-ephemeris-0009",
+        "vera-ephemeris-0010",
         None,
         None,
     ]
@@ -433,6 +437,25 @@ def test_payload_over_the_object_limit_fails_before_persistence(
 
     assert failure.value.diagnostic_class == "import_payload_too_large"
     assert failure.value.exit_code == 2
+    assert raw_rows(workspace) == []
+
+
+def test_a_rejected_record_still_counts_toward_the_object_limit(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 4: the object cap is the payload bound, not a per-record one.
+
+    The float sits before the bulk, so a scan that stopped at the record's
+    first defect would let everything behind it through uncounted.
+    """
+    bulk = [{"vera_example": index} for index in range(6_000)]
+    hidden = ephemeris_record("vera-ephemeris-0009", occurred_hours=1.5, bulk=bulk)
+    payload = write_payload(
+        tmp_path, "hidden-bulk.jsonl", [ephemeris_record(), hidden, hidden]
+    )
+    with pytest.raises(ImportPayloadTooLargeError):
+        run_import(workspace, "ephemeris", payload)
+
     assert raw_rows(workspace) == []
 
 
@@ -760,6 +783,30 @@ def test_github_malformed_commit_sha_rejects_without_identity(
     assert outcome.rejected[0].source_record_id is None
     assert raw_rows(workspace) == []
     assert evidence_rows(workspace) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "repo"),
+    [
+        ("no-separator", "playbook"),
+        ("empty-owner", "/playbook"),
+        ("empty-name", "vera-example/"),
+        ("extra-segment", "vera-example/playbook/extra"),
+        ("empty", ""),
+    ],
+)
+def test_github_repo_must_be_an_owner_name_identity(
+    workspace: Path, tmp_path: Path, name: str, repo: str
+) -> None:
+    """§19.3: `repo` is half the derived, non-normalized idempotency key."""
+    payload = write_payload(tmp_path, f"{name}.json", github_record(repo=repo))
+    outcome = run_import(workspace, "github", payload)
+
+    assert counts(outcome) == (0, 0, 1)
+    assert outcome.rejected[0].reason == "record_invalid"
+    # An identity that is itself invalid is exactly §19.4 rule 5's null case.
+    assert outcome.rejected[0].source_record_id is None
+    assert raw_rows(workspace) == []
 
 
 def test_github_supplied_identity_field_is_an_undeclared_field(

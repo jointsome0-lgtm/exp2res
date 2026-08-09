@@ -98,7 +98,12 @@ class SourceContract:
 
 @dataclass(frozen=True)
 class ParsedRecord:
-    """One established input record boundary under §19.4 rule 5."""
+    """One established input record boundary under §19.4 rule 5.
+
+    A `reason` is the parse-time verdict; `value` is whatever decoded, and
+    stays populated beside a reason so a rejected record can still report the
+    source identity it carries.
+    """
 
     record_number: int
     value: Any = None
@@ -123,24 +128,43 @@ def decode_json(text: str) -> Any:
         raise ValueError("JSON nesting too deep") from error
 
 
-def scan_record(value: Any, *, counter: list[int], depth: int = 1) -> None:
-    """Apply §11 rule 38's payload bounds and §19.4 rule 3's float ban."""
+def scan_record(value: Any, *, counter: list[int]) -> Optional[str]:
+    """Count one record's objects and return its first rejection reason.
 
-    if depth > MAX_JSON_NESTING:
-        raise RecordRejected("record_nesting_too_deep")
-    if isinstance(value, float):
-        # §11 deliberately leaves float rendering unpinned, so hashing one
-        # would be implementation-dependent (§19.4 rule 3).
-        raise RecordRejected("record_float_value")
-    if isinstance(value, dict):
-        counter[0] += 1
-        if counter[0] > MAX_PAYLOAD_OBJECTS:
-            raise ImportPayloadTooLargeError()
-        for child in value.values():
-            scan_record(child, counter=counter, depth=depth + 1)
-    elif isinstance(value, list):
-        for child in value:
-            scan_record(child, counter=counter, depth=depth + 1)
+    The object count is payload-wide (§19.4 rule 4 makes §11 rule 38's cap the
+    whole payload-size bound), so it must not stop at a record-level defect:
+    returning at the first float or over-deep node would leave everything
+    behind it uncounted, and a payload could carry an unbounded object graph
+    behind one cheap rejected record. Counting therefore always completes,
+    while the record's own verdict is the first reason found in traversal
+    order. The traversal is iterative because it no longer stops at
+    `MAX_JSON_NESTING`, and a decoded value may nest far deeper than that.
+    """
+
+    reason: Optional[str] = None
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    while stack:
+        current, depth = stack.pop()
+        children: Any = ()
+        if isinstance(current, dict):
+            counter[0] += 1
+            if counter[0] > MAX_PAYLOAD_OBJECTS:
+                raise ImportPayloadTooLargeError()
+            children = list(current.values())
+        elif isinstance(current, list):
+            children = current
+        if reason is None:
+            if depth > MAX_JSON_NESTING:
+                reason = "record_nesting_too_deep"
+            elif isinstance(current, float):
+                # §11 deliberately leaves float rendering unpinned, so hashing
+                # one would be implementation-dependent (§19.4 rule 3).
+                reason = "record_float_value"
+        # Reversed, so popping walks the children in their source order and
+        # the reported reason stays the document-order first one.
+        for child in reversed(children):
+            stack.append((child, depth + 1))
+    return reason
 
 
 def parse_payload(text: str, *, multi_record: bool) -> tuple[ParsedRecord, ...]:
@@ -157,11 +181,10 @@ def parse_payload(text: str, *, multi_record: bool) -> tuple[ParsedRecord, ...]:
             value = decode_json(text)
         except ValueError as error:
             raise ImportPayloadInvalidError() from error
-        try:
-            scan_record(value, counter=counter)
-        except RecordRejected as rejection:
-            return (ParsedRecord(1, reason=rejection.reason),)
-        return (ParsedRecord(1, value=value),)
+        # The decoded value is kept even when the scan rejects it: §19.4 rule 5
+        # nulls `source_record_id` only for a missing or invalid identity, and
+        # a record can carry a valid identity beside the defect.
+        return (ParsedRecord(1, value=value, reason=scan_record(value, counter=counter)),)
 
     records: list[ParsedRecord] = []
     # JSONL delimits records by LF alone. `splitlines()` would also break on
@@ -176,14 +199,12 @@ def parse_payload(text: str, *, multi_record: bool) -> tuple[ParsedRecord, ...]:
         try:
             value = decode_json(line)
         except ValueError:
+            # Nothing decoded, so this record has no recoverable identity.
             records.append(ParsedRecord(number, reason="record_not_json"))
             continue
-        try:
-            scan_record(value, counter=counter)
-        except RecordRejected as rejection:
-            records.append(ParsedRecord(number, reason=rejection.reason))
-            continue
-        records.append(ParsedRecord(number, value=value))
+        records.append(
+            ParsedRecord(number, value=value, reason=scan_record(value, counter=counter))
+        )
     return tuple(records)
 
 

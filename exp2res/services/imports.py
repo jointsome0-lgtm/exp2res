@@ -149,15 +149,17 @@ def _classify(
     id_factory: IdFactory,
 ) -> tuple[str, ImportedRecord]:
     number = parsed.record_number
-    if parsed.reason is not None:
-        return "rejected", ImportedRecord(number, None, reason=parsed.reason)
     raw = parsed.value
+    # §19.4 rule 5 reports the source identity of a rejected record too, so it
+    # is recovered from the raw object whenever the identity itself is valid —
+    # including for a record the parse already rejected, whose defect may sit
+    # anywhere but on its identity.
+    identity = contract.raw_identity(raw) if isinstance(raw, dict) else None
+    if parsed.reason is not None:
+        return "rejected", ImportedRecord(number, identity, reason=parsed.reason)
     if not isinstance(raw, dict):
         return "rejected", ImportedRecord(number, None, reason="record_not_object")
 
-    # §19.4 rule 5 reports the source identity of a rejected record too, so it
-    # is recovered from the raw object whenever the identity itself is valid.
-    identity = contract.raw_identity(raw)
     supplied_source = raw.get("source")
     if isinstance(supplied_source, str) and supplied_source != contract.source_system:
         return "rejected", ImportedRecord(

@@ -27,6 +27,11 @@ from exp2res.integrations.records import (
 from exp2res.services.source_files import validate_remote_locator
 
 COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+# §19.3 calls `repo` the `owner/name` repository identity, and the derived
+# `<repo>@<commit_sha>` is the record's whole idempotency key. Only that stated
+# two-segment shape is enforced: what characters a host allows inside a segment
+# is the adapter's business, and §19.3 normalizes nothing.
+REPO_IDENTITY = re.compile(r"^[^/]+/[^/]+$")
 MAX_LIST_ITEMS = 1_000
 EVIDENCE_SUMMARY = "Imported repository commit."
 
@@ -61,10 +66,18 @@ class GithubRecord(SourceRecord):
     # serialization, so omission and an explicit `unknown` hash alike.
     owner_attribution: OwnerAttribution = "unknown"
 
-    @field_validator("repo", "url")
+    @field_validator("url")
     @classmethod
     def structural_fields(cls, value: str) -> str:
         return validate_structural(value)
+
+    @field_validator("repo")
+    @classmethod
+    def owner_and_name(cls, value: str) -> str:
+        validate_structural(value)
+        if REPO_IDENTITY.fullmatch(value) is None:
+            raise ValueError("repo must be an owner/name repository identity")
+        return value
 
     @field_validator("commit_sha")
     @classmethod
@@ -109,6 +122,8 @@ def raw_identity(raw: Mapping[str, Any]) -> Optional[str]:
     if not isinstance(repo, str) or not isinstance(commit_sha, str):
         return None
     if COMMIT_SHA.fullmatch(commit_sha) is None:
+        return None
+    if REPO_IDENTITY.fullmatch(repo) is None:
         return None
     try:
         validate_structural(repo)
