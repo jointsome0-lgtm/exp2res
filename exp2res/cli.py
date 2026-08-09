@@ -1515,6 +1515,35 @@ def _import_outcome(imported: ImportOutcome) -> Outcome:
     )
 
 
+def _import_decorate(error: Exp2ResError) -> None:
+    """Report the committed records an ended import left behind.
+
+    §14.14 rule 6 and §19.4 rule 4: each accepted record commits in its own
+    transaction, so whatever ended the payload — a signal, a classified
+    failure, a teardown fault — the records already committed are a lifecycle
+    boundary this envelope reports. Every ending decorates here, so none of
+    them reports less than the others.
+    """
+
+    committed = cast(ImportOutcome | None, getattr(error, "import_outcome", None))
+    if committed is None:
+        return
+    error.affected_ids = _import_created(committed)
+    if getattr(error, "import_classified", False):
+        # Rule 5 nulls a result only when none exists yet; an interrupt after
+        # the last record leaves a complete one.
+        error.result = _import_result(committed)
+    # Human mode reads no `affected_ids`, so the same boundary is rendered as
+    # the committed records' own lines.
+    error.human_result = "\n".join(
+        [f"{_import_ending(error)}, {len(committed.accepted)} committed"]
+        + [
+            _import_record_line(record, "accepted")
+            for record in committed.accepted
+        ]
+    )
+
+
 def _import_command(
     context: typer.Context, command: CommandPath, source_system: str, payload: str
 ) -> None:
@@ -1533,28 +1562,19 @@ def _import_command(
                 cancelled.import_classified = True
                 raise cancelled from None
         except Exp2ResError as error:
-            # §14.14 rule 6 and §19.4 rule 4: each accepted record commits in
-            # its own transaction, so whatever ended the payload — a signal or
-            # a classified failure — the records already committed are a
-            # lifecycle boundary this envelope reports.
-            committed = cast(
-                ImportOutcome | None, getattr(error, "import_outcome", None)
-            )
-            if committed is not None:
-                error.affected_ids = _import_created(committed)
-                if getattr(error, "import_classified", False):
-                    # Rule 5 nulls a result only when none exists yet; an
-                    # interrupt after the last record leaves a complete one.
-                    error.result = _import_result(committed)
-                # Human mode reads no `affected_ids`, so the same boundary is
-                # rendered as the committed records' own lines.
-                error.human_result = "\n".join(
-                    [f"{_import_ending(error)}, {len(committed.accepted)} committed"]
-                    + [
-                        _import_record_line(record, "accepted")
-                        for record in committed.accepted
-                    ]
+            try:
+                _import_decorate(error)
+            except KeyboardInterrupt:
+                # The signal replaced the failure while its boundary was being
+                # rendered. That boundary now belongs to the cancellation, and
+                # rendering it there is the same bounded work.
+                cancelled = OperationCancelledError()
+                cancelled.import_outcome = getattr(error, "import_outcome", None)
+                cancelled.import_classified = getattr(
+                    error, "import_classified", False
                 )
+                _import_decorate(cancelled)
+                raise cancelled from None
             raise
 
     _run_command(context, command, operation)

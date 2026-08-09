@@ -582,6 +582,8 @@ nodes = [
   "tests/test_cli_import.py::test_a_candidate_that_only_shares_an_id_is_never_reported_as_committed",
   "tests/test_cli_import.py::test_a_final_duplicate_survives_the_signal_that_follows_it",
   "tests/test_cli_import.py::test_a_repeated_candidate_id_never_hides_the_earlier_commit",
+  "tests/test_cli_import.py::test_a_teardown_fault_still_reports_the_completed_classification",
+  "tests/test_cli_import.py::test_a_signal_during_failure_reporting_keeps_the_same_boundary",
   "tests/test_vera_replay_import.py::test_every_declared_import_step_produces_its_declared_counts",
   "tests/test_vera_replay_import.py::test_every_declared_failure_step_fails_for_its_declared_reason",
 ]

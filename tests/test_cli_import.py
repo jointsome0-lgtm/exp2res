@@ -902,3 +902,83 @@ def test_a_repeated_candidate_id_never_hides_the_earlier_commit(
     assert "raw_log" in created
     assert created["raw_log"] == ["log_shared_0002"]
     assert envelope["result"] is None
+
+
+def test_a_teardown_fault_still_reports_the_completed_classification(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: lock release can fail without un-committing a record."""
+    payload = write_payload(
+        tmp_path,
+        "teardown-fault.jsonl",
+        [ephemeris_record(f"vera-ephemeris-97{index:02d}") for index in range(2)],
+    )
+    writer = imports_service.writer_database
+
+    @contextmanager
+    def fault_on_release(*args, **kwargs):
+        with writer(*args, **kwargs) as connection:
+            yield connection
+        # Not an interrupt: the §8.1 lock release itself fails.
+        raise OSError("lock release failed")
+
+    monkeypatch.setattr(imports_service, "writer_database", fault_on_release)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert result.exit_code == 1
+    assert envelope["diagnostic_class"] == "internal_error"
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    assert len(created["raw_log"]) == 2
+    # Every record was classified before teardown ran, so the result stands.
+    assert envelope["result"] is not None
+    assert envelope["result"]["counts"] == {
+        "accepted": 2,
+        "duplicate": 0,
+        "rejected": 0,
+    }
+
+
+def test_a_signal_during_failure_reporting_keeps_the_same_boundary(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the ending changes, the committed records do not."""
+    payload = write_payload(
+        tmp_path,
+        "failing-report.jsonl",
+        [ephemeris_record(f"vera-ephemeris-98{index:02d}") for index in range(3)],
+    )
+    persist = imports_service._persist
+    calls = {"count": 0}
+
+    def fail_after_two(*args, **kwargs):
+        if calls["count"] == 2:
+            raise IdCollisionError()
+        calls["count"] += 1
+        return persist(*args, **kwargs)
+
+    monkeypatch.setattr(imports_service, "_persist", fail_after_two)
+    created_ids = cli_module._import_created
+    reports = {"count": 0}
+
+    def interrupt_the_first_report(*args, **kwargs):
+        reports["count"] += 1
+        if reports["count"] == 1:
+            # The signal lands while the failure's boundary is being rendered.
+            raise KeyboardInterrupt()
+        return created_ids(*args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "_import_created", interrupt_the_first_report)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    # The signal wins the ending, but not the report.
+    assert result.exit_code == 9
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    assert len(created["raw_log"]) == 2

@@ -457,4 +457,20 @@ def import_payload(
         cancelled.import_outcome = report()
         cancelled.import_classified = is_complete(cancelled.import_outcome)
         raise cancelled from None
+    except Exp2ResError as error:
+        # A typed failure raised by `writer_database` itself, past every
+        # handler that knows this import's progress.
+        if getattr(error, "import_outcome", None) is None:
+            error.import_outcome = report()
+            error.import_classified = is_complete(error.import_outcome)
+        raise
+    except Exception as error:
+        # Teardown — §8.1 lock release, connection close — can fail after
+        # every record has already committed. §14.14 rule 6 keeps those
+        # boundaries reported, and the base class carries the same class-1
+        # exit the raw exception would have produced.
+        internal = Exp2ResError()
+        internal.import_outcome = report()
+        internal.import_classified = is_complete(internal.import_outcome)
+        raise internal from error
     return report()
