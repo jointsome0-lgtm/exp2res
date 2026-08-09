@@ -2753,17 +2753,31 @@ def bullets_generate(
             # fields the cancelled envelope reads.
             carried = getattr(error, "stage_result", None)
             if isinstance(carried, Stage10Result):
-                committed = _bullets_generate_outcome(carried)
-                error.affected_ids = committed.affected_ids
-                error.generation_ids = committed.generation_ids
-                error.run_ids = committed.run_ids
-                error.invalidated_branches = committed.invalidated_branches
-                error.residual_paths = committed.residual_paths
-                error.warnings = committed.warnings
+                _carry_generated_pack(error, carried)
             raise
-        return _bullets_generate_outcome(generated)
+        try:
+            return _bullets_generate_outcome(generated)
+        except KeyboardInterrupt:
+            # The service returned a durable swap; §14.14 rule 6 keeps it
+            # reported even when the interrupt lands in result assembly.
+            cancelled = OperationCancelledError()
+            cancelled.stage_result = generated
+            _carry_generated_pack(cancelled, generated)
+            raise cancelled from None
 
     _run_command(context, "bullets generate", operation)
+
+
+def _carry_generated_pack(error: Exp2ResError, generated: Stage10Result) -> None:
+    """Fold a committed §13.10 swap into the fields a failed envelope reads."""
+
+    committed = _bullets_generate_outcome(generated)
+    error.affected_ids = committed.affected_ids
+    error.generation_ids = committed.generation_ids
+    error.run_ids = committed.run_ids
+    error.invalidated_branches = committed.invalidated_branches
+    error.residual_paths = committed.residual_paths
+    error.warnings = committed.warnings
 
 
 def _bullets_generate_outcome(generated: Stage10Result) -> Outcome:

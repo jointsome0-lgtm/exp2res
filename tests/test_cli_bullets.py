@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import exp2res.cli as cli_module
 import exp2res.pipeline.stage10 as stage10_module
 import exp2res.services.bullets as bullets_service
 from exp2res.cli import _bullets_generate_outcome, app
@@ -139,6 +140,38 @@ def test_created_bullet_ids_are_ordered_by_their_stable_identity() -> None:
 
     created = {group.entity_type: group.ids for group in outcome.affected_ids.created}
     assert created["resume_bullet"] == ["bullet_vera_aa", "bullet_vera_zz"]
+
+
+def test_an_interrupt_in_result_assembly_still_reports_the_swap(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: composition is inside the durable swap's guarded window."""
+
+    _facts, snapshot_id = arrange(workspace, monkeypatch, one_bullet)
+    compose = cli_module._bullets_generate_outcome
+    attempts: list[object] = []
+
+    def interrupt_first(generated):
+        attempts.append(generated)
+        if len(attempts) == 1:
+            raise KeyboardInterrupt()
+        return compose(generated)
+
+    monkeypatch.setattr(cli_module, "_bullets_generate_outcome", interrupt_first)
+
+    result, envelope = generate(workspace, snapshot_id)
+
+    assert result.exit_code == 9, (result.stderr, envelope)
+    assert envelope["status"] == "cancelled"
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    assert len(created["resume_branch"]) == 1
+    assert len(created["resume_bullet"]) == 1
+    assert envelope["generation_ids"] and envelope["run_ids"]
+    with read_database(workspace) as connection:
+        assert len(list_resume_branches(connection, current_only=True)) == 1
 
 
 def test_an_invalid_branch_name_fails_in_the_input_class(
