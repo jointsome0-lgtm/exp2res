@@ -15,7 +15,7 @@
     "llm/demo-assessment-overclaim.json": "6c3e81c6f405a0957f6435936cc0902a0701d753f1e8f8e6d99f51f5854c9dac",
     "llm/demo-assessment-supported.json": "c5cd1db10b6b284f723c376308edcde0baeac7dc916b4c92f1d397920f07bb8b",
     "llm/demo-bullet-verification.json": "79ba54c15f3cd8b3c53af584728b7ddfa284daeefb213a4d4a61b5a0c5176138",
-    "llm/demo-bullets.json": "7702a4799b7d4a1da815848671b2cf3d731fc2ede451e6ab8076e8101f8988c0",
+    "llm/demo-bullets.json": "dee37efbd089bec6907b706176f239cd724461e27ce97b96999a49e0c4a62a4b",
     "llm/demo-detection.json": "e167df528c0315e1458aa5aa2115616f1505da8680c80877ac0c45610a44996d",
     "llm/demo-extract-call-01.json": "4e2f5ae20dcc3dadfc6f8675e6e166f51960cd6f733b89e6333d850315cbacde",
     "llm/demo-extract-call-02.json": "36fb8534fef728f4dd55c5040a0aca010b779d7553a5ad6f1177f78c166d771c",

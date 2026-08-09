@@ -740,9 +740,9 @@ DEMO_RESPONSES = {
         "warnings": [],
     },
     # §15.6: one claim-guided multi-sentence bullet and one facts-only bullet.
-    # Only the Kubernetes demand is matched: the two-year tenure, Git, Python
-    # scripting, video-tutorial, and SEO demands all stay unmatched because the
-    # invented corpus reaches none of them.
+    # The kubectl runbook work is the only demand this corpus reaches; the
+    # ingress correction carries no demand at all, and the two-year tenure,
+    # Git, Python scripting, video-tutorial, and SEO demands stay unmatched.
     "demo-bullets.json": {
         "bullets": [
             {
@@ -764,7 +764,7 @@ DEMO_RESPONSES = {
                 ),
                 "target_section": "selected_projects",
                 "target_role_relevance": "medium",
-                "matched_jd_requirements": ["jdreq_demo_0002"],
+                "matched_jd_requirements": [],
                 "source_fact_ids": ["fact_demo_0003"],
                 "source_self_claim_ids": [],
             },
