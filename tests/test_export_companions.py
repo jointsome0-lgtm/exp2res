@@ -138,6 +138,49 @@ def test_bullet_pack_map_rejects_bullet_logs_outside_its_fact_closure(
         BulletPackEvidenceMapDocument.model_validate(broken)
 
 
+def test_bullet_pack_map_rejects_two_facts_with_their_logs_swapped() -> None:
+    # §21.48: each fact-to-log edge is checked on its own, so a cross-wired
+    # pair cannot look evidence-complete through the global union alone.
+    pinned = json.loads(
+        (REPOSITORY_ROOT / "tests" / "goldens" / "branch" / "evidence_map.json")
+        .read_text(encoding="utf-8")
+    )
+    # The golden's two facts share one evidence item, so the cross-wiring is
+    # only visible once each fact carries its own. This widened map is a
+    # legitimate pack and must still validate.
+    def wired(first_logs: list[str], second_logs: list[str]) -> dict:
+        widened = dict(pinned)
+        widened["evidence_links"] = [
+            {"evidence_item_id": "evidence_item_vera_0001", "raw_log_id": "raw_log_vera_0001"},
+            {"evidence_item_id": "evidence_item_vera_0002", "raw_log_id": "raw_log_vera_0002"},
+        ]
+        widened["fact_links"] = [
+            {
+                "fact_id": "fact_vera_0001",
+                "evidence_item_ids": ["evidence_item_vera_0001"],
+                "source_log_ids": first_logs,
+            },
+            {
+                "fact_id": "fact_vera_0002",
+                "evidence_item_ids": ["evidence_item_vera_0002"],
+                "source_log_ids": second_logs,
+            },
+        ]
+        widened["rendered_bullets"] = [
+            {**pinned["rendered_bullets"][0], "source_log_ids": first_logs},
+            {**pinned["rendered_bullets"][1], "source_log_ids": second_logs},
+        ]
+        return widened
+
+    assert BulletPackEvidenceMapDocument.model_validate(
+        wired(["raw_log_vera_0001"], ["raw_log_vera_0002"])
+    )
+    with pytest.raises(ValidationError):
+        BulletPackEvidenceMapDocument.model_validate(
+            wired(["raw_log_vera_0002"], ["raw_log_vera_0001"])
+        )
+
+
 def test_render_input_hash_covers_gap_lifecycle_and_verification_at_same_ids() -> None:
     graph = assessment_graph(all_sections=False)
     answered = graph_with_gap_answered(graph, True)

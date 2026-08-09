@@ -387,15 +387,20 @@ class BulletPackEvidenceMapDocument(ExportDocument):
         # An unused extra member fails export exactly like a missing one.
         if reached_facts != fact_ids:
             raise ValueError("fact links disagree with the reached closure")
+        evidence_logs = {item.evidence_item_id: item.raw_log_id for item in self.evidence_links}
         reached_evidence: set[str] = set()
-        reached_logs: set[str] = set()
         for link in self.fact_links:
+            if not set(link.evidence_item_ids).issubset(evidence_ids):
+                raise ValueError("fact link reaches an unlinked evidence item")
             reached_evidence.update(link.evidence_item_ids)
-            reached_logs.update(link.source_log_ids)
+            # Each edge is checked on its own: comparing only the union would
+            # accept two facts whose logs are swapped between them.
+            if set(link.source_log_ids) != {
+                evidence_logs[item] for item in link.evidence_item_ids
+            }:
+                raise ValueError("fact link logs disagree with its own evidence")
         if reached_evidence != evidence_ids:
             raise ValueError("evidence links disagree with the reached closure")
-        if reached_logs != {item.raw_log_id for item in self.evidence_links}:
-            raise ValueError("evidence links disagree with the reached logs")
         return self
 
 
