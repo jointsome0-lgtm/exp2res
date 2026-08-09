@@ -15,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.enums import ResumeTargetSection
 from exp2res.domain.models import (
+    AssessmentSnapshot,
     ExperienceFact,
     ResumeBranch,
     ResumeBullet,
@@ -275,11 +276,47 @@ def _require_current_claim_facts(
 
     current = {fact.id for fact in facts}
     for claim in claims:
+        if not claim.source_fact_ids:
+            # Storage refuses a chainless claim (`claim_source_facts_empty`),
+            # so only damaged state has one — and the closure is the whole
+            # provenance such a claim would lack.
+            raise IntegrityFailureError("claim_source_facts_empty")
         for fact_id in sorted(set(claim.source_fact_ids) - current, key=_id_key):
             stored = get_experience_fact(connection, fact_id)
             raise IntegrityFailureError(
                 "claim_fact_missing" if stored is None else "claim_fact_superseded"
             )
+
+
+_SNAPSHOT_REFERENCES = (
+    ("gap_question_ids", "gap_questions", "snapshot_gap_reference_invalid"),
+    (
+        "contradiction_ids",
+        "contradictions",
+        "snapshot_contradiction_reference_invalid",
+    ),
+)
+
+
+def _require_current_snapshot_references(
+    connection: sqlite3.Connection, snapshot: AssessmentSnapshot
+) -> None:
+    """§11.7: a read-time consumer revalidates the snapshot's typed references.
+
+    Resolvable and current — and nothing beyond that. §11's typed-ID
+    validation already makes a hydrated snapshot's reference lists
+    duplicate-free, a gap answered after synthesis stays valid because §11.7
+    says so, and the set-equality rules Stage 7 and assessment export layer on
+    top of this are their own freshness gates rather than reference integrity.
+    """
+
+    for field, table, code in _SNAPSHOT_REFERENCES:
+        for reference in getattr(snapshot, field):
+            row = connection.execute(
+                f"SELECT superseded_at FROM {table} WHERE id = ?", (reference,)
+            ).fetchone()
+            if row is None or row["superseded_at"] is not None:
+                raise IntegrityFailureError(code)
 
 
 def _run_is_committed(connection: sqlite3.Connection, run_id: str) -> bool:
@@ -341,6 +378,7 @@ def run_bullet_generation(
                 raise SelectorNotFoundError()
             if snapshot.superseded_at is not None:
                 raise SnapshotNotCurrentError()
+            _require_current_snapshot_references(connection, snapshot)
             members = list_self_claims_for_snapshot(connection, snapshot.id)
             if snapshot.verification_status != aggregate_verification_status(
                 item.verification_status for item in members
@@ -386,12 +424,32 @@ def run_bullet_generation(
             planned = (
                 PlannedCall(
                     input_payload=input_payload,
+                    # §12.13 telemetry names every transited entity, and this
+                    # payload carries each fact's evidence items and their raw
+                    # logs beside the parsed vacancy's typed requirements.
                     input_ids=tuple(
                         sorted(
                             {
                                 job_description.id,
                                 snapshot.id,
+                                *(
+                                    requirement.id
+                                    for requirement in (
+                                        job_description.parsed.requirements
+                                    )
+                                ),
                                 *(item.fact.id for item in selected_facts),
+                                *(
+                                    evidence.evidence_item.id
+                                    for item in selected_facts
+                                    for evidence in item.evidence
+                                ),
+                                *(
+                                    evidence.raw_log.id
+                                    for item in selected_facts
+                                    for evidence in item.evidence
+                                    if evidence.raw_log is not None
+                                ),
                                 *(claim.id for claim in supported),
                             },
                             key=_id_key,

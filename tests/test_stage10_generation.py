@@ -24,10 +24,12 @@ from exp2res.errors import (
     SnapshotNotCurrentError,
     SnapshotNotVerifiedError,
 )
+from exp2res.domain.models import AssessmentSnapshot, SelfClaim
 from exp2res.pipeline.orchestration import withdraw_pending_unless_superseded
 import exp2res.pipeline.stage10 as stage10_module
 from exp2res.pipeline.stage10 import run_bullet_generation
 from exp2res.storage.repository import (
+    get_assessment_snapshot,
     get_resume_branch,
     list_resume_branches,
     list_resume_bullets_for_branch,
@@ -315,6 +317,95 @@ def test_a_claim_whose_facts_are_not_current_never_reaches_the_writer(
     assert exhausted.calls == []
     with read_database(workspace) as connection:
         assert list_resume_branches(connection, current_only=False) == ()
+
+
+def test_a_claim_without_any_provenance_is_refused(workspace: Path) -> None:
+    """§16.1: a chainless claim has no closure to ground a bullet with."""
+
+    _ids, _facts, _snapshot_id = prepare_anchor(workspace)
+    chainless = SelfClaim(
+        id="claim_vera_chainless",
+        created_at=FIXED_NOW,
+        snapshot_id="snapshot_vera_0001",
+        claim="A claim standing on nothing at all.",
+        claim_kind="hypothesis",
+        dimension="gap",
+        source_fact_ids=[],
+        confidence="unknown",
+        verification_status="supported",
+    )
+
+    with read_database(workspace) as connection:
+        with pytest.raises(IntegrityFailureError) as caught:
+            stage10_module._require_current_claim_facts(connection, (chainless,), ())
+
+    assert caught.value.args == ("claim_source_facts_empty",)
+
+
+def test_a_snapshot_reference_that_stopped_resolving_fails_closed(
+    workspace: Path,
+) -> None:
+    """§11.7: a read-time consumer revalidates the snapshot's typed references."""
+
+    _ids, _facts, snapshot_id = prepare_anchor(workspace)
+    with read_database(workspace) as connection:
+        stored = get_assessment_snapshot(connection, snapshot_id)
+    assert stored is not None
+
+    def damaged(**overrides) -> AssessmentSnapshot:
+        # The stored payload is immutable by trigger, so the damaged states a
+        # migration or direct edit could leave behind are built as models.
+        values = stored.model_dump() | overrides
+        return AssessmentSnapshot(**values)
+
+    cases = (
+        (
+            damaged(gap_question_ids=["gap_vera_absent"]),
+            "snapshot_gap_reference_invalid",
+        ),
+        (
+            damaged(contradiction_ids=["contradiction_vera_absent"]),
+            "snapshot_contradiction_reference_invalid",
+        ),
+    )
+    with read_database(workspace) as connection:
+        for snapshot, code in cases:
+            with pytest.raises(IntegrityFailureError) as caught:
+                stage10_module._require_current_snapshot_references(
+                    connection, snapshot
+                )
+            assert caught.value.args == (code,)
+
+
+def test_the_run_records_every_entity_the_writer_received(workspace: Path) -> None:
+    """§12.13: telemetry names the evidence and requirements that transited."""
+
+    ids, facts, snapshot_id = prepare_anchor(workspace)
+    fake = FakeContractRunner(
+        [writer_response([bullet_candidate(fact_ids=list(facts))])]
+    )
+
+    generated = run_stage10(workspace, fake, ids, snapshot_id=snapshot_id)
+
+    payload = json.loads(fake.calls[0].serialized_input)
+    transited = {snapshot_id, JOB_DESCRIPTION_ID, REQUIREMENT_ID}
+    for item in payload["selected_facts"]:
+        transited.add(item["fact"]["id"])
+        for evidence in item["evidence"]:
+            transited.add(evidence["evidence_item"]["id"])
+            if evidence.get("raw_log") is not None:
+                transited.add(evidence["raw_log"]["id"])
+    for claim in payload["supported_self_claims"]:
+        transited.add(claim["id"])
+
+    with read_database(workspace) as connection:
+        row = connection.execute(
+            "SELECT input_ids_json FROM processing_runs WHERE id = ?",
+            (generated.run_id,),
+        ).fetchone()
+    recorded = json.loads(row["input_ids_json"])
+    assert set(recorded) == transited
+    assert recorded == sorted(transited, key=lambda value: value.encode("utf-8"))
 
 
 def test_a_no_bullet_answer_leaves_the_current_branch_in_place(
