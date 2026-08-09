@@ -18,6 +18,7 @@ from exp2res.domain.models import (
     ExperienceFact,
     ResumeBranch,
     ResumeBullet,
+    SelfClaim,
     validate_structural,
 )
 from exp2res.domain.results import InvalidatedBranch
@@ -56,6 +57,7 @@ from exp2res.storage.repository import (
     bullet_log_closure,
     current_branch_name_conflict,
     get_assessment_snapshot,
+    get_experience_fact,
     get_job_description,
     get_raw_log,
     get_resume_branch,
@@ -257,6 +259,29 @@ def _validated_branch_name(value: str) -> str:
     return value
 
 
+def _require_current_claim_facts(
+    connection: sqlite3.Connection,
+    claims: Sequence[SelfClaim],
+    facts: Sequence[ExperienceFact],
+) -> None:
+    """Refuse a supplied claim whose §16.1 provenance chain is not current.
+
+    A claim reaches the writer as guidance and can end up cited by a persisted
+    bullet, so Stage 10 owes the same check Stage 7 and assessment export make
+    before they use one: every `source_fact_ids` member resolves to a current
+    fact. Only damaged state can fail it, which is exactly why it fails closed
+    rather than reaching a provider.
+    """
+
+    current = {fact.id for fact in facts}
+    for claim in claims:
+        for fact_id in sorted(set(claim.source_fact_ids) - current, key=_id_key):
+            stored = get_experience_fact(connection, fact_id)
+            raise IntegrityFailureError(
+                "claim_fact_missing" if stored is None else "claim_fact_superseded"
+            )
+
+
 def _run_is_committed(connection: sqlite3.Connection, run_id: str) -> bool:
     """Prove the stage's single final transaction reached durable storage.
 
@@ -340,6 +365,7 @@ def run_bullet_generation(
                     key=lambda item: _id_key(item.id),
                 )
             )
+            _require_current_claim_facts(connection, supported, facts)
             input_payload = ResumeWriterInput(
                 branch=BranchContext(
                     name=branch_name,

@@ -292,6 +292,31 @@ def test_a_broken_aggregate_fails_before_the_eligibility_verdict(
     assert exhausted.calls == []
 
 
+def test_a_claim_whose_facts_are_not_current_never_reaches_the_writer(
+    workspace: Path,
+) -> None:
+    """§16.1: a supplied claim's provenance chain must resolve, or nothing runs."""
+
+    ids, facts, snapshot_id = prepare_anchor(workspace)
+    with writer_database(workspace) as connection:
+        # Workspace damage, not an ordinary lifecycle: a claim stays
+        # `supported` while one of the facts it cites stops being current.
+        connection.execute(
+            "UPDATE experience_facts SET superseded_at = ? WHERE id = ?",
+            (FIXED_NOW.isoformat(), facts[0]),
+        )
+        connection.commit()
+    exhausted = FakeContractRunner([])
+
+    with pytest.raises(IntegrityFailureError) as caught:
+        run_stage10(workspace, exhausted, ids, snapshot_id=snapshot_id)
+
+    assert caught.value.args == ("claim_fact_superseded",)
+    assert exhausted.calls == []
+    with read_database(workspace) as connection:
+        assert list_resume_branches(connection, current_only=False) == ()
+
+
 def test_a_no_bullet_answer_leaves_the_current_branch_in_place(
     workspace: Path,
 ) -> None:
