@@ -12,10 +12,11 @@ from typing import Any, Mapping, Optional
 from pydantic import ValidationError
 
 from exp2res.config import load_workspace_config
-from exp2res.domain.models import EvidenceItem, RawLog
+from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
 from exp2res.errors import (
     Exp2ResError,
     IdCollisionError,
+    ImportDocumentInvalidError,
     OperationCancelledError,
     WorkspaceBusyError,
 )
@@ -30,9 +31,16 @@ from exp2res.integrations.records import (
     content_hash,
     parse_payload,
 )
-from exp2res.services.capture import Clock, IdFactory, new_id
-from exp2res.services.source_files import read_payload_file
+from exp2res.pipeline.stage1 import persist_manual_capture
+from exp2res.services.capture import (
+    Clock,
+    IdFactory,
+    new_id,
+    validate_project_label,
+)
+from exp2res.services.source_files import read_document_file, read_payload_file
 from exp2res.storage.repository import (
+    RawLogBundle,
     committed_import_records,
     insert_evidence_item,
     insert_raw_log,
@@ -336,6 +344,91 @@ def _cancelled_report(
         duplicate=tuple(classified["duplicate"]),
         rejected=tuple(classified["rejected"]),
     )
+
+
+def import_design_document(
+    workspace: Path,
+    *,
+    source_path: str,
+    project: str | None = None,
+    clock: Clock | None = None,
+    id_factory: IdFactory = new_id,
+    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+) -> RawLogBundle:
+    """Import one local design document as a §14.5 `import file` record.
+
+    §14.5 states this form is not a §19 record, so it shares none of
+    `import_payload`'s identity, duplicate, or per-record machinery: there is
+    one document, it is either recorded or the command fails, and nothing
+    about it is addressable as a source record. What it does share is §13.1's
+    ordinary raw-capture shape, so it commits the same atomic rule 5 pair a
+    manual capture does.
+
+    §14.5 rejects other local-file categories rather than guessing an entry
+    type. The gates that decide this are the typed ones already in the path:
+    §29.4 refuses anything that is not a selectable regular file, and the
+    §11 boundary refuses a non-UTF-8, oversized, or empty document. Each is
+    an ordinary typed error, never a silent skip.
+    """
+
+    validate_project_label(project)
+    # Fail closed before acquiring the owner's document (§12.14, §14.14).
+    require_compatible(workspace)
+    config = load_workspace_config(workspace)
+    raw_text, canonical_path = read_document_file(source_path, config=config)
+    recorded_at = (clock or (lambda: datetime.now(timezone.utc)))()
+
+    last_collision: IdCollisionError | None = None
+    for _attempt in range(3):
+        raw_id = id_factory("raw_log")
+        try:
+            raw_log = RawLog(
+                id=raw_id,
+                recorded_at=recorded_at,
+                entry_type="design_doc",
+                source_type="imported_artifact",
+                # A local document carries no occurrence the workspace may
+                # read. §13.1 rule 3 wants that stated, and §5 forbids
+                # inventing one from filesystem metadata.
+                occurred=OccurredAt(
+                    start=None,
+                    end=None,
+                    precision="unknown",
+                    confidence="unknown",
+                ),
+                raw_text=raw_text,
+                project=project,
+                external_ref=canonical_path,
+                corrects_log_id=None,
+                metadata={},
+            )
+            evidence_items = (
+                EvidenceItem(
+                    id=id_factory("evidence_item"),
+                    created_at=recorded_at,
+                    raw_log_id=raw_id,
+                    title=None,
+                    summary="Imported local design document.",
+                    uri=None,
+                    path=canonical_path,
+                    strength="design_doc",
+                    metadata={},
+                ),
+            )
+        except (ValidationError, ValueError, TypeError) as error:
+            raise ImportDocumentInvalidError() from error
+        try:
+            persist_manual_capture(
+                workspace,
+                raw_log=raw_log,
+                evidence_items=evidence_items,
+                timeout_ms=timeout_ms,
+            )
+            return RawLogBundle(raw_log, evidence_items)
+        except IdCollisionError as error:
+            last_collision = error
+            continue
+    raise IdCollisionError() from last_collision
 
 
 def import_payload(

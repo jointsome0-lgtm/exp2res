@@ -146,6 +146,7 @@ from exp2res.services.view_server import (
 from exp2res.services.imports import (
     ImportOutcome,
     ImportedRecord,
+    import_design_document,
     import_payload,
 )
 from exp2res.services.time_input import parse_occurred, workspace_zone
@@ -178,7 +179,9 @@ db_app = typer.Typer(help="Inspect or migrate the workspace schema.")
 log_app = typer.Typer(help="Capture a manual record.")
 logs_app = typer.Typer(help="Inspect or owner-delete raw records.")
 correction_app = typer.Typer(help="Correction capture lifecycle.")
-import_app = typer.Typer(help="Import one local §19 source payload.")
+import_app = typer.Typer(
+    help="Import one local §19 source payload or design document."
+)
 facts_app = typer.Typer(help="Inspect current extracted facts.")
 detections_app = typer.Typer(
     help="Generate both complete current detection sets together."
@@ -1604,6 +1607,26 @@ def import_github(
     # §14.5 and §19.3: one local payload whose `repo` field names the
     # repository. Nothing here reaches the network.
     _import_command(context, "import github", "github", payload)
+
+
+@import_app.command("file")
+def import_file(
+    context: typer.Context,
+    source_path: str = typer.Argument(..., metavar="PATH"),
+    project: str | None = typer.Option(None, "--project"),
+) -> None:
+    # §14.5: not a §19 record, so it goes through neither `_import_command`
+    # nor §14.14 rule 5's `{counts, records}` schema. Unlisted there, it
+    # reports `result = null` with its created IDs in `affected_ids`, exactly
+    # as the §14.2 captures whose record shape it shares do.
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        return _capture_outcome(
+            import_design_document(
+                workspace, source_path=source_path, project=project
+            )
+        )
+
+    _run_command(context, "import file", operation)
 
 
 @app.command("extract")

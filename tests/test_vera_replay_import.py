@@ -1,9 +1,11 @@
-"""Vera's declared §19 import steps replayed through the §14.5 CLI.
+"""Vera's declared import steps replayed through the §14.5 CLI.
 
 ``replay.json`` is a claim about what each corpus payload does; this module
-is its proof. Every ``kind: import`` step whose form exists — the three
-§19-backed ones — is replayed in declared order against one workspace, and
-each declared count, evidence strength, and rejection reason is asserted.
+is its proof. Every ``kind: import`` step is replayed in declared order
+against one workspace: the three §19-backed forms against their declared
+counts, evidence strengths, and rejection reasons, and the fourth `file`
+form — which §14.5 states is not a §19 record — against the record shape
+that section gives it instead.
 
 Two declared values are read where they actually live. The closed §14.14
 rule 5 projection carries no rejection reason, so a failure step's declared
@@ -24,7 +26,11 @@ from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
 from exp2res.cli import app
-from exp2res.services.imports import ImportOutcome, import_payload
+from exp2res.services.imports import (
+    ImportOutcome,
+    import_design_document,
+    import_payload,
+)
 
 from conftest import VERA_CORPUS, configure_timezone
 
@@ -33,9 +39,6 @@ pytestmark = [pytest.mark.contract, pytest.mark.lifecycle]
 runner = CliRunner()
 
 REPLAY = json.loads((VERA_CORPUS / "replay.json").read_text(encoding="utf-8"))
-# §14.5's fourth form lands in a later phase; naming it keeps the skip an
-# explicit statement about scope rather than a silently short replay.
-DEFERRED_FORMS = {"file"}
 # The declared prose reason for each failure step, mapped to the reason code
 # the classifier actually assigns. Both directions matter: the fixture must
 # fail, and it must fail for the stated reason and no other.
@@ -63,11 +66,25 @@ def run_step(
 ) -> dict:
     """Run one declared import step with its declared clock pinned."""
 
-    monkeypatch.setattr(
-        cli_module,
-        "import_payload",
-        functools.partial(import_payload, clock=lambda: parse_clock(step["clock"])),
-    )
+    def clock() -> datetime:
+        return parse_clock(step["clock"])
+
+    arguments = [str(VERA_CORPUS / step["file"])]
+    if step["importer"] == "file":
+        # Not a §19 record (§14.5), so it is pinned at its own service seam
+        # and carries the declared project label the other forms never take.
+        monkeypatch.setattr(
+            cli_module,
+            "import_design_document",
+            functools.partial(import_design_document, clock=clock),
+        )
+        arguments += ["--project", step["project"]]
+    else:
+        monkeypatch.setattr(
+            cli_module,
+            "import_payload",
+            functools.partial(import_payload, clock=clock),
+        )
     result = runner.invoke(
         app,
         [
@@ -76,7 +93,7 @@ def run_step(
             str(workspace),
             "import",
             step["importer"],
-            str(VERA_CORPUS / step["file"]),
+            *arguments,
         ],
     )
     monkeypatch.undo()
@@ -124,11 +141,13 @@ def test_every_declared_import_step_produces_its_declared_counts(
 ) -> None:
     """The corpus is only a fixture if the importer agrees with replay.json."""
     steps = import_steps(REPLAY["steps"])
-    replayed = [step for step in steps if step["importer"] not in DEFERRED_FORMS]
-    # A shrinking corpus must not silently shrink the replay.
-    assert [step["step"] for step in replayed] == [9, 10, 11, 12]
+    counted = [step for step in steps if "accepted" in step["expect"]]
+    # A shrinking corpus must not silently shrink the replay: every declared
+    # step is claimed here or by the `file` test below, and no other.
+    assert [step["step"] for step in steps] == [9, 10, 11, 12, 13]
+    assert [step["step"] for step in counted] == [9, 10, 11, 12]
 
-    for step in replayed:
+    for step in counted:
         envelope = run_step(replay_workspace, step, monkeypatch)
 
         expected = step["expect"]
@@ -149,27 +168,39 @@ def test_every_declared_import_step_produces_its_declared_counts(
                 ], step
 
 
-def test_the_deferred_file_form_is_the_only_unreplayed_step(
-    replay_workspace: Path,
+def test_the_declared_file_step_records_its_design_document(
+    replay_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§14.5's `import file` is declared but has no command yet."""
-    deferred = [
+    """§14.5's fourth form, replayed against the record shape it declares."""
+    declared = [
         step
         for step in import_steps(REPLAY["steps"])
-        if step["importer"] in DEFERRED_FORMS
+        if step["importer"] == "file"
     ]
-    assert [step["importer"] for step in deferred] == ["file"]
-    result = runner.invoke(
-        app,
-        [
-            "--workspace",
-            str(replay_workspace),
-            "import",
-            "file",
-            str(VERA_CORPUS / deferred[0]["file"]),
-        ],
-    )
-    assert result.exit_code != 0
+    assert [step["step"] for step in declared] == [13]
+    step = declared[0]
+
+    envelope = run_step(replay_workspace, step, monkeypatch)
+
+    assert envelope["command"] == "import file"
+    assert envelope["status"] == step["expect"]["status"]
+    # §14.14 rule 5 lists only the §19-backed forms' `{counts, records}`.
+    assert envelope["result"] is None
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    log = show_log(replay_workspace, created["raw_log"][0])
+    assert parse_clock(log["log"]["recorded_at"]) == parse_clock(step["clock"])
+    assert log["log"]["entry_type"] == "design_doc"
+    assert log["log"]["source_type"] == "imported_artifact"
+    assert log["log"]["project"] == step["project"]
+    # §14.5 with §14.2: the canonical real path, in both places, and no
+    # managed copy of a document that stays where the owner put it.
+    canonical = (VERA_CORPUS / step["file"]).resolve().as_posix()
+    assert log["log"]["external_ref"] == canonical
+    assert [item["strength"] for item in log["evidence_items"]] == ["design_doc"]
+    assert [item["path"] for item in log["evidence_items"]] == [canonical]
 
 
 def test_every_declared_failure_step_fails_for_its_declared_reason(
