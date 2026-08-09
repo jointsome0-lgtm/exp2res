@@ -740,8 +740,9 @@ DEMO_RESPONSES = {
         "warnings": [],
     },
     # §15.6: one claim-guided multi-sentence bullet and one facts-only bullet.
-    # Git, Python scripting, video tutorials, and SEO stay unmatched because
-    # the invented corpus reaches none of them.
+    # Only the Kubernetes demand is matched: the two-year tenure, Git, Python
+    # scripting, video-tutorial, and SEO demands all stay unmatched because the
+    # invented corpus reaches none of them.
     "demo-bullets.json": {
         "bullets": [
             {
@@ -752,7 +753,7 @@ DEMO_RESPONSES = {
                 ),
                 "target_section": "selected_projects",
                 "target_role_relevance": "high",
-                "matched_jd_requirements": ["jdreq_demo_0001", "jdreq_demo_0002"],
+                "matched_jd_requirements": ["jdreq_demo_0002"],
                 "source_fact_ids": ["fact_demo_0001", "fact_demo_0002", "fact_demo_0003"],
                 "source_self_claim_ids": ["claim_demo_0003"],
             },
@@ -763,7 +764,7 @@ DEMO_RESPONSES = {
                 ),
                 "target_section": "selected_projects",
                 "target_role_relevance": "medium",
-                "matched_jd_requirements": ["jdreq_demo_0001"],
+                "matched_jd_requirements": ["jdreq_demo_0002"],
                 "source_fact_ids": ["fact_demo_0003"],
                 "source_self_claim_ids": [],
             },
@@ -945,7 +946,8 @@ def replay() -> dict:
          "note": "snapshot_step names the exact --snapshot anchor (§14.10 has no "
                  "latest default); the harness resolves it to E4's snapshot ID",
          "expect": {"status": "ok", "supported_bullets_min": 1,
-                    "unmatched_requirements": ["video tutorials", "SEO"]}},
+                    "unmatched_requirements": ["Two or more years",
+                                               "video tutorials", "SEO"]}},
         {"step": "E11", "kind": "bullets", "jd_file": "jds/jd-junior-backend-clouddocs.md",
          "branch": "backend-clouddocs", "snapshot_step": "E4",
          "clock": "2026-07-12T11:00:00+02:00",

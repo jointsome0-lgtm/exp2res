@@ -255,7 +255,8 @@ demo/workspace/out/branch/branch_demo_0001/bullet_pack.md
 demo/workspace/out/branch/branch_demo_0001/evidence_map.json
 demo/workspace/out/branch/branch_demo_0001/verification_report.json
 
-Act 3 result: two supported bullets published under out/branch/branch_demo_0001; 4 demands stay unmatched because the invented corpus reaches none of them:
+Act 3 result: two supported bullets published under out/branch/branch_demo_0001; 5 demands stay unmatched because the invented corpus reaches none of them:
+  - Two or more years writing developer-facing documentation.
   - Comfortable working in Git: branches, pull requests, reviews.
   - Python scripting for documentation tooling (link checkers, linters).
   - Experience producing video tutorials.

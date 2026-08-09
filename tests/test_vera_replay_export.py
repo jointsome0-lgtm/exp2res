@@ -616,7 +616,7 @@ def test_vera_e10_cli_bullet_pack_matches_pinned_goldens(
                         "Drafted and validated a kubectl troubleshooting runbook. "
                         "Every documented step was walked on a toy cluster first.",
                         section="selected_projects",
-                        requirements=[requirements[0].id, requirements[1].id],
+                        requirements=[requirements[1].id],
                         fact_ids=[fact_ids[0]],
                         claim_ids=[claim_ids[0]],
                     ),
@@ -657,6 +657,7 @@ def test_vera_e10_cli_bullet_pack_matches_pinned_goldens(
     }
     unmatched = [item.text for item in requirements if item.id not in matched]
     assert unmatched == [
+        "Two or more years writing developer-facing documentation.",
         "Experience producing video tutorials.",
         "On-page SEO basics.",
     ]

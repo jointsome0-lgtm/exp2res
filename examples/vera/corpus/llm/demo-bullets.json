@@ -2,7 +2,6 @@
   "bullets": [
     {
       "matched_jd_requirements": [
-        "jdreq_demo_0001",
         "jdreq_demo_0002"
       ],
       "source_fact_ids": [
@@ -19,7 +18,7 @@
     },
     {
       "matched_jd_requirements": [
-        "jdreq_demo_0001"
+        "jdreq_demo_0002"
       ],
       "source_fact_ids": [
         "fact_demo_0003"
