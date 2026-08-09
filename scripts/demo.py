@@ -57,7 +57,7 @@ GOLDEN_TRANSCRIPT = ROOT / "demo" / "transcript.txt"
 GOLDEN_CAST = ROOT / "demo.cast"
 WORKSPACE_LABEL = "demo/workspace"
 FIXED_CLOCK = datetime.fromisoformat("2026-07-15T12:30:00+00:00")
-CORPUS_VERSION = "1.0.0"
+CORPUS_VERSION = "2.0.0"
 ENVELOPE_VERSION = 2
 EXPORT_MEMBERS = (
     "report.md",
@@ -67,6 +67,12 @@ EXPORT_MEMBERS = (
     "manifest.json",
 )
 PRIVATE_HOME_MARKERS = (b"/home/", b"/Users/", b"/root/", b"\\Users\\")
+# Canned §15 prose the mirror must actually render, in §16.14's second-person
+# and subject-free forms. Pinned here so a corpus rewording fails this check
+# rather than silently reducing what the demo proves.
+RENDERED_CLAIM = "You currently show an evidence-checking documentation pattern."
+RENDERED_GAP = "What external outcome followed your runbook validation?"
+RENDERED_CONTRADICTION = "Ingress completion conflict"
 
 
 def default_workspace() -> Path:
@@ -582,9 +588,14 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
     ]:
         raise AssertionError("Vera Example rendered claim set is not graph-complete")
     report = members["report.md"].decode("utf-8")
-    if "Vera Example" not in report or not claims_document.unknowns:
+    # §16.14 keeps the persona's name out of generated prose, so the report
+    # is checked against the corpus's own canned claim, gap, and
+    # contradiction wording rather than against the ecosystem marker.
+    if RENDERED_CLAIM not in report or not claims_document.unknowns:
         raise AssertionError("Vera Example report does not visibly render claim and gap")
-    if "ingress completion conflict" not in report:
+    if RENDERED_GAP not in report:
+        raise AssertionError("Vera Example report does not visibly render gap question")
+    if RENDERED_CONTRADICTION not in report:
         raise AssertionError("Vera Example report does not visibly render contradiction")
 
     transcript = (workspace / "demo-transcript.txt").read_bytes()

@@ -3,12 +3,12 @@
     {
       "source_ref_id": "fact_demo_0001",
       "source_ref_type": "experience_fact",
-      "statement": "Vera Example only walked steps on an invented toy cluster."
+      "statement": "You only walked steps on an invented toy cluster."
     }
   ],
-  "reason": "The Vera Example corpus contains no production-tenure or seniority evidence.",
+  "reason": "The supplied corpus contains no production-tenure or seniority evidence.",
   "status": "rejected",
-  "suggested_rewrite": "Vera Example drafted and validated a kubectl troubleshooting runbook on an invented toy cluster.",
+  "suggested_rewrite": "You drafted and validated a kubectl troubleshooting runbook on an invented toy cluster.",
   "unsupported_phrases": [
     "operated production Kubernetes systems for ten years"
   ]

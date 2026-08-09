@@ -10,7 +10,7 @@
   ],
   "self_claims": [
     {
-      "claim": "Vera Example operated production Kubernetes systems for ten years.",
+      "claim": "You operated production Kubernetes systems for ten years.",
       "claim_kind": "pattern_signal",
       "confidence": "medium",
       "dimension": "technical_skill",
@@ -23,7 +23,7 @@
       "uncertainty": null
     },
     {
-      "claim": "Current evidence proves Vera Example is a senior production Kubernetes expert.",
+      "claim": "Current evidence proves you are a senior production Kubernetes expert.",
       "claim_kind": "narrative_summary",
       "confidence": "medium",
       "dimension": "trajectory",
