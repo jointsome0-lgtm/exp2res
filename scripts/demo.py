@@ -35,7 +35,12 @@ from exp2res.exports.companions import (
     VerificationReportDocument,
 )
 from exp2res.exports.graph import load_assessment_graph, load_current_snapshot
-from exp2res.storage.repository import hydrate_assessment_snapshot
+from exp2res.domain.verification import aggregate_verification_status
+from exp2res.storage.repository import (
+    STAGE10_ANCHOR_ALLOWLIST,
+    hydrate_assessment_snapshot,
+    list_self_claims_for_snapshot,
+)
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import (
     AttemptTelemetry,
@@ -635,7 +640,8 @@ def _verify_branch(
         raise AssertionError("Vera Example published a bullet without support")
 
     anchored = connection.execute(
-        "SELECT branch.assessment_snapshot_id FROM resume_branches AS branch "
+        "SELECT branch.assessment_snapshot_id, snapshot.verification_status "
+        "FROM resume_branches AS branch "
         "JOIN assessment_snapshots AS snapshot "
         "ON snapshot.id = branch.assessment_snapshot_id "
         "WHERE branch.id = ? AND branch.superseded_at IS NULL "
@@ -644,7 +650,17 @@ def _verify_branch(
     ).fetchone()
     if anchored is None:
         raise AssertionError("Vera Example published branch or its anchor is not current")
-    anchor_snapshot = anchored[0]
+    anchor_snapshot, anchor_status = anchored
+    # §16.11: every gated consumer re-reduces the anchor aggregate from its own
+    # current claims rather than trusting the stored one, then applies the
+    # Stage 10 allowlist to it.
+    anchor_members = list_self_claims_for_snapshot(connection, anchor_snapshot)
+    if anchor_status != aggregate_verification_status(
+        item.verification_status for item in anchor_members
+    ):
+        raise AssertionError("Vera Example branch anchor aggregate is stale")
+    if anchor_status not in STAGE10_ANCHOR_ALLOWLIST:
+        raise AssertionError("Vera Example branch anchor is not export-eligible")
 
     stored = dict(
         connection.execute(
@@ -662,6 +678,12 @@ def _verify_branch(
             )
 
     pack = members["bullet_pack.md"].decode("utf-8")
+    # §13.10/§24.51: the pack projects the evidence map's bullets in that exact
+    # order, so a reordering renderer is a failure, not a substring match.
+    if [line[2:] for line in pack.splitlines() if line.startswith("- ")] != [
+        item.text for item in evidence_map.rendered_bullets
+    ]:
+        raise AssertionError("Vera Example pack does not render the mapped bullet order")
     fact_links = {item.fact_id: item for item in evidence_map.fact_links}
     evidence_links = {
         item.evidence_item_id: item for item in evidence_map.evidence_links
@@ -690,8 +712,6 @@ def _verify_branch(
                     )
 
     for item in evidence_map.rendered_bullets:
-        if item.text not in pack:
-            raise AssertionError(f"Vera Example bullet never rendered: {item.bullet_id}")
         if not item.source_fact_ids:
             raise AssertionError(f"Vera Example bullet has no fact closure: {item.bullet_id}")
         for fact_id in item.source_fact_ids:
