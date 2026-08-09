@@ -41,20 +41,25 @@ corpus/
   replay.json       ordered end-to-end replay contract (below)
   logs/             §14.2 daily-log files, §14.3 retro scripts, §14.4 correction scripts
   llm/              canned §15.2 responses for E1, in planned-call order
-  imports/          §19.4 envelopes (ephemeris JSONL, atlas JSON, github JSON),
-                    §14.5 `import file` design doc, referenced artifacts/
+  imports/          §19.1–§19.3 source-local records (ephemeris JSONL, atlas
+                    JSON, github JSON), §14.5 `import file` design doc,
+                    referenced artifacts/
   jds/              §14.10 `jd add` vacancy texts
   invalid/          deterministic failure fixtures, each wrong in exactly one way
 ```
 
-Integration envelopes carry real `content_hash` values: SHA-256 over the
-§11 canonical-serialization bytes of `body` (keys sorted by code point,
-no insignificant whitespace, datetimes normalized to UTC
-`…Z`-with-microseconds for hashing only; stored values keep their
-supplied `+02:00` offsets per §12 rule 3). If the implementation's §11
-serializer ever disagrees with `corpus.py`, imports of this corpus fail
-loudly — that disagreement is a spec-precision finding, not a fixture to
-patch around.
+Import fixtures carry no envelope, no shared version field, and no
+content hash of their own: §19.4 rule 1 admits the source's own record
+shape, and rule 3 makes the hash the importer's to compute over the §11
+canonical-serialization bytes. A fixture that supplied one would be
+undeclared-field input and reject. Ephemeris and Atlas records name
+their identity in `record_id`; a GitHub record has no identity field and
+derives `<repo>@<commit_sha>`. Stored datetimes keep their supplied
+`+02:00` offsets (§12 rule 3); UTC normalization exists only inside the
+hash. `tests/test_vera_replay_import.py` replays every §19-backed
+`import` step against these files, so a disagreement between the
+importer and the corpus fails loudly — that disagreement is a
+spec-precision finding, not a fixture to patch around.
 
 ## Replay contract (`replay.json`)
 
@@ -106,7 +111,7 @@ must fail exactly as stated; the `privacy_epilogue` exercises the
 | Supported and rejected resume bullets | docs-writer JD vs the evidence; backend JD's production/on-call requirements | supported bullets for documented k8s-docs work; blocked claims for production Python/on-call (§16, §18) |
 | Prompt-injection-like source text stays inert | `logs/daily-2026-07-08.md` (quoted forum comment), backend JD's "Note to agents" | byte-exact preservation, no authority (§16.12, §21.49) |
 | Private/sensitive routing markers, invented only | `logs/daily-2026-06-20.md` (knee pain) | stand-in for sensitive content; `privacy_epilogue` P2 deletes it after P1's dependent-JD purge (§13.13); the human-only `private` marker itself stays reserved-unimplemented (§11) |
-| Duplicate/conflict/invalid import behavior | duplicate line in the ephemeris JSONL; `invalid/*` | counted duplicate; fail-closed conflict and rejections (§19.4) |
+| Duplicate/invalid import behavior | repeated line in the ephemeris JSONL; `invalid/*` | counted duplicate no-op; per-record rejections that leave earlier records committed (§19.4 rules 2 and 4) |
 
 ## Consumer contract
 

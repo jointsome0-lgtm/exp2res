@@ -57,7 +57,7 @@ GOLDEN_TRANSCRIPT = ROOT / "demo" / "transcript.txt"
 GOLDEN_CAST = ROOT / "demo.cast"
 WORKSPACE_LABEL = "demo/workspace"
 FIXED_CLOCK = datetime.fromisoformat("2026-07-15T12:30:00+00:00")
-CORPUS_VERSION = "0.4.0"
+CORPUS_VERSION = "1.0.0"
 ENVELOPE_VERSION = 2
 EXPORT_MEMBERS = (
     "report.md",
