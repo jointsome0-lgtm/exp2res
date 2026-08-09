@@ -63,10 +63,13 @@ from .graph import (
     SnapshotRenderEntry,
     StoredRecord,
     _BundleModel,
+    _merged_stored,
+    _require_reference,
     _stored,
     assessment_integrity_failure,
     id_key,
     load_snapshot_claims,
+    load_supplemental_closure,
 )
 from .markdown import normalize_generated_text
 
@@ -297,11 +300,34 @@ class BranchExportGraph:
     evidence_items: tuple[EvidenceItem, ...]
     raw_logs: tuple[RawLog, ...]
     fact_sources: tuple[FactSourceRecord, ...]
+    # The anchor snapshot's complete current member set. No companion renders
+    # an uncited member, but every one of them is read to gate: §16.11's
+    # integrity half reduces the stored aggregate from exactly this set and
+    # matches the `narrative_summary` against it. §13.14 rule 2 puts anything
+    # read to *gate* in the render hash, so an uncited member changing under a
+    # reduction that happens to land on the same aggregate still invalidates
+    # the published set.
+    anchor_claims: tuple[StoredRecord[SelfClaim], ...] = ()
+    # Supplemental rows outside the bullet and cited-claim source closure —
+    # counterevidence grounding targets. Read to validate rendering, so rule 2
+    # folds them into `source_ids` and the bundle, while the closed §13.12
+    # evidence map and companions keep consuming only the closure fields.
+    supplemental_facts: tuple[StoredRecord[ExperienceFact], ...] = ()
+    supplemental_fact_sources: tuple[FactSourceRecord, ...] = ()
+    supplemental_evidence_items: tuple[EvidenceItem, ...] = ()
+    supplemental_raw_logs: tuple[RawLog, ...] = ()
 
     def source_ids(self) -> dict[str, list[str]]:
         # §13.14 rule 2: each list is the complete duplicate-free ID-byte-
         # ordered set actually read to render a member, and the snapshot and
         # job-description lists each hold exactly the one ID `identity` names.
+        # `self_claim_ids` stays the cited set: rule 2 scopes the source lists
+        # to what renders a member and widens only the hash to what validates
+        # or gates one, so a gate-only anchor member belongs to the second
+        # surface and not this one.
+        def merged(main: list[str], extra: list[str]) -> list[str]:
+            return sorted(set(main) | set(extra), key=id_key)
+
         return {
             "resume_bullet_ids": sorted(
                 (item.value.id for item in self.bullets), key=id_key
@@ -309,9 +335,18 @@ class BranchExportGraph:
             "assessment_snapshot_ids": [self.snapshot.value.id],
             "job_description_ids": [self.job_description.id],
             "self_claim_ids": [item.value.id for item in self.claims],
-            "experience_fact_ids": [item.value.id for item in self.facts],
-            "evidence_item_ids": [item.id for item in self.evidence_items],
-            "raw_log_ids": [item.id for item in self.raw_logs],
+            "experience_fact_ids": merged(
+                [item.value.id for item in self.facts],
+                [item.value.id for item in self.supplemental_facts],
+            ),
+            "evidence_item_ids": merged(
+                [item.id for item in self.evidence_items],
+                [item.id for item in self.supplemental_evidence_items],
+            ),
+            "raw_log_ids": merged(
+                [item.id for item in self.raw_logs],
+                [item.id for item in self.supplemental_raw_logs],
+            ),
             "jd_requirement_ids": sorted(
                 (
                     requirement.id
@@ -436,6 +471,7 @@ def load_branch_graph(
         claim_id for bullet in ordered for claim_id in bullet.source_self_claim_ids
     }
     claim_records: list[StoredRecord[SelfClaim]] = []
+    supplemental_refs: dict[str, set[str]] = {}
     for claim_id in sorted(claim_ids, key=id_key):
         record = by_id.get(claim_id)
         if record is None:
@@ -451,6 +487,21 @@ def load_branch_graph(
             record.value.source_fact_ids,
             diagnostic="claim_direct_chain_missing",
         )
+        for counterevidence in record.value.counterevidence:
+            # §16.1, exactly as the assessment export reads it: a cited claim's
+            # counterevidence is a typed reference into current state, so it is
+            # resolved rather than trusted. Without this the pack could publish
+            # over a dangling or §13.3-displaced target, and its hash would
+            # cover only the reference string instead of what it points at.
+            _require_reference(
+                connection,
+                counterevidence.source_ref_type,
+                counterevidence.source_ref_id,
+                "export_source_reference_invalid",
+            )
+            supplemental_refs.setdefault(counterevidence.source_ref_type, set()).add(
+                counterevidence.source_ref_id
+            )
 
     # The fact closure is every fact any exported row reaches: a bullet's own
     # sources plus each cited claim's, since the evidence map resolves both.
@@ -534,6 +585,19 @@ def load_branch_graph(
         except IntegrityFailureError as error:
             raise IntegrityFailureError("fact_source_selection_invalid") from error
 
+    # The one reference kind that can leave this export's closure. The shared
+    # loader cascades each target one level — fact -> fact_sources/evidence ->
+    # raw log — and re-checks the same per-fact equality as the closure above,
+    # so a counterevidence target enters the hash as a validated projection.
+    closure = load_supplemental_closure(
+        connection,
+        supplemental_refs=supplemental_refs,
+        fact_ids=fact_ids,
+        evidence_ids=evidence_ids,
+        raw_log_ids=raw_log_ids,
+        log_by_evidence=log_by_evidence,
+    )
+
     return BranchExportGraph(
         branch=branch_record,
         bullets=tuple(bullet_records),
@@ -545,6 +609,11 @@ def load_branch_graph(
         evidence_items=tuple(evidence_items),
         raw_logs=tuple(raw_logs),
         fact_sources=tuple(fact_source_records),
+        anchor_claims=tuple(members),
+        supplemental_facts=closure.facts,
+        supplemental_fact_sources=closure.fact_sources,
+        supplemental_evidence_items=closure.evidence_items,
+        supplemental_raw_logs=closure.raw_logs,
     )
 
 
@@ -575,8 +644,25 @@ def branch_render_input_bundle(graph: BranchExportGraph) -> BranchRenderInputBun
     reach the hashed bundle would make the digest depend on which requirement
     each bullet happened to match, and any other conforming implementation
     would compute a different `render_input_sha256` for identical state.
+
+    The claim entries are the anchor's whole member set, not the cited subset
+    the companions link: the §16.11 gate reads every member, so an uncited one
+    changing is a gate input changing.
     """
 
+    bundle_facts = _merged_stored(graph.facts, graph.supplemental_facts)
+    bundle_evidence = sorted(
+        (*graph.evidence_items, *graph.supplemental_evidence_items),
+        key=lambda item: id_key(item.id),
+    )
+    bundle_raw_logs = sorted(
+        (*graph.raw_logs, *graph.supplemental_raw_logs),
+        key=lambda item: id_key(item.id),
+    )
+    bundle_fact_sources = sorted(
+        (*graph.fact_sources, *graph.supplemental_fact_sources),
+        key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id)),
+    )
     return BranchRenderInputBundle(
         resume_branches=[
             BranchRenderEntry(
@@ -608,7 +694,9 @@ def branch_render_input_bundle(graph: BranchExportGraph) -> BranchRenderInputBun
                 generation_id=item.generation_id,
                 produced_by_run_id=item.produced_by_run_id,
             )
-            for item in graph.claims
+            for item in sorted(
+                graph.anchor_claims, key=lambda item: id_key(item.value.id)
+            )
         ],
         experience_facts=[
             FactRenderEntry(
@@ -616,19 +704,17 @@ def branch_render_input_bundle(graph: BranchExportGraph) -> BranchRenderInputBun
                 generation_id=item.generation_id,
                 produced_by_run_id=item.produced_by_run_id,
             )
-            for item in graph.facts
+            for item in bundle_facts
         ],
-        evidence_items=[
-            EvidenceRenderEntry(value=item) for item in graph.evidence_items
-        ],
-        raw_logs=[RawLogRenderEntry(value=item) for item in graph.raw_logs],
+        evidence_items=[EvidenceRenderEntry(value=item) for item in bundle_evidence],
+        raw_logs=[RawLogRenderEntry(value=item) for item in bundle_raw_logs],
         fact_sources=[
             FactSourceRenderEntry(
                 fact_id=item.fact_id,
                 evidence_item_id=item.evidence_item_id,
                 support_type=item.support_type,
             )
-            for item in graph.fact_sources
+            for item in bundle_fact_sources
         ],
     )
 

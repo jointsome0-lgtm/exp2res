@@ -340,10 +340,11 @@ nodes = [
   "tests/test_stage12_bullet_pack.py::test_the_manifest_identity_and_source_lists_are_the_resume_shape",
   "tests/test_stage12_bullet_pack.py::test_publishing_a_branch_leaves_its_anchor_snapshot_set_alone",
   "tests/test_stage12_bullet_pack.py::test_the_hashed_bundle_is_id_ordered_while_the_pack_is_render_ordered",
+  "tests/test_stage12_bullet_pack.py::test_an_uncited_anchor_member_still_moves_the_render_hash",
   "tests/test_cli_bullets.py::test_export_reports_only_the_closed_manifest_path_projection",
 ]
 phase = "4"
-note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; Stage 10 now proves the folded-identity replacement itself, superseding exactly the branch a generated name folds onto and removing that branch's set while the owner's exact new spelling is stored, and proves that a semantic no-bullet answer replaces nothing; Stage 12 now publishes the branch set at exactly out/branch/<branch-id>/ under a manifest carrying the branch ID, the closed §13.14 resume identity, and the render-input hash, without touching the anchor snapshot's set"
+note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; Stage 10 now proves the folded-identity replacement itself, superseding exactly the branch a generated name folds onto and removing that branch's set while the owner's exact new spelling is stored, and proves that a semantic no-bullet answer replaces nothing; Stage 12 now publishes the branch set at exactly out/branch/<branch-id>/ under a manifest carrying the branch ID, the closed §13.14 resume identity, and the render-input hash, without touching the anchor snapshot's set, and proves that hash moving when a value the §16.11 gate reads changes while every entity, generation, and source ID stays the same"
 
 ["21.35"]
 status = "partial"
@@ -581,11 +582,13 @@ nodes = [
   "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[ungrounded-bullet]",
   "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[empty-bullet-set]",
   "tests/test_stage12_bullet_pack.py::test_texts_that_collide_only_after_projection_never_render_twice",
+  "tests/test_stage12_bullet_pack.py::test_a_cited_claims_counterevidence_target_joins_the_hashed_closure",
+  "tests/test_stage12_bullet_pack.py::test_a_dangling_counterevidence_reference_stops_the_export",
   "tests/test_cli_bullets.py::test_export_reports_only_the_closed_manifest_path_projection",
   "tests/test_cli_bullets.py::test_an_unverified_branch_is_a_blocked_class_10_export",
 ]
 phase = "4"
-note = "The assessment half proves deterministic §17 Markdown, strict §13.12 version-3 companions carrying each claim's source/counter split, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; the bullet-pack half now proves the three members' repeated byte-identical export, §18's every-heading-no-filler render under the §13.10 order recomputed from persisted state with both the exact-text and post-projection collision rules, both closed companions' full closure round trip and one same-order finding per bullet, and the §14.14 export envelope in both its ok and class-10 forms — pinned bullet-pack golden files and the Vera E10/E11 replay remain"
+note = "The assessment half proves deterministic §17 Markdown, strict §13.12 version-3 companions carrying each claim's source/counter split, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; the bullet-pack half now proves the three members' repeated byte-identical export, §18's every-heading-no-filler render under the §13.10 order recomputed from persisted state with both the exact-text and post-projection collision rules, both closed companions' full closure round trip and one same-order finding per bullet, a cited claim's counterevidence resolving into the hashed closure while an unresolved one fails before publication, and the §14.14 export envelope in both its ok and class-10 forms — pinned bullet-pack golden files and the Vera E10/E11 replay remain"
 
 ["21.49"]
 status = "pending"

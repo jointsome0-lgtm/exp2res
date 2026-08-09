@@ -52,6 +52,7 @@ from exp2res.storage.workspace import read_database, writer_database
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
 from test_branch_substrate import BRANCH_NAME, REQUIREMENT_ID
+from test_stage3_extraction import add_log, exact_day
 from test_stage10_generation import (
     BULLET_TEXT,
     SECOND_TEXT,
@@ -595,15 +596,11 @@ def test_the_hashed_bundle_is_id_ordered_while_the_pack_is_render_ordered(
     assert set(bundled) == {item.value.id for item in graph.bullets}
 
 
-def test_a_cited_claim_off_supported_is_a_gate_refusal_not_an_integrity_failure(
-    workspace: Path,
-) -> None:
-    """§14.14: membership is integrity, status is a §16.11 consumer gate.
+def branch_citing_a_claim(workspace: Path):
+    """One verified branch whose single bullet cites a real anchor member.
 
-    A claim a later Stage 7 pass moved off `supported` leaves a perfectly
-    coherent graph — nothing disagrees with itself. Reporting class 7 would
-    tell the owner their workspace is damaged when the honest answer is that
-    the pack no longer clears the gate.
+    The default fixture's bullets cite no claim, so anything about the cited
+    subset — its gate, its counterevidence closure — needs this graph instead.
     """
 
     ids, facts, snapshot_id = prepare_anchor(workspace)
@@ -629,6 +626,43 @@ def test_a_cited_claim_off_supported_is_a_gate_refusal_not_an_integrity_failure(
         ),
         ids,
     )
+    assert generated.branch_id is not None
+    return claims, cited, snapshot_id, generated.branch_id
+
+
+def plant_counterevidence(
+    workspace: Path, claim_id: str, *, ref_type: str, ref_id: str
+) -> None:
+    """Give a stored claim one counterevidence reference of the caller's shape."""
+
+    payload = [
+        {
+            "statement": "A later record narrows how far this claim reaches.",
+            "source_ref_type": ref_type,
+            "source_ref_id": ref_id,
+        }
+    ]
+    with writer_database(workspace) as connection:
+        connection.execute("DROP TRIGGER self_claims_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE self_claims SET counterevidence_json = ? WHERE id = ?",
+            (json.dumps(payload, separators=(",", ":")), claim_id),
+        )
+        connection.commit()
+
+
+def test_a_cited_claim_off_supported_is_a_gate_refusal_not_an_integrity_failure(
+    workspace: Path,
+) -> None:
+    """§14.14: membership is integrity, status is a §16.11 consumer gate.
+
+    A claim a later Stage 7 pass moved off `supported` leaves a perfectly
+    coherent graph — nothing disagrees with itself. Reporting class 7 would
+    tell the owner their workspace is damaged when the honest answer is that
+    the pack no longer clears the gate.
+    """
+
+    claims, cited, snapshot_id, _branch_id = branch_citing_a_claim(workspace)
     assert export_bullet_pack(workspace, branch_name=BRANCH_NAME).branch_id
 
     with writer_database(workspace) as connection:
@@ -763,4 +797,104 @@ def test_texts_that_collide_only_after_projection_never_render_twice(
     # Not `bullet_text_duplicate`: the stored values really are byte-distinct,
     # so only the projection check can catch this.
     assert str(raised.value) == "bullet_projection_collision"
+    assert not published(workspace, branch_id).exists()
+
+
+def test_an_uncited_anchor_member_still_moves_the_render_hash(
+    workspace: Path,
+) -> None:
+    """§13.14 rule 2: the hash covers what *gates* a member, not only what
+    renders one.
+
+    §16.11's integrity half reduces the stored aggregate from every current
+    member of the anchor, so an uncited claim is a gate input. Were it outside
+    the hash, an edit that leaves the reduction on the same aggregate would
+    recompute the published digest unchanged, and the set would stay current
+    while a value the gate read had moved underneath it.
+    """
+
+    _ids, _facts, snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    manifest_path = published(workspace, branch_id) / "manifest.json"
+    before = json.loads(manifest_path.read_text("utf-8"))
+    # The premise: no bullet here cites a claim, so every member is uncited and
+    # nothing below could reach the hash through the rendered companions.
+    assert before["source_ids"]["self_claim_ids"] == []
+
+    with writer_database(workspace) as connection:
+        claims = list_self_claims_for_snapshot(connection, snapshot_id)
+        target = next(
+            claim for claim in claims if claim.claim_kind != "narrative_summary"
+        )
+        connection.execute("DROP TRIGGER self_claims_lifecycle_update_guard")
+        connection.execute(
+            "UPDATE self_claims SET uncertainty = ? WHERE id = ?",
+            ("A later pass narrowed what this claim rests on.", target.id),
+        )
+        connection.commit()
+
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    after = json.loads(manifest_path.read_text("utf-8"))
+
+    # No status moved, so the gate still passes and every source list — the
+    # cited-claim list included — is the same set as before.
+    assert after["source_ids"] == before["source_ids"]
+    assert after["members"] == before["members"]
+    assert after["render_input_sha256"] != before["render_input_sha256"]
+
+
+def test_a_cited_claims_counterevidence_target_joins_the_hashed_closure(
+    workspace: Path,
+) -> None:
+    """§16.1: a supplemental row entering the export resolves its own chain.
+
+    Counterevidence is the one reference kind that can leave a bullet pack's
+    closure. Leaving the target unread would put only the reference string in
+    the hash, so the row it points at could change — or stop being current —
+    with the published set still recomputing as current.
+    """
+
+    _claims, cited, _snapshot_id, branch_id = branch_citing_a_claim(workspace)
+    outside, _items = add_log(
+        workspace,
+        log_id="log_vera_counterevidence",
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example recorded a later limit on the same work.",
+        occurred=exact_day(16),
+        item_specs=(("evi_vera_counterevidence", "manual_claim"),),
+    )
+    plant_counterevidence(workspace, cited.id, ref_type="raw_log", ref_id=outside.id)
+
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+
+    manifest = json.loads(
+        (published(workspace, branch_id) / "manifest.json").read_text("utf-8")
+    )
+    assert outside.id in manifest["source_ids"]["raw_log_ids"]
+    graph = branch_graph(workspace, branch_id)
+    # The closure field stays out of the rendered evidence map: only the hash
+    # and the completeness lists widen.
+    assert [item.id for item in graph.supplemental_raw_logs] == [outside.id]
+    assert outside.id not in {item.id for item in graph.raw_logs}
+    bundle = branch_render_input_bundle(graph)
+    assert outside.id in {entry.value.id for entry in bundle.raw_logs}
+
+
+def test_a_dangling_counterevidence_reference_stops_the_export(
+    workspace: Path,
+) -> None:
+    """§13.3: a displaced or absent target is not a current source.
+
+    The pack would otherwise publish a claim link whose counterevidence points
+    at nothing, which reads to the owner as evidence that was weighed.
+    """
+
+    _claims, cited, _snapshot_id, branch_id = branch_citing_a_claim(workspace)
+    plant_counterevidence(
+        workspace, cited.id, ref_type="raw_log", ref_id="log_vera_never_captured"
+    )
+
+    with pytest.raises(IntegrityFailureError) as raised:
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    assert str(raised.value) == "export_source_reference_invalid"
     assert not published(workspace, branch_id).exists()
