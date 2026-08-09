@@ -35,6 +35,11 @@ from exp2res.errors import (
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
 SLASH_WINDOWS_DRIVE = re.compile(r"^/[A-Za-z]:[\\/]")
 URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+# §29.4 rule 18 admits every scheme but `file` without an allowlist, and RFC
+# 3986 allows a one-character scheme, so `x://host/path` is a legitimate
+# remote locator that `WINDOWS_DRIVE` alone would read as drive `x:`. An
+# authority's `//` never follows a drive letter, which separates the two.
+AUTHORITY_URI = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 URI_COMPONENT = re.compile(
     r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*$"
@@ -104,12 +109,20 @@ class ArtifactLocator:
         return (0 if field == "path" else 1, value.encode("utf-8"))
 
 
-def _forbidden_supplied_form(value: str) -> bool:
-    return (
-        "\\" in value
-        or WINDOWS_DRIVE.match(value) is not None
-        or value.startswith("//")
-    )
+def _forbidden_supplied_form(value: str, *, uri_authority: bool = False) -> bool:
+    """Reject the supplied spellings §29.4 never accepts.
+
+    `uri_authority` belongs to the rule 18 remote form alone, where `x://`
+    is a one-character scheme's authority rather than the drive letter
+    `WINDOWS_DRIVE` would otherwise read. A supplied local path has no such
+    form, so its drive check stays unconditional.
+    """
+
+    if "\\" in value or value.startswith("//"):
+        return True
+    if WINDOWS_DRIVE.match(value) is None:
+        return False
+    return not (uri_authority and AUTHORITY_URI.match(value) is not None)
 
 
 def _case_insensitive_lookup(path: Path) -> bool:
@@ -673,7 +686,7 @@ def validate_remote_locator(value: str) -> str:
         validate_structural(value)
     except (UnicodeError, ValueError, TypeError) as error:
         raise ArtifactLocatorInvalidError() from error
-    if _forbidden_supplied_form(value) or WINDOWS_DRIVE.match(value) is not None:
+    if _forbidden_supplied_form(value, uri_authority=True):
         raise ArtifactLocatorUnsupportedPathError()
     scheme_match = URI_SCHEME.match(value)
     if scheme_match is None:

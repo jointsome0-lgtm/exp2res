@@ -778,6 +778,29 @@ def test_github_attribution_matrix_maps_only_owner_to_commit_evidence(
     assert items[0]["uri"] == record["url"]
 
 
+@pytest.mark.parametrize(
+    ("url", "accepted"),
+    [
+        # §29.4 rule 18 keeps no scheme allowlist, and RFC 3986 permits a
+        # one-character scheme; only the `//` distinguishes it from a Windows
+        # drive path, which stays unsupported.
+        ("x://host.invalid/vera-example/playbook/commit", True),
+        ("c:/vera-example/playbook/commit", False),
+        ("file:///vera-example/playbook/commit", False),
+    ],
+)
+def test_github_url_is_held_to_the_remote_locator_form(
+    workspace: Path, tmp_path: Path, url: str, accepted: bool
+) -> None:
+    """§29.4 rule 18: an absolute non-`file` URI, whatever its scheme."""
+    payload = write_payload(tmp_path, "url.json", github_record(url=url))
+    outcome = run_import(workspace, "github", payload)
+
+    assert counts(outcome) == ((1, 0, 0) if accepted else (0, 0, 1))
+    if not accepted:
+        assert outcome.rejected[0].reason == "github_url_not_remote"
+
+
 def test_github_omitted_attribution_hashes_as_explicit_unknown(
     workspace: Path, tmp_path: Path
 ) -> None:
