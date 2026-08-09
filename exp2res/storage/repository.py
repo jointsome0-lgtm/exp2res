@@ -158,6 +158,35 @@ def insert_evidence_item(connection: sqlite3.Connection, item: EvidenceItem) -> 
         raise IntegrityFailureError() from error
 
 
+def retained_import_hashes(
+    connection: sqlite3.Connection, source_system: str
+) -> dict[str, str]:
+    """Map one source system's retained §19.4 identities to their hashes.
+
+    Identity lives in `RawLog.metadata`, so the comparison reads the same
+    three reserved keys the importer wrote. A retained row missing its hash
+    is stored state no import may reinterpret.
+    """
+
+    retained: dict[str, str] = {}
+    for row in connection.execute(
+        """
+        SELECT
+            json_extract(metadata_json, '$.source_record_id') AS source_record_id,
+            json_extract(metadata_json, '$.content_hash') AS content_hash
+        FROM raw_logs
+        WHERE json_extract(metadata_json, '$.source_system') = ?
+        """,
+        (source_system,),
+    ):
+        identity = row["source_record_id"]
+        digest = row["content_hash"]
+        if not isinstance(identity, str) or not isinstance(digest, str):
+            raise IntegrityFailureError()
+        retained[identity] = digest
+    return retained
+
+
 def validate_experience_fact_sources(
     connection: sqlite3.Connection, fact: ExperienceFact
 ) -> dict[str, sqlite3.Row]:

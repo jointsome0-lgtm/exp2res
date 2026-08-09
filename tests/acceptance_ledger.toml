@@ -6,10 +6,11 @@ issues = ["#81", "PR #95"]
 note = "Phase 0 proves atomic daily and retrospective RawLog/manual_claim EvidenceItem pairs; the broader typed-provenance eval remains partial until later producers land"
 
 ["24.2"]
-status = "pending"
+status = "partial"
 phases = ["5"]
 evals = ["21.2", "21.3", "21.45", "21.46"]
-issues = []
+issues = ["#175", "#246"]
+note = "Imported activity and knowledge-state records enter as raw logs and evidence items with no automatic overclaiming: import creates no ExperienceFact or SelfClaim, and an ephemeris record carrying knowledge-state members is rejected; the Stage 3 scope halves of §21.2 and §21.3 remain unproven"
 
 ["24.3"]
 status = "partial"
@@ -325,16 +326,18 @@ issues = ["#167"]
 note = "Workspace purge, the §14.15 jd list projection, and jd delete are implemented and proven, including consent, the committed point deletion under a filesystem failure, global call-hash redaction, removed-and-residual managed-path reporting, and an untraversed symlink whose target survives; and the dependent branch and bullet purge with its out/branch/ removal is proven in both output modes"
 
 ["24.48"]
-status = "pending"
+status = "partial"
 phases = ["5"]
 evals = ["21.45"]
-issues = []
+issues = ["#175"]
+note = "Closed unwrapped record shapes, (source system, source identity) keying, importer-computed canonical hashing, the GitHub identity derivation and SHA rules, the attribution mapping, and per-record transactions under one writer lock are proven; the complete §14.14 result envelope lands with the CLI group and no authorized content_digest dereference exists yet"
 
 ["24.49"]
-status = "pending"
+status = "partial"
 phases = ["5"]
 evals = ["21.3", "21.46"]
-issues = []
+issues = ["#175"]
+note = "The §19.1 and §19.2 import halves are proven, including rejection of a directly routed knowledge-state payload and an Atlas snapshot that promotes nothing; the Stage 3 confidence-ceiling halves and the §30 view clauses belong to other rows"
 
 ["24.50"]
 status = "partial"

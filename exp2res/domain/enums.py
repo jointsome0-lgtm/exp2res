@@ -91,6 +91,8 @@ EvidenceStrength = Literal[
     "design_doc",
 ]
 
+OwnerAttribution = Literal["owner", "not_owner", "unknown"]
+
 OwnershipLevel = Literal[
     "unknown",
     "observed",
