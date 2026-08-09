@@ -40,6 +40,7 @@ CommandPath = Literal[
     "import ephemeris",
     "import atlas",
     "import github",
+    "import file",
     "logs list",
     "logs show",
     "logs delete",

@@ -408,12 +408,14 @@ nodes = [
   "tests/test_capture_phase0.py::test_invalid_temporal_shapes_fail_before_persistence[reversed-range]",
   "tests/test_capture_phase0.py::test_invalid_temporal_shapes_fail_before_persistence[unknown-with-bound]",
   "tests/test_capture_phase0.py::test_oversize_and_forbidden_source_files_leave_no_record",
+  "tests/test_import_file.py::test_an_oversize_document_fails_closed_rather_than_truncating",
+  "tests/test_import_file.py::test_a_non_utf8_document_is_a_typed_rejection",
   "tests/test_llm_runner.py::test_datetime_outputs_validate_through_the_json_boundary",
   "tests/test_llm_runner.py::test_invalid_output_retries_once_then_fails_without_business_effect[extra-key]",
   "tests/test_llm_runner.py::test_invalid_output_retries_once_then_fails_without_business_effect[service-owned-injection]",
 ]
 phase = "5"
-note = "Strict temporal construction, bounded acquisition, closed runner outputs, JSON datetime parsing, and service-owned-field rejection are covered; every later §15 and §19 shape plus stored hydration remain"
+note = "Strict temporal construction, bounded acquisition on both owner-supplied file surfaces — capture and the §14.5 `import file` document — closed runner outputs, JSON datetime parsing, and service-owned-field rejection are covered; every later §15 and §19 shape plus stored hydration remain"
 
 ["21.40"]
 status = "pending"

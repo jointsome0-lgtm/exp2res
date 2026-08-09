@@ -669,6 +669,22 @@ def read_capture_file(
     return _read_selected_file(resolved, _read_bounded_utf8), canonical
 
 
+def read_document_file(
+    supplied: str, *, config: WorkspaceConfig
+) -> tuple[str, str]:
+    """Read one §14.5 `import file` document with its canonical real path.
+
+    §14.5 gives this form no standard-input spelling, and it could not have
+    one: the record persists the authorized canonical path in both
+    `RawLog.external_ref` and `EvidenceItem.path`, and standard input names
+    no filesystem object to put there. The canonical path is therefore never
+    `None` here, unlike `read_capture_file`'s.
+    """
+
+    resolved, canonical = _authorize_selected_file(supplied, config=config)
+    return _read_selected_file(resolved, _read_bounded_utf8), canonical
+
+
 def read_payload_file(
     supplied: str, *, config: WorkspaceConfig
 ) -> tuple[str, Path]:

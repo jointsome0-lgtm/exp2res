@@ -106,6 +106,18 @@ class ImportPayloadTooLargeError(InvalidInputError):
     public_message = "The import payload exceeds the total-object limit."
 
 
+class ImportDocumentInvalidError(InvalidInputError):
+    """§14.5 `import file`: the document cannot become a §13.1 record.
+
+    Distinct from the payload classes above because this form is not a §19
+    record: there is no per-record outcome to carry the reason, so the
+    rejection is the command's own diagnostic.
+    """
+
+    diagnostic_class = "import_document_invalid"
+    public_message = "The imported document failed strict validation."
+
+
 class PublicCheckoutError(InvalidInputError):
     diagnostic_class = "public_checkout_forbidden"
     public_message = "A public engine checkout cannot be initialized as a private workspace."
