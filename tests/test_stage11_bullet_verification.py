@@ -22,13 +22,22 @@ from exp2res.errors import (
     SelectorNotFoundError,
 )
 from exp2res.pipeline import stage11 as stage11_module
-from exp2res.pipeline.stage11 import require_consistent_bullets, run_bullet_verification
+from exp2res.pipeline.stage11 import (
+    require_consistent_bullets,
+    require_current_anchor,
+    run_bullet_verification,
+)
 from exp2res.storage.repository import (
     get_job_description,
+    get_resume_branch,
     list_resume_bullets_for_branch,
     list_verification_findings,
 )
-from exp2res.storage.workspace import collect_preamble_residuals, read_database
+from exp2res.storage.workspace import (
+    collect_preamble_residuals,
+    read_database,
+    writer_database,
+)
 
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
@@ -548,3 +557,34 @@ def test_cancellation_after_the_commit_reports_the_committed_pass(
     with read_database(workspace) as connection:
         stored = list_resume_bullets_for_branch(connection, branch_id, current_only=True)
     assert [bullet.verification_status for bullet in stored] == ["supported"]
+
+
+def test_a_dead_assessment_anchor_fails_before_the_call(workspace: Path) -> None:
+    """§18: a branch whose anchor no longer resolves never reaches a verdict."""
+
+    _ids, _facts, snapshot_id, branch_id, _bullet_ids = prepare_generated_branch(
+        workspace
+    )
+    with read_database(workspace) as connection:
+        branch = get_resume_branch(connection, branch_id)
+        assert branch is not None
+        # The unspoiled branch passes, so the guard is rejecting the anchor.
+        require_current_anchor(connection, branch)
+        with pytest.raises(IntegrityFailureError):
+            require_current_anchor(
+                connection,
+                branch.model_copy(update={"assessment_snapshot_id": "asmt_vera_gone"}),
+            )
+
+    # A superseded anchor is the second half of the same guard; §13.13 rule 4
+    # supersedes the branch with it, so only damaged state reaches here.
+    with writer_database(workspace) as connection:
+        connection.execute(
+            "UPDATE assessment_snapshots SET superseded_at = ? WHERE id = ?",
+            (FIXED_NOW.isoformat(), snapshot_id),
+        )
+        connection.commit()
+        branch = get_resume_branch(connection, branch_id)
+        assert branch is not None
+        with pytest.raises(IntegrityFailureError):
+            require_current_anchor(connection, branch)

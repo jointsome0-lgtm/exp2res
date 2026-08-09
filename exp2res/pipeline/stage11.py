@@ -46,6 +46,7 @@ from exp2res.storage.repository import (
     BULLET_EXPORT_ALLOWLIST,
     bullet_log_closure,
     current_branch_by_folded_name,
+    get_assessment_snapshot,
     get_experience_fact,
     get_job_description,
     get_raw_log,
@@ -103,6 +104,33 @@ def _current_bullets(
         # is damaged state, not a verifiable pack.
         raise IntegrityFailureError("branch_bullet_set_empty")
     return bullets
+
+
+def require_current_anchor(
+    connection: sqlite3.Connection, branch: ResumeBranch
+) -> None:
+    """Fail closed on a branch whose §18 assessment anchor no longer resolves.
+
+    `validate_branch_production` establishes a present, current anchor at
+    insert and §13.13 rule 4 supersedes the branch with its snapshot, so a
+    current branch pointing at a missing or superseded one is restored,
+    migrated, or damaged state. `_build_bundle` alone would not see it: a
+    facts-only pack cites no self-claim, so the snapshot's member lookup comes
+    back legitimately empty and the dead anchor stays invisible through the
+    call and into a persisted verdict §18 could not honour.
+    """
+
+    if (
+        get_assessment_snapshot(
+            connection, branch.assessment_snapshot_id, current_only=False
+        )
+        is None
+    ):
+        raise IntegrityFailureError("branch_snapshot_missing")
+    if (
+        get_assessment_snapshot(connection, branch.assessment_snapshot_id) is None
+    ):
+        raise IntegrityFailureError("branch_snapshot_superseded")
 
 
 def require_consistent_bullets(
@@ -410,6 +438,7 @@ def run_bullet_verification(
         job_description = get_job_description(connection, branch.job_description_id)
         if job_description is None:
             raise IntegrityFailureError("branch_job_description_missing")
+        require_current_anchor(connection, branch)
         require_consistent_bullets(connection, bullets, job_description)
 
         prior_state = _verifier_state(bullets)
@@ -567,5 +596,6 @@ def run_bullet_verification(
 __all__ = [
     "Stage11Result",
     "require_consistent_bullets",
+    "require_current_anchor",
     "run_bullet_verification",
 ]
