@@ -319,7 +319,7 @@ def _require_current_snapshot_references(
                 raise IntegrityFailureError(code)
 
 
-def _run_is_committed(connection: sqlite3.Connection, run_id: str) -> bool:
+def run_is_committed(connection: sqlite3.Connection, run_id: str) -> bool:
     """Prove the stage's single final transaction reached durable storage.
 
     The run's completed transition commits with the business swap, so a
@@ -646,7 +646,7 @@ def run_bullet_generation(
                     table="resume_branches",
                 )
                 cancelling = isinstance(error, (KeyboardInterrupt, LLMCancelledError))
-                if cancelling and (returned or _run_is_committed(connection, run_id)):
+                if cancelling and (returned or run_is_committed(connection, run_id)):
                     # §14.14 rule 6: the class-9 error carries the complete
                     # committed result, and only the sets this pass never reached
                     # stay reported.

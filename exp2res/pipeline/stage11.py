@@ -25,6 +25,7 @@ from exp2res.domain.models import (
 )
 from exp2res.errors import (
     IntegrityFailureError,
+    LLMCancelledError,
     OperationCancelledError,
     SelectorNotFoundError,
 )
@@ -70,7 +71,11 @@ from .orchestration import (
     run_complete_stage,
     unfinished_stale_paths,
 )
-from .stage10 import require_current_claim_facts, validated_branch_name
+from .stage10 import (
+    require_current_claim_facts,
+    run_is_committed,
+    validated_branch_name,
+)
 
 
 @dataclass(frozen=True)
@@ -612,7 +617,7 @@ def run_bullet_verification(
                 token_patterns=token_patterns,
                 resolved_credentials=resolved_credentials,
             )
-        except BaseException:
+        except BaseException as error:
             # Withdraw the pre-commit pending report only on a proven rollback.
             # Stage 11 supersedes nothing, so the committed marker is the
             # verifier-state change itself; an indeterminate read keeps the
@@ -633,6 +638,25 @@ def run_bullet_verification(
                     committed = True
                 if not committed:
                     withdraw_managed_residuals(pending_stale_paths)
+            # §14.14 rule 6: orchestration converts an interrupt inside its own
+            # commit-to-return window into `LLMCancelledError`, which reaches
+            # here rather than the guarded read window below. A `completed` run
+            # row is exactly the durability the interrupt could not undo, so the
+            # class-9 error leaves with the committed pass on it — the same
+            # recovery Stage 10 makes at the same boundary.
+            if isinstance(
+                error, (KeyboardInterrupt, LLMCancelledError)
+            ) and run_is_committed(connection, run_id):
+                cancelled = OperationCancelledError()
+                cancelled.stage_result = _recovered_result(
+                    connection,
+                    run_id=run_id,
+                    branch=branch,
+                    # Nothing was cleaned yet: any set reported stale above is
+                    # still on disk and stays reported as residual.
+                    residuals=pending_stale_paths,
+                )
+                raise cancelled from None
             raise
 
         # §14.14 rule 6: the pass is durable from here on, so the whole

@@ -18,6 +18,7 @@ from exp2res.llm.resume_verifier import ResumeVerifierOutput
 from exp2res.errors import (
     BranchNameInvalidError,
     IntegrityFailureError,
+    LLMCancelledError,
     LLMInvocationError,
     OperationCancelledError,
     SelectorNotFoundError,
@@ -769,3 +770,33 @@ def test_the_findings_array_carries_the_rule_38_cap() -> None:
     assert any(
         getattr(item, "max_length", None) == 1_000 for item in field.metadata
     )
+
+
+def test_cancellation_inside_orchestration_reports_the_committed_pass(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the commit-to-return window is class 9 *with* the pass."""
+
+    ids, _facts, _snapshot, branch_id, bullet_ids = prepare_generated_branch(workspace)
+    fake = FakeContractRunner([verifier_response([finding(bullet_ids[0])])])
+    orchestrate = stage11_module.run_complete_stage
+
+    def commit_then_cancel(*args, **kwargs):
+        # Exactly what orchestration does when Ctrl-C lands after its business
+        # transaction commits: the run row is `completed`, and the interrupt
+        # leaves as `LLMCancelledError` rather than a `KeyboardInterrupt`.
+        orchestrate(*args, **kwargs)
+        raise LLMCancelledError() from None
+
+    monkeypatch.setattr(stage11_module, "run_complete_stage", commit_then_cancel)
+
+    with pytest.raises(OperationCancelledError) as raised:
+        run_stage11(workspace, fake, ids)
+
+    recovered = raised.value.stage_result
+    assert recovered is not None
+    assert [item.target_id for item in recovered.findings] == [bullet_ids[0]]
+    assert recovered.bullet_statuses == ((bullet_ids[0], "supported"),)
+    with read_database(workspace) as connection:
+        stored = list_resume_bullets_for_branch(connection, branch_id, current_only=True)
+    assert [bullet.verification_status for bullet in stored] == ["supported"]
