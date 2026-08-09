@@ -879,6 +879,8 @@ def test_the_verifier_is_told_what_a_counter_fact_means() -> None:
         pytest.param("Your reason is bound", id="reason-grounded"),
         # §16.13: the bullet's own language is judged, source tokens excepted.
         pytest.param("whose prose is not English fails", id="bullet-language"),
+        # §16.14: second person is right in a reason and wrong in a bullet.
+        pytest.param("or in the second person you would correctly", id="bullet-subject-free"),
     ],
 )
 def test_the_instructions_carry_each_16_rule_in_full(clause: str) -> None:
