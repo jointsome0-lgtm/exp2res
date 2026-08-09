@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import exp2res.services.imports as imports_service
 from exp2res.cli import app
 
 from test_imports_phase5 import (
@@ -215,3 +216,145 @@ def test_human_mode_prints_one_line_for_every_record(
     assert lines[0] == "accepted 1, duplicate 0, rejected 1"
     assert lines[1].startswith("1\taccepted\tvera-ephemeris-0021\t")
     assert lines[2] == "2\trejected\tvera-ephemeris-0022\t-"
+
+
+def test_an_empty_multi_record_payload_is_a_complete_zero_classification(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 5: zero established records is a completed classification.
+
+    An exporter with nothing to hand over for its window establishes no
+    record boundary and no failure: counts equal their list lengths, the
+    three lists partition every established record, and rule 4's
+    same-payload retry unit converges. Turning that into an error would
+    fail an honest empty export, so it stays exit 0 with a complete result.
+    """
+    path = tmp_path / "empty.jsonl"
+    path.write_text("\n   \n", encoding="utf-8")
+    result, envelope = _invoke_json(
+        workspace, ["import", "ephemeris", str(path)]
+    )
+
+    assert result.exit_code == 0
+    assert envelope["diagnostic_class"] is None
+    assert envelope["result"] == {
+        "counts": {"accepted": 0, "duplicate": 0, "rejected": 0},
+        "records": {"accepted": [], "duplicate": [], "rejected": []},
+    }
+    assert envelope["affected_ids"]["created"] == []
+    # A single-record form has no such boundary: an empty file decodes to
+    # nothing at all and keeps §19.4 rule 5's null result.
+    single = tmp_path / "empty.json"
+    single.write_text("", encoding="utf-8")
+    failed, failed_envelope = _invoke_json(
+        workspace, ["import", "atlas", str(single)]
+    )
+    assert failed.exit_code == 2
+    assert failed_envelope["diagnostic_class"] == "import_payload_invalid"
+    assert failed_envelope["result"] is None
+
+
+def test_created_entity_groups_are_ordered_by_their_own_id_identity(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§14.14 rule 5: entity groups order by stable identity, not input order."""
+    payload = write_payload(
+        tmp_path,
+        "ordered.jsonl",
+        [ephemeris_record(f"vera-ephemeris-3{index:04d}") for index in range(12)],
+    )
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+
+    assert result.exit_code == 0
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    for entity_type in ("raw_log", "evidence_item"):
+        ids = created[entity_type]
+        assert len(ids) == 12
+        assert ids == sorted(ids, key=lambda value: value.encode("utf-8"))
+    # The result records keep their own identity — the input record_number —
+    # so the two orderings are genuinely independent.
+    accepted = envelope["result"]["records"]["accepted"]
+    assert [record["record_number"] for record in accepted] == list(range(1, 13))
+
+
+def test_a_completed_report_with_a_residual_still_reaches_class_eight(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§14.14 rule 4: class 8 covers every non-cancelled completion."""
+    candidate = (
+        workspace
+        / "out"
+        / "assessment"
+        / (".exp2res-candidate-snapshot_vera_0001-" + "0" * 32)
+    )
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    # The writer preamble refuses to follow a symlink out of the managed
+    # root, so this candidate is reported instead of removed.
+    candidate.symlink_to(tmp_path, target_is_directory=True)
+    payload = write_payload(
+        tmp_path,
+        "rejected.jsonl",
+        [
+            ephemeris_record("vera-ephemeris-0031"),
+            ephemeris_record("vera-ephemeris-0032", project="   "),
+        ],
+    )
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "managed_output_incomplete"
+    assert envelope["residual_paths"] == [str(candidate)]
+    # The promotion changes the class, never the completed classification.
+    assert envelope["result"]["counts"] == {
+        "accepted": 1,
+        "duplicate": 0,
+        "rejected": 1,
+    }
+
+
+def test_an_interrupted_import_reports_the_records_it_already_committed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: a committed §19.4 rule 4 transaction is reported."""
+    payload = write_payload(
+        tmp_path,
+        "interrupted.jsonl",
+        [ephemeris_record(f"vera-ephemeris-4{index:04d}") for index in range(4)],
+    )
+    persist = imports_service._persist
+    calls = {"count": 0}
+
+    def interrupt_after_two(*args, **kwargs):
+        if calls["count"] == 2:
+            raise KeyboardInterrupt()
+        calls["count"] += 1
+        return persist(*args, **kwargs)
+
+    monkeypatch.setattr(imports_service, "_persist", interrupt_after_two)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["diagnostic_class"] == "cancelled"
+    # The classification never completed, so rule 5 emits no partial result.
+    assert envelope["result"] is None
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    assert len(created["raw_log"]) == 2
+    assert len(created["evidence_item"]) == 2
+    monkeypatch.undo()
+    # The committed rows are durable, so replaying the payload converges.
+    replayed, replayed_envelope = _invoke_json(
+        workspace, ["import", "ephemeris", payload]
+    )
+    assert replayed.exit_code == 0
+    assert replayed_envelope["result"]["counts"] == {
+        "accepted": 2,
+        "duplicate": 2,
+        "rejected": 0,
+    }

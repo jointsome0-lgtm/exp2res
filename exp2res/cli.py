@@ -253,6 +253,11 @@ class Outcome:
     ) = None
     human_result: str = ""
     retry: Retry | None = None
+    # §14.14 rule 4: a nonzero *completion* — today only a fully classified
+    # §19.4 import result with rejections — rather than a rejected input.
+    # Class 8 covers every non-cancelled completion, so a residual observed
+    # beside one promotes exactly as it does for class 0 and class 10.
+    completed_report: bool = False
 
 
 def _status_for(exit_code: int) -> str:
@@ -640,11 +645,12 @@ def _run_operation(
         key=os.fsencode,
     )
     outcome.residual_paths = residual_paths
-    if residual_paths and outcome.exit_code in {0, 10}:
+    if residual_paths and (outcome.exit_code in {0, 10} or outcome.completed_report):
         # §14.14 rule 4: a non-cancelled completion that reports a residual is
-        # class 8, including verifier findings that would otherwise be 10. A
-        # failed class (1-7) is not a completion and keeps its own code while
-        # still reporting the residual paths.
+        # class 8, including verifier findings that would otherwise be 10 and a
+        # §19.4 import report that would otherwise be 2. An operational failure
+        # is not a completion and keeps its own code while still reporting the
+        # residual paths.
         outcome.exit_code = 8
         # §14.15/§14.16: a destructive privacy operation reports every
         # residual as `deletion_incomplete`, whatever produced it — the
@@ -1409,6 +1415,43 @@ def _import_record_group(
     ]
 
 
+def _import_created(imported: ImportOutcome) -> AffectedIds:
+    """Report the rows committed accepted records left behind.
+
+    §14.14 rule 5 orders every entity group by its own stable identity, and an
+    entity ID is allocated randomly under §12 rule 11 — so neither group may
+    keep the input order its `result` records are reported in.
+    """
+
+    groups = []
+    for entity_type, ids in (
+        (
+            "evidence_item",
+            [
+                item_id
+                for record in imported.accepted
+                for item_id in record.evidence_item_ids
+            ],
+        ),
+        (
+            "raw_log",
+            [
+                record.raw_log_id
+                for record in imported.accepted
+                if record.raw_log_id is not None
+            ],
+        ),
+    ):
+        if ids:
+            groups.append(
+                EntityIdGroup(
+                    entity_type=entity_type,
+                    ids=sorted(ids, key=lambda value: value.encode("utf-8")),
+                )
+            )
+    return AffectedIds(created=groups, superseded=[], deleted=[])
+
+
 def _import_outcome(imported: ImportOutcome) -> Outcome:
     """Project one §19.4 classification into its §14.14 envelope.
 
@@ -1429,27 +1472,6 @@ def _import_outcome(imported: ImportOutcome) -> Outcome:
             duplicate=_import_record_group(imported.duplicate),
             rejected=_import_record_group(imported.rejected),
         ),
-    )
-    evidence_ids = sorted(
-        (
-            item_id
-            for record in imported.accepted
-            for item_id in record.evidence_item_ids
-        ),
-        key=lambda value: value.encode("utf-8"),
-    )
-    raw_log_ids = [
-        record.raw_log_id
-        for record in imported.accepted
-        if record.raw_log_id is not None
-    ]
-    created = (
-        [
-            EntityIdGroup(entity_type="evidence_item", ids=evidence_ids),
-            EntityIdGroup(entity_type="raw_log", ids=raw_log_ids),
-        ]
-        if raw_log_ids
-        else []
     )
     lines = [
         f"accepted {result.counts.accepted}, "
@@ -1472,8 +1494,12 @@ def _import_outcome(imported: ImportOutcome) -> Outcome:
     return Outcome(
         exit_code=2 if rejected else 0,
         diagnostic_class="import_records_rejected" if rejected else None,
-        affected_ids=AffectedIds(created=created, superseded=[], deleted=[]),
+        affected_ids=_import_created(imported),
         result=result,
+        # §14.14 rule 4: this class 2 is a completion, not a rejected input, so
+        # an incomplete managed-output cleanup observed beside it still
+        # promotes to class 8 the way a completed class 0 or 10 does.
+        completed_report=True,
         human_result="\n".join(lines),
     )
 
@@ -1482,11 +1508,24 @@ def _import_command(
     context: typer.Context, command: CommandPath, source_system: str, payload: str
 ) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        return _import_outcome(
-            import_payload(
-                workspace, source_system=source_system, payload_path=payload
+        try:
+            return _import_outcome(
+                import_payload(
+                    workspace, source_system=source_system, payload_path=payload
+                )
             )
-        )
+        except OperationCancelledError as error:
+            # §14.14 rule 6: §19.4 rule 4 commits each accepted record in its
+            # own transaction, so the records already committed are a
+            # lifecycle boundary the cancelled envelope reports. The
+            # classification itself never completed, so rule 5 keeps
+            # `result` null rather than emitting a partial object.
+            committed = cast(
+                ImportOutcome | None, getattr(error, "import_outcome", None)
+            )
+            if committed is not None:
+                error.affected_ids = _import_created(committed)
+            raise
 
     _run_command(context, command, operation)
 

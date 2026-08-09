@@ -13,7 +13,11 @@ from pydantic import ValidationError
 
 from exp2res.config import load_workspace_config
 from exp2res.domain.models import EvidenceItem, RawLog
-from exp2res.errors import IdCollisionError, WorkspaceBusyError
+from exp2res.errors import (
+    IdCollisionError,
+    OperationCancelledError,
+    WorkspaceBusyError,
+)
 from exp2res.integrations import CONTRACTS
 from exp2res.integrations.records import (
     ImportPlan,
@@ -268,6 +272,14 @@ def import_payload(
         "duplicate": [],
         "rejected": [],
     }
+
+    def report() -> ImportOutcome:
+        return ImportOutcome(
+            accepted=tuple(classified["accepted"]),
+            duplicate=tuple(classified["duplicate"]),
+            rejected=tuple(classified["rejected"]),
+        )
+
     with writer_database(workspace, timeout_ms=timeout_ms) as connection:
         try:
             # One scan under the §8.1 writer lock: no other writer can add an
@@ -289,8 +301,13 @@ def import_payload(
             if "locked" in str(error).lower() or "busy" in str(error).lower():
                 raise WorkspaceBusyError() from error
             raise
-    return ImportOutcome(
-        accepted=tuple(classified["accepted"]),
-        duplicate=tuple(classified["duplicate"]),
-        rejected=tuple(classified["rejected"]),
-    )
+        except KeyboardInterrupt:
+            # §14.14 rule 6: rule 4 commits each accepted record in its own
+            # transaction, so those records are lifecycle boundaries that
+            # remain committed and are reported rather than restored. The
+            # records the interrupt never reached leave the classification
+            # incomplete, so the caller reports no primary result.
+            cancelled = OperationCancelledError()
+            cancelled.import_outcome = report()
+            raise cancelled from None
+    return report()

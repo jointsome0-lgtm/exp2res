@@ -564,6 +564,10 @@ nodes = [
   "tests/test_cli_import.py::test_more_than_a_hundred_records_are_reported_untruncated",
   "tests/test_cli_import.py::test_a_payload_without_a_record_boundary_reports_a_null_result",
   "tests/test_cli_import.py::test_human_mode_prints_one_line_for_every_record",
+  "tests/test_cli_import.py::test_an_empty_multi_record_payload_is_a_complete_zero_classification",
+  "tests/test_cli_import.py::test_created_entity_groups_are_ordered_by_their_own_id_identity",
+  "tests/test_cli_import.py::test_a_completed_report_with_a_residual_still_reaches_class_eight",
+  "tests/test_cli_import.py::test_an_interrupted_import_reports_the_records_it_already_committed",
   "tests/test_vera_replay_import.py::test_every_declared_import_step_produces_its_declared_counts",
   "tests/test_vera_replay_import.py::test_every_declared_failure_step_fails_for_its_declared_reason",
 ]
