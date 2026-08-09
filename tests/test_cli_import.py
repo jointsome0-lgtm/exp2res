@@ -720,3 +720,88 @@ def test_an_interrupt_before_the_writer_opens_reports_no_classification(
     # a claim the run never earned.
     assert envelope["result"] is None
     assert envelope["affected_ids"]["created"] == []
+
+
+def test_a_signal_on_the_final_classification_still_carries_the_result(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5: completeness is a property of the outcome, not of timing."""
+    records = [
+        ephemeris_record(f"vera-ephemeris-96{index:02d}") for index in range(3)
+    ]
+    payload = write_payload(tmp_path, "last-record.jsonl", records)
+    classify = imports_service._classify
+
+    def interrupt_after_the_last_classification(*args, **kwargs):
+        outcome, record = classify(*args, **kwargs)
+        if record.record_number == len(records):
+            # The last record is classified and its row is committed; the
+            # signal lands before the loop can record either fact.
+            raise KeyboardInterrupt()
+        return outcome, record
+
+    monkeypatch.setattr(
+        imports_service, "_classify", interrupt_after_the_last_classification
+    )
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    # Nothing is unreported, so the run keeps the result it earned in full.
+    assert envelope["result"]["counts"] == {
+        "accepted": 3,
+        "duplicate": 0,
+        "rejected": 0,
+    }
+    assert [
+        record["record_number"]
+        for record in envelope["result"]["records"]["accepted"]
+    ] == [1, 2, 3]
+
+
+def test_a_candidate_that_only_shares_an_id_is_never_reported_as_committed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§19.4 rule 2: a collided ID names a different record, not this commit."""
+    counts: dict[str, int] = {}
+
+    def colliding_ids(kind: str) -> str:
+        counts[kind] = counts.get(kind, 0) + 1
+        # Every raw log this factory names takes the same ID, so the second
+        # import's candidate collides with the first import's stored row.
+        return (
+            "log_shared_0001"
+            if kind == "raw_log"
+            else f"evi_shared_{counts[kind]:04d}"
+        )
+
+    monkeypatch.setattr(
+        cli_module,
+        "import_payload",
+        functools.partial(imports_service.import_payload, id_factory=colliding_ids),
+    )
+    stored = write_payload(
+        tmp_path, "collide-stored.jsonl", [ephemeris_record("vera-ephemeris-9700")]
+    )
+    first, _ = _invoke_json(workspace, ["import", "ephemeris", stored])
+    assert first.exit_code == 0
+
+    def interrupt_while_the_collision_unwinds(*args, **kwargs):
+        # The signal arrives inside `_persist`, as its rollback unwinds the
+        # collision, so `_classify` never reaches its `attempted.pop()`.
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        imports_service, "_persist", interrupt_while_the_collision_unwinds
+    )
+    payload = write_payload(
+        tmp_path, "collide-new.jsonl", [ephemeris_record("vera-ephemeris-9701")]
+    )
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    # The stored row carries the first record's identity and hash, so it is
+    # not this candidate's commit however its ID reads.
+    assert envelope["affected_ids"]["created"] == []
+    assert envelope["result"] is None

@@ -38,10 +38,10 @@
     "logs/daily-2026-07-08.md": "e1e0c545e1640da568f69ca4636728fff98006867743c4bcaf8978907f3348ce",
     "logs/retro-2026-05-strength.json": "89a02739084ecf21c18b11ddac64c8bd4ce725808ede96d2cf9968198e801c16",
     "logs/retro-2026-06-k8s.json": "c92f84c5c5b058238892697dd5ee01f4c3fe0a054684f7488ac4183c23d303af",
-    "replay.json": "3c8e58a15c0e2d9307def0e11581d10bbd732c87595d3560949456ee0f7b82eb"
+    "replay.json": "6bd6bafc0583e70d4d595db60983912b2eabc21a7829a96c0db2a6728b912468"
   },
   "generator": "examples/vera/corpus.py",
   "persona": "Vera Example",
   "persona_source": "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md",
-  "version": "0.5.0"
+  "version": "1.0.0"
 }

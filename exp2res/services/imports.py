@@ -33,7 +33,7 @@ from exp2res.integrations.records import (
 from exp2res.services.capture import Clock, IdFactory, new_id
 from exp2res.services.source_files import read_payload_file
 from exp2res.storage.repository import (
-    committed_raw_log_ids,
+    committed_import_records,
     insert_evidence_item,
     insert_raw_log,
     retained_import_hashes,
@@ -56,6 +56,9 @@ class ImportedRecord:
     # §14.14 rule 5's closed projection carries neither of these; they reach
     # the envelope's `affected_ids` and its rejection diagnostic instead.
     evidence_item_ids: tuple[str, ...] = ()
+    # §19.4 rule 3's hash, kept beside the identity so an interrupted run can
+    # ask the workspace whether a stored row is this record (§19.4 rule 2).
+    content_hash: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -243,6 +246,7 @@ def _classify(
             identity,
             raw_log.id,
             evidence_item_ids=tuple(item.id for item in evidence_items),
+            content_hash=digest,
         )
         # Recorded before the transaction opens: a signal can land between
         # `_persist`'s commit and any bookkeeping after it, and the workspace
@@ -252,8 +256,10 @@ def _classify(
             _persist(connection, raw_log=raw_log, evidence_items=evidence_items)
         except IdCollisionError as error:
             # This candidate's ID belongs to a row that already existed, so
-            # leaving it registered would make the retained row look like
-            # this payload's own commit.
+            # leaving it registered would name a row this payload never wrote.
+            # A signal can outrun this line while `_persist` unwinds, so it is
+            # the cheap path, not the guarantee: `committed_import_records`
+            # matches the stored identity and hash and rejects it either way.
             attempted.pop()
             last_collision = error
             continue
@@ -286,8 +292,12 @@ def _cancelled_report(
             # its resolution. Resolving it here keeps the query's visibility
             # a statement about committed rows.
             connection.rollback()
-        committed = committed_raw_log_ids(
-            connection, [record.raw_log_id or "" for record in attempted]
+        committed = committed_import_records(
+            connection,
+            [
+                (record.raw_log_id or "", record.source_record_id, record.content_hash)
+                for record in attempted
+            ],
         )
     except sqlite3.Error:
         accepted = tuple(classified["accepted"])
@@ -328,7 +338,20 @@ def import_payload(
         "rejected": [],
     }
     attempted: list[ImportedRecord] = []
-    classification_complete = False
+
+    def is_complete(outcome: ImportOutcome) -> bool:
+        """Do this outcome's three lists partition every parsed record?
+
+        §14.14 rule 5's complete primary result is a property of the outcome
+        being reported, so it is derived from that outcome rather than written
+        by a separate statement a signal could land in front of. A record the
+        loop never reached and a record whose commit the signal outran both
+        leave the same gap, and both mean `result = null` (§14.14 rule 4).
+        """
+
+        return len(outcome.accepted) + len(outcome.duplicate) + len(
+            outcome.rejected
+        ) == len(parsed_records)
 
     def report() -> ImportOutcome:
         return ImportOutcome(
@@ -358,10 +381,6 @@ def import_payload(
                         attempted=attempted,
                     )
                     classified[outcome].append(result)
-                # Every record reached a §19.4 rule 5 classification. Only
-                # `writer_database` teardown remains, so a signal past this
-                # point still leaves a complete primary result.
-                classification_complete = True
             except sqlite3.OperationalError as error:
                 progress = _cancelled_report(
                     connection, attempted=attempted, classified=classified
@@ -383,12 +402,14 @@ def import_payload(
                 # §14.14 rule 6: rule 4 commits each accepted record in its
                 # own transaction, so those records are lifecycle boundaries
                 # that remain committed and are reported rather than restored.
-                # The records the interrupt never reached leave the
-                # classification incomplete, so the caller reports no result.
+                # A signal that lands on the last record's own classification
+                # leaves nothing unreported, so completeness is read off the
+                # outcome instead of assumed from where the signal landed.
                 cancelled = OperationCancelledError()
                 cancelled.import_outcome = _cancelled_report(
                     connection, attempted=attempted, classified=classified
                 )
+                cancelled.import_classified = is_complete(cancelled.import_outcome)
                 raise cancelled from None
             except Exp2ResError as error:
                 # §19.4 rule 4: a failure fails only its own record and never
@@ -402,12 +423,12 @@ def import_payload(
         # The signal landed outside the record loop: either in
         # `writer_database` entry — the §8.1 lock wait or the §13.14 preamble,
         # before any record was read — or in its teardown, after every record
-        # was classified. Only the second has a complete primary result;
+        # was classified. Only the second reports a complete primary result;
         # §14.14 rule 4 gives the first `result = null`. Either way the
         # committed rows are durable and reported, and the closed connection
         # is no longer available to re-read.
         cancelled = OperationCancelledError()
         cancelled.import_outcome = report()
-        cancelled.import_classified = classification_complete
+        cancelled.import_classified = is_complete(cancelled.import_outcome)
         raise cancelled from None
     return report()

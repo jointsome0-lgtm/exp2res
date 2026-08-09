@@ -578,6 +578,8 @@ nodes = [
   "tests/test_cli_import.py::test_a_classified_failure_keeps_the_records_committed_behind_it",
   "tests/test_cli_import.py::test_a_non_busy_database_failure_keeps_the_records_committed_behind_it",
   "tests/test_cli_import.py::test_an_interrupt_before_the_writer_opens_reports_no_classification",
+  "tests/test_cli_import.py::test_a_signal_on_the_final_classification_still_carries_the_result",
+  "tests/test_cli_import.py::test_a_candidate_that_only_shares_an_id_is_never_reported_as_committed",
   "tests/test_vera_replay_import.py::test_every_declared_import_step_produces_its_declared_counts",
   "tests/test_vera_replay_import.py::test_every_declared_failure_step_fails_for_its_declared_reason",
 ]

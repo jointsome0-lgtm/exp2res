@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import json
 import re
 import sqlite3
-from typing import Iterable, Sequence
+from typing import Iterable, Optional, Sequence
 
 from pydantic import ValidationError
 
@@ -165,28 +165,51 @@ def insert_evidence_item(connection: sqlite3.Connection, item: EvidenceItem) -> 
         raise IntegrityFailureError() from error
 
 
-def committed_raw_log_ids(
-    connection: sqlite3.Connection, candidate_ids: Sequence[str]
+def committed_import_records(
+    connection: sqlite3.Connection,
+    candidates: Sequence[tuple[str, Optional[str], Optional[str]]],
 ) -> set[str]:
-    """Report which candidate raw-log IDs actually reached the database.
+    """Report which candidate records the workspace actually stores as themselves.
 
     §19.4 rule 4 gives each imported record its own transaction, so after an
     interruption the committed set is a fact of the workspace rather than of
     the classifier's in-memory bookkeeping. Reading it back under the still
     held §8.1 writer lock reports a record whose commit the signal outran and
     never reports a rolled-back candidate.
+
+    Existence of the generated ID is not that fact. A candidate whose ID
+    collided with an already-stored row shares only the ID: the stored row is
+    a different record, and a signal that lands while that collision unwinds
+    can leave the candidate registered. The verdict therefore matches the
+    §19.4 rule 2 pair the importer wrote — identity and rule 3's content hash,
+    read from the same reserved `RawLog.metadata` keys `retained_import_hashes`
+    scans — so a row is this candidate's commit only when it is this record.
+    A manual-capture row carries neither key and matches nothing.
     """
 
+    wanted = {
+        raw_log_id: (identity, digest)
+        for raw_log_id, identity, digest in candidates
+    }
     committed: set[str] = set()
-    for start in range(0, len(candidate_ids), 512):
-        chunk = tuple(candidate_ids[start : start + 512])
+    ordered = list(wanted)
+    for start in range(0, len(ordered), 512):
+        chunk = tuple(ordered[start : start + 512])
         placeholders = ",".join("?" for _ in chunk)
-        committed.update(
-            str(row["id"])
-            for row in connection.execute(
-                f"SELECT id FROM raw_logs WHERE id IN ({placeholders})", chunk
-            )
-        )
+        for row in connection.execute(
+            f"""
+            SELECT
+                id,
+                json_extract(metadata_json, '$.source_record_id') AS source_record_id,
+                json_extract(metadata_json, '$.content_hash') AS content_hash
+            FROM raw_logs
+            WHERE id IN ({placeholders})
+            """,
+            chunk,
+        ):
+            stored = (row["source_record_id"], row["content_hash"])
+            if stored == wanted[str(row["id"])]:
+                committed.add(str(row["id"]))
     return committed
 
 
