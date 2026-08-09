@@ -752,3 +752,44 @@ def test_a_post_commit_interrupt_keeps_the_committed_pack(
     assert str(stale_set) in carried.residual_paths
     with read_database(workspace) as connection:
         assert len(list_resume_branches(connection, current_only=True)) == 1
+
+
+def test_an_interrupt_building_the_final_result_still_reports_the_swap(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: even result construction sits under the post-commit guard."""
+
+    ids, facts, snapshot_id = prepare_anchor(workspace)
+    prior_id, _prior_bullet_id = plant_branch(
+        workspace,
+        snapshot_id=snapshot_id,
+        fact_ids=facts,
+        branch_id="branch_vera_0009",
+        bullet_id="bullet_vera_0009",
+        suffix="0009",
+    )
+    stale_set = plant_branch_set(workspace, prior_id)
+    built = stage10_module.Stage10Result
+
+    def interrupt_first_build(*arguments, **keywords):
+        # The swap and the cleanup are both done; only the caller's answer is
+        # left to assemble, and that is where this Ctrl-C lands. The guard's
+        # own rebuild is allowed through.
+        monkeypatch.setattr(stage10_module, "Stage10Result", built)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(stage10_module, "Stage10Result", interrupt_first_build)
+
+    fake = FakeContractRunner(
+        [writer_response([bullet_candidate(fact_ids=list(facts))])]
+    )
+    with pytest.raises(OperationCancelledError) as caught:
+        run_stage10(workspace, fake, ids, snapshot_id=snapshot_id)
+
+    carried = caught.value.stage_result
+    assert carried.branch_id is not None
+    assert carried.superseded_branch_ids == (prior_id,)
+    assert len(carried.bullet_ids) == 1
+    # Cleanup finished before the interrupt, so nothing stays reported stale.
+    assert carried.residual_paths == ()
+    assert not stale_set.exists()

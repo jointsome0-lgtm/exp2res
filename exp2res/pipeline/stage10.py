@@ -632,6 +632,9 @@ def run_bullet_generation(
                 residual_paths = remove_branch_sets(
                     workspace, replaced.branch_ids, removed_ledger=cleaned_sets
                 )
+                # Built inside the guard so an interrupt during construction
+                # still leaves the guard a committed result to carry.
+                completed = build_result(residual_paths, branch, bullets)
             except BaseException as error:
                 # Withdraw the pre-commit pending report only when the rollback is
                 # proven; an interrupt after a durable commit keeps it reported.
@@ -663,7 +666,6 @@ def run_bullet_generation(
                     )
                     raise cancelled from None
                 raise
-            completed = build_result(residual_paths, branch, bullets)
             return completed
     except KeyboardInterrupt:
         if completed is None:
