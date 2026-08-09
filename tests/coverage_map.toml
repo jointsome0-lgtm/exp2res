@@ -558,9 +558,17 @@ nodes = [
   "tests/test_imports_phase5.py::test_github_malformed_commit_sha_rejects_without_identity[uppercase-record2]",
   "tests/test_imports_phase5.py::test_github_malformed_commit_sha_rejects_without_identity[non-hexadecimal-record3]",
   "tests/test_imports_phase5.py::test_github_supplied_identity_field_is_an_undeclared_field",
+  "tests/test_cli_import.py::test_each_source_form_reports_its_own_command_and_record",
+  "tests/test_cli_import.py::test_a_repeated_record_is_a_duplicate_with_no_raw_log_id",
+  "tests/test_cli_import.py::test_a_classified_rejection_exits_class_two_with_its_complete_result",
+  "tests/test_cli_import.py::test_more_than_a_hundred_records_are_reported_untruncated",
+  "tests/test_cli_import.py::test_a_payload_without_a_record_boundary_reports_a_null_result",
+  "tests/test_cli_import.py::test_human_mode_prints_one_line_for_every_record",
+  "tests/test_vera_replay_import.py::test_every_declared_import_step_produces_its_declared_counts",
+  "tests/test_vera_replay_import.py::test_every_declared_failure_step_fails_for_its_declared_reason",
 ]
 phase = "5"
-note = "Service-level classification, identity, hashing, per-record transactions, and the payload object bound are proven for all three importers; the §14.14 result envelope with its untruncated 100-record lists lands with the CLI group, and the later authorized dereference of a supplied content_digest has no reader yet"
+note = "Service-level classification, identity, hashing, per-record transactions, and the payload object bound are proven for all three importers, and the §14.14 result envelope — command path, exit class, and the untruncated over-100-record lists that partition every record_number — is proven through the CLI group; only the later authorized dereference of a supplied content_digest has no reader yet"
 
 ["21.46"]
 status = "partial"

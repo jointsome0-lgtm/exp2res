@@ -10,7 +10,7 @@ It turns owner-controlled experience evidence that automation cannot rewrite int
 
 SDD v0.3 is implementation-ready and remains the binding product contract. The manual-capture and private-workspace foundation is implemented, together with isolated Codex and Claude agent-backed runner substrates and the model-backed pipeline from fact extraction through gap/contradiction detection, assessment, and verification; current work proceeds phase by phase along the approved dependency frontier summarized in [`AGENTS.md`](AGENTS.md). [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implemented and verified the global Mirror as a CLI-generated assessment export, and [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98) now serves that Mirror plus unanswered Gap Questions on loopback through `exp2res view serve`. The verified bullet pack now exists as a CLI slice — `bullets generate`, `bullets verify`, and `bullets export` publish a job-targeted pack with its closed §13.12 companions — but this is still not a resume product, and a full resume document model stays deferred. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
 
-§22 phase status: Phases 0–3 complete, including the §14.17 view-serving slice. Phase 4's stages are all merged — JD parsing, bullet generation, bullet verification, and the verified bullet-pack export — but the phase is not yet closed: its definition of done also names pinned golden export tests, and the bullet-pack half of those goldens is not written. Phase 5 is not yet implemented.
+§22 phase status: Phases 0–3 complete, including the §14.17 view-serving slice. Phase 4's stages are all merged — JD parsing, bullet generation, bullet verification, and the verified bullet-pack export — but the phase is not yet closed: its definition of done also names pinned golden export tests, and the bullet-pack half of those goldens is not written. Phase 5 has its three §19-backed importers and their `import` command group; §14.5's fourth form, `import file`, is not yet implemented.
 
 Exp2Res remains a public engine. Real owner data lives in a private workspace outside this repository, never in the public checkout.
 
@@ -80,7 +80,7 @@ make demo-verify
 
 `demo-verify` proves manifest hashes, evidence-map closure through real fact/evidence/log rows, current-generation integrity, the blocked export, the checked transcript, and byte-identical exported members and transcript across two clean reruns. The accessible textual walkthrough is [`demo/transcript.txt`](demo/transcript.txt).
 
-Version pin: Vera corpus `0.4.0`; SQLite schema `12`; CLI `envelope_version = 2`. After any incompatible corpus, schema, envelope, rendering, or command-flow change, regenerate with `python examples/vera/corpus.py generate`, rerun the three make targets, and replace the checked transcript and recording only with output from the new exact deterministic flow.
+Version pin: Vera corpus `0.5.0`; SQLite schema `12`; CLI `envelope_version = 2`. After any incompatible corpus, schema, envelope, rendering, or command-flow change, regenerate with `python examples/vera/corpus.py generate`, rerun the three make targets, and replace the checked transcript and recording only with output from the new exact deterministic flow.
 
 The checked recording is [`demo.cast`](demo.cast). Replay it locally with `asciinema play demo.cast`. Regenerate it after an incompatible demo change with the pinned 110×32 terminal shape:
 

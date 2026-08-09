@@ -47,6 +47,9 @@ class ImportedRecord:
     source_record_id: Optional[str]
     raw_log_id: Optional[str] = None
     reason: Optional[str] = None
+    # §14.14 rule 5's closed projection carries neither of these; they reach
+    # the envelope's `affected_ids` and its rejection diagnostic instead.
+    evidence_item_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -231,7 +234,12 @@ def _classify(
             last_collision = error
             continue
         retained[identity] = digest
-        return "accepted", ImportedRecord(number, identity, raw_log.id)
+        return "accepted", ImportedRecord(
+            number,
+            identity,
+            raw_log.id,
+            evidence_item_ids=tuple(item.id for item in evidence_items),
+        )
     raise IdCollisionError() from last_collision
 
 

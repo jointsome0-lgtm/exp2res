@@ -10,7 +10,7 @@ status = "partial"
 phases = ["5"]
 evals = ["21.2", "21.3", "21.45", "21.46"]
 issues = ["#175", "#246"]
-note = "Imported activity and knowledge-state records enter as raw logs and evidence items with no automatic overclaiming: import creates no ExperienceFact or SelfClaim, and an ephemeris record carrying knowledge-state members is rejected; the Stage 3 scope halves of §21.2 and §21.3 remain unproven"
+note = "Imported activity and knowledge-state records enter as raw logs and evidence items with no automatic overclaiming: import creates no ExperienceFact or SelfClaim, and an ephemeris record carrying knowledge-state members is rejected; the Vera corpus replays its declared §19 import steps through the command group, and the Stage 3 scope halves of §21.2 and §21.3 remain unproven"
 
 ["24.3"]
 status = "partial"
@@ -350,7 +350,7 @@ status = "partial"
 phases = ["5"]
 evals = ["21.45"]
 issues = ["#175"]
-note = "Closed unwrapped record shapes, (source system, source identity) keying, importer-computed canonical hashing, the GitHub identity derivation and SHA rules, the attribution mapping, and per-record transactions under one writer lock are proven; the complete §14.14 result envelope lands with the CLI group and no authorized content_digest dereference exists yet"
+note = "Closed unwrapped record shapes, (source system, source identity) keying, importer-computed canonical hashing, the GitHub identity derivation and SHA rules, the attribution mapping, and per-record transactions under one writer lock are proven, and the §14.5 command group now emits the complete §14.14 result envelope over them; only an authorized content_digest dereference is still absent"
 
 ["24.49"]
 status = "partial"

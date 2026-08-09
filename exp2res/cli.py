@@ -42,6 +42,10 @@ from exp2res.domain.results import (
     EntityIdGroup,
     FactsListResult,
     GapsListResult,
+    ImportCounts,
+    ImportRecordGroups,
+    ImportRecordResult,
+    ImportResult,
     InvalidatedBranch,
     InvalidatedView,
     JdDeleteResult,
@@ -139,6 +143,11 @@ from exp2res.services.view_server import (
     ViewServer,
     validate_bind,
 )
+from exp2res.services.imports import (
+    ImportOutcome,
+    ImportedRecord,
+    import_payload,
+)
 from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.services.workspace import PurgeOutcome, purge_workspace
 from exp2res.storage.repository import (
@@ -169,6 +178,7 @@ db_app = typer.Typer(help="Inspect or migrate the workspace schema.")
 log_app = typer.Typer(help="Capture a manual record.")
 logs_app = typer.Typer(help="Inspect or owner-delete raw records.")
 correction_app = typer.Typer(help="Correction capture lifecycle.")
+import_app = typer.Typer(help="Import one local §19 source payload.")
 facts_app = typer.Typer(help="Inspect current extracted facts.")
 detections_app = typer.Typer(
     help="Generate both complete current detection sets together."
@@ -189,6 +199,7 @@ app.add_typer(db_app, name="db")
 app.add_typer(log_app, name="log")
 app.add_typer(logs_app, name="logs")
 app.add_typer(correction_app, name="correction")
+app.add_typer(import_app, name="import")
 app.add_typer(facts_app, name="facts")
 app.add_typer(detections_app, name="detections")
 app.add_typer(gaps_app, name="gaps")
@@ -225,6 +236,7 @@ class Outcome:
     warnings: list[ContractWarning] = field(default_factory=list)
     result: (
         SchemaResult
+        | ImportResult
         | LogsListResult
         | LogsShowResult
         | LogsDeleteResult
@@ -1382,6 +1394,127 @@ def recompute_command(
         return _lifecycle_outcome(recomputed)
 
     _run_command(context, "recompute", operation)
+
+
+def _import_record_group(
+    records: tuple[ImportedRecord, ...],
+) -> list[ImportRecordResult]:
+    return [
+        ImportRecordResult(
+            record_number=record.record_number,
+            source_record_id=record.source_record_id,
+            raw_log_id=record.raw_log_id,
+        )
+        for record in records
+    ]
+
+
+def _import_outcome(imported: ImportOutcome) -> Outcome:
+    """Project one §19.4 classification into its §14.14 envelope.
+
+    Every established record appears exactly once under its input
+    `record_number`, and none of the three lists is ever truncated: §14.14
+    rule 5 exempts local stdout from §11's list caps precisely so a large
+    payload still reports every record.
+    """
+
+    result = ImportResult(
+        counts=ImportCounts(
+            accepted=len(imported.accepted),
+            duplicate=len(imported.duplicate),
+            rejected=len(imported.rejected),
+        ),
+        records=ImportRecordGroups(
+            accepted=_import_record_group(imported.accepted),
+            duplicate=_import_record_group(imported.duplicate),
+            rejected=_import_record_group(imported.rejected),
+        ),
+    )
+    evidence_ids = sorted(
+        (
+            item_id
+            for record in imported.accepted
+            for item_id in record.evidence_item_ids
+        ),
+        key=lambda value: value.encode("utf-8"),
+    )
+    raw_log_ids = [
+        record.raw_log_id
+        for record in imported.accepted
+        if record.raw_log_id is not None
+    ]
+    created = (
+        [
+            EntityIdGroup(entity_type="evidence_item", ids=evidence_ids),
+            EntityIdGroup(entity_type="raw_log", ids=raw_log_ids),
+        ]
+        if raw_log_ids
+        else []
+    )
+    lines = [
+        f"accepted {result.counts.accepted}, "
+        f"duplicate {result.counts.duplicate}, "
+        f"rejected {result.counts.rejected}"
+    ]
+    for outcome_name, group in (
+        ("accepted", imported.accepted),
+        ("duplicate", imported.duplicate),
+        ("rejected", imported.rejected),
+    ):
+        for record in group:
+            lines.append(
+                f"{record.record_number}\t{outcome_name}\t"
+                f"{record.source_record_id or '-'}\t{record.raw_log_id or '-'}"
+            )
+    # §14.14 rule 5: a fully classified result with rejections is a completed
+    # report, so it exits through class 2 still carrying its complete result.
+    rejected = result.counts.rejected > 0
+    return Outcome(
+        exit_code=2 if rejected else 0,
+        diagnostic_class="import_records_rejected" if rejected else None,
+        affected_ids=AffectedIds(created=created, superseded=[], deleted=[]),
+        result=result,
+        human_result="\n".join(lines),
+    )
+
+
+def _import_command(
+    context: typer.Context, command: CommandPath, source_system: str, payload: str
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        return _import_outcome(
+            import_payload(
+                workspace, source_system=source_system, payload_path=payload
+            )
+        )
+
+    _run_command(context, command, operation)
+
+
+@import_app.command("ephemeris")
+def import_ephemeris(
+    context: typer.Context,
+    payload: str = typer.Argument(..., metavar="PATH"),
+) -> None:
+    _import_command(context, "import ephemeris", "ephemeris", payload)
+
+
+@import_app.command("atlas")
+def import_atlas(
+    context: typer.Context,
+    payload: str = typer.Argument(..., metavar="PATH"),
+) -> None:
+    _import_command(context, "import atlas", "atlas", payload)
+
+
+@import_app.command("github")
+def import_github(
+    context: typer.Context,
+    payload: str = typer.Argument(..., metavar="PATH"),
+) -> None:
+    # §14.5 and §19.3: one local payload whose `repo` field names the
+    # repository. Nothing here reaches the network.
+    _import_command(context, "import github", "github", payload)
 
 
 @app.command("extract")
