@@ -746,7 +746,7 @@ def test_vera_e11_cli_learning_evidence_never_reaches_production_claims(
                 [
                     _bullet(
                         "Worked hands-on with Kubernetes while writing and "
-                        "checking cluster runbooks.",
+                        "checking a cluster runbook.",
                         section="selected_projects",
                         requirements=[demanded["Familiarity with Kubernetes."]],
                         fact_ids=[fact_ids[0]],

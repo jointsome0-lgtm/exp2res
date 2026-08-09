@@ -108,12 +108,14 @@ MARKER_EXEMPT_PATHS: frozenset[str] = frozenset(
         "tests/goldens/branch/bullet_pack.md",
         "tests/goldens/branch/evidence_map.json",
         "tests/goldens/branch/verification_report.json",
-        # The demo's canned Stage 10 and Stage 11 responses become the
-        # published bullet prose and verifier reasons an external reader
-        # consumes, so §16.14 keeps the synthetic owner's personal name out of
-        # both. Their invented lineage stays checkable through the
-        # marker-carrying vacancy, logs, and entity IDs they are generated
-        # beside; examples/vera/corpus.py records the same paths.
+        # The demo's canned Stage 8, 10, and 11 responses are §16.12 generated
+        # voice the demo persists and publishes — parsed red flags, bullet
+        # prose, and verifier reasons — so §16.14 keeps the synthetic owner's
+        # personal name out of all three. Their invented lineage stays
+        # checkable through the marker-carrying vacancy, logs, and entity IDs
+        # they are generated beside; examples/vera/corpus.py records the same
+        # paths.
+        "examples/vera/corpus/llm/demo-jd-parse.json",
         "examples/vera/corpus/llm/demo-bullets.json",
         "examples/vera/corpus/llm/demo-bullet-verification.json",
     }
