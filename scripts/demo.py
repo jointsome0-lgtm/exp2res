@@ -604,13 +604,20 @@ def _verify_branch(
     if any(item.verification_status != "supported" for item in report.findings):
         raise AssertionError("Vera Example published a bullet without support")
 
-    stored = connection.execute(
-        "SELECT id, text FROM resume_bullets "
-        "WHERE branch_id = ? AND superseded_at IS NULL",
-        (branch,),
-    ).fetchall()
-    if sorted(row[0] for row in stored) != sorted(rendered):
+    stored = dict(
+        connection.execute(
+            "SELECT id, verification_status FROM resume_bullets "
+            "WHERE branch_id = ? AND superseded_at IS NULL",
+            (branch,),
+        ).fetchall()
+    )
+    if sorted(stored) != sorted(rendered):
         raise AssertionError("Vera Example rendered bullet set is not branch-complete")
+    for finding in report.findings:
+        if stored[finding.bullet_id] != finding.verification_status:
+            raise AssertionError(
+                f"Vera Example published verdict is stale: {finding.bullet_id}"
+            )
 
     pack = members["bullet_pack.md"].decode("utf-8")
     fact_links = {item.fact_id: item for item in evidence_map.fact_links}

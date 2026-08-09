@@ -442,9 +442,9 @@ def _bullet_verifier_response(findings: list[dict[str, object]]) -> bytes:
 
 ANCHOR_LOG = (
     "Vera Example drafted the kubectl troubleshooting runbook and walked every "
-    "step on a toy cluster before writing it down. A small Python script checks "
-    "the runbook's links, and every change to it went through a reviewed pull "
-    "request."
+    "step on a toy cluster before writing it down. Vera Example also wrote the "
+    "small Python script that checks the runbook's links, and put every runbook "
+    "change through a reviewed pull request."
 )
 
 
@@ -476,8 +476,8 @@ def _anchor_facts(evidence_id: str) -> bytes:
                 },
                 {
                     "claim": (
-                        "Scripted the runbook's link checks in Python and took "
-                        "every change through a reviewed pull request."
+                        "Wrote the runbook's Python link checker and took every "
+                        "runbook change through a reviewed pull request."
                     ),
                     "claim_kind": "observed_fact",
                     "role": None,
