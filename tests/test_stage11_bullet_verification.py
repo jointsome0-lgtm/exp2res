@@ -863,6 +863,18 @@ def test_the_verifier_is_told_what_a_counter_fact_means() -> None:
         pytest.param("a recurring pattern appears", id="identity-licensed"),
         # §16.10: reporting an experience in the owner's own terms is allowed.
         pytest.param("you report burnout under ambitious plans", id="diagnostic-licensed"),
+        # §13.10: the relevance grade is judged, not only its requirement IDs.
+        pytest.param("invented relevance", id="relevance-grade"),
+        # §16.7 rule 18: approximate bounds are weaker at equal width.
+        pytest.param("at equal width an approximate_range", id="temporal-exactness"),
+        # §16.7 rules 16/20: another record may license the end date.
+        pytest.param(
+            "additional linked evidence itself states the bound", id="temporal-bound"
+        ),
+        # §16.12: an advisory rewrite is generated voice and is bound by §16.
+        pytest.param(
+            "A rewrite you cannot ground is no rewrite", id="rewrite-grounded"
+        ),
     ],
 )
 def test_the_instructions_carry_each_16_rule_in_full(clause: str) -> None:
