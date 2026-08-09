@@ -858,15 +858,20 @@ def insert_verification_finding(
         "SELECT 1 FROM processing_runs WHERE id = ?", (finding.produced_by_run_id,)
     ).fetchone() is None:
         raise IntegrityFailureError("finding_run_missing")
-    if finding.target_type == "resume_bullet":
-        raise IntegrityFailureError("finding_resume_bullet_target_unavailable")
+    table, missing, superseded = (
+        ("resume_bullets", "finding_resume_bullet_target_missing",
+         "finding_resume_bullet_target_superseded")
+        if finding.target_type == "resume_bullet"
+        else ("self_claims", "finding_self_claim_target_missing",
+              "finding_self_claim_target_superseded")
+    )
     target = connection.execute(
-        "SELECT superseded_at FROM self_claims WHERE id = ?", (finding.target_id,)
+        f"SELECT superseded_at FROM {table} WHERE id = ?", (finding.target_id,)
     ).fetchone()
     if target is None:
-        raise IntegrityFailureError("finding_self_claim_target_missing")
+        raise IntegrityFailureError(missing)
     if target["superseded_at"] is not None:
-        raise IntegrityFailureError("finding_self_claim_target_superseded")
+        raise IntegrityFailureError(superseded)
 
     pairs = [
         (item.source_ref_type, item.source_ref_id)
@@ -983,6 +988,45 @@ def update_self_claim_verification(
         raise IntegrityFailureError("claim_verification_update_failed") from error
     if cursor.rowcount != 1:
         raise IntegrityFailureError("claim_verification_update_failed")
+
+
+def update_resume_bullet_verification(
+    connection: sqlite3.Connection,
+    *,
+    bullet_id: str,
+    verification_status: VerificationStatus,
+    unsupported_phrases: Iterable[str],
+    verifier_reason: str,
+) -> None:
+    """Apply §13.11's denormalized verdict to one current bullet.
+
+    §11.14 keeps `suggested_rewrite` in the finding history alone: it is
+    advisory, so it has no denormalized column to land in here.
+    """
+
+    if verification_status == "unverified":
+        # §13.11: Stage 11 owns the transition *out* of `unverified`; nothing
+        # returns a current bullet to the state generation left it in.
+        raise IntegrityFailureError("bullet_verification_status_unverified")
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE resume_bullets
+            SET verification_status = ?, unsupported_phrases_json = ?,
+                verifier_reason = ?
+            WHERE id = ? AND superseded_at IS NULL
+            """,
+            (
+                verification_status,
+                _json(list(unsupported_phrases)),
+                verifier_reason,
+                bullet_id,
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        raise IntegrityFailureError("bullet_verification_update_failed") from error
+    if cursor.rowcount != 1:
+        raise IntegrityFailureError("bullet_verification_update_failed")
 
 
 def update_assessment_snapshot_verification(
@@ -1535,21 +1579,45 @@ STAGE10_ANCHOR_ALLOWLIST = frozenset(
 """§16.11's Stage 10 snapshot-anchor allowlist."""
 
 
+BULLET_EXPORT_ALLOWLIST = frozenset({"supported"})
+"""§16.11's verified-bullet-pack allowlist for a `ResumeBullet`."""
+
+
+def current_branch_by_folded_name(
+    connection: sqlite3.Connection, name: str
+) -> ResumeBranch | None:
+    """Resolve the current branch whose name folds equal to `name` (§14.10).
+
+    One folded identity serves both §14.10 roles: it is what a `--branch`
+    selector resolves, and what a Stage 10 generation replaces. Two current
+    branches folding equal is the uniqueness invariant §14.10 rests on, so a
+    second match is restored, migrated, or damaged state and fails closed —
+    silently taking the first would resolve a selector to a vacancy the owner
+    did not name, and a `bullets verify` verdict would land on the wrong pack.
+    """
+
+    folded = canonical_branch_identity(name)
+    matches = [
+        branch
+        for branch in list_resume_branches(connection, current_only=True)
+        if canonical_branch_identity(branch.name) == folded
+    ]
+    if len(matches) > 1:
+        raise IntegrityFailureError("branch_folded_name_conflict")
+    return matches[0] if matches else None
+
+
 def current_branch_name_conflict(
     connection: sqlite3.Connection, name: str
 ) -> ResumeBranch | None:
-    """Return the current branch whose name folds equal to `name`, if any.
+    """Return the current branch a Stage 10 generation of `name` replaces.
 
     §14.10's folded identity cannot be indexed, so this is the Stage 10
     transaction check the §8.1 writer lock makes race-free; §12 rule 12's raw
     `name` partial unique index is the coarser backstop underneath it.
     """
 
-    folded = canonical_branch_identity(name)
-    for branch in list_resume_branches(connection, current_only=True):
-        if canonical_branch_identity(branch.name) == folded:
-            return branch
-    return None
+    return current_branch_by_folded_name(connection, name)
 
 
 def insert_resume_branch(

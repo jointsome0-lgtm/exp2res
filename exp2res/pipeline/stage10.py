@@ -242,7 +242,7 @@ def _projected_text(value: str) -> str:
     return unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n"))
 
 
-def _validated_branch_name(value: str) -> str:
+def validated_branch_name(value: str) -> str:
     """§14.10's non-blank, §11-hygienic `--branch` value, checked at entry.
 
     The same rule guards `BranchContext` and `ResumeBranch`, but those raise
@@ -260,7 +260,7 @@ def _validated_branch_name(value: str) -> str:
     return value
 
 
-def _require_current_claim_facts(
+def require_current_claim_facts(
     connection: sqlite3.Connection,
     claims: Sequence[SelfClaim],
     facts: Sequence[ExperienceFact],
@@ -319,7 +319,7 @@ def _require_current_snapshot_references(
                 raise IntegrityFailureError(code)
 
 
-def _run_is_committed(connection: sqlite3.Connection, run_id: str) -> bool:
+def run_is_committed(connection: sqlite3.Connection, run_id: str) -> bool:
     """Prove the stage's single final transaction reached durable storage.
 
     The run's completed transition commits with the business swap, so a
@@ -358,7 +358,7 @@ def run_bullet_generation(
     """Run the one whole-pack writer call and atomically swap its branch."""
 
     now = clock or (lambda: datetime.now(timezone.utc))
-    branch_name = _validated_branch_name(branch_name)
+    branch_name = validated_branch_name(branch_name)
     # The writer teardown — the final commit, the connection close, and the
     # §8.1 lock release — runs after the guarded block below and can itself
     # be interrupted over a durable swap, so the completed result stays
@@ -403,7 +403,7 @@ def run_bullet_generation(
                     key=lambda item: _id_key(item.id),
                 )
             )
-            _require_current_claim_facts(connection, supported, facts)
+            require_current_claim_facts(connection, supported, facts)
             input_payload = ResumeWriterInput(
                 branch=BranchContext(
                     name=branch_name,
@@ -646,7 +646,7 @@ def run_bullet_generation(
                     table="resume_branches",
                 )
                 cancelling = isinstance(error, (KeyboardInterrupt, LLMCancelledError))
-                if cancelling and (returned or _run_is_committed(connection, run_id)):
+                if cancelling and (returned or run_is_committed(connection, run_id)):
                     # §14.14 rule 6: the class-9 error carries the complete
                     # committed result, and only the sets this pass never reached
                     # stay reported.

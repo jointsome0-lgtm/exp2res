@@ -1,4 +1,4 @@
-"""§14.10 `bullets generate` CLI behavior."""
+"""§14.10 `bullets generate` and `bullets verify` CLI behavior."""
 
 from __future__ import annotations
 
@@ -10,10 +10,14 @@ from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
 import exp2res.pipeline.stage10 as stage10_module
+import exp2res.pipeline.stage11 as stage11_module
 import exp2res.services.bullets as bullets_service
 from exp2res.cli import _bullets_generate_outcome, app
 from exp2res.pipeline.stage10 import Stage10Result
-from exp2res.storage.repository import list_resume_branches
+from exp2res.storage.repository import (
+    list_resume_branches,
+    list_resume_bullets_for_branch,
+)
 from exp2res.storage.workspace import read_database
 
 from fakes import FakeContractRunner
@@ -29,6 +33,7 @@ from test_stage10_generation import (
     prepare_anchor,
     writer_response,
 )
+from test_stage11_bullet_verification import REWRITE, finding, verifier_response
 
 
 runner = CliRunner()
@@ -271,3 +276,237 @@ def test_an_interrupted_cleanup_reports_the_committed_pack(
     }
     assert len(created["resume_branch"]) == 1
     assert str(stale_set) in envelope["residual_paths"]
+
+
+def verify(
+    workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    responses: list[bytes],
+    *,
+    branch: str = BRANCH_NAME,
+    json_mode: bool = True,
+):
+    monkeypatch.setattr(
+        bullets_service,
+        "build_llm_execution",
+        lambda _workspace: (SELECTION, budgets(), FakeContractRunner(responses)),
+    )
+    arguments = ["--workspace", str(workspace), "bullets", "verify", "--branch", branch]
+    if json_mode:
+        return invoke_json(workspace, ["bullets", "verify", "--branch", branch])
+    return runner.invoke(app, arguments), None
+
+
+def generated_branch(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, str]:
+    """One generated branch, returned as its branch and single bullet ID."""
+
+    _facts, snapshot_id = arrange(workspace, monkeypatch, one_bullet)
+    result, envelope = generate(workspace, snapshot_id)
+    assert result.exit_code == 0, (result.stderr, envelope)
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    return created["resume_branch"][0], created["resume_bullet"][0]
+
+
+def test_verification_reports_its_findings_through_the_envelope(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.10/§14.14: the canonical command path with `result = null`."""
+
+    branch_id, bullet_id = generated_branch(workspace, monkeypatch)
+
+    result, envelope = verify(
+        workspace, monkeypatch, [verifier_response([finding(bullet_id)])]
+    )
+
+    assert result.exit_code == 0, (result.stderr, envelope)
+    assert envelope["command"] == "bullets verify"
+    assert envelope["status"] == "ok"
+    assert envelope["result"] is None
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    assert len(created["verification_finding"]) == 1
+    # §13.11 supersedes nothing: the verified bullets stay current.
+    assert envelope["affected_ids"]["superseded"] == []
+    assert envelope["findings"][0]["target_id"] == bullet_id
+    assert envelope["findings"][0]["status"] == "supported"
+    with read_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+    assert bullets[0].verification_status == "supported"
+
+
+def test_a_bullet_outside_the_export_allowlist_blocks_the_branch(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§16.11/§14.14: only `supported` passes, so anything else is class 10."""
+
+    _branch_id, bullet_id = generated_branch(workspace, monkeypatch)
+
+    result, envelope = verify(
+        workspace,
+        monkeypatch,
+        [
+            verifier_response(
+                [
+                    finding(
+                        bullet_id,
+                        status="partially_supported",
+                        phrases=["provenance links"],
+                        rewrite=REWRITE,
+                    )
+                ]
+            )
+        ],
+    )
+
+    assert result.exit_code == 10, (result.stderr, envelope)
+    assert envelope["status"] == "blocked"
+    assert envelope["diagnostic_class"] == "verifier_gate_blocked"
+    assert envelope["findings"][0]["suggested_rewrite"] == REWRITE
+
+
+def test_human_mode_presents_the_advisory_rewrite(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.10: findings are presented in full, `suggested_rewrite` included."""
+
+    _branch_id, bullet_id = generated_branch(workspace, monkeypatch)
+
+    result, _envelope = verify(
+        workspace,
+        monkeypatch,
+        [
+            verifier_response(
+                [
+                    finding(
+                        bullet_id,
+                        status="unsupported",
+                        phrases=["provenance links"],
+                        rewrite=REWRITE,
+                    )
+                ]
+            )
+        ],
+        json_mode=False,
+    )
+
+    assert result.exit_code == 10, result.stdout
+    assert f"Target bullet: {bullet_id}" in result.stdout
+    assert "Status: unsupported" in result.stdout
+    assert "- provenance links" in result.stdout
+    assert f"Suggested rewrite (advisory): {REWRITE}" in result.stdout
+    assert "bullet-pack export is blocked" in result.stderr
+
+
+def test_an_unknown_branch_is_a_selector_miss(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 3: selector resolution precedes the semantic pass."""
+
+    generated_branch(workspace, monkeypatch)
+
+    result, envelope = verify(workspace, monkeypatch, [], branch="no-such-branch")
+
+    assert result.exit_code == 2, (result.stderr, envelope)
+    assert envelope["status"] == "failed"
+    assert envelope["diagnostic_class"] == "selector_not_found"
+
+
+def test_an_invalid_branch_name_fails_in_the_input_class_on_verify(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.10: the same non-blank hygiene both bullet-pack forms apply."""
+
+    generated_branch(workspace, monkeypatch)
+
+    result, envelope = verify(workspace, monkeypatch, [], branch="   ")
+
+    assert result.exit_code == 2, (result.stderr, envelope)
+    assert envelope["diagnostic_class"] == "branch_name_invalid"
+
+
+def test_an_interrupted_invalidation_reports_the_committed_pass(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: a class-9 envelope still carries the committed verdicts."""
+
+    branch_id, bullet_id = generated_branch(workspace, monkeypatch)
+    stale_set = plant_branch_set(workspace, branch_id)
+
+    def interrupt_cleanup(*_arguments, **_keywords):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(stage11_module, "remove_branch_sets", interrupt_cleanup)
+
+    result, envelope = verify(
+        workspace, monkeypatch, [verifier_response([finding(bullet_id)])]
+    )
+
+    assert result.exit_code == 9, (result.stderr, envelope)
+    assert envelope["status"] == "cancelled"
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    assert len(created["verification_finding"]) == 1
+    assert str(stale_set) in envelope["residual_paths"]
+    with read_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+    assert bullets[0].verification_status == "supported"
+
+
+def test_an_interrupt_in_verify_result_assembly_still_reports_the_pass(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the whole-branch finding set composes inside the guard."""
+
+    _branch_id, bullet_id = generated_branch(workspace, monkeypatch)
+    compose = cli_module._bullets_verify_outcome
+    attempts: list[object] = []
+
+    def interrupt_first(verified):
+        attempts.append(verified)
+        if len(attempts) == 1:
+            raise KeyboardInterrupt()
+        return compose(verified)
+
+    monkeypatch.setattr(cli_module, "_bullets_verify_outcome", interrupt_first)
+
+    result, envelope = verify(
+        workspace, monkeypatch, [verifier_response([finding(bullet_id)])]
+    )
+
+    assert result.exit_code == 9, (result.stderr, envelope)
+    assert envelope["status"] == "cancelled"
+    assert envelope["run_ids"]
+    assert [item["target_id"] for item in envelope["findings"]] == [bullet_id]
+    # The verdict is durable, so the cancelled envelope reports it rather than
+    # leaving the owner to guess whether the pass landed.
+    with read_database(workspace) as connection:
+        stored = list_resume_bullets_for_branch(connection, _branch_id)
+    assert [bullet.verification_status for bullet in stored] == ["supported"]
+
+
+def test_branch_hygiene_precedes_adapter_construction_on_verify(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: boundary text is settled before any adapter is built."""
+
+    generated_branch(workspace, monkeypatch)
+
+    def refuse(_workspace):
+        raise AssertionError("the adapter was built for rejected boundary text")
+
+    monkeypatch.setattr(bullets_service, "build_llm_execution", refuse)
+    result, envelope = invoke_json(
+        workspace, ["bullets", "verify", "--branch", "   "]
+    )
+
+    assert result.exit_code == 2, (result.stderr, envelope)
+    assert envelope["diagnostic_class"] == "branch_name_invalid"

@@ -89,7 +89,8 @@ from exp2res.services.correction import (
     validate_correction_selection,
 )
 from exp2res.pipeline.stage10 import Stage10Result
-from exp2res.services.bullets import run_bullets_generate
+from exp2res.pipeline.stage11 import Stage11Result
+from exp2res.services.bullets import run_bullets_generate, run_bullets_verify
 from exp2res.services.assessment import (
     Stage6Result,
     Stage7Result,
@@ -136,7 +137,10 @@ from exp2res.services.view_server import (
 )
 from exp2res.services.time_input import parse_occurred, workspace_zone
 from exp2res.services.workspace import PurgeOutcome, purge_workspace
-from exp2res.storage.repository import get_assessment_snapshot
+from exp2res.storage.repository import (
+    BULLET_EXPORT_ALLOWLIST,
+    get_assessment_snapshot,
+)
 from exp2res.storage.workspace import (
     SchemaStatus,
     discover_workspace,
@@ -564,6 +568,10 @@ def _run_operation(
                 getattr(error, "invalidated_branches", ()) or ()
             ),
             residual_paths=list(getattr(error, "residual_paths", ()) or ()),
+            # §14.14 rule 5: findings are committed §11.14 rows, so an error
+            # carrying a durable verification pass reports them exactly like
+            # the affected IDs beside them.
+            findings=list(getattr(error, "findings", ()) or ()),
             warnings=list(getattr(error, "warnings", ()) or ()),
             retry=getattr(error, "retry", None),
             result=getattr(error, "result", None),
@@ -2859,6 +2867,130 @@ def _bullets_generate_outcome(generated: Stage10Result) -> Outcome:
         human_result=human_result,
     )
 
+
+@bullets_app.command("verify")
+def bullets_verify(
+    context: typer.Context,
+    branch_name: str = typer.Option(..., "--branch"),
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.14 rule 3: compatibility precedes adapter construction; the
+        # service re-checks under its own authority.
+        require_compatible(workspace)
+        try:
+            verified = run_bullets_verify(workspace, branch_name=branch_name)
+        except Exp2ResError as error:
+            # §14.14 rules 5/6: an interrupt after the committed §13.11 pass
+            # carries the complete result on the error; fold it into the
+            # fields the cancelled envelope reads.
+            carried = getattr(error, "stage_result", None)
+            if isinstance(carried, Stage11Result):
+                _carry_verified_pass(error, carried)
+            raise
+        try:
+            if verified.export_blocked:
+                typer.echo(
+                    "Bullet verification completed, but bullet-pack export is blocked.",
+                    err=True,
+                )
+            return _bullets_verify_outcome(verified)
+        except KeyboardInterrupt:
+            # The service returned a durable pass; §14.14 rule 6 keeps it
+            # reported even when the interrupt lands in result assembly, which
+            # for a whole-branch finding set is not a negligible window.
+            cancelled = OperationCancelledError()
+            cancelled.stage_result = verified
+            _carry_verified_pass(cancelled, verified)
+            raise cancelled from None
+
+    _run_command(context, "bullets verify", operation)
+
+
+def _carry_verified_pass(error: Exp2ResError, verified: Stage11Result) -> None:
+    """Fold a committed §13.11 pass into the fields a failed envelope reads."""
+
+    committed = _bullets_verify_outcome(verified)
+    error.affected_ids = committed.affected_ids
+    error.run_ids = committed.run_ids
+    error.findings = committed.findings
+    error.residual_paths = committed.residual_paths
+    # Human mode renders only `human_result`, so without it the durable pass
+    # would be reported to `--json` callers alone.
+    error.human_result = committed.human_result
+
+
+def _bullets_verify_outcome(verified: Stage11Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted passes."""
+
+    findings = list(verified.findings)
+    return Outcome(
+        # §16.11: only a `supported` bullet may enter the pack, so one bullet
+        # outside that allowlist is the class-10 consumer gate for the branch.
+        exit_code=10 if verified.export_blocked else 0,
+        diagnostic_class="verifier_gate_blocked" if verified.export_blocked else None,
+        affected_ids=AffectedIds(
+            created=[
+                EntityIdGroup(
+                    entity_type="verification_finding",
+                    ids=[item.id for item in findings],
+                )
+            ],
+            # §13.11 supersedes nothing: the bullets it verifies stay current
+            # and only their denormalized verdict fields change.
+            superseded=[],
+            deleted=[],
+        ),
+        run_ids=[verified.run_id],
+        findings=findings,
+        residual_paths=list(verified.residual_paths),
+        result=None,
+        human_result=_bullet_verification_human_result(verified),
+    )
+
+
+def _bullet_verification_human_result(verified: Stage11Result) -> str:
+    """Present the complete §14.10 findings, advisory rewrites included."""
+
+    blocked = [
+        bullet_id
+        for bullet_id, status in verified.bullet_statuses
+        if status not in BULLET_EXPORT_ALLOWLIST
+    ]
+    lines = [
+        f"Branch {verified.branch_id} — {verified.branch_name}: "
+        f"{len(verified.bullet_statuses) - len(blocked)} of "
+        f"{len(verified.bullet_statuses)} bullets supported."
+    ]
+    for finding in _findings_in_bullet_order(verified):
+        lines.extend(
+            [
+                "",
+                f"Finding {finding.id}",
+                f"Target bullet: {finding.target_id}",
+                f"Status: {finding.status}",
+                f"Reason: {finding.reason}",
+                "Unsupported phrases:",
+            ]
+        )
+        lines.extend(f"- {phrase}" for phrase in finding.unsupported_phrases)
+        if not finding.unsupported_phrases:
+            lines.append("- none")
+        if finding.suggested_rewrite is not None:
+            # §13.11: advisory only — presented, never applied. Revised
+            # wording requires an explicit `bullets generate`.
+            lines.append(f"Suggested rewrite (advisory): {finding.suggested_rewrite}")
+    return "\n".join(lines)
+
+
+def _findings_in_bullet_order(verified: Stage11Result) -> list[VerificationFinding]:
+    """Order the pass's findings by their target bullet's own ID bytes."""
+
+    by_target = {finding.target_id: finding for finding in verified.findings}
+    return [
+        by_target[bullet_id]
+        for bullet_id, _status in verified.bullet_statuses
+        if bullet_id in by_target
+    ]
 
 
 @workspace_app.command("purge")
