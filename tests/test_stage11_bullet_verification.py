@@ -14,7 +14,10 @@ from pathlib import Path
 import pytest
 
 from exp2res.domain.models import ResumeBullet
-from exp2res.llm.resume_verifier import ResumeVerifierOutput
+from exp2res.llm.resume_verifier import (
+    RESUME_VERIFIER_INSTRUCTIONS,
+    ResumeVerifierOutput,
+)
 from exp2res.errors import (
     BranchNameInvalidError,
     IntegrityFailureError,
@@ -800,3 +803,45 @@ def test_cancellation_inside_orchestration_reports_the_committed_pass(
     with read_database(workspace) as connection:
         stored = list_resume_bullets_for_branch(connection, branch_id, current_only=True)
     assert [bullet.verification_status for bullet in stored] == ["supported"]
+
+
+def test_an_unsorted_stored_closure_is_still_the_same_closure(
+    workspace: Path,
+) -> None:
+    """§18 equality is on the set: `insert_resume_bullet` stores caller order."""
+
+    ids, facts, snapshot_id = prepare_paired_anchor(workspace)
+    generated = run_stage10(
+        workspace,
+        FakeContractRunner(
+            [writer_response([bullet_candidate(fact_ids=list(facts))])]
+        ),
+        ids,
+        snapshot_id=snapshot_id,
+    )
+    with read_database(workspace) as connection:
+        stored = list_resume_bullets_for_branch(connection, generated.branch_id)[0]
+        job_description = get_job_description(connection, JOB_DESCRIPTION_ID)
+        assert job_description is not None
+        assert len(stored.source_log_ids) > 1
+        # The same closure, written in the other order, is the same closure.
+        require_consistent_bullets(
+            connection,
+            [
+                damaged_bullet(
+                    stored, source_log_ids=list(reversed(stored.source_log_ids))
+                )
+            ],
+            job_description,
+        )
+
+
+def test_the_verifier_is_told_what_a_counter_fact_means() -> None:
+    """§15.6: Stage 11 judges against the same contrary-role marking."""
+
+    assert "counter_fact_ids" in RESUME_VERIFIER_INSTRUCTIONS
+    # §15.1 rule 11 wants both halves: the prohibition and the licensed form.
+    assert "grounds no bullet wording through that claim" in (
+        RESUME_VERIFIER_INSTRUCTIONS
+    )
+    assert "may still ground the bullet directly" in RESUME_VERIFIER_INSTRUCTIONS

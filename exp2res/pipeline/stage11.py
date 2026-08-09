@@ -194,8 +194,13 @@ def require_consistent_bullets(
         # through this bullet's own facts. A displaced record contributes its
         # identity here exactly like a retained one; only the *object* is
         # withheld, in `_build_bundle` below.
+        #
+        # Equality is on the set, not the list order: `insert_resume_bullet`
+        # compares a sorted copy and stores the caller's own order, so a bullet
+        # that passed the write boundary may legitimately hold the closure
+        # unsorted. Comparing positionally would fail a valid pack.
         closure = bullet_log_closure(connection, bullet.source_fact_ids)
-        if tuple(bullet.source_log_ids) != closure:
+        if tuple(sorted(bullet.source_log_ids, key=_id_key)) != closure:
             raise IntegrityFailureError("bullet_log_closure_mismatch")
 
 
@@ -530,190 +535,204 @@ def run_bullet_verification(
 
     now = clock or (lambda: datetime.now(timezone.utc))
     branch_name = validated_branch_name(branch_name)
-    with writer_database(
-        workspace, timeout_ms=timeout_ms, reconcile=True
-    ) as connection:
-        branch = current_branch_by_folded_name(connection, branch_name)
-        if branch is None:
-            raise SelectorNotFoundError()
-        bullets = _current_bullets(connection, branch.id)
-        # §13.12/§18: both consumers recover the vacancy through the branch's
-        # persisted association, and a missing one fails verification.
-        job_description = get_job_description(connection, branch.job_description_id)
-        if job_description is None:
-            raise IntegrityFailureError("branch_job_description_missing")
-        require_current_anchor(connection, branch)
-        require_consistent_bullets(connection, bullets, job_description)
+    # §14.14 rule 6: releasing the writer lock and closing the connection is
+    # still part of the invocation, so the composed result is held across the
+    # context manager's exit — an interrupt during teardown reports the pass
+    # rather than an empty cancellation.
+    completed: Stage11Result | None = None
+    try:
+        with writer_database(
+            workspace, timeout_ms=timeout_ms, reconcile=True
+        ) as connection:
+            branch = current_branch_by_folded_name(connection, branch_name)
+            if branch is None:
+                raise SelectorNotFoundError()
+            bullets = _current_bullets(connection, branch.id)
+            # §13.12/§18: both consumers recover the vacancy through the branch's
+            # persisted association, and a missing one fails verification.
+            job_description = get_job_description(connection, branch.job_description_id)
+            if job_description is None:
+                raise IntegrityFailureError("branch_job_description_missing")
+            require_current_anchor(connection, branch)
+            require_consistent_bullets(connection, bullets, job_description)
 
-        prior_state = _verifier_state(bullets)
-        bundle = _build_bundle(
-            connection,
-            branch=branch,
-            bullets=bullets,
-            job_description=job_description,
-        )
-
-        run_id = id_factory("run")
-        planned = (
-            PlannedCall(
-                input_payload=bundle.input_payload,
-                input_ids=bundle.input_ids,
-                enrich=_enrich_for(bundle.bullet_ids),
-                resolve=_resolve_for(
-                    run_id=run_id, id_factory=id_factory, clock=now
-                ),
-            ),
-        )
-
-        pending_stale_paths: tuple[str, ...] = ()
-
-        def commit(
-            held: sqlite3.Connection, resolved: Sequence[object]
-        ) -> Iterable[str]:
-            nonlocal pending_stale_paths
-            findings = cast(tuple[VerificationFinding, ...], resolved[0])
-            if {item.target_id for item in findings} != set(bundle.bullet_ids):
-                raise IntegrityFailureError("verification_bullet_set_mismatch")
-            for finding in findings:
-                update_resume_bullet_verification(
-                    held,
-                    bullet_id=finding.target_id,
-                    verification_status=finding.status,
-                    unsupported_phrases=finding.unsupported_phrases,
-                    verifier_reason=finding.reason,
-                )
-                # §15.7 returns no counterevidence, so a Stage 11 finding
-                # grounds none and needs no bundle-reference allowance.
-                insert_verification_finding(held, finding, bundle_refs=frozenset())
-            fresh = _verifier_state(
-                list_resume_bullets_for_branch(held, branch.id, current_only=True)
-            )
-            if fresh != prior_state:
-                # §13.11: a changed verdict may not leave an older valid
-                # manifest current, so the branch's published set is reported
-                # stale before the commit-to-cleanup window opens.
-                pending_stale_paths = branch_set_paths(workspace, (branch.id,))
-                report_managed_residuals(pending_stale_paths)
-            return tuple(item.id for item in findings)
-
-        try:
-            run_complete_stage(
-                workspace,
+            prior_state = _verifier_state(bullets)
+            bundle = _build_bundle(
                 connection,
-                stage="13.11",
-                contract=RESUME_VERIFIER_CONTRACT,
-                selection=selection,
-                budgets=budgets,
-                runner=runner,
-                planned=planned,
-                commit=commit,
-                run_id=run_id,
-                clock=now,
-                cli_version=cli_version,
-                capability_check=capability_check,
-                monotonic=monotonic,
-                sleeper=sleeper,
-                jitter=jitter,
-                token_patterns=token_patterns,
-                resolved_credentials=resolved_credentials,
+                branch=branch,
+                bullets=bullets,
+                job_description=job_description,
             )
-        except BaseException as error:
-            # Withdraw the pre-commit pending report only on a proven rollback.
-            # Stage 11 supersedes nothing, so the committed marker is the
-            # verifier-state change itself; an indeterminate read keeps the
-            # report, because a spurious residual is the recoverable error.
-            if pending_stale_paths:
-                committed = True
-                try:
-                    if not connection.in_transaction:
-                        committed = (
-                            _verifier_state(
-                                list_resume_bullets_for_branch(
-                                    connection, branch.id, current_only=True
-                                )
-                            )
-                            != prior_state
-                        )
-                except Exception:
+
+            run_id = id_factory("run")
+            planned = (
+                PlannedCall(
+                    input_payload=bundle.input_payload,
+                    input_ids=bundle.input_ids,
+                    enrich=_enrich_for(bundle.bullet_ids),
+                    resolve=_resolve_for(
+                        run_id=run_id, id_factory=id_factory, clock=now
+                    ),
+                ),
+            )
+
+            pending_stale_paths: tuple[str, ...] = ()
+
+            def commit(
+                held: sqlite3.Connection, resolved: Sequence[object]
+            ) -> Iterable[str]:
+                nonlocal pending_stale_paths
+                findings = cast(tuple[VerificationFinding, ...], resolved[0])
+                if {item.target_id for item in findings} != set(bundle.bullet_ids):
+                    raise IntegrityFailureError("verification_bullet_set_mismatch")
+                for finding in findings:
+                    update_resume_bullet_verification(
+                        held,
+                        bullet_id=finding.target_id,
+                        verification_status=finding.status,
+                        unsupported_phrases=finding.unsupported_phrases,
+                        verifier_reason=finding.reason,
+                    )
+                    # §15.7 returns no counterevidence, so a Stage 11 finding
+                    # grounds none and needs no bundle-reference allowance.
+                    insert_verification_finding(held, finding, bundle_refs=frozenset())
+                fresh = _verifier_state(
+                    list_resume_bullets_for_branch(held, branch.id, current_only=True)
+                )
+                if fresh != prior_state:
+                    # §13.11: a changed verdict may not leave an older valid
+                    # manifest current, so the branch's published set is reported
+                    # stale before the commit-to-cleanup window opens.
+                    pending_stale_paths = branch_set_paths(workspace, (branch.id,))
+                    report_managed_residuals(pending_stale_paths)
+                return tuple(item.id for item in findings)
+
+            try:
+                run_complete_stage(
+                    workspace,
+                    connection,
+                    stage="13.11",
+                    contract=RESUME_VERIFIER_CONTRACT,
+                    selection=selection,
+                    budgets=budgets,
+                    runner=runner,
+                    planned=planned,
+                    commit=commit,
+                    run_id=run_id,
+                    clock=now,
+                    cli_version=cli_version,
+                    capability_check=capability_check,
+                    monotonic=monotonic,
+                    sleeper=sleeper,
+                    jitter=jitter,
+                    token_patterns=token_patterns,
+                    resolved_credentials=resolved_credentials,
+                )
+            except BaseException as error:
+                # Withdraw the pre-commit pending report only on a proven rollback.
+                # Stage 11 supersedes nothing, so the committed marker is the
+                # verifier-state change itself; an indeterminate read keeps the
+                # report, because a spurious residual is the recoverable error.
+                if pending_stale_paths:
                     committed = True
-                if not committed:
-                    withdraw_managed_residuals(pending_stale_paths)
-            # §14.14 rule 6: orchestration converts an interrupt inside its own
-            # commit-to-return window into `LLMCancelledError`, which reaches
-            # here rather than the guarded read window below. A `completed` run
-            # row is exactly the durability the interrupt could not undo, so the
-            # class-9 error leaves with the committed pass on it — the same
-            # recovery Stage 10 makes at the same boundary.
-            if isinstance(
-                error, (KeyboardInterrupt, LLMCancelledError)
-            ) and run_is_committed(connection, run_id):
+                    try:
+                        if not connection.in_transaction:
+                            committed = (
+                                _verifier_state(
+                                    list_resume_bullets_for_branch(
+                                        connection, branch.id, current_only=True
+                                    )
+                                )
+                                != prior_state
+                            )
+                    except Exception:
+                        committed = True
+                    if not committed:
+                        withdraw_managed_residuals(pending_stale_paths)
+                # §14.14 rule 6: orchestration converts an interrupt inside its own
+                # commit-to-return window into `LLMCancelledError`, which reaches
+                # here rather than the guarded read window below. A `completed` run
+                # row is exactly the durability the interrupt could not undo, so the
+                # class-9 error leaves with the committed pass on it — the same
+                # recovery Stage 10 makes at the same boundary.
+                if isinstance(
+                    error, (KeyboardInterrupt, LLMCancelledError)
+                ) and run_is_committed(connection, run_id):
+                    cancelled = OperationCancelledError()
+                    cancelled.stage_result = _recovered_result(
+                        connection,
+                        run_id=run_id,
+                        branch=branch,
+                        # Nothing was cleaned yet: any set reported stale above is
+                        # still on disk and stays reported as residual.
+                        residuals=pending_stale_paths,
+                    )
+                    raise cancelled from None
+                raise
+
+            # §14.14 rule 6: the pass is durable from here on, so the whole
+            # read-compose-cleanup window is guarded — an interrupt anywhere in it
+            # reports the committed verdicts rather than an empty cancellation.
+            cleaned_sets: list[str] = []
+            try:
+                findings = tuple(
+                    sorted(
+                        list_verification_findings(connection, run_id=run_id),
+                        key=lambda item: _id_key(item.id),
+                    )
+                )
+                verified = list_resume_bullets_for_branch(
+                    connection, branch.id, current_only=True
+                )
+                statuses = tuple(
+                    (bullet.id, bullet.verification_status) for bullet in verified
+                )
+                # §16.11: the pack's allowlist is exactly `supported`, so one
+                # bullet outside it leaves the whole branch ineligible for export.
+                blocked = any(
+                    status not in BULLET_EXPORT_ALLOWLIST
+                    for _bullet_id, status in statuses
+                )
+                if _verifier_state(verified) == prior_state:
+                    completed = _result(
+                        run_id=run_id,
+                        branch=branch,
+                        findings=findings,
+                        statuses=statuses,
+                        blocked=blocked,
+                        residuals=(),
+                    )
+                    return completed
+                # Cleanup failure never rolls the committed pass back.
+                residual_paths = remove_branch_sets(
+                    workspace, (branch.id,), removed_ledger=cleaned_sets
+                )
+            except KeyboardInterrupt:
+                # Only the set this pass never removed stays reported; a read that
+                # the interrupt cut short contributes whatever it reached.
                 cancelled = OperationCancelledError()
                 cancelled.stage_result = _recovered_result(
                     connection,
                     run_id=run_id,
                     branch=branch,
-                    # Nothing was cleaned yet: any set reported stale above is
-                    # still on disk and stays reported as residual.
-                    residuals=pending_stale_paths,
+                    residuals=unfinished_stale_paths(pending_stale_paths, cleaned_sets),
                 )
                 raise cancelled from None
-            raise
-
-        # §14.14 rule 6: the pass is durable from here on, so the whole
-        # read-compose-cleanup window is guarded — an interrupt anywhere in it
-        # reports the committed verdicts rather than an empty cancellation.
-        cleaned_sets: list[str] = []
-        try:
-            findings = tuple(
-                sorted(
-                    list_verification_findings(connection, run_id=run_id),
-                    key=lambda item: _id_key(item.id),
-                )
-            )
-            verified = list_resume_bullets_for_branch(
-                connection, branch.id, current_only=True
-            )
-            statuses = tuple(
-                (bullet.id, bullet.verification_status) for bullet in verified
-            )
-            # §16.11: the pack's allowlist is exactly `supported`, so one
-            # bullet outside it leaves the whole branch ineligible for export.
-            blocked = any(
-                status not in BULLET_EXPORT_ALLOWLIST
-                for _bullet_id, status in statuses
-            )
-            if _verifier_state(verified) == prior_state:
-                return _result(
-                    run_id=run_id,
-                    branch=branch,
-                    findings=findings,
-                    statuses=statuses,
-                    blocked=blocked,
-                    residuals=(),
-                )
-            # Cleanup failure never rolls the committed pass back.
-            residual_paths = remove_branch_sets(
-                workspace, (branch.id,), removed_ledger=cleaned_sets
-            )
-        except KeyboardInterrupt:
-            # Only the set this pass never removed stays reported; a read that
-            # the interrupt cut short contributes whatever it reached.
-            cancelled = OperationCancelledError()
-            cancelled.stage_result = _recovered_result(
-                connection,
+            completed = _result(
                 run_id=run_id,
                 branch=branch,
-                residuals=unfinished_stale_paths(pending_stale_paths, cleaned_sets),
+                findings=findings,
+                statuses=statuses,
+                blocked=blocked,
+                residuals=residual_paths,
             )
-            raise cancelled from None
-        return _result(
-            run_id=run_id,
-            branch=branch,
-            findings=findings,
-            statuses=statuses,
-            blocked=blocked,
-            residuals=residual_paths,
-        )
+            return completed
+    except KeyboardInterrupt:
+        if completed is None:
+            raise
+        cancelled = OperationCancelledError()
+        cancelled.stage_result = completed
+        raise cancelled from None
 
 
 __all__ = [
