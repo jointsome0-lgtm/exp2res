@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 import os
 import sqlite3
-from typing import Generic, Literal, TypeVar, cast
+from typing import Generic, Literal, Sequence, TypeVar, cast
 
 from pydantic import ConfigDict
 
@@ -380,6 +380,141 @@ def assessment_integrity_failure(
     return None
 
 
+@dataclass(frozen=True)
+class SupplementalClosure:
+    """Every row a supplemental reference reaches, one level out."""
+
+    facts: tuple[StoredRecord[ExperienceFact], ...]
+    fact_sources: tuple[FactSourceRecord, ...]
+    evidence_items: tuple[EvidenceItem, ...]
+    raw_logs: tuple[RawLog, ...]
+
+
+def load_supplemental_closure(
+    connection: sqlite3.Connection,
+    *,
+    supplemental_refs: dict[str, set[str]],
+    fact_ids: set[str],
+    evidence_ids: Sequence[str],
+    raw_log_ids: Sequence[str],
+    log_by_evidence: dict[str, str],
+) -> SupplementalClosure:
+    """Resolve supplemental references and their one-level chain.
+
+    §16.1: a supplemental row entering export — counterevidence grounding, a
+    gap target, a gap answer log, a contradiction reference — resolves its own
+    complete current chain, so out-of-closure targets cascade one level
+    (facts -> fact_sources/evidence -> raw logs) and every row read here joins
+    the manifest source lists and the render-input bundle. Both export kinds
+    call this: the assessment graph reaches it through four reference kinds,
+    the branch graph only through a cited claim's counterevidence, and a
+    second copy would let the two drift on what "reached" means.
+    """
+
+    ce_facts: list[StoredRecord[ExperienceFact]] = []
+    ce_fact_sources: list[FactSourceRecord] = []
+    ce_evidence: list[EvidenceItem] = []
+    ce_raw_logs: list[RawLog] = []
+    invalid = "export_source_reference_invalid"
+    ce_fact_ids: set[str] = set(
+        supplemental_refs.get("experience_fact", set()) - fact_ids
+    )
+    ce_evidence_ids: set[str] = set(
+        supplemental_refs.get("evidence_item", set()) - set(evidence_ids)
+    )
+    ce_fact_evidence: dict[str, list[str]] = {}
+    for fact_id in sorted(ce_fact_ids, key=id_key):
+        row = connection.execute(
+            "SELECT * FROM experience_facts WHERE id = ?", (fact_id,)
+        ).fetchone()
+        fact = get_experience_fact(connection, fact_id)
+        if row is None or fact is None or fact.superseded_at is not None:
+            raise IntegrityFailureError(invalid)
+        ce_facts.append(_stored(row, fact))
+        source_rows = connection.execute(
+            "SELECT fact_id, evidence_item_id, support_type "
+            "FROM fact_sources WHERE fact_id = ?",
+            (fact_id,),
+        ).fetchall()
+        row_evidence: list[str] = []
+        has_direct_source = False
+        for source in source_rows:
+            support_type = source["support_type"]
+            if support_type not in {"direct", "corroborating"}:
+                raise IntegrityFailureError(invalid)
+            if support_type == "direct":
+                has_direct_source = True
+            ce_fact_sources.append(
+                FactSourceRecord(
+                    fact_id=source["fact_id"],
+                    evidence_item_id=source["evidence_item_id"],
+                    support_type=support_type,
+                )
+            )
+            row_evidence.append(source["evidence_item_id"])
+        if sorted(set(row_evidence), key=id_key) != list(fact.evidence_item_ids):
+            raise IntegrityFailureError("fact_evidence_closure_incomplete")
+        if not has_direct_source:
+            raise IntegrityFailureError("supplemental_fact_direct_source_missing")
+        ce_fact_evidence[fact_id] = list(fact.evidence_item_ids)
+        ce_evidence_ids.update(set(fact.evidence_item_ids) - set(evidence_ids))
+    ce_fact_sources.sort(
+        key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id))
+    )
+    ce_log_ids: set[str] = set(
+        supplemental_refs.get("raw_log", set()) - set(raw_log_ids)
+    )
+    for evidence_id in sorted(ce_evidence_ids, key=id_key):
+        row = connection.execute(
+            "SELECT * FROM evidence_items WHERE id = ?", (evidence_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError(invalid)
+        item = hydrate_evidence_item(row)
+        ce_evidence.append(item)
+        if item.raw_log_id not in set(raw_log_ids):
+            ce_log_ids.add(item.raw_log_id)
+    for raw_log_id in sorted(ce_log_ids, key=id_key):
+        row = connection.execute(
+            "SELECT * FROM raw_logs WHERE id = ?", (raw_log_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError(invalid)
+        ce_raw_logs.append(hydrate_raw_log(row))
+    # Same per-fact raw-log equality as the claim closure: the evidence-derived
+    # log set of each counterevidence-reached fact equals its stored value.
+    ce_log_by_evidence = {
+        **log_by_evidence,
+        **{item.id: item.raw_log_id for item in ce_evidence},
+    }
+    for fact_record in ce_facts:
+        fact = fact_record.value
+        derived_logs = sorted(
+            {ce_log_by_evidence[item] for item in ce_fact_evidence[fact.id]},
+            key=id_key,
+        )
+        if derived_logs != list(fact.source_log_ids):
+            raise IntegrityFailureError("fact_raw_log_closure_incomplete")
+        try:
+            validate_experience_fact_sources(connection, fact)
+        except IntegrityFailureError as error:
+            raise IntegrityFailureError("fact_source_selection_invalid") from error
+    unknown_types = set(supplemental_refs) - {
+        "experience_fact",
+        "evidence_item",
+        "raw_log",
+    }
+    if unknown_types:
+        raise IntegrityFailureError(invalid)
+
+    return SupplementalClosure(
+        facts=tuple(ce_facts),
+        fact_sources=tuple(ce_fact_sources),
+        evidence_items=tuple(ce_evidence),
+        raw_logs=tuple(ce_raw_logs),
+    )
+
+
 def load_assessment_graph(
     connection: sqlite3.Connection,
     *,
@@ -599,106 +734,14 @@ def load_assessment_graph(
         except IntegrityFailureError as error:
             raise IntegrityFailureError("fact_source_selection_invalid") from error
 
-    # §16.1: a supplemental row entering export — counterevidence grounding,
-    # gap target, gap answer log, contradiction reference — resolves its own
-    # complete current chain, so out-of-closure targets cascade one level —
-    # facts → fact_sources/evidence → raw logs — and every row read here
-    # joins the manifest source lists and the render-input bundle.
-    ce_facts: list[StoredRecord[ExperienceFact]] = []
-    ce_fact_sources: list[FactSourceRecord] = []
-    ce_evidence: list[EvidenceItem] = []
-    ce_raw_logs: list[RawLog] = []
-    invalid = "export_source_reference_invalid"
-    ce_fact_ids: set[str] = set(
-        supplemental_refs.get("experience_fact", set()) - fact_ids
+    closure = load_supplemental_closure(
+        connection,
+        supplemental_refs=supplemental_refs,
+        fact_ids=fact_ids,
+        evidence_ids=evidence_ids,
+        raw_log_ids=raw_log_ids,
+        log_by_evidence=log_by_evidence,
     )
-    ce_evidence_ids: set[str] = set(
-        supplemental_refs.get("evidence_item", set()) - set(evidence_ids)
-    )
-    ce_fact_evidence: dict[str, list[str]] = {}
-    for fact_id in sorted(ce_fact_ids, key=id_key):
-        row = connection.execute(
-            "SELECT * FROM experience_facts WHERE id = ?", (fact_id,)
-        ).fetchone()
-        fact = get_experience_fact(connection, fact_id)
-        if row is None or fact is None or fact.superseded_at is not None:
-            raise IntegrityFailureError(invalid)
-        ce_facts.append(_stored(row, fact))
-        source_rows = connection.execute(
-            "SELECT fact_id, evidence_item_id, support_type "
-            "FROM fact_sources WHERE fact_id = ?",
-            (fact_id,),
-        ).fetchall()
-        row_evidence: list[str] = []
-        has_direct_source = False
-        for source in source_rows:
-            support_type = source["support_type"]
-            if support_type not in {"direct", "corroborating"}:
-                raise IntegrityFailureError(invalid)
-            if support_type == "direct":
-                has_direct_source = True
-            ce_fact_sources.append(
-                FactSourceRecord(
-                    fact_id=source["fact_id"],
-                    evidence_item_id=source["evidence_item_id"],
-                    support_type=support_type,
-                )
-            )
-            row_evidence.append(source["evidence_item_id"])
-        if sorted(set(row_evidence), key=id_key) != list(fact.evidence_item_ids):
-            raise IntegrityFailureError("fact_evidence_closure_incomplete")
-        if not has_direct_source:
-            raise IntegrityFailureError("supplemental_fact_direct_source_missing")
-        ce_fact_evidence[fact_id] = list(fact.evidence_item_ids)
-        ce_evidence_ids.update(set(fact.evidence_item_ids) - set(evidence_ids))
-    ce_fact_sources.sort(
-        key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id))
-    )
-    ce_log_ids: set[str] = set(
-        supplemental_refs.get("raw_log", set()) - set(raw_log_ids)
-    )
-    for evidence_id in sorted(ce_evidence_ids, key=id_key):
-        row = connection.execute(
-            "SELECT * FROM evidence_items WHERE id = ?", (evidence_id,)
-        ).fetchone()
-        if row is None:
-            raise IntegrityFailureError(invalid)
-        item = hydrate_evidence_item(row)
-        ce_evidence.append(item)
-        if item.raw_log_id not in set(raw_log_ids):
-            ce_log_ids.add(item.raw_log_id)
-    for raw_log_id in sorted(ce_log_ids, key=id_key):
-        row = connection.execute(
-            "SELECT * FROM raw_logs WHERE id = ?", (raw_log_id,)
-        ).fetchone()
-        if row is None:
-            raise IntegrityFailureError(invalid)
-        ce_raw_logs.append(hydrate_raw_log(row))
-    # Same per-fact raw-log equality as the claim closure: the evidence-derived
-    # log set of each counterevidence-reached fact equals its stored value.
-    ce_log_by_evidence = {
-        **log_by_evidence,
-        **{item.id: item.raw_log_id for item in ce_evidence},
-    }
-    for fact_record in ce_facts:
-        fact = fact_record.value
-        derived_logs = sorted(
-            {ce_log_by_evidence[item] for item in ce_fact_evidence[fact.id]},
-            key=id_key,
-        )
-        if derived_logs != list(fact.source_log_ids):
-            raise IntegrityFailureError("fact_raw_log_closure_incomplete")
-        try:
-            validate_experience_fact_sources(connection, fact)
-        except IntegrityFailureError as error:
-            raise IntegrityFailureError("fact_source_selection_invalid") from error
-    unknown_types = set(supplemental_refs) - {
-        "experience_fact",
-        "evidence_item",
-        "raw_log",
-    }
-    if unknown_types:
-        raise IntegrityFailureError(invalid)
 
     return AssessmentExportGraph(
         snapshot=snapshot_record,
@@ -710,9 +753,9 @@ def load_assessment_graph(
         gaps=tuple(gap_records),
         contradictions=tuple(contradiction_records),
         fact_sources=tuple(fact_source_records),
-        supplemental_facts=tuple(ce_facts),
-        supplemental_fact_sources=tuple(ce_fact_sources),
-        supplemental_evidence_items=tuple(ce_evidence),
-        supplemental_raw_logs=tuple(ce_raw_logs),
+        supplemental_facts=closure.facts,
+        supplemental_fact_sources=closure.fact_sources,
+        supplemental_evidence_items=closure.evidence_items,
+        supplemental_raw_logs=closure.raw_logs,
         supplemental_gaps=tuple(omitted_gap_records),
     )

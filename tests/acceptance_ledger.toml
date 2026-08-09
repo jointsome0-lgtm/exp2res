@@ -56,10 +56,16 @@ issues = []
 note = "Stage 7 now persists deterministic blocking verdicts, preserves claim prose, and exposes the complete owner-visible rewrite through the CLI; live semantic detection of flattery, unsupported identity, and diagnostic claims remains"
 
 ["24.9"]
-status = "pending"
+status = "met"
 phases = ["4"]
 evals = ["21.9"]
 issues = []
+nodes = [
+  "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[ungrounded-bullet]",
+  "tests/test_stage12_bullet_pack.py::test_every_closed_document_failure_writes_nothing_to_out_branch[log-closure-mismatch]",
+  "tests/test_stage12_bullet_pack.py::test_the_evidence_map_closes_over_every_rendered_bullet",
+]
+note = "§11 gives source_fact_ids and source_log_ids a min_length of 1, Stage 10 derives the log closure from the selected facts rather than the model, and Stage 12 now refuses to publish a bullet whose grounding is empty or whose stored closure no longer equals the reached logs"
 
 ["24.10"]
 status = "pending"
@@ -72,20 +78,27 @@ status = "partial"
 phases = ["3"]
 evals = ["21.16", "21.48"]
 issues = []
-note = "The public export assessment CLI now publishes deterministic golden-matched report.md through the managed writer and closed envelope; the shared eval remains partial because the verified bullet-pack export half is pending"
+note = "The public export assessment CLI now publishes deterministic golden-matched report.md through the managed writer and closed envelope; the bullet-pack half of the shared eval has landed, so what keeps 21.48 partial is its pinned bullet-pack goldens rather than a missing export"
 
 ["24.12"]
-status = "pending"
+status = "partial"
 phases = ["4"]
 evals = ["21.16", "21.48"]
 issues = []
+nodes = [
+  "tests/test_stage12_bullet_pack.py::test_the_published_set_is_exactly_the_three_members_and_a_manifest",
+  "tests/test_stage12_bullet_pack.py::test_the_pack_renders_every_section_heading_and_no_filler",
+  "tests/test_stage12_bullet_pack.py::test_re_exporting_the_same_branch_state_is_byte_identical",
+  "tests/test_cli_bullets.py::test_export_reports_only_the_closed_manifest_path_projection",
+]
+note = "bullets export publishes exactly bullet_pack.md, evidence_map.json, verification_report.json, and the §13.14 manifest under out/branch/<branch-id>/, byte-identical on re-export with nothing outside §13.12 written; the item stays partial only because its two linked evals still carry uncovered clauses — pinned bullet-pack goldens under 21.48 and the Stage 10 self-claim column under 21.16"
 
 ["24.13"]
 status = "partial"
 phases = ["3", "4"]
 evals = ["21.15", "21.48"]
 issues = []
-note = "Assessment evidence_map.json carries a complete closed link projection at the §13.12 version-2 claim-fact-evidence shape, each claim's source and counter members split; the resume evidence map remains"
+note = "Assessment evidence_map.json carries a complete closed link projection at the §13.12 version-3 claim-fact-evidence shape with each claim's source and counter members split, and the resume evidence map now joins it, round-tripping every rendered bullet through its claim, fact, evidence, and raw-log closure with equality enforced in both directions"
 
 ["24.14"]
 status = "pending"
@@ -121,10 +134,11 @@ issues = ["#81", "PR #95", "#82", "PR #125"]
 note = "Stage 1 proves atomic non-null EvidenceItem linkage and Stage 3 proves transactional fact_sources semantics, derived source-log IDs, and exact selected-item persistence; the same-log multi-item calibration clause and Stage 6 cardinality remain"
 
 ["24.19"]
-status = "pending"
+status = "partial"
 phases = ["3", "4"]
 evals = ["21.16"]
 issues = []
+note = "Stage 7 reduces a snapshot from its current claim statuses including the required matching narrative_summary claim, Stage 10 admits only a supported self-claim and only an anchor-eligible snapshot, and Stage 12 now admits only a supported bullet while keeping a partially_supported or inferred_but_acceptable anchor eligible; unverified blocks every gated consumer and assessment export decides all eight statuses, while the Stage 10 self-claim column is proven only on its rejection side"
 
 ["24.20"]
 status = "pending"
@@ -137,7 +151,7 @@ status = "partial"
 phases = ["3", "4", "5"]
 evals = ["21.18"]
 issues = []
-note = "The Stage 7 assessment-verifier gate now runs through the CLI with no owner confirm, dispute, or override state, Stage 10's input gate joins it — only a §16.11-eligible snapshot may anchor a branch, only supported member claims may guide a bullet, and every new bullet starts unverified — and Stage 11 now completes for the branch projection under the same envelope; exports and exhaustive producer coverage for every SourceType and EvidenceStrength remain"
+note = "The Stage 7 assessment-verifier gate now runs through the CLI with no owner confirm, dispute, or override state, Stage 10's input gate joins it — only a §16.11-eligible snapshot may anchor a branch, only supported member claims may guide a bullet, and every new bullet starts unverified — and Stage 11 now completes for the branch projection under the same envelope; both export projections now refuse a row whose verifier pass has not completed or whose status fails the consumer allowlist, and only exhaustive producer coverage for every SourceType and EvidenceStrength value remains"
 
 ["24.22"]
 status = "pending"
@@ -170,7 +184,7 @@ status = "partial"
 phases = ["4"]
 evals = ["21.22", "21.24"]
 issues = []
-note = "Stage 8 persists a typed ParsedJD whose JDRequirement IDs are service-assigned, globally unique, and never model-authored, and Stage 10 now persists bullets whose matched_jd_requirements resolve in that exact supplied ParsedJD, failing the whole batch atomically on a free-form or different-job reference; the export-side reference rendering waits on Stage 12"
+note = "Stage 8 persists a typed ParsedJD whose JDRequirement IDs are service-assigned, globally unique, and never model-authored, and Stage 10 now persists bullets whose matched_jd_requirements resolve in that exact supplied ParsedJD, failing the whole batch atomically on a free-form or different-job reference; Stage 12 now re-resolves every reference against the branch's own job description at export, refusing a foreign requirement before publication and deriving the §13.10 render order from the requirement positions alone"
 
 ["24.26"]
 status = "partial"
@@ -253,7 +267,7 @@ status = "partial"
 phases = ["3", "4"]
 evals = ["21.34", "21.47"]
 issues = []
-note = "Assessment sets are opaque-snapshot-ID keyed, manifest-validated, lifecycle-hash-sensitive, invalidated by verification and gap answers, and same-view replaced without touching other views; resume branch invalidation targets exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and fold-equal display names resolve one current branch without ever deriving a path, so branch-name separation holds; the folded-identity replacement itself and publishing a branch set with its manifest remain with Stages 10 and 12"
+note = "Assessment sets are opaque-snapshot-ID keyed, manifest-validated, lifecycle-hash-sensitive, invalidated by verification and gap answers, and same-view replaced without touching other views; resume branch invalidation targets exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and fold-equal display names resolve one current branch without ever deriving a path, so branch-name separation holds; Stage 10's folded-identity replacement and Stage 12's publication of the branch set under a manifest carrying the branch ID, the closed resume identity, and a render hash that moves when a gate-read value changes at unchanged IDs now join them"
 
 ["24.38"]
 status = "partial"
@@ -347,7 +361,7 @@ status = "partial"
 phases = ["3", "4"]
 evals = ["21.34", "21.47"]
 issues = []
-note = "The assessment half proves private candidate construction, manifest-last flush, rollback publication, no-follow containment, lock-held every-writer preamble recovery/reporting, stale cleanup, and deletion; resume publication remains"
+note = "The assessment half proves private candidate construction, manifest-last flush, rollback publication, no-follow containment, lock-held every-writer preamble recovery/reporting, stale cleanup, and deletion; resume publication now runs that same extracted protocol under out/branch/<branch-id>/ with 0700/0600 modes, refuses to publish behind an unresolved candidate residual, and leaves the anchor snapshot's set untouched — the hostile-display-name and crash-injection matrices still exercise the assessment kind only"
 
 ["24.51"]
 status = "partial"
@@ -357,7 +371,7 @@ issues = ["#79"]
 nodes = [
   "tests/test_demo.py::test_vera_first_mirror_demo_is_closed_current_blocking_and_deterministic",
 ]
-note = "Assessment report.md, self_claims.json, evidence_map.json, closed export envelope, §17's closed positional escape rule with its CommonMark round trip, pinned Vera E6 goldens, and the Vera first-mirror demo's clean-workspace closure, blocked-overclaim refusal, checked asciinema stream, and repeated transcript/member bytes are covered against the §13.12 version-2 signal-free companions; every bullet-pack member and its CLI envelope half remain"
+note = "Assessment report.md, self_claims.json, evidence_map.json, closed export envelope, §17's closed positional escape rule with its CommonMark round trip, pinned Vera E6 goldens, and the Vera first-mirror demo's clean-workspace closure, blocked-overclaim refusal, checked asciinema stream, and repeated transcript/member bytes are covered against the §13.12 version-3 signal-free companions; bullet_pack.md, its evidence_map.json, and verification_report.json now prove repeated byte-identical export, extra-forbid version-3 validation, full closure round trip, one same-order finding per rendered bullet, and both §14.14 export envelope forms — pinned bullet-pack golden files and the Vera E10/E11 replay remain"
 
 ["24.52"]
 status = "pending"

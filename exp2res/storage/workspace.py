@@ -144,18 +144,30 @@ def _assessment_set_cleanup(
     the retained view's set is as stale as a deleted one's and the retained
     view re-exports cleanly at version 6 instead of stalling on a residual.
 
-    The `out/branch/<branch-id>/` half of §12.14's cleanup has no ID source
-    here: `resume_branches` arrives at v12, so neither a v8 nor a v9 workspace
-    can hold a branch set. It joins here when §22 Phase 4 publishes branch
-    output.
+    The `out/branch/<branch-id>/` half is now published (§22 Phase 4), so it is
+    swept here too rather than deferred. `resume_branches` arrives at v12,
+    which is after both registered steps, so the branch half is provably empty
+    at 8→9 and 9→10 — the table lookup is what makes that provable instead of
+    assumed, and it is why the next step to strand derived rows inherits a
+    cleanup that already covers both managed parents.
     """
 
-    from exp2res.exports.managed import remove_assessment_sets
+    from exp2res.exports.managed import remove_assessment_sets, remove_branch_sets
 
     snapshot_ids = [
         row[0] for row in connection.execute("SELECT id FROM assessment_snapshots")
     ]
-    return remove_assessment_sets(workspace, snapshot_ids)
+    residuals = list(remove_assessment_sets(workspace, snapshot_ids))
+
+    branch_table = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'resume_branches'"
+    ).fetchone()
+    if branch_table is not None:
+        branch_ids = [
+            row[0] for row in connection.execute("SELECT id FROM resume_branches")
+        ]
+        residuals.extend(remove_branch_sets(workspace, branch_ids))
+    return tuple(sorted(set(residuals), key=lambda value: value.encode("utf-8")))
 
 
 def _entry_kind(path: Path) -> int | None:
