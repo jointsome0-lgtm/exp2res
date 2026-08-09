@@ -243,6 +243,15 @@ class FactLink(ExportDocument):
     def unique_ids(cls, value: list[str]) -> list[str]:
         return _require_unique(value)
 
+    @model_validator(mode="after")
+    def grounded_fact(self) -> "FactLink":
+        # §12: a persisted fact always selects evidence, and that evidence
+        # always names its log. An empty link would satisfy every closure
+        # comparison while leaving the fact it stands for ungrounded.
+        if not self.evidence_item_ids or not self.source_log_ids:
+            raise ValueError("fact link carries no evidence or log")
+        return self
+
 
 class EvidenceLink(ExportDocument):
     evidence_item_id: str

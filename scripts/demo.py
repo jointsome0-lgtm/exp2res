@@ -34,7 +34,9 @@ from exp2res.exports.companions import (
     SelfClaimsDocument,
     VerificationReportDocument,
 )
+from exp2res.exports.branch import load_branch_graph, load_current_branch
 from exp2res.exports.graph import load_assessment_graph, load_current_snapshot
+from exp2res.exports.managed import ResumeManifest, build_branch_manifest
 from exp2res.domain.verification import aggregate_verification_status
 from exp2res.storage.repository import (
     STAGE10_ANCHOR_ALLOWLIST,
@@ -627,11 +629,19 @@ def _verify_branch(
 ) -> None:
     """§13.12: the pack's own closure, checked against persisted rows alone."""
 
-    manifest = json.loads(members["manifest.json"])
-    recorded = {item["name"]: item["sha256"] for item in manifest["members"]}
-    for name in BRANCH_MEMBERS[:-1]:
-        if recorded.get(name) != hashlib.sha256(members[name]).hexdigest():
-            raise AssertionError(f"Vera Example branch manifest hash mismatch: {name}")
+    # §13.14: the manifest is a typed claim about which branch generation the
+    # published bytes came from, so it is rebuilt from the persisted graph and
+    # compared whole. Member hashes alone would accept correct bytes carried by
+    # stale identity, provenance, source IDs, or render hash.
+    manifest = ResumeManifest.model_validate_json(members["manifest.json"])
+    branch_row, branch_value = load_current_branch(connection, branch)
+    expected = build_branch_manifest(
+        load_branch_graph(connection, branch_row=branch_row, branch=branch_value),
+        {name: members[name] for name in BRANCH_MEMBERS[:-1]},
+        created_at=manifest.created_at,
+    )
+    if manifest != expected:
+        raise AssertionError("Vera Example branch manifest disagrees with persisted state")
 
     evidence_map = BulletPackEvidenceMapDocument.model_validate_json(
         members["evidence_map.json"]

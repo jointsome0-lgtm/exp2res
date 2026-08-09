@@ -181,6 +181,29 @@ def test_bullet_pack_map_rejects_two_facts_with_their_logs_swapped() -> None:
         )
 
 
+def test_bullet_pack_map_rejects_a_fact_link_with_no_evidence_or_log() -> None:
+    # §21.48: an empty link satisfies every subset and equality comparison
+    # while leaving the fact it stands for outside the closure entirely.
+    pinned = json.loads(
+        (REPOSITORY_ROOT / "tests" / "goldens" / "branch" / "evidence_map.json")
+        .read_text(encoding="utf-8")
+    )
+    emptied = dict(pinned)
+    first, *rest = pinned["fact_links"]
+    emptied["fact_links"] = [
+        {**first, "evidence_item_ids": [], "source_log_ids": []},
+        *rest,
+    ]
+    emptied["rendered_bullets"] = [
+        {**bullet, "source_log_ids": []}
+        if bullet["source_fact_ids"] == [first["fact_id"]]
+        else bullet
+        for bullet in pinned["rendered_bullets"]
+    ]
+    with pytest.raises(ValidationError):
+        BulletPackEvidenceMapDocument.model_validate(emptied)
+
+
 def test_render_input_hash_covers_gap_lifecycle_and_verification_at_same_ids() -> None:
     graph = assessment_graph(all_sections=False)
     answered = graph_with_gap_answered(graph, True)
