@@ -856,6 +856,13 @@ def test_the_verifier_is_told_what_a_counter_fact_means() -> None:
         pytest.param("Impact, production, customer", id="impact-language"),
         # §16.7 rule 3: comparisons run on the UTC instant, not wall clock.
         pytest.param("by the UTC instant", id="temporal-utc"),
+        # §16.7 rules 4-6: the widths and the anchored half-open intervals.
+        pytest.param("quarter 92 days", id="temporal-widths"),
+        pytest.param("half-open interval from its start", id="temporal-intervals"),
+        # §16.9: the licensed bounded-pattern half, not the prohibition alone.
+        pytest.param("a recurring pattern appears", id="identity-licensed"),
+        # §16.10: reporting an experience in the owner's own terms is allowed.
+        pytest.param("you report burnout under ambitious plans", id="diagnostic-licensed"),
     ],
 )
 def test_the_instructions_carry_each_16_rule_in_full(clause: str) -> None:
