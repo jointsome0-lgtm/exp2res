@@ -99,6 +99,15 @@ MARKER_EXEMPT_PATHS: frozenset[str] = frozenset(
         "tests/goldens/assessment/report.md",
         "tests/goldens/assessment/report.html",
         "tests/goldens/assessment/self_claims.json",
+        # The closed bullet-pack golden set (§13.12) is the same case:
+        # evidence_map.json and verification_report.json are structural, and
+        # bullet_pack.md is generated prose §16.14 keeps the synthetic owner's
+        # personal name out of. The Vera E10 replay derives all three members
+        # in one run from marker-carrying capture and vacancy input, and every
+        # entity ID keeps the vera lineage.
+        "tests/goldens/branch/bullet_pack.md",
+        "tests/goldens/branch/evidence_map.json",
+        "tests/goldens/branch/verification_report.json",
     }
 )
 

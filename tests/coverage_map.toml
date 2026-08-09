@@ -557,7 +557,7 @@ phase = "4"
 note = "Assessment publication proves the ID-keyed manifest writer, owner-only modes, atomic candidate/rollback fallback, idempotency, same-view replacement, no-follow residuals, every-writer preamble reporting, stale invalidation, managed deletion, and the CLI boundary; resume publication now runs the same extracted protocol, publishing 0700/0600 entries under the branch ID alone, refusing to publish behind an unresolved planted-symlink candidate, and never reaching the anchor snapshot's set — the hostile-display-name and crash-injection matrices still run only against the assessment kind"
 
 ["21.48"]
-status = "partial"
+status = "covered"
 nodes = [
   "tests/test_export_markdown.py::test_escape_generated_applies_the_closed_positional_set",
   "tests/test_export_markdown.py::test_escape_generated_keeps_prose_instants_and_typed_ids_legible",
@@ -595,9 +595,11 @@ nodes = [
   "tests/test_stage12_bullet_pack.py::test_a_dangling_counterevidence_reference_stops_the_export",
   "tests/test_cli_bullets.py::test_export_reports_only_the_closed_manifest_path_projection",
   "tests/test_cli_bullets.py::test_an_unverified_branch_is_a_blocked_class_10_export",
+  "tests/test_vera_replay_export.py::test_vera_e10_cli_bullet_pack_matches_pinned_goldens",
+  "tests/test_vera_replay_export.py::test_vera_e11_cli_learning_evidence_never_reaches_production_claims",
 ]
 phase = "4"
-note = "The assessment half proves deterministic §17 Markdown, strict §13.12 version-3 companions carrying each claim's source/counter split, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; the bullet-pack half now proves the three members' repeated byte-identical export, §18's every-heading-no-filler render under the §13.10 order recomputed from persisted state with both the exact-text and post-projection collision rules, both closed companions' full closure round trip and one same-order finding per bullet, a cited claim's counterevidence resolving into the hashed closure while an unresolved one fails before publication, and the §14.14 export envelope in both its ok and class-10 forms — pinned bullet-pack golden files and the Vera E10/E11 replay remain"
+note = "The assessment half proves deterministic §17 Markdown, strict §13.12 version-3 companions carrying each claim's source/counter split, complete typed links, lifecycle-sensitive hashing, all-status gating, pinned CLI golden replay, answered-since-synthesis re-export, and a clean-workspace Vera demo with manifest/evidence closure, checked asciinema output, and repeated transcript/member bytes; the bullet-pack half proves the three members' repeated byte-identical export, §18's every-heading-no-filler render under the §13.10 order recomputed from persisted state with both the exact-text and post-projection collision rules, both closed companions' full closure round trip and one same-order finding per bullet, a cited claim's counterevidence resolving into the hashed closure while an unresolved one fails before publication, and the §14.14 export envelope in both its ok and class-10 forms; the Vera E10 replay now pins bullet_pack.md, evidence_map.json, and verification_report.json against golden files over one claim-guided multi-sentence bullet and one facts-only bullet, and E11 carries the §16.11 refusal end to end over the corpus's own production-demanding vacancy"
 
 ["21.49"]
 status = "pending"

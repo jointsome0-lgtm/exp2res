@@ -1,5 +1,5 @@
 Vera Example — deterministic first-mirror demo
-corpus=0.4.0 schema=12 envelope=2
+corpus=0.5.0 schema=12 envelope=2
 mode=no-cost offline canned responses; network/provider calls=0
 workspace=demo/workspace (external temporary workspace; display alias only)
 paths=stored locators are canonical real paths; this checkout root displays as . (display alias only)
@@ -220,5 +220,41 @@ $ exp2res --workspace demo/workspace logs show --log-id log_demo_0003
 Opened the ingress guide to add a link and found half the TLS section is
 still placeholder text. It was not actually finished. Picked the
 drafting back up today.
+
+== Act 3 — job-targeted verified bullet pack ==
+
+$ exp2res --workspace demo/workspace jd add examples/vera/corpus/jds/jd-docs-engineer-examplia.md
+Added job description jd_demo_0001 with 6 typed requirements.
+
+$ exp2res --workspace demo/workspace jd list
+jd_demo_0001	2026-07-12T10:00:00+02:00	Technical Writer, Platform Documentation	Examplia GmbH
+
+$ exp2res --workspace demo/workspace bullets generate --jd jd_demo_0001 --snapshot snapshot_demo_0002 --branch docs-examplia
+Created branch_demo_0001 — docs-examplia; 2 bullets.
+
+$ exp2res --workspace demo/workspace bullets verify --branch docs-examplia
+Branch branch_demo_0001 — docs-examplia: 2 of 2 bullets supported.
+
+Finding finding_demo_0005
+Target bullet: bullet_demo_0001
+Status: supported
+Reason: Every material assertion resolves to the supplied Vera Example fact, evidence-item, and raw-log closure.
+Unsupported phrases:
+- none
+
+Finding finding_demo_0006
+Target bullet: bullet_demo_0002
+Status: supported
+Reason: The Vera Example correction record carries the reopened guide and the resumed draft.
+Unsupported phrases:
+- none
+
+$ exp2res --workspace demo/workspace bullets export --branch docs-examplia
+demo/workspace/out/branch/branch_demo_0001/manifest.json
+demo/workspace/out/branch/branch_demo_0001/bullet_pack.md
+demo/workspace/out/branch/branch_demo_0001/evidence_map.json
+demo/workspace/out/branch/branch_demo_0001/verification_report.json
+
+Act 3 result: two supported bullets published under out/branch/branch_demo_0001; the video-tutorial and SEO demands stay unmatched because the invented corpus reaches neither.
 
 Demo run complete. Run make demo-verify for closure and determinism proof.

@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 CORPUS_NAME = "vera-example-fixtures"
-CORPUS_VERSION = "0.4.0"
+CORPUS_VERSION = "0.5.0"
 MARKER = "Vera Example"
 PERSONA_SOURCE = "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md"
 ROOT = Path(__file__).resolve().parent / "corpus"
@@ -691,6 +691,97 @@ DEMO_RESPONSES = {
         "status": "supported",
         "reason": "The narrower Vera Example evidence-bound summary is supported.",
         "unsupported_phrases": [], "counterevidence": [], "suggested_rewrite": None,
+    },
+    # §15.9: the parse keeps each demand's wording and required-versus-preferred
+    # modality, and reports the vacancy's self-declared fiction as context.
+    "demo-jd-parse.json": {
+        "title": "Technical Writer, Platform Documentation",
+        "company": "Examplia GmbH",
+        "parsed": {
+            "requirements": [
+                {"kind": "required_skill",
+                 "text": "Two or more years writing developer-facing documentation.",
+                 "keywords": ["developer documentation", "technical writing"]},
+                {"kind": "required_skill",
+                 "text": "Hands-on familiarity with Kubernetes concepts and kubectl workflows.",
+                 "keywords": ["Kubernetes", "kubectl"]},
+                {"kind": "required_skill",
+                 "text": "Comfortable working in Git: branches, pull requests, reviews.",
+                 "keywords": ["Git", "pull requests"]},
+                {"kind": "preferred_skill",
+                 "text": "Python scripting for documentation tooling (link checkers, linters).",
+                 "keywords": ["Python", "documentation tooling"]},
+                {"kind": "preferred_skill",
+                 "text": "Experience producing video tutorials.",
+                 "keywords": ["video tutorials"]},
+                {"kind": "preferred_skill", "text": "On-page SEO basics.",
+                 "keywords": ["SEO"]},
+            ],
+            "seniority_signals": [],
+            "domain_signals": ["internal developer platform", "platform documentation"],
+            "keywords": ["Git", "Kubernetes", "Python", "SEO", "developer documentation",
+                         "documentation tooling", "kubectl", "pull requests",
+                         "technical writing", "video tutorials"],
+            "red_flags": [
+                "The vacancy declares itself a fictional Vera Example demo posting."
+            ],
+        },
+        "warnings": [],
+    },
+    # §15.6: one claim-guided multi-sentence bullet and one facts-only bullet.
+    # Git, Python scripting, video tutorials, and SEO stay unmatched because
+    # the invented corpus reaches none of them.
+    "demo-bullets.json": {
+        "bullets": [
+            {
+                "text": (
+                    "Drafted and validated the kubectl troubleshooting runbook for "
+                    "the invented Vera Example playbook. Every documented step was "
+                    "walked on the toy cluster before it was written down."
+                ),
+                "target_section": "selected_projects",
+                "target_role_relevance": "high",
+                "matched_jd_requirements": ["jdreq_demo_0001", "jdreq_demo_0002"],
+                "source_fact_ids": ["fact_demo_0001", "fact_demo_0002", "fact_demo_0003"],
+                "source_self_claim_ids": ["claim_demo_0003"],
+            },
+            {
+                "text": (
+                    "Reopened the ingress guide after finding placeholder TLS text "
+                    "and resumed the draft."
+                ),
+                "target_section": "selected_projects",
+                "target_role_relevance": "medium",
+                "matched_jd_requirements": ["jdreq_demo_0001"],
+                "source_fact_ids": ["fact_demo_0003"],
+                "source_self_claim_ids": [],
+            },
+        ],
+        "warnings": [],
+    },
+    "demo-bullet-verification.json": {
+        "findings": [
+            {
+                "bullet_id": "bullet_demo_0001",
+                "status": "supported",
+                "unsupported_phrases": [],
+                "suggested_rewrite": None,
+                "reason": (
+                    "Every material assertion resolves to the supplied Vera Example "
+                    "fact, evidence-item, and raw-log closure."
+                ),
+            },
+            {
+                "bullet_id": "bullet_demo_0002",
+                "status": "supported",
+                "unsupported_phrases": [],
+                "suggested_rewrite": None,
+                "reason": (
+                    "The Vera Example correction record carries the reopened guide "
+                    "and the resumed draft."
+                ),
+            },
+        ],
     },
 }
 
