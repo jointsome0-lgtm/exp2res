@@ -108,6 +108,12 @@ MARKER_EXEMPT_PATHS: frozenset[str] = frozenset(
         "tests/goldens/branch/bullet_pack.md",
         "tests/goldens/branch/evidence_map.json",
         "tests/goldens/branch/verification_report.json",
+        # The demo's canned Stage 10 response becomes published bullet prose
+        # an external reader consumes, so §16.14 keeps the synthetic owner's
+        # personal name out of it. Its invented lineage stays checkable
+        # through the marker-carrying vacancy, logs, and Stage 11 response it
+        # is generated beside; examples/vera/corpus.py records the same path.
+        "examples/vera/corpus/llm/demo-bullets.json",
     }
 )
 

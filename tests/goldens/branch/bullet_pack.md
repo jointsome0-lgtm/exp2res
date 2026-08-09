@@ -12,6 +12,6 @@
 
 ## Skills
 
-- Kept the runbook's link checks scripted and its changes reviewable.
+- Kept the runbook's link checks scripted in Python and took every change through a reviewed pull request.
 
 ## Education

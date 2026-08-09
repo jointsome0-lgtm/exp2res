@@ -289,12 +289,6 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
     assert stale["diagnostic_class"] == "snapshot_not_current"
 
 
-# --- E10/E11 ---------------------------------------------------------------
-#
-# Both steps run the §14.10 commands over the corpus's own vacancy prose, so
-# what a pack may claim stays bounded by the evidence the mirror carries.
-
-
 def _replay_step(step: str) -> dict:
     contract = json.loads((VERA_CORPUS / "replay.json").read_text(encoding="utf-8"))
     return next(item for item in contract["derived_steps"] if item["step"] == step)
@@ -446,18 +440,77 @@ def _bullet_verifier_response(findings: list[dict[str, object]]) -> bytes:
     return json.dumps({"findings": findings}, separators=(",", ":")).encode("utf-8")
 
 
+ANCHOR_LOG = (
+    "Vera Example drafted the kubectl troubleshooting runbook and walked every "
+    "step on a toy cluster before writing it down. A small Python script checks "
+    "the runbook's links, and every change to it went through a reviewed pull "
+    "request."
+)
+
+
+def _anchor_facts(evidence_id: str) -> bytes:
+    """The two facts ANCHOR_LOG states, and nothing the log does not say."""
+
+    return json.dumps(
+        {
+            "facts": [
+                {
+                    "claim": (
+                        "Drafted a kubectl troubleshooting runbook and walked "
+                        "every documented step on a toy cluster first."
+                    ),
+                    "claim_kind": "observed_fact",
+                    "role": None,
+                    "company": None,
+                    "context": "independent_project",
+                    "ownership_level": "built",
+                    "action": "drafted",
+                    "object": "a kubectl troubleshooting runbook",
+                    "outcome": None,
+                    "skills": ["technical writing", "kubernetes troubleshooting"],
+                    "technologies": ["Kubernetes", "kubectl"],
+                    "themes": ["documentation"],
+                    "occurred": None,
+                    "evidence_item_ids": [evidence_id],
+                    "confidence": "medium",
+                },
+                {
+                    "claim": (
+                        "Scripted the runbook's link checks in Python and took "
+                        "every change through a reviewed pull request."
+                    ),
+                    "claim_kind": "observed_fact",
+                    "role": None,
+                    "company": None,
+                    "context": "independent_project",
+                    "ownership_level": "built",
+                    "action": "scripted",
+                    "object": "a Python link checker for the runbook",
+                    "outcome": None,
+                    "skills": ["documentation tooling", "code review"],
+                    "technologies": ["Python", "Git"],
+                    "themes": ["documentation"],
+                    "occurred": None,
+                    "evidence_item_ids": [evidence_id],
+                    "confidence": "medium",
+                },
+            ],
+            "warnings": [],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def _verified_anchor(
     workspace: Path, monkeypatch: pytest.MonkeyPatch, ids: VeraIds
-) -> tuple[str, str, tuple[str, ...]]:
-    """E4/E5 in miniature: one current fact under a `supported` snapshot."""
+) -> tuple[tuple[str, ...], str, tuple[str, ...]]:
+    """E4/E5 in miniature: current facts under a `supported` snapshot."""
 
     monkeypatch.setattr(capture_service, "new_id", ids)
     captured = capture_daily(
         workspace,
-        raw_text=(
-            "Vera Example drafted the kubectl troubleshooting runbook and walked "
-            "every step on a toy cluster before writing it down."
-        ),
+        raw_text=ANCHOR_LOG,
         project="K8s Playbook",
         clock=lambda: FIXED_NOW,
         id_factory=ids,
@@ -467,18 +520,18 @@ def _verified_anchor(
         extraction_service,
         run_fact_extraction,
         ids,
-        [fact_response([captured.evidence_items[0].id])],
+        [_anchor_facts(captured.evidence_items[0].id)],
         workspace,
         ["extract"],
     )
-    fact_id = extracted["affected_ids"]["created"][0]["ids"][0]
+    fact_ids = tuple(extracted["affected_ids"]["created"][0]["ids"])
 
     generated = _run_cli_stage(
         monkeypatch,
         assessment_service,
         run_assessment_generation,
         ids,
-        [assessment_response(fact_ids=[fact_id])],
+        [assessment_response(fact_ids=list(fact_ids))],
         workspace,
         ["assess", "generate"],
     )
@@ -501,7 +554,7 @@ def _verified_anchor(
         workspace,
         ["assess", "verify", "--snapshot", snapshot_id],
     )
-    return fact_id, snapshot_id, claim_ids
+    return fact_ids, snapshot_id, claim_ids
 
 
 def _add_vacancy(
@@ -545,7 +598,7 @@ def test_vera_e10_cli_bullet_pack_matches_pinned_goldens(
 
     step = _replay_step("E10")
     ids = VeraIds()
-    fact_id, snapshot_id, claim_ids = _verified_anchor(workspace, monkeypatch, ids)
+    fact_ids, snapshot_id, claim_ids = _verified_anchor(workspace, monkeypatch, ids)
     vacancy = _add_vacancy(
         workspace, monkeypatch, ids, source=DOCS_VACANCY, response=DOCS_PARSE
     )
@@ -559,22 +612,20 @@ def test_vera_e10_cli_bullet_pack_matches_pinned_goldens(
         [
             _writer_response(
                 [
-                    # §18: one claim-guided bullet carrying more than one
-                    # sentence, and one that stands on its facts alone.
                     _bullet(
                         "Drafted and validated a kubectl troubleshooting runbook. "
                         "Every documented step was walked on a toy cluster first.",
                         section="selected_projects",
                         requirements=[requirements[0].id, requirements[1].id],
-                        fact_ids=[fact_id],
+                        fact_ids=[fact_ids[0]],
                         claim_ids=[claim_ids[0]],
                     ),
                     _bullet(
-                        "Kept the runbook's link checks scripted and its changes "
-                        "reviewable.",
+                        "Kept the runbook's link checks scripted in Python and "
+                        "took every change through a reviewed pull request.",
                         section="skills",
                         requirements=[requirements[2].id, requirements[3].id],
-                        fact_ids=[fact_id],
+                        fact_ids=[fact_ids[1]],
                     ),
                 ]
             )
@@ -599,7 +650,6 @@ def test_vera_e10_cli_bullet_pack_matches_pinned_goldens(
     bullets = _current_bullets(workspace, branch_id)
     assert len(bullets) >= step["expect"]["supported_bullets_min"]
 
-    # §18: a demand no evidence reaches simply carries no bullet.
     matched = {
         requirement_id
         for bullet in bullets
@@ -671,7 +721,7 @@ def test_vera_e11_cli_learning_evidence_never_reaches_production_claims(
 
     step = _replay_step("E11")
     ids = VeraIds()
-    fact_id, snapshot_id, claim_ids = _verified_anchor(workspace, monkeypatch, ids)
+    fact_ids, snapshot_id, claim_ids = _verified_anchor(workspace, monkeypatch, ids)
     vacancy = _add_vacancy(
         workspace, monkeypatch, ids, source=BACKEND_VACANCY, response=BACKEND_PARSE
     )
@@ -693,15 +743,12 @@ def test_vera_e11_cli_learning_evidence_never_reaches_production_claims(
         [
             _writer_response(
                 [
-                    # The preferred Kubernetes demand is the only one this
-                    # corpus reaches; the production bullet is the overreach
-                    # Stage 11 has to refuse.
                     _bullet(
                         "Worked hands-on with Kubernetes while writing and "
                         "checking cluster runbooks.",
                         section="selected_projects",
                         requirements=[demanded["Familiarity with Kubernetes."]],
-                        fact_ids=[fact_id],
+                        fact_ids=[fact_ids[0]],
                         claim_ids=[claim_ids[0]],
                     ),
                     _bullet(
@@ -709,7 +756,7 @@ def test_vera_e11_cli_learning_evidence_never_reaches_production_claims(
                         "on-call rotation.",
                         section="professional_experience",
                         requirements=sorted(blocked_demands),
-                        fact_ids=[fact_id],
+                        fact_ids=[fact_ids[0]],
                     ),
                 ]
             )
@@ -780,8 +827,6 @@ def test_vera_e11_cli_learning_evidence_never_reaches_production_claims(
     stored = {item.id: item for item in _current_bullets(workspace, branch_id)}
     assert stored[overclaim.id].verification_status == "rejected"
     assert all(stored[item.id].verification_status == "supported" for item in supported)
-    # Every demand the replay names as blocked is carried by the refused bullet
-    # alone, so no supported bullet answers one of them.
     for claim in step["expect"]["blocked_claims"]:
         assert claim in overclaim.text or claim.split()[0] in overclaim.text
     assert blocked_demands == set(stored[overclaim.id].matched_jd_requirements)

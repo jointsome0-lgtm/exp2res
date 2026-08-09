@@ -506,9 +506,6 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     invoke(transcript, workspace, ["logs", "show", "--log-id", "log_demo_0002"])
     invoke(transcript, workspace, ["logs", "show", "--log-id", "log_demo_0003"])
 
-    # §23: the same evidence, aimed at one vacancy. The pack is anchored to the
-    # mirror snapshot Act 2 published, so nothing here can claim more than the
-    # mirror already carries.
     transcript.section("Act 3 — job-targeted verified bullet pack")
     clock.set("2026-07-12T10:00:00+02:00")
     _stage_command(

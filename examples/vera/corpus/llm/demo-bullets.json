@@ -15,7 +15,7 @@
       ],
       "target_role_relevance": "high",
       "target_section": "selected_projects",
-      "text": "Drafted and validated the kubectl troubleshooting runbook for the invented Vera Example playbook. Every documented step was walked on the toy cluster before it was written down."
+      "text": "Drafted and validated the kubectl troubleshooting runbook for the K8s Playbook. Every documented step was walked on the toy cluster before it was written down."
     },
     {
       "matched_jd_requirements": [

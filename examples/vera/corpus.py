@@ -34,6 +34,13 @@ MARKER = "Vera Example"
 PERSONA_SOURCE = "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md"
 ROOT = Path(__file__).resolve().parent / "corpus"
 
+# §16.14 keeps the persona's personal name out of §18 bullet prose, which an
+# external reader consumes, so this canned Stage 10 response cannot carry the
+# marker. Its invented lineage stays checkable through the marker-carrying
+# vacancy, logs, and Stage 11 response it is generated beside; the same path
+# is recorded in scripts/check_public_hygiene.py.
+MARKER_EXEMPT_PATHS = frozenset({"llm/demo-bullets.json"})
+
 # Fields inside §19 bodies whose values are datetimes for §11 hash
 # normalization. Envelope fields (exported_at) never enter the hash.
 DATETIME_KEYS = {"start", "end", "as_of", "authored_at", "committed_at"}
@@ -736,8 +743,8 @@ DEMO_RESPONSES = {
             {
                 "text": (
                     "Drafted and validated the kubectl troubleshooting runbook for "
-                    "the invented Vera Example playbook. Every documented step was "
-                    "walked on the toy cluster before it was written down."
+                    "the K8s Playbook. Every documented step was walked on the toy "
+                    "cluster before it was written down."
                 ),
                 "target_section": "selected_projects",
                 "target_role_relevance": "high",
@@ -1079,7 +1086,7 @@ def build_files() -> dict:
     files["manifest.json"] = json_file(manifest)
 
     for path, content in files.items():
-        if MARKER not in content:
+        if MARKER not in content and path not in MARKER_EXEMPT_PATHS:
             raise AssertionError(f"fixture {path} lacks the literal marker {MARKER!r}")
     return files
 

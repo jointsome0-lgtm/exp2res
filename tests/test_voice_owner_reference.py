@@ -38,6 +38,15 @@ FORBIDDEN_OWNER_NOUN_PATTERNS = tuple(
 
 GOLDEN_PROSE_MEMBERS = ("report.md", "report.html", "self_claims.json")
 
+# §18 bullet prose an external reader consumes: the pinned pack and the
+# canned Stage 10 response the offline demo publishes from. Both are
+# marker-exempt in scripts/check_public_hygiene.py, so this is where their
+# invented-but-owner-free wording is held.
+GENERATED_BULLET_PROSE = (
+    "tests/goldens/branch/bullet_pack.md",
+    "examples/vera/corpus/llm/demo-bullets.json",
+)
+
 # §15.1 rule 11: every §16 rule a block encodes carries its licensed form
 # beside the violation. One row per (block, rule): the licensed fragment
 # first, then the forbidden one. Wording pins, not the rules themselves —
@@ -188,7 +197,12 @@ def test_generated_prose_in_goldens_carries_no_third_person_owner_nouns() -> Non
         lowered = text.lower()
         for pattern in FORBIDDEN_OWNER_NOUN_PATTERNS:
             assert not pattern.search(lowered), (member, pattern.pattern)
-        # §16.14 forbids the owner's personal name in generated prose, so the
-        # prose goldens are marker-exempt (scripts/check_public_hygiene.py);
-        # fixture lineage lives in the vera entity IDs instead.
         assert "vera example" not in lowered, member
+
+
+def test_generated_bullet_prose_never_names_the_owner() -> None:
+    for relative in GENERATED_BULLET_PROSE:
+        lowered = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8").lower()
+        for pattern in FORBIDDEN_OWNER_NOUN_PATTERNS:
+            assert not pattern.search(lowered), (relative, pattern.pattern)
+        assert "vera example" not in lowered, relative
