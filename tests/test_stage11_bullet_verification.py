@@ -13,13 +13,18 @@ from pathlib import Path
 
 import pytest
 
+from exp2res.domain.models import ResumeBullet
 from exp2res.errors import (
     BranchNameInvalidError,
+    IntegrityFailureError,
     LLMInvocationError,
+    OperationCancelledError,
     SelectorNotFoundError,
 )
-from exp2res.pipeline.stage11 import run_bullet_verification
+from exp2res.pipeline import stage11 as stage11_module
+from exp2res.pipeline.stage11 import require_consistent_bullets, run_bullet_verification
 from exp2res.storage.repository import (
+    get_job_description,
     list_resume_bullets_for_branch,
     list_verification_findings,
 )
@@ -421,6 +426,77 @@ def test_a_superseded_branch_is_never_verified(workspace: Path) -> None:
     )
 
 
+def damaged_bullet(bullet: ResumeBullet, **overrides: object) -> ResumeBullet:
+    """A stored bullet whose own typed references disagree with the graph.
+
+    `insert_resume_bullet` and the §12 update guard make this state
+    unreachable through the service, so the guard is exercised against a
+    hand-built row rather than a workspace the writer refuses to produce.
+    """
+
+    return bullet.model_copy(update=overrides)
+
+
+def test_an_unresolved_requirement_reference_fails_before_the_call(
+    workspace: Path,
+) -> None:
+    """§15.7: a wrong-job or missing requirement ID is not a verdict."""
+
+    _ids, _facts, _snapshot, branch_id, _bullet_ids = prepare_generated_branch(
+        workspace
+    )
+    with read_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+        job_description = get_job_description(connection, JOB_DESCRIPTION_ID)
+        assert job_description is not None
+        with pytest.raises(IntegrityFailureError):
+            require_consistent_bullets(
+                connection,
+                [
+                    damaged_bullet(
+                        bullets[0], matched_jd_requirements=["jdreq_vera_other_job"]
+                    )
+                ],
+                job_description,
+            )
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [
+        pytest.param("extra", id="extra-log"),
+        pytest.param("missing", id="missing-log"),
+    ],
+)
+def test_source_log_ids_must_equal_the_fact_closure(
+    workspace: Path, spoil: str
+) -> None:
+    """§18: the named set equals the closure, so a superset also fails."""
+
+    _ids, _facts, _snapshot, branch_id, _bullet_ids = prepare_generated_branch(
+        workspace
+    )
+    with read_database(workspace) as connection:
+        bullets = list_resume_bullets_for_branch(connection, branch_id)
+        job_description = get_job_description(connection, JOB_DESCRIPTION_ID)
+        assert job_description is not None
+        stored = bullets[0]
+        assert stored.source_log_ids
+        spoiled = (
+            [*stored.source_log_ids, "log_vera_not_in_closure"]
+            if spoil == "extra"
+            else list(stored.source_log_ids[:-1])
+        )
+        # The unspoiled row passes, so the guard is rejecting the change.
+        require_consistent_bullets(connection, [stored], job_description)
+        with pytest.raises(IntegrityFailureError):
+            require_consistent_bullets(
+                connection,
+                [damaged_bullet(stored, source_log_ids=spoiled)],
+                job_description,
+            )
+
+
 def test_a_verified_bullet_never_returns_to_unverified(workspace: Path) -> None:
     """§13.11: Stage 11 owns the transition *out* of the generated state."""
 
@@ -438,3 +514,37 @@ def test_a_verified_bullet_never_returns_to_unverified(workspace: Path) -> None:
         run_stage11(workspace, fake, ids)
 
 
+
+
+def test_cancellation_after_the_commit_reports_the_committed_pass(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: a durable pass survives an interrupt in the read window."""
+
+    ids, _facts, _snapshot, branch_id, bullet_ids = prepare_generated_branch(workspace)
+    fake = FakeContractRunner([verifier_response([finding(bullet_ids[0])])])
+    genuine = stage11_module.list_verification_findings
+    interrupts: list[int] = []
+
+    def interrupt_once(*args: object, **kwargs: object):
+        # One Ctrl-C, landing on the first post-commit read; the recovery
+        # re-read that follows is the ordinary one.
+        if not interrupts:
+            interrupts.append(1)
+            raise KeyboardInterrupt
+        return genuine(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(stage11_module, "list_verification_findings", interrupt_once)
+
+    with pytest.raises(OperationCancelledError) as raised:
+        run_stage11(workspace, fake, ids)
+
+    recovered = raised.value.stage_result
+    assert recovered is not None
+    assert [item.target_id for item in recovered.findings] == [bullet_ids[0]]
+    assert recovered.bullet_statuses == ((bullet_ids[0], "supported"),)
+    assert recovered.export_blocked is False
+    # The verdict is durable, not rolled back with the cancelled invocation.
+    with read_database(workspace) as connection:
+        stored = list_resume_bullets_for_branch(connection, branch_id, current_only=True)
+    assert [bullet.verification_status for bullet in stored] == ["supported"]

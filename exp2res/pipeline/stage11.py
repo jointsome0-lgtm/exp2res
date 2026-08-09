@@ -44,6 +44,7 @@ from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
 from exp2res.storage.repository import (
     BULLET_EXPORT_ALLOWLIST,
+    bullet_log_closure,
     current_branch_by_folded_name,
     get_experience_fact,
     get_job_description,
@@ -102,6 +103,37 @@ def _current_bullets(
         # is damaged state, not a verifiable pack.
         raise IntegrityFailureError("branch_bullet_set_empty")
     return bullets
+
+
+def require_consistent_bullets(
+    connection: sqlite3.Connection,
+    bullets: Sequence[ResumeBullet],
+    job_description: JobDescription,
+) -> None:
+    """Fail closed on a bullet whose own typed references disagree (§15.7).
+
+    Both relations are §12 rule 10 invariants that `insert_resume_bullet`
+    establishes and no current-row update may change, so reaching either
+    failure means the stored graph disagrees with itself — restored, migrated,
+    or damaged state. Checking them here keeps that state from being charged
+    to a provider and from receiving a semantic verdict §18 would then have to
+    refuse at export.
+    """
+
+    requirement_ids = [
+        requirement.id for requirement in job_description.parsed.requirements
+    ]
+    for bullet in bullets:
+        for requirement_id in bullet.matched_jd_requirements:
+            if requirement_ids.count(requirement_id) != 1:
+                raise IntegrityFailureError("bullet_requirement_unresolved")
+        # §18: `source_log_ids` equals — not contains — the closure reached
+        # through this bullet's own facts. A displaced record contributes its
+        # identity here exactly like a retained one; only the *object* is
+        # withheld, in `_build_bundle` below.
+        closure = bullet_log_closure(connection, bullet.source_fact_ids)
+        if tuple(bullet.source_log_ids) != closure:
+            raise IntegrityFailureError("bullet_log_closure_mismatch")
 
 
 def _build_bundle(
@@ -282,6 +314,68 @@ def _verifier_state(
     )
 
 
+def _result(
+    *,
+    run_id: str,
+    branch: ResumeBranch,
+    findings: tuple[VerificationFinding, ...],
+    statuses: tuple[tuple[str, VerificationStatus], ...],
+    blocked: bool,
+    residuals: tuple[str, ...],
+) -> Stage11Result:
+    return Stage11Result(
+        run_id=run_id,
+        branch_id=branch.id,
+        branch_name=branch.name,
+        findings=findings,
+        bullet_statuses=statuses,
+        export_blocked=blocked,
+        residual_paths=residuals,
+    )
+
+
+def _recovered_result(
+    connection: sqlite3.Connection,
+    *,
+    run_id: str,
+    branch: ResumeBranch,
+    residuals: tuple[str, ...],
+) -> Stage11Result:
+    """Re-read the committed pass for a §14.14 rule 6 cancelled envelope.
+
+    The interrupt may have landed before or after any of the ordinary reads,
+    so this repeats them instead of reusing partial locals; a read that fails
+    against the interrupted connection degrades to the empty projection rather
+    than replacing the cancellation with its own error.
+    """
+
+    try:
+        findings = tuple(
+            sorted(
+                list_verification_findings(connection, run_id=run_id),
+                key=lambda item: _id_key(item.id),
+            )
+        )
+        statuses = tuple(
+            (bullet.id, bullet.verification_status)
+            for bullet in list_resume_bullets_for_branch(
+                connection, branch.id, current_only=True
+            )
+        )
+    except Exception:
+        findings, statuses = (), ()
+    return _result(
+        run_id=run_id,
+        branch=branch,
+        findings=findings,
+        statuses=statuses,
+        blocked=any(
+            status not in BULLET_EXPORT_ALLOWLIST for _bullet_id, status in statuses
+        ),
+        residuals=residuals,
+    )
+
+
 def run_bullet_verification(
     workspace: Path,
     *,
@@ -316,6 +410,7 @@ def run_bullet_verification(
         job_description = get_job_description(connection, branch.job_description_id)
         if job_description is None:
             raise IntegrityFailureError("branch_job_description_missing")
+        require_consistent_bullets(connection, bullets, job_description)
 
         prior_state = _verifier_state(bullets)
         bundle = _build_bundle(
@@ -412,52 +507,65 @@ def run_bullet_verification(
                     withdraw_managed_residuals(pending_stale_paths)
             raise
 
-        findings = tuple(
-            sorted(
-                list_verification_findings(connection, run_id=run_id),
-                key=lambda item: _id_key(item.id),
-            )
-        )
-        verified = list_resume_bullets_for_branch(
-            connection, branch.id, current_only=True
-        )
-        statuses = tuple(
-            (bullet.id, bullet.verification_status) for bullet in verified
-        )
-        # §16.11: the pack's allowlist is exactly `supported`, so one bullet
-        # outside it leaves the whole branch ineligible for export.
-        blocked = any(
-            status not in BULLET_EXPORT_ALLOWLIST for _bullet_id, status in statuses
-        )
-
-        def build_result(residuals: tuple[str, ...]) -> Stage11Result:
-            return Stage11Result(
-                run_id=run_id,
-                branch_id=branch.id,
-                branch_name=branch.name,
-                findings=findings,
-                bullet_statuses=statuses,
-                export_blocked=blocked,
-                residual_paths=residuals,
-            )
-
-        if _verifier_state(verified) == prior_state:
-            return build_result(())
-        # The pass is already committed, so cleanup failure never rolls it back.
+        # §14.14 rule 6: the pass is durable from here on, so the whole
+        # read-compose-cleanup window is guarded — an interrupt anywhere in it
+        # reports the committed verdicts rather than an empty cancellation.
         cleaned_sets: list[str] = []
         try:
+            findings = tuple(
+                sorted(
+                    list_verification_findings(connection, run_id=run_id),
+                    key=lambda item: _id_key(item.id),
+                )
+            )
+            verified = list_resume_bullets_for_branch(
+                connection, branch.id, current_only=True
+            )
+            statuses = tuple(
+                (bullet.id, bullet.verification_status) for bullet in verified
+            )
+            # §16.11: the pack's allowlist is exactly `supported`, so one
+            # bullet outside it leaves the whole branch ineligible for export.
+            blocked = any(
+                status not in BULLET_EXPORT_ALLOWLIST
+                for _bullet_id, status in statuses
+            )
+            if _verifier_state(verified) == prior_state:
+                return _result(
+                    run_id=run_id,
+                    branch=branch,
+                    findings=findings,
+                    statuses=statuses,
+                    blocked=blocked,
+                    residuals=(),
+                )
+            # Cleanup failure never rolls the committed pass back.
             residual_paths = remove_branch_sets(
                 workspace, (branch.id,), removed_ledger=cleaned_sets
             )
         except KeyboardInterrupt:
-            # §14.14 rule 6: the class-9 error carries the complete committed
-            # result, and only the set this pass never removed stays reported.
+            # Only the set this pass never removed stays reported; a read that
+            # the interrupt cut short contributes whatever it reached.
             cancelled = OperationCancelledError()
-            cancelled.stage_result = build_result(
-                unfinished_stale_paths(pending_stale_paths, cleaned_sets)
+            cancelled.stage_result = _recovered_result(
+                connection,
+                run_id=run_id,
+                branch=branch,
+                residuals=unfinished_stale_paths(pending_stale_paths, cleaned_sets),
             )
             raise cancelled from None
-        return build_result(residual_paths)
+        return _result(
+            run_id=run_id,
+            branch=branch,
+            findings=findings,
+            statuses=statuses,
+            blocked=blocked,
+            residuals=residual_paths,
+        )
 
 
-__all__ = ["Stage11Result", "run_bullet_verification"]
+__all__ = [
+    "Stage11Result",
+    "require_consistent_bullets",
+    "run_bullet_verification",
+]

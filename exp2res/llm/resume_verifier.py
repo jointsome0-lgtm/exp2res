@@ -98,6 +98,13 @@ class ResumeVerifierInput(StrictModel):
             raise ValueError("source logs are outside the bullets' closure")
         return self
 
+    # Equality with `named_logs` is deliberately *not* asserted here: a
+    # displaced record's identity stays in `source_log_ids` while its object
+    # never transits, so the two sets legitimately differ. That the named set
+    # is itself the exact fact closure is a database relation, checked against
+    # storage in §13.11's `require_consistent_bullets` before this payload is
+    # built.
+
 
 class ResumeVerifierFinding(StrictModel):
     """§15.11: `bullet_id` plus the four transition-result fields."""
