@@ -153,8 +153,11 @@ def _classify(
     # §19.4 rule 5 reports the source identity of a rejected record too, so it
     # is recovered from the raw object whenever the identity itself is valid —
     # including for a record the parse already rejected, whose defect may sit
-    # anywhere but on its identity.
-    identity = contract.raw_identity(raw) if isinstance(raw, dict) else None
+    # anywhere but on its identity. A record that never decoded into a mapping
+    # carries whatever the parse could still salvage, and null otherwise.
+    identity = (
+        contract.raw_identity(raw) if isinstance(raw, dict) else parsed.identity
+    )
     if parsed.reason is not None:
         return "rejected", ImportedRecord(number, identity, reason=parsed.reason)
     if not isinstance(raw, dict):
@@ -234,7 +237,7 @@ def import_payload(
     require_compatible(workspace)
     config = load_workspace_config(workspace)
     text, payload_root = read_payload_file(payload_path, config=config)
-    parsed_records = parse_payload(text, multi_record=contract.multi_record)
+    parsed_records = parse_payload(text, contract=contract)
     context = PlanContext(payload_root=payload_root, config=config)
     recorded_at = (clock or (lambda: datetime.now(timezone.utc)))()
 

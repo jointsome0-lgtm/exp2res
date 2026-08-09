@@ -425,6 +425,37 @@ def test_duplicate_json_object_keys_reject_the_record(
     assert raw_rows(workspace) == []
 
 
+def test_a_duplicate_key_elsewhere_still_reports_the_record_identity(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 5: only the identity's own defect nulls source_record_id."""
+    path = tmp_path / "duplicate-key-identities.jsonl"
+    unrelated = json.dumps(ephemeris_record("vera-ephemeris-0021"))
+    unrelated = unrelated[:-1] + ', "text": "Vera Example second value"}'
+    nested = json.dumps(ephemeris_record("vera-ephemeris-0022")).replace(
+        '"confidence": "high"', '"confidence": "high", "confidence": "low"'
+    )
+    doubled_identity = json.dumps(ephemeris_record("vera-ephemeris-0023"))
+    doubled_identity = (
+        doubled_identity[:-1] + ', "record_id": "vera-ephemeris-0024"}'
+    )
+    path.write_text(
+        "\n".join([unrelated, nested, doubled_identity]) + "\n", encoding="utf-8"
+    )
+    outcome = run_import(workspace, "ephemeris", str(path))
+
+    assert counts(outcome) == (0, 0, 3)
+    assert [record.reason for record in outcome.rejected] == ["record_not_json"] * 3
+    assert [record.source_record_id for record in outcome.rejected] == [
+        "vera-ephemeris-0021",
+        "vera-ephemeris-0022",
+        # Two competing record_id values are an invalid identity, so neither
+        # is picked and the report stays null.
+        None,
+    ]
+    assert raw_rows(workspace) == []
+
+
 def test_payload_over_the_object_limit_fails_before_persistence(
     workspace: Path, tmp_path: Path
 ) -> None:

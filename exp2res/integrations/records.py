@@ -102,12 +102,14 @@ class ParsedRecord:
 
     A `reason` is the parse-time verdict; `value` is whatever decoded, and
     stays populated beside a reason so a rejected record can still report the
-    source identity it carries.
+    source identity it carries. `identity` carries that same report for a
+    record that never decoded into a usable mapping at all.
     """
 
     record_number: int
     value: Any = None
     reason: Optional[str] = None
+    identity: Optional[str] = None
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -126,6 +128,48 @@ def decode_json(text: str) -> Any:
         return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
     except RecursionError as error:
         raise ValueError("JSON nesting too deep") from error
+
+
+def salvaged_identity(text: str, contract: SourceContract) -> Optional[str]:
+    """Read the source identity out of a record the strict decode rejected.
+
+    §19.4 rule 5 nulls `source_record_id` only when that record's own identity
+    is missing or invalid. A key declared twice somewhere else in the line
+    leaves the identity determinate — every decoding order agrees on it — so
+    the record is still rejected but reports what it names.
+
+    Only the identity string survives this pass. The tree is discarded and no
+    object reaches `scan_record`'s counter, so the payload-wide object cap
+    still counts exactly the records that decoded under one unambiguous
+    shape, and a rejected record cannot smuggle an unbounded graph past it.
+    """
+
+    doubled: list[frozenset[str]] = [frozenset()]
+
+    def record_doubled_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        seen: dict[str, Any] = {}
+        repeated: set[str] = set()
+        for key, value in pairs:
+            if key in seen:
+                repeated.add(key)
+            seen[key] = value
+        # json completes the outermost object last, so after the decode this
+        # holds that object's repeats — the only ones an identity field can
+        # sit under.
+        doubled[0] = frozenset(repeated)
+        return seen
+
+    try:
+        value = json.loads(text, object_pairs_hook=record_doubled_keys)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    # A doubled key is dropped rather than resolved: two competing values are
+    # an invalid identity, not a coin toss between them.
+    return contract.raw_identity(
+        {key: item for key, item in value.items() if key not in doubled[0]}
+    )
 
 
 def scan_record(value: Any, *, counter: list[int]) -> Optional[str]:
@@ -167,7 +211,7 @@ def scan_record(value: Any, *, counter: list[int]) -> Optional[str]:
     return reason
 
 
-def parse_payload(text: str, *, multi_record: bool) -> tuple[ParsedRecord, ...]:
+def parse_payload(text: str, *, contract: SourceContract) -> tuple[ParsedRecord, ...]:
     """Establish every §19.4 rule 5 input record boundary, in file order.
 
     A payload failure too early to establish those boundaries raises instead,
@@ -176,7 +220,7 @@ def parse_payload(text: str, *, multi_record: bool) -> tuple[ParsedRecord, ...]:
     """
 
     counter = [0]
-    if not multi_record:
+    if not contract.multi_record:
         try:
             value = decode_json(text)
         except ValueError as error:
@@ -199,8 +243,13 @@ def parse_payload(text: str, *, multi_record: bool) -> tuple[ParsedRecord, ...]:
         try:
             value = decode_json(line)
         except ValueError:
-            # Nothing decoded, so this record has no recoverable identity.
-            records.append(ParsedRecord(number, reason="record_not_json"))
+            records.append(
+                ParsedRecord(
+                    number,
+                    reason="record_not_json",
+                    identity=salvaged_identity(line, contract),
+                )
+            )
             continue
         records.append(
             ParsedRecord(number, value=value, reason=scan_record(value, counter=counter))
