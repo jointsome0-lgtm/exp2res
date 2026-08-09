@@ -361,6 +361,34 @@ def _current_branch(workspace: Path) -> str:
     return row[0]
 
 
+def _unmatched_demands(workspace: Path, branch: str) -> list[str]:
+    """§18: demands the pack's current bullets leave unanswered, from the rows."""
+
+    with read_database(workspace) as connection:
+        parsed = connection.execute(
+            "SELECT jd.parsed_json FROM job_descriptions AS jd "
+            "JOIN resume_branches AS branch ON branch.job_description_id = jd.id "
+            "WHERE branch.id = ?",
+            (branch,),
+        ).fetchone()
+        matched = {
+            requirement_id
+            for (raw,) in connection.execute(
+                "SELECT matched_jd_requirements_json FROM resume_bullets "
+                "WHERE branch_id = ? AND superseded_at IS NULL",
+                (branch,),
+            )
+            for requirement_id in json.loads(raw)
+        }
+    if parsed is None:
+        raise AssertionError("Vera Example demo branch has no parsed vacancy")
+    return [
+        item["text"]
+        for item in json.loads(parsed[0])["requirements"]
+        if item["id"] not in matched
+    ]
+
+
 def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     workspace = workspace.resolve()
     if workspace.is_relative_to(ROOT.resolve()):
@@ -546,10 +574,12 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     clock.set("2026-07-12T10:10:00+02:00")
     with replaced(cli_module, "export_bullet_pack", deterministic_bullet_export):
         invoke(transcript, workspace, ["bullets", "export", "--branch", DEMO_BRANCH])
+    unmatched = _unmatched_demands(workspace, published_branch)
     transcript.note(
         "Act 3 result: two supported bullets published under "
-        f"out/branch/{published_branch}; the video-tutorial and SEO demands stay "
-        "unmatched because the invented corpus reaches neither."
+        f"out/branch/{published_branch}; {len(unmatched)} demands stay unmatched "
+        "because the invented corpus reaches none of them:\n"
+        + "\n".join(f"  - {demand}" for demand in unmatched)
     )
 
     state = {
@@ -604,6 +634,12 @@ def _verify_branch(
     if any(item.verification_status != "supported" for item in report.findings):
         raise AssertionError("Vera Example published a bullet without support")
 
+    if connection.execute(
+        "SELECT 1 FROM resume_branches WHERE id = ? AND superseded_at IS NULL",
+        (branch,),
+    ).fetchone() is None:
+        raise AssertionError("Vera Example published branch is not current")
+
     stored = dict(
         connection.execute(
             "SELECT id, verification_status FROM resume_bullets "
@@ -637,15 +673,18 @@ def _verify_branch(
                 link = evidence_links[evidence_id]
                 if link.raw_log_id not in fact.source_log_ids:
                     raise AssertionError("Vera Example bullet evidence/log closure diverged")
-                for table, entity_id in (
-                    ("experience_facts", fact_id),
-                    ("evidence_items", evidence_id),
-                    ("raw_logs", link.raw_log_id),
+                for table, entity_id, current in (
+                    ("experience_facts", fact_id, " AND superseded_at IS NULL"),
+                    ("evidence_items", evidence_id, ""),
+                    ("raw_logs", link.raw_log_id, ""),
                 ):
                     if connection.execute(
-                        f"SELECT 1 FROM {table} WHERE id = ?", (entity_id,)
+                        f"SELECT 1 FROM {table} WHERE id = ?{current}", (entity_id,)
                     ).fetchone() is None:
-                        raise AssertionError(f"Vera Example bullet closure row missing: {entity_id}")
+                        raise AssertionError(
+                            f"Vera Example bullet closure row is missing or "
+                            f"superseded: {entity_id}"
+                        )
 
 
 def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, bytes], bytes]:

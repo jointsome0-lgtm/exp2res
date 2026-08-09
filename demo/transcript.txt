@@ -238,14 +238,14 @@ Branch branch_demo_0001 — docs-examplia: 2 of 2 bullets supported.
 Finding finding_demo_0005
 Target bullet: bullet_demo_0001
 Status: supported
-Reason: Every material assertion resolves to the supplied Vera Example fact, evidence-item, and raw-log closure.
+Reason: Every material assertion resolves to the supplied fact, evidence-item, and raw-log closure.
 Unsupported phrases:
 - none
 
 Finding finding_demo_0006
 Target bullet: bullet_demo_0002
 Status: supported
-Reason: The Vera Example correction record carries the reopened guide and the resumed draft.
+Reason: The correction record carries the reopened guide and the resumed draft.
 Unsupported phrases:
 - none
 
@@ -255,6 +255,10 @@ demo/workspace/out/branch/branch_demo_0001/bullet_pack.md
 demo/workspace/out/branch/branch_demo_0001/evidence_map.json
 demo/workspace/out/branch/branch_demo_0001/verification_report.json
 
-Act 3 result: two supported bullets published under out/branch/branch_demo_0001; the video-tutorial and SEO demands stay unmatched because the invented corpus reaches neither.
+Act 3 result: two supported bullets published under out/branch/branch_demo_0001; 4 demands stay unmatched because the invented corpus reaches none of them:
+  - Comfortable working in Git: branches, pull requests, reviews.
+  - Python scripting for documentation tooling (link checkers, linters).
+  - Experience producing video tutorials.
+  - On-page SEO basics.
 
 Demo run complete. Run make demo-verify for closure and determinism proof.

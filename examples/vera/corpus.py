@@ -34,12 +34,16 @@ MARKER = "Vera Example"
 PERSONA_SOURCE = "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md"
 ROOT = Path(__file__).resolve().parent / "corpus"
 
-# §16.14 keeps the persona's personal name out of §18 bullet prose, which an
-# external reader consumes, so this canned Stage 10 response cannot carry the
-# marker. Its invented lineage stays checkable through the marker-carrying
-# vacancy, logs, and Stage 11 response it is generated beside; the same path
-# is recorded in scripts/check_public_hygiene.py.
-MARKER_EXEMPT_PATHS = frozenset({"llm/demo-bullets.json"})
+# §16.14 keeps the persona's personal name out of the §16.12 generated voice
+# the demo publishes — §18 bullet prose an external reader consumes, and the
+# verifier reasons that ride into verification_report.json beside it — so
+# these canned responses cannot carry the marker. Their invented lineage stays
+# checkable through the marker-carrying vacancy, logs, and entity IDs they are
+# generated beside; the same paths are recorded in
+# scripts/check_public_hygiene.py.
+MARKER_EXEMPT_PATHS = frozenset(
+    {"llm/demo-bullets.json", "llm/demo-bullet-verification.json"}
+)
 
 # Fields inside §19 bodies whose values are datetimes for §11 hash
 # normalization. Envelope fields (exported_at) never enter the hash.
@@ -774,8 +778,8 @@ DEMO_RESPONSES = {
                 "unsupported_phrases": [],
                 "suggested_rewrite": None,
                 "reason": (
-                    "Every material assertion resolves to the supplied Vera Example "
-                    "fact, evidence-item, and raw-log closure."
+                    "Every material assertion resolves to the supplied fact, "
+                    "evidence-item, and raw-log closure."
                 ),
             },
             {
@@ -784,8 +788,8 @@ DEMO_RESPONSES = {
                 "unsupported_phrases": [],
                 "suggested_rewrite": None,
                 "reason": (
-                    "The Vera Example correction record carries the reopened guide "
-                    "and the resumed draft."
+                    "The correction record carries the reopened guide and the "
+                    "resumed draft."
                 ),
             },
         ],

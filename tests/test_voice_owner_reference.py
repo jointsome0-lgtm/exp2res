@@ -38,13 +38,16 @@ FORBIDDEN_OWNER_NOUN_PATTERNS = tuple(
 
 GOLDEN_PROSE_MEMBERS = ("report.md", "report.html", "self_claims.json")
 
-# §18 bullet prose an external reader consumes: the pinned pack and the
-# canned Stage 10 response the offline demo publishes from. Both are
-# marker-exempt in scripts/check_public_hygiene.py, so this is where their
-# invented-but-owner-free wording is held.
+# The §16.12 generated voice a bullet pack publishes: §18 bullet prose and the
+# verifier reasons beside it, pinned and as the offline demo's canned Stage 10
+# and Stage 11 responses. All four are marker-exempt in
+# scripts/check_public_hygiene.py, so this is where their invented-but-
+# owner-free wording is held.
 GENERATED_BULLET_PROSE = (
     "tests/goldens/branch/bullet_pack.md",
+    "tests/goldens/branch/verification_report.json",
     "examples/vera/corpus/llm/demo-bullets.json",
+    "examples/vera/corpus/llm/demo-bullet-verification.json",
 )
 
 # §15.1 rule 11: every §16 rule a block encodes carries its licensed form
