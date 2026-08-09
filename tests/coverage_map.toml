@@ -106,8 +106,15 @@ status = "pending"
 phase = "4"
 
 ["21.17"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage10_generation.py::test_the_anchor_must_be_current_supplied_and_verified",
+  "tests/test_stage10_generation.py::test_one_invocation_carries_the_complete_current_set",
+  "tests/test_branch_substrate.py::test_a_branch_may_only_anchor_a_snapshot_the_verifier_passed",
+  "tests/test_branch_substrate.py::test_bullet_storage_refuses_an_unverified_claim_and_a_foreign_requirement",
+]
 phase = "4"
+note = "Stage 10 proves the required exact anchor: a missing selector never reaches the stage, an unverified or superseded snapshot is refused before the provider call, the persisted branch carries that exact ID, and a claim outside the supplied supported set fails before the bullet becomes current; the export half of the ineligible-anchor clause waits on Stage 12"
 
 ["21.18"]
 status = "partial"
@@ -156,8 +163,15 @@ nodes = [
 ]
 
 ["21.22"]
-status = "pending"
+status = "partial"
+nodes = [
+  "tests/test_stage10_generation.py::test_one_invocation_carries_the_complete_current_set",
+  "tests/test_stage10_generation.py::test_a_reference_outside_the_supplied_context_fails_the_response",
+  "tests/test_branch_substrate.py::test_bullet_storage_requires_the_exact_service_derived_log_closure",
+  "tests/test_branch_substrate.py::test_bullet_storage_refuses_an_unverified_claim_and_a_foreign_requirement",
+]
 phase = "4"
+note = "Stage 10 proves a persisted bullet's matched_jd_requirements resolve in the exact supplied ParsedJD and its source_log_ids are the service-derived closure of its selected facts; a free-form or different-job reference fails the whole batch atomically before anything becomes current, and the omitted-job_description_id candidate shape is proven at the storage boundary"
 
 ["21.23"]
 status = "partial"
@@ -285,9 +299,11 @@ nodes = [
   "tests/test_vera_replay_export.py::test_vera_e6_cli_export_goldens_and_artifact_lifecycle",
   "tests/test_branch_substrate.py::test_folded_identity_controls_replacement_and_never_a_path",
   "tests/test_branch_substrate.py::test_view_regeneration_supersedes_only_its_dependent_branches",
+  "tests/test_stage10_generation.py::test_a_generated_name_replaces_exactly_the_branch_it_folds_onto",
+  "tests/test_stage10_generation.py::test_a_no_bullet_answer_leaves_the_current_branch_in_place",
 ]
 phase = "4"
-note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; the folded-identity replacement itself and publishing a branch set with its manifest wait on the Stage 10 and Stage 12 phases"
+note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; Stage 10 now proves the folded-identity replacement itself, superseding exactly the branch a generated name folds onto and removing that branch's set while the owner's exact new spelling is stored, and proves that a semantic no-bullet answer replaces nothing, leaving the prior generation and its published set current; publishing a branch set with its manifest waits on Stage 12"
 
 ["21.35"]
 status = "partial"

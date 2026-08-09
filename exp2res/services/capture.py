@@ -65,6 +65,8 @@ def new_id(kind: str) -> str:
         "finding": "finding",
         "job_description": "jd",
         "jd_requirement": "jdreq",
+        "branch": "branch",
+        "bullet": "bullet",
         "run": "run",
         "gen": "gen",
     }

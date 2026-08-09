@@ -88,6 +88,8 @@ from exp2res.services.correction import (
     read_correction_source,
     validate_correction_selection,
 )
+from exp2res.pipeline.stage10 import Stage10Result
+from exp2res.services.bullets import run_bullets_generate
 from exp2res.services.assessment import (
     Stage6Result,
     Stage7Result,
@@ -171,6 +173,7 @@ export_app = typer.Typer(help="Publish deterministic managed exports.")
 jd_app = typer.Typer(
     help="Add, list, and owner-delete job descriptions."
 )
+bullets_app = typer.Typer(help="Generate the verified bullet pack for a vacancy.")
 workspace_app = typer.Typer(help="Manage the whole initialized workspace.")
 view_app = typer.Typer(help="Serve the read-only local views on loopback.")
 app.add_typer(db_app, name="db")
@@ -184,6 +187,7 @@ app.add_typer(contradictions_app, name="contradictions")
 app.add_typer(assess_app, name="assess")
 app.add_typer(export_app, name="export")
 app.add_typer(jd_app, name="jd")
+app.add_typer(bullets_app, name="bullets")
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(view_app, name="view")
 
@@ -2721,6 +2725,140 @@ def jd_delete(
             raise cancelled from None
 
     _run_command(context, "jd delete", operation)
+
+
+
+
+@bullets_app.command("generate")
+def bullets_generate(
+    context: typer.Context,
+    job_description_id: str = typer.Option(..., "--jd"),
+    snapshot_id: str = typer.Option(..., "--snapshot"),
+    branch_name: str = typer.Option(..., "--branch"),
+) -> None:
+    def operation(workspace: Path, _controls: Controls) -> Outcome:
+        # §14.14 rule 3: compatibility precedes adapter construction; the
+        # service re-checks under its own authority.
+        require_compatible(workspace)
+        try:
+            generated = run_bullets_generate(
+                workspace,
+                job_description_id=job_description_id,
+                snapshot_id=snapshot_id,
+                branch_name=branch_name,
+            )
+        except Exp2ResError as error:
+            # §14.14 rules 5/6: an interrupt after the committed §13.10 swap
+            # carries the complete result on the error; fold it into the
+            # fields the cancelled envelope reads.
+            carried = getattr(error, "stage_result", None)
+            if isinstance(carried, Stage10Result):
+                _carry_generated_pack(error, carried)
+            raise
+        try:
+            return _bullets_generate_outcome(generated)
+        except KeyboardInterrupt:
+            # The service returned a durable swap; §14.14 rule 6 keeps it
+            # reported even when the interrupt lands in result assembly.
+            cancelled = OperationCancelledError()
+            cancelled.stage_result = generated
+            _carry_generated_pack(cancelled, generated)
+            raise cancelled from None
+
+    _run_command(context, "bullets generate", operation)
+
+
+def _carry_generated_pack(error: Exp2ResError, generated: Stage10Result) -> None:
+    """Fold a committed §13.10 swap into the fields a failed envelope reads."""
+
+    committed = _bullets_generate_outcome(generated)
+    error.affected_ids = committed.affected_ids
+    error.generation_ids = committed.generation_ids
+    error.run_ids = committed.run_ids
+    error.invalidated_branches = committed.invalidated_branches
+    error.residual_paths = committed.residual_paths
+    error.warnings = committed.warnings
+    # Human mode renders only `human_result`, so without it the durable swap
+    # would be reported to `--json` callers alone.
+    error.human_result = committed.human_result
+
+
+def _bullets_generate_outcome(generated: Stage10Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted swaps."""
+
+    created_groups: list[EntityIdGroup] = []
+    if generated.branch_id is not None:
+        created_groups.append(
+            EntityIdGroup(entity_type="resume_branch", ids=[generated.branch_id])
+        )
+        # §14.14 rule 5 orders every reported group by its stable identity, and
+        # a production bullet ID carries no writer-order information.
+        created_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=sorted(generated.bullet_ids, key=lambda value: value.encode("utf-8")),
+            )
+        )
+    superseded_groups: list[EntityIdGroup] = []
+    if generated.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(generated.superseded_branch_ids),
+            )
+        )
+    if generated.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(generated.superseded_bullet_ids),
+            )
+        )
+    # §13.10/§14.14: an empty writer array is a completed semantic result with
+    # no branch — class 10 `blocked` under its own stable class, never a failed
+    # run and never an empty branch.
+    blocked = generated.branch_id is None
+    replaced = (
+        ""
+        if not generated.superseded_branch_ids
+        else f"; superseded {generated.superseded_branch_ids[0]}"
+    )
+    human_result = (
+        f"No bullet was generated for branch {generated.branch_name}: the "
+        "supplied evidence supports none."
+        if blocked
+        else (
+            f"Created {generated.branch_id} — {generated.branch_name}; "
+            f"{len(generated.bullet_ids)} bullets{replaced}."
+        )
+    )
+    return Outcome(
+        exit_code=10 if blocked else 0,
+        diagnostic_class="no_bullet_generated" if blocked else None,
+        affected_ids=AffectedIds(
+            created=created_groups,
+            superseded=superseded_groups,
+            deleted=[],
+        ),
+        generation_ids=sorted(
+            {
+                *(
+                    [generated.generation_id]
+                    if generated.generation_id is not None
+                    else []
+                ),
+                *generated.superseded_generation_ids,
+            },
+            key=lambda value: value.encode("utf-8"),
+        ),
+        run_ids=[generated.run_id],
+        invalidated_branches=list(generated.invalidated_branches),
+        residual_paths=list(generated.residual_paths),
+        warnings=list(generated.warnings),
+        result=None,
+        human_result=human_result,
+    )
+
 
 
 @workspace_app.command("purge")
