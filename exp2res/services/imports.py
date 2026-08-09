@@ -32,6 +32,7 @@ from exp2res.integrations.records import (
 from exp2res.services.capture import Clock, IdFactory, new_id
 from exp2res.services.source_files import read_payload_file
 from exp2res.storage.repository import (
+    committed_raw_log_ids,
     insert_evidence_item,
     insert_raw_log,
     retained_import_hashes,
@@ -154,6 +155,7 @@ def _classify(
     retained: dict[str, str],
     recorded_at: datetime,
     id_factory: IdFactory,
+    attempted: list[ImportedRecord],
 ) -> tuple[str, ImportedRecord]:
     number = parsed.record_number
     raw = parsed.value
@@ -232,19 +234,58 @@ def _classify(
             return "rejected", ImportedRecord(
                 number, identity, reason="record_invalid"
             )
+        candidate = ImportedRecord(
+            number,
+            identity,
+            raw_log.id,
+            evidence_item_ids=tuple(item.id for item in evidence_items),
+        )
+        # Recorded before the transaction opens: a signal can land between
+        # `_persist`'s commit and any bookkeeping after it, and the workspace
+        # is then the only authority on whether this candidate committed.
+        attempted.append(candidate)
         try:
             _persist(connection, raw_log=raw_log, evidence_items=evidence_items)
         except IdCollisionError as error:
             last_collision = error
             continue
         retained[identity] = digest
-        return "accepted", ImportedRecord(
-            number,
-            identity,
-            raw_log.id,
-            evidence_item_ids=tuple(item.id for item in evidence_items),
-        )
+        return "accepted", candidate
     raise IdCollisionError() from last_collision
+
+
+def _cancelled_report(
+    connection: sqlite3.Connection,
+    *,
+    attempted: list[ImportedRecord],
+    classified: dict[str, list[ImportedRecord]],
+) -> ImportOutcome:
+    """Report exactly the records whose transaction reached the database.
+
+    The in-memory classification is not the authority: a signal can arrive
+    after `_persist` commits and before the loop files the record, which
+    would drop a durable §14.14 rule 6 boundary from the report. Every
+    candidate this payload tried to persist is therefore checked against the
+    workspace under the still held writer lock. A failed read leaves the
+    classified accepted records as the reported set, which is a subset of
+    what committed and never invents one.
+    """
+
+    try:
+        committed = committed_raw_log_ids(
+            connection, [record.raw_log_id or "" for record in attempted]
+        )
+    except sqlite3.Error:
+        accepted = tuple(classified["accepted"])
+    else:
+        accepted = tuple(
+            record for record in attempted if record.raw_log_id in committed
+        )
+    return ImportOutcome(
+        accepted=accepted,
+        duplicate=tuple(classified["duplicate"]),
+        rejected=tuple(classified["rejected"]),
+    )
 
 
 def import_payload(
@@ -272,6 +313,7 @@ def import_payload(
         "duplicate": [],
         "rejected": [],
     }
+    attempted: list[ImportedRecord] = []
 
     def report() -> ImportOutcome:
         return ImportOutcome(
@@ -295,6 +337,7 @@ def import_payload(
                     retained=retained,
                     recorded_at=recorded_at,
                     id_factory=id_factory,
+                    attempted=attempted,
                 )
                 classified[outcome].append(result)
         except sqlite3.OperationalError as error:
@@ -308,6 +351,8 @@ def import_payload(
             # records the interrupt never reached leave the classification
             # incomplete, so the caller reports no primary result.
             cancelled = OperationCancelledError()
-            cancelled.import_outcome = report()
+            cancelled.import_outcome = _cancelled_report(
+                connection, attempted=attempted, classified=classified
+            )
             raise cancelled from None
     return report()

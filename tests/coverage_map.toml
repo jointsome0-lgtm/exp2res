@@ -568,6 +568,10 @@ nodes = [
   "tests/test_cli_import.py::test_created_entity_groups_are_ordered_by_their_own_id_identity",
   "tests/test_cli_import.py::test_a_completed_report_with_a_residual_still_reaches_class_eight",
   "tests/test_cli_import.py::test_an_interrupted_import_reports_the_records_it_already_committed",
+  "tests/test_cli_import.py::test_a_commit_the_signal_outran_is_still_reported",
+  "tests/test_cli_import.py::test_a_rolled_back_candidate_is_never_reported_as_committed",
+  "tests/test_cli_import.py::test_human_mode_renders_the_committed_records_of_a_cancelled_import",
+  "tests/test_cli_import.py::test_an_interrupt_in_result_assembly_keeps_the_complete_result",
   "tests/test_vera_replay_import.py::test_every_declared_import_step_produces_its_declared_counts",
   "tests/test_vera_replay_import.py::test_every_declared_failure_step_fails_for_its_declared_reason",
 ]

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import exp2res.cli as cli_module
 import exp2res.services.imports as imports_service
 from exp2res.cli import app
 
@@ -358,3 +359,137 @@ def test_an_interrupted_import_reports_the_records_it_already_committed(
         "duplicate": 2,
         "rejected": 0,
     }
+
+
+def test_a_commit_the_signal_outran_is_still_reported(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the workspace, not the classifier, is the authority."""
+    payload = write_payload(
+        tmp_path,
+        "outran.jsonl",
+        [ephemeris_record(f"vera-ephemeris-5{index:04d}") for index in range(3)],
+    )
+    persist = imports_service._persist
+
+    def interrupt_after_the_commit_returns(*args, **kwargs):
+        persist(*args, **kwargs)
+        # The narrowest window there is: the record is durable, and the
+        # classifier has not filed it anywhere yet.
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        imports_service, "_persist", interrupt_after_the_commit_returns
+    )
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+
+    assert result.exit_code == 9
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    assert len(created["raw_log"]) == 1
+    assert len(created["evidence_item"]) == 1
+    monkeypatch.undo()
+    replayed, replayed_envelope = _invoke_json(
+        workspace, ["import", "ephemeris", payload]
+    )
+    # The reported row is exactly the one that survived the interruption.
+    assert replayed_envelope["result"]["counts"] == {
+        "accepted": 2,
+        "duplicate": 1,
+        "rejected": 0,
+    }
+    assert replayed.exit_code == 0
+
+
+def test_a_rolled_back_candidate_is_never_reported_as_committed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A candidate whose transaction rolled back left no lifecycle boundary."""
+    payload = write_payload(
+        tmp_path,
+        "rolled-back.jsonl",
+        [ephemeris_record(f"vera-ephemeris-6{index:04d}") for index in range(3)],
+    )
+    persist = imports_service._persist
+    calls = {"count": 0}
+
+    def interrupt_inside_the_transaction(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return persist(*args, **kwargs)
+        # The candidate was registered before this call, and its transaction
+        # never opened: it must not be reported as a committed boundary.
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        imports_service, "_persist", interrupt_inside_the_transaction
+    )
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+
+    assert result.exit_code == 9
+    created = {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+    # Exactly the first record: the second never reached a commit.
+    assert len(created["raw_log"]) == 1
+
+
+def test_human_mode_renders_the_committed_records_of_a_cancelled_import(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: human mode reads no `affected_ids`, so it needs lines."""
+    payload = write_payload(
+        tmp_path,
+        "cancelled-human.jsonl",
+        [ephemeris_record(f"vera-ephemeris-7{index:04d}") for index in range(3)],
+    )
+    persist = imports_service._persist
+    calls = {"count": 0}
+
+    def interrupt_after_two(*args, **kwargs):
+        if calls["count"] == 2:
+            raise KeyboardInterrupt()
+        calls["count"] += 1
+        return persist(*args, **kwargs)
+
+    monkeypatch.setattr(imports_service, "_persist", interrupt_after_two)
+    result = _invoke_human(workspace, ["import", "ephemeris", payload])
+
+    assert result.exit_code == 9
+    lines = result.stdout.strip().splitlines()
+    assert lines[0] == "cancelled, 2 committed"
+    assert [line.split("\t")[:3] for line in lines[1:]] == [
+        ["1", "accepted", "vera-ephemeris-70000"],
+        ["2", "accepted", "vera-ephemeris-70001"],
+    ]
+    for line in lines[1:]:
+        assert line.split("\t")[3].startswith("log_")
+
+
+def test_an_interrupt_in_result_assembly_keeps_the_complete_result(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 5 nulls a result only when none exists yet."""
+    payload = write_payload(
+        tmp_path,
+        "assembly.jsonl",
+        [ephemeris_record(f"vera-ephemeris-8{index:04d}") for index in range(2)],
+    )
+
+    def interrupt_projection(_imported):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(cli_module, "_import_outcome", interrupt_projection)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["result"]["counts"] == {
+        "accepted": 2,
+        "duplicate": 0,
+        "rejected": 0,
+    }
+    assert len(envelope["affected_ids"]["created"]) == 2

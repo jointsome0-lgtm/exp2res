@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import json
 import re
 import sqlite3
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from pydantic import ValidationError
 
@@ -163,6 +163,31 @@ def insert_evidence_item(connection: sqlite3.Connection, item: EvidenceItem) -> 
         if "evidence_items.id" in str(error):
             raise IdCollisionError() from error
         raise IntegrityFailureError() from error
+
+
+def committed_raw_log_ids(
+    connection: sqlite3.Connection, candidate_ids: Sequence[str]
+) -> set[str]:
+    """Report which candidate raw-log IDs actually reached the database.
+
+    §19.4 rule 4 gives each imported record its own transaction, so after an
+    interruption the committed set is a fact of the workspace rather than of
+    the classifier's in-memory bookkeeping. Reading it back under the still
+    held §8.1 writer lock reports a record whose commit the signal outran and
+    never reports a rolled-back candidate.
+    """
+
+    committed: set[str] = set()
+    for start in range(0, len(candidate_ids), 512):
+        chunk = tuple(candidate_ids[start : start + 512])
+        placeholders = ",".join("?" for _ in chunk)
+        committed.update(
+            str(row["id"])
+            for row in connection.execute(
+                f"SELECT id FROM raw_logs WHERE id IN ({placeholders})", chunk
+            )
+        )
+    return committed
 
 
 def retained_import_hashes(

@@ -1415,6 +1415,28 @@ def _import_record_group(
     ]
 
 
+def _import_result(imported: ImportOutcome) -> ImportResult:
+    return ImportResult(
+        counts=ImportCounts(
+            accepted=len(imported.accepted),
+            duplicate=len(imported.duplicate),
+            rejected=len(imported.rejected),
+        ),
+        records=ImportRecordGroups(
+            accepted=_import_record_group(imported.accepted),
+            duplicate=_import_record_group(imported.duplicate),
+            rejected=_import_record_group(imported.rejected),
+        ),
+    )
+
+
+def _import_record_line(record: ImportedRecord, outcome_name: str) -> str:
+    return (
+        f"{record.record_number}\t{outcome_name}\t"
+        f"{record.source_record_id or '-'}\t{record.raw_log_id or '-'}"
+    )
+
+
 def _import_created(imported: ImportOutcome) -> AffectedIds:
     """Report the rows committed accepted records left behind.
 
@@ -1461,18 +1483,7 @@ def _import_outcome(imported: ImportOutcome) -> Outcome:
     payload still reports every record.
     """
 
-    result = ImportResult(
-        counts=ImportCounts(
-            accepted=len(imported.accepted),
-            duplicate=len(imported.duplicate),
-            rejected=len(imported.rejected),
-        ),
-        records=ImportRecordGroups(
-            accepted=_import_record_group(imported.accepted),
-            duplicate=_import_record_group(imported.duplicate),
-            rejected=_import_record_group(imported.rejected),
-        ),
-    )
+    result = _import_result(imported)
     lines = [
         f"accepted {result.counts.accepted}, "
         f"duplicate {result.counts.duplicate}, "
@@ -1483,11 +1494,7 @@ def _import_outcome(imported: ImportOutcome) -> Outcome:
         ("duplicate", imported.duplicate),
         ("rejected", imported.rejected),
     ):
-        for record in group:
-            lines.append(
-                f"{record.record_number}\t{outcome_name}\t"
-                f"{record.source_record_id or '-'}\t{record.raw_log_id or '-'}"
-            )
+        lines.extend(_import_record_line(record, outcome_name) for record in group)
     # §14.14 rule 5: a fully classified result with rejections is a completed
     # report, so it exits through class 2 still carrying its complete result.
     rejected = result.counts.rejected > 0
@@ -1509,22 +1516,40 @@ def _import_command(
 ) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
         try:
-            return _import_outcome(
-                import_payload(
-                    workspace, source_system=source_system, payload_path=payload
-                )
+            imported = import_payload(
+                workspace, source_system=source_system, payload_path=payload
             )
+            try:
+                return _import_outcome(imported)
+            except KeyboardInterrupt:
+                # The classification is complete and durable; an interrupt in
+                # result assembly still reports it under §14.14 rule 6.
+                cancelled = OperationCancelledError()
+                cancelled.import_outcome = imported
+                cancelled.import_classified = True
+                raise cancelled from None
         except OperationCancelledError as error:
             # §14.14 rule 6: §19.4 rule 4 commits each accepted record in its
             # own transaction, so the records already committed are a
-            # lifecycle boundary the cancelled envelope reports. The
-            # classification itself never completed, so rule 5 keeps
-            # `result` null rather than emitting a partial object.
+            # lifecycle boundary the cancelled envelope reports.
             committed = cast(
                 ImportOutcome | None, getattr(error, "import_outcome", None)
             )
             if committed is not None:
                 error.affected_ids = _import_created(committed)
+                if getattr(error, "import_classified", False):
+                    # Rule 5 nulls a result only when none exists yet; an
+                    # interrupt in projection leaves a complete one behind.
+                    error.result = _import_result(committed)
+                # Human mode reads no `affected_ids`, so the same boundary is
+                # rendered as the committed records' own lines.
+                error.human_result = "\n".join(
+                    [f"cancelled, {len(committed.accepted)} committed"]
+                    + [
+                        _import_record_line(record, "accepted")
+                        for record in committed.accepted
+                    ]
+                )
             raise
 
     _run_command(context, command, operation)
