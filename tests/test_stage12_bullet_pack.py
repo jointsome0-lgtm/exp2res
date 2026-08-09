@@ -43,6 +43,7 @@ from exp2res.exports.managed import (
 from exp2res.services.export import export_assessment, export_bullet_pack
 from exp2res.storage.repository import (
     current_branch_by_folded_name,
+    get_experience_fact,
     list_resume_bullets_for_branch,
     list_self_claims_for_snapshot,
     update_resume_bullet_verification,
@@ -51,7 +52,14 @@ from exp2res.storage.workspace import read_database, writer_database
 
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner
-from test_branch_substrate import BRANCH_NAME, REQUIREMENT_ID
+from assessment_helpers import VeraIds, prepare_facts, prepare_high_facts
+from test_branch_substrate import (
+    BRANCH_NAME,
+    REQUIREMENT_ID,
+    anchor_snapshot,
+    plant_job_description,
+)
+from test_stage6_assessment import assessment_response, run_stage6
 from test_stage3_extraction import add_log, exact_day
 from test_stage10_generation import (
     BULLET_TEXT,
@@ -1011,4 +1019,242 @@ def test_an_uncited_members_dead_fact_never_licenses_the_pack(
         export_bullet_pack(workspace, branch_name=BRANCH_NAME)
     # Not a bullet-side diagnostic: no bullet or cited claim reaches this fact.
     assert str(raised.value) == "anchor_claim_fact_not_current"
+    assert not published(workspace, branch_id).exists()
+
+
+def displace(workspace: Path, log_id: str, *, correction_id: str) -> str:
+    """Plant a §13.3 correction over one log without the recompute it triggers.
+
+    Capture would supersede everything downstream; a restored or migrated
+    workspace can hold the correction with the derived rows still current.
+    """
+
+    correction, _items = add_log(
+        workspace,
+        log_id=correction_id,
+        recorded_at=FIXED_NOW,
+        raw_text="Vera Example corrected the earlier record.",
+        occurred=exact_day(16),
+        item_specs=((f"evi_{correction_id}", "manual_claim"),),
+        corrects_log_id=log_id,
+    )
+    return correction.id
+
+
+def branch_over_split_member_claims(workspace: Path):
+    """Two facts under an anchor whose members cite one fact each.
+
+    `prepare_paired_anchor` has every member cite both facts, which is exactly
+    what hides a per-claim failure behind a sibling's evidence.
+    """
+
+    ids = VeraIds()
+    facts = prepare_facts(workspace, ids, count=2)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner(
+            [
+                assessment_response(
+                    fact_ids=[facts[0]], narrative_fact_ids=[facts[1]]
+                )
+            ]
+        ),
+        ids,
+    )
+    assert assessed.snapshot_id is not None
+    anchor_snapshot(workspace, assessed.snapshot_id)
+    plant_job_description(workspace)
+    generated = run_stage10(
+        workspace,
+        FakeContractRunner(
+            [writer_response([bullet_candidate(fact_ids=[facts[0]])])]
+        ),
+        ids,
+        snapshot_id=assessed.snapshot_id,
+    )
+    run_stage11(
+        workspace,
+        FakeContractRunner(
+            [verifier_response([finding(item) for item in generated.bullet_ids])]
+        ),
+        ids,
+    )
+    assert generated.branch_id is not None
+    return facts, assessed.snapshot_id, generated.branch_id
+
+
+def test_one_members_live_chain_never_answers_for_another_member(
+    workspace: Path,
+) -> None:
+    """§16.1 is per row: *this* claim reaches one live chain.
+
+    The chain helper returns on the first fact that reaches a retained log, so
+    checking the union of every member's facts would let a healthy member's
+    evidence license a member whose own facts are all displaced.
+    """
+
+    facts, _snapshot_id, branch_id = branch_over_split_member_claims(workspace)
+    with read_database(workspace) as connection:
+        summary_fact = get_experience_fact(connection, facts[1])
+    assert summary_fact is not None
+    displace(
+        workspace,
+        summary_fact.source_log_ids[0],
+        correction_id="log_vera_displacing_summary",
+    )
+
+    with pytest.raises(IntegrityFailureError) as raised:
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    # The bullet and the other member still reach a retained log through the
+    # first fact, so only a per-claim check can see this.
+    assert str(raised.value) == "anchor_claim_direct_chain_missing"
+    assert not published(workspace, branch_id).exists()
+
+
+def test_an_uncited_members_dangling_counterevidence_stops_the_export(
+    workspace: Path,
+) -> None:
+    """§16.1 over the whole anchor, not just the cited half.
+
+    An uncited member carries the aggregate the gate reads and rides in the
+    render hash, so its typed provenance has to still resolve too.
+    """
+
+    _ids, _facts, snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+    with read_database(workspace) as connection:
+        claims = list_self_claims_for_snapshot(connection, snapshot_id)
+    uncited = next(
+        claim for claim in claims if claim.claim_kind != "narrative_summary"
+    )
+    plant_counterevidence(
+        workspace, uncited.id, ref_type="raw_log", ref_id="log_vera_never_captured"
+    )
+
+    with pytest.raises(IntegrityFailureError) as raised:
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    assert str(raised.value) == "export_source_reference_invalid"
+    assert not published(workspace, branch_id).exists()
+
+
+def branch_over_a_corrected_lineage(workspace: Path):
+    """A branch whose facts already span a §13.3 correction lineage.
+
+    `prepare_high_facts` gives each fact a displaced `design_doc` root and a
+    retained correction, which is the one shape where a fact stays selectable
+    with a displaced source in its own closure.
+    """
+
+    ids = VeraIds()
+    facts, _root_item, _correction_item = prepare_high_facts(workspace, ids)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    assert assessed.snapshot_id is not None
+    anchor_snapshot(workspace, assessed.snapshot_id)
+    plant_job_description(workspace)
+    generated = run_stage10(
+        workspace,
+        FakeContractRunner(
+            [writer_response([bullet_candidate(fact_ids=[facts[0]])])]
+        ),
+        ids,
+        snapshot_id=assessed.snapshot_id,
+    )
+    run_stage11(
+        workspace,
+        FakeContractRunner(
+            [verifier_response([finding(item) for item in generated.bullet_ids])]
+        ),
+        ids,
+    )
+    assert generated.branch_id is not None
+    return facts, generated.branch_id
+
+
+def test_a_correction_the_chain_gate_consulted_moves_the_render_hash(
+    workspace: Path,
+) -> None:
+    """§13.14 rule 2: the gate's inputs include the rows that answer it.
+
+    §13.3 records displacement on the *correcting* log, so the retained-chain
+    gate and §13.3's source-selection predicate both read rows no closure
+    reaches. A correction planted over an already-displaced root leaves every
+    rendered byte, every source ID, and both gate answers alone — and, if it
+    stayed off the hashed surface, the published set would recompute as
+    current with a row the gate consulted having appeared underneath it.
+    """
+
+    _facts, branch_id = branch_over_a_corrected_lineage(workspace)
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    manifest_path = published(workspace, branch_id) / "manifest.json"
+    before = json.loads(manifest_path.read_text("utf-8"))
+
+    correction_id = displace(
+        workspace,
+        "log_vera_signal_root",
+        correction_id="log_vera_second_correction",
+    )
+
+    export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    after = json.loads(manifest_path.read_text("utf-8"))
+
+    assert correction_id not in before["source_ids"]["raw_log_ids"]
+    assert correction_id in after["source_ids"]["raw_log_ids"]
+    assert after["render_input_sha256"] != before["render_input_sha256"]
+
+
+def test_a_correction_that_strands_a_fact_stops_the_export(
+    workspace: Path,
+) -> None:
+    """The same rows, read as §13.3 intends: a displacement that leaves a fact
+    with no selectable source refuses the export rather than shrinking it."""
+
+    facts, _snapshot_id, branch_id = branch_over_a_partly_cited_anchor(workspace)
+    with read_database(workspace) as connection:
+        supplemental = get_experience_fact(connection, facts[1])
+    assert supplemental is not None
+    displace(
+        workspace,
+        supplemental.source_log_ids[0],
+        correction_id="log_vera_displacing_supplemental",
+    )
+
+    with pytest.raises(IntegrityFailureError) as raised:
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    assert str(raised.value) == "fact_source_selection_invalid"
+    assert not published(workspace, branch_id).exists()
+
+
+@pytest.mark.parametrize(
+    "column, diagnostic",
+    [
+        ("gap_question_ids_json", "snapshot_gap_reference_invalid"),
+        ("contradiction_ids_json", "snapshot_contradiction_reference_invalid"),
+    ],
+)
+def test_an_anchors_unresolvable_typed_reference_stops_the_export(
+    workspace: Path, column: str, diagnostic: str
+) -> None:
+    """§11.7: a read-time consumer re-resolves the snapshot's reference lists.
+
+    Persisted IDs are not evidence that the rows still exist. The bullet pack
+    renders neither list, but it accepts the snapshot as its anchor, and an
+    anchor whose own typed graph no longer resolves is damaged state.
+    """
+
+    _ids, _facts, snapshot_id, branch_id, _bullet_ids = verified_branch(workspace)
+
+    with writer_database(workspace) as connection:
+        connection.execute("DROP TRIGGER assessment_snapshots_lifecycle_update_guard")
+        connection.execute(
+            f"UPDATE assessment_snapshots SET {column} = ? WHERE id = ?",
+            (json.dumps(["missing_vera_reference"]), snapshot_id),
+        )
+        connection.commit()
+
+    with pytest.raises(IntegrityFailureError) as raised:
+        export_bullet_pack(workspace, branch_name=BRANCH_NAME)
+    assert str(raised.value) == diagnostic
     assert not published(workspace, branch_id).exists()

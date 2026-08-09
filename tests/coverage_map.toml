@@ -138,9 +138,14 @@ nodes = [
   "tests/test_stage12_bullet_pack.py::test_a_broken_anchor_is_refused_before_its_allowlist_verdict[claim-generation-mismatch]",
   "tests/test_stage12_bullet_pack.py::test_a_partially_superseded_bullet_batch_never_exports",
   "tests/test_stage12_bullet_pack.py::test_an_uncited_members_dead_fact_never_licenses_the_pack",
+  "tests/test_stage12_bullet_pack.py::test_one_members_live_chain_never_answers_for_another_member",
+  "tests/test_stage12_bullet_pack.py::test_an_uncited_members_dangling_counterevidence_stops_the_export",
+  "tests/test_stage12_bullet_pack.py::test_a_correction_that_strands_a_fact_stops_the_export",
+  "tests/test_stage12_bullet_pack.py::test_an_anchors_unresolvable_typed_reference_stops_the_export[gap_question_ids_json-snapshot_gap_reference_invalid]",
+  "tests/test_stage12_bullet_pack.py::test_an_anchors_unresolvable_typed_reference_stops_the_export[contradiction_ids_json-snapshot_contradiction_reference_invalid]",
 ]
 phase = "4"
-note = "Stage 10 proves the required exact anchor: a missing selector never reaches the stage, an unverified or superseded snapshot is refused before the provider call, the persisted branch carries that exact ID, and a claim outside the supplied supported set fails before the bullet becomes current; Stage 12 now closes the export half, refusing a superseded anchor, a stored aggregate that no longer reduces from its own claims, a member claim from another Stage 6 batch, a half-applied branch/bullet swap, and an uncited member whose own fact is no longer current, and naming that one snapshot ID in the manifest identity"
+note = "Stage 10 proves the required exact anchor: a missing selector never reaches the stage, an unverified or superseded snapshot is refused before the provider call, the persisted branch carries that exact ID, and a claim outside the supplied supported set fails before the bullet becomes current; Stage 12 now closes the export half, refusing a superseded anchor, a stored aggregate that no longer reduces from its own claims, a member claim from another Stage 6 batch, a half-applied branch/bullet swap, and — per member, never over the pooled fact union — an uncited member whose own fact is gone, whose chain is fully displaced, or whose counterevidence no longer resolves, re-resolving the anchor's own §11.7 gap and contradiction references, and naming that one snapshot ID in the manifest identity"
 
 ["21.18"]
 status = "partial"
@@ -344,10 +349,11 @@ nodes = [
   "tests/test_stage12_bullet_pack.py::test_the_hashed_bundle_is_id_ordered_while_the_pack_is_render_ordered",
   "tests/test_stage12_bullet_pack.py::test_an_uncited_anchor_member_still_moves_the_render_hash",
   "tests/test_stage12_bullet_pack.py::test_an_uncited_members_grounding_joins_the_hashed_closure",
+  "tests/test_stage12_bullet_pack.py::test_a_correction_the_chain_gate_consulted_moves_the_render_hash",
   "tests/test_cli_bullets.py::test_export_reports_only_the_closed_manifest_path_projection",
 ]
 phase = "4"
-note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; Stage 10 now proves the folded-identity replacement itself, superseding exactly the branch a generated name folds onto and removing that branch's set while the owner's exact new spelling is stored, and proves that a semantic no-bullet answer replaces nothing; Stage 12 now publishes the branch set at exactly out/branch/<branch-id>/ under a manifest carrying the branch ID, the closed §13.14 resume identity, and the render-input hash, without touching the anchor snapshot's set, and proves that hash moving when a value the §16.11 gate reads changes while every entity, generation, and source ID stays the same, with the uncited anchor's own grounding reaching the completeness lists and the hash but never the rendered evidence map"
+note = "Assessment CLI export, exact ID-keyed stale-set removal for verification, gap answers, and downstream claim/snapshot supersession, the later generation publishing under its own ID while the prior set is removed, and lifecycle-sensitive re-export are covered; branch invalidation is proven to target exactly the opaque-ID-keyed out/branch/<branch-id>/ sets of the dependent branches, and every §11-valid display name — including assessment and its path-shaped spellings — is proven ordinary, with fold-equal names proven to resolve one current branch and to be refused a second current row; Stage 10 now proves the folded-identity replacement itself, superseding exactly the branch a generated name folds onto and removing that branch's set while the owner's exact new spelling is stored, and proves that a semantic no-bullet answer replaces nothing; Stage 12 now publishes the branch set at exactly out/branch/<branch-id>/ under a manifest carrying the branch ID, the closed §13.14 resume identity, and the render-input hash, without touching the anchor snapshot's set, and proves that hash moving when a value the §16.11 gate reads changes while every entity, generation, and source ID stays the same, with the uncited anchor's own grounding, and the §13.3 correction rows both provenance gates consult, reaching the completeness lists and the hash but never the rendered evidence map"
 
 ["21.35"]
 status = "partial"

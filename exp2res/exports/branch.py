@@ -22,8 +22,10 @@ from typing import Literal, Sequence
 from exp2res.domain.enums import ResumeTargetSection
 from exp2res.domain.models import (
     AssessmentSnapshot,
+    Contradiction,
     EvidenceItem,
     ExperienceFact,
+    GapQuestion,
     JobDescription,
     RawLog,
     ResumeBranch,
@@ -43,7 +45,9 @@ from exp2res.storage.repository import (
     get_experience_fact,
     get_job_description,
     hydrate_assessment_snapshot,
+    hydrate_contradiction,
     hydrate_evidence_item,
+    hydrate_gap_question,
     hydrate_raw_log,
     hydrate_resume_branch,
     hydrate_resume_bullet,
@@ -55,10 +59,12 @@ from exp2res.storage.repository import (
 
 from .graph import (
     ClaimRenderEntry,
+    ContradictionRenderEntry,
     EvidenceRenderEntry,
     FactRenderEntry,
     FactSourceRecord,
     FactSourceRenderEntry,
+    GapRenderEntry,
     RawLogRenderEntry,
     SnapshotRenderEntry,
     StoredRecord,
@@ -320,6 +326,12 @@ class BranchExportGraph:
     # reduction that happens to land on the same aggregate still invalidates
     # the published set.
     anchor_claims: tuple[StoredRecord[SelfClaim], ...] = ()
+    # The anchor's two typed reference lists, revalidated under §11.7. No
+    # branch member renders them — §13.14 rule 2 dropped both from the resume
+    # `source_ids` shape for exactly that reason — but they were read to accept
+    # the anchor, so the hash carries them.
+    anchor_gaps: tuple[StoredRecord[GapQuestion], ...] = ()
+    anchor_contradictions: tuple[StoredRecord[Contradiction], ...] = ()
     # Supplemental rows outside the bullet and cited-claim source closure —
     # counterevidence grounding targets. Read to validate rendering, so rule 2
     # folds them into `source_ids` and the bundle, while the closed §13.12
@@ -410,6 +422,55 @@ def _stored_bullet(
     return _stored(row, bullet)
 
 
+def load_anchor_references(
+    connection: sqlite3.Connection, snapshot: AssessmentSnapshot
+) -> tuple[
+    tuple[StoredRecord[GapQuestion], ...], tuple[StoredRecord[Contradiction], ...]
+]:
+    """§11.7's read-time check over the anchor's two typed reference lists.
+
+    Exactly what §11.7 names — resolvable, duplicate-free, current — and no
+    more. Stage 6's set-completeness rules (every current unanswered gap
+    listed, the contradiction set equal to the current one) are §13.12
+    assessment-export gates over rows the mirror renders; a bullet pack
+    publishes none of them and refusing one here would fail a pack over a
+    defect in a projection it does not carry.
+    """
+
+    if len(set(snapshot.gap_question_ids)) != len(snapshot.gap_question_ids):
+        raise IntegrityFailureError("snapshot_gap_reference_invalid")
+    if len(set(snapshot.contradiction_ids)) != len(snapshot.contradiction_ids):
+        raise IntegrityFailureError("snapshot_contradiction_reference_invalid")
+
+    gaps: list[StoredRecord[GapQuestion]] = []
+    for gap_id in sorted(snapshot.gap_question_ids, key=id_key):
+        row = connection.execute(
+            "SELECT * FROM gap_questions WHERE id = ?", (gap_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("snapshot_gap_reference_invalid")
+        gap = hydrate_gap_question(row)
+        # An answer recorded after synthesis is ordinary owner activity, not
+        # corruption: §11.7 says so explicitly, so only currentness is checked.
+        if gap.superseded_at is not None:
+            raise IntegrityFailureError("snapshot_gap_reference_invalid")
+        gaps.append(_stored(row, gap))
+
+    contradictions: list[StoredRecord[Contradiction]] = []
+    for contradiction_id in sorted(snapshot.contradiction_ids, key=id_key):
+        row = connection.execute(
+            "SELECT * FROM contradictions WHERE id = ?", (contradiction_id,)
+        ).fetchone()
+        if row is None:
+            raise IntegrityFailureError("snapshot_contradiction_reference_invalid")
+        contradiction = hydrate_contradiction(row)
+        if contradiction.superseded_at is not None:
+            raise IntegrityFailureError("snapshot_contradiction_reference_invalid")
+        contradictions.append(_stored(row, contradiction))
+
+    return tuple(gaps), tuple(contradictions)
+
+
 def load_branch_graph(
     connection: sqlite3.Connection,
     *,
@@ -467,11 +528,22 @@ def load_branch_graph(
         fact = get_experience_fact(connection, fact_id)
         if fact is None or fact.superseded_at is not None:
             raise IntegrityFailureError("anchor_claim_fact_not_current")
-    require_direct_retained_chain(
-        connection,
-        ordered_anchor_facts,
-        diagnostic="anchor_claim_direct_chain_missing",
-    )
+    for item in members:
+        # Per claim, never over the union: §16.1 asks that *this* row reach one
+        # live chain, and the helper is satisfied by the first fact that does.
+        # One pooled call would let a healthy member's chain answer for a
+        # member whose own facts are all displaced.
+        require_direct_retained_chain(
+            connection,
+            item.value.source_fact_ids,
+            diagnostic="anchor_claim_direct_chain_missing",
+        )
+    # §11.7: a read-time consumer re-validates the snapshot's typed references
+    # — resolvable, duplicate-free, current — rather than trusting persisted
+    # IDs, and never fails a current snapshot because a listed gap was answered
+    # after synthesis. The deeper projection of those rows belongs to the
+    # assessment export, which renders them; here they only have to resolve.
+    anchor_gaps, anchor_contradictions = load_anchor_references(connection, snapshot)
     # §18: the anchor must still be eligible to anchor Stage 10. A snapshot
     # that fell out of the allowlist after generation no longer licenses the
     # pack it fixed the assessment context for.
@@ -518,12 +590,17 @@ def load_branch_graph(
             record.value.source_fact_ids,
             diagnostic="claim_direct_chain_missing",
         )
-        for counterevidence in record.value.counterevidence:
-            # §16.1, exactly as the assessment export reads it: a cited claim's
+
+    for item in members:
+        for counterevidence in item.value.counterevidence:
+            # §16.1, exactly as the assessment export reads it: a member's
             # counterevidence is a typed reference into current state, so it is
             # resolved rather than trusted. Without this the pack could publish
             # over a dangling or §13.3-displaced target, and its hash would
             # cover only the reference string instead of what it points at.
+            # Every member, not only the cited ones: the whole set carries the
+            # aggregate the gate reads and rides in the hash, so the whole set
+            # has to still resolve.
             _require_reference(
                 connection,
                 counterevidence.source_ref_type,
@@ -632,6 +709,30 @@ def load_branch_graph(
         log_by_evidence=log_by_evidence,
     )
 
+    # §13.3 displacement is recorded on the *correcting* log, so the retained-
+    # chain gate above answers itself out of rows no closure reaches: a planted
+    # correction can displace one direct source, leave another retained, and
+    # change what the gate read without moving a single hashed byte. Hashing
+    # the corrections of every log this export touches closes that: normally
+    # the set is empty, and one appearing invalidates the published set.
+    closure_log_ids = {item.id for item in raw_logs} | {
+        item.id for item in closure.raw_logs
+    }
+    corrections: dict[str, RawLog] = {}
+    for log_id in sorted(closure_log_ids, key=id_key):
+        for row in connection.execute(
+            "SELECT * FROM raw_logs WHERE corrects_log_id = ?", (log_id,)
+        ).fetchall():
+            correction = hydrate_raw_log(row)
+            if correction.id not in closure_log_ids:
+                corrections[correction.id] = correction
+    supplemental_raw_logs = tuple(
+        sorted(
+            (*closure.raw_logs, *corrections.values()),
+            key=lambda item: id_key(item.id),
+        )
+    )
+
     return BranchExportGraph(
         branch=branch_record,
         bullets=tuple(bullet_records),
@@ -644,10 +745,12 @@ def load_branch_graph(
         raw_logs=tuple(raw_logs),
         fact_sources=tuple(fact_source_records),
         anchor_claims=tuple(members),
+        anchor_gaps=anchor_gaps,
+        anchor_contradictions=anchor_contradictions,
         supplemental_facts=closure.facts,
         supplemental_fact_sources=closure.fact_sources,
         supplemental_evidence_items=closure.evidence_items,
-        supplemental_raw_logs=closure.raw_logs,
+        supplemental_raw_logs=supplemental_raw_logs,
     )
 
 
@@ -663,6 +766,8 @@ class BranchRenderInputBundle(_BundleModel):
     evidence_items: list[EvidenceRenderEntry]
     raw_logs: list[RawLogRenderEntry]
     fact_sources: list[FactSourceRenderEntry]
+    gap_questions: list[GapRenderEntry]
+    contradictions: list[ContradictionRenderEntry]
 
 
 def branch_render_input_bundle(graph: BranchExportGraph) -> BranchRenderInputBundle:
@@ -749,6 +854,22 @@ def branch_render_input_bundle(graph: BranchExportGraph) -> BranchRenderInputBun
                 support_type=item.support_type,
             )
             for item in bundle_fact_sources
+        ],
+        gap_questions=[
+            GapRenderEntry(
+                value=item.value,
+                generation_id=item.generation_id,
+                produced_by_run_id=item.produced_by_run_id,
+            )
+            for item in graph.anchor_gaps
+        ],
+        contradictions=[
+            ContradictionRenderEntry(
+                value=item.value,
+                generation_id=item.generation_id,
+                produced_by_run_id=item.produced_by_run_id,
+            )
+            for item in graph.anchor_contradictions
         ],
     )
 
