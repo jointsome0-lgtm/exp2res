@@ -94,6 +94,63 @@ def test_closed_companion_models_reject_extra_missing_and_wrong_version(
         model.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    "break_document",
+    [
+        pytest.param(
+            lambda pinned: {
+                **pinned,
+                "claim_links": [
+                    {**link, "source_fact_ids": ["fact_vera_9999"]}
+                    for link in pinned["claim_links"]
+                ],
+            },
+            id="claim-reaches-an-unlinked-fact",
+        ),
+        pytest.param(
+            lambda pinned: {
+                **pinned,
+                "fact_links": [
+                    *pinned["fact_links"],
+                    {
+                        "fact_id": "fact_vera_9999",
+                        "evidence_item_ids": ["evidence_item_vera_0001"],
+                        "source_log_ids": ["raw_log_vera_0001"],
+                    },
+                ],
+            },
+            id="unused-fact-link",
+        ),
+        pytest.param(
+            lambda pinned: {
+                **pinned,
+                "evidence_links": [
+                    *pinned["evidence_links"],
+                    {
+                        "evidence_item_id": "evidence_item_vera_9999",
+                        "raw_log_id": "raw_log_vera_0001",
+                    },
+                ],
+            },
+            id="unused-evidence-link",
+        ),
+    ],
+)
+def test_assessment_map_rejects_unresolved_and_unused_closure_members(
+    break_document: object,
+) -> None:
+    # §21.48: the assessment companion enforces the same claim → fact →
+    # evidence → log closure as the bullet-pack one, so an unresolved or
+    # unused member fails the document instead of reaching publication.
+    pinned = json.loads(
+        (REPOSITORY_ROOT / "tests" / "goldens" / "assessment" / "evidence_map.json")
+        .read_text(encoding="utf-8")
+    )
+    assert AssessmentEvidenceMapDocument.model_validate(pinned)
+    with pytest.raises(ValidationError):
+        AssessmentEvidenceMapDocument.model_validate(break_document(pinned))
+
+
 def test_bullet_pack_map_rejects_a_claim_link_no_bullet_cites() -> None:
     # §21.48: an unused closure member fails export exactly like a missing one,
     # and a claim link is the one closure list bullets reach by citation.

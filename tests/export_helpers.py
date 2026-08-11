@@ -186,12 +186,22 @@ def assessment_graph(
         contradiction_ids=[contradiction.id],
         verification_status="contradicted" if all_sections else "supported",
     )
+    # §13.12: the graph carries exactly the facts the claims reach, the way
+    # §13.6 selection builds it — the contrary member enters only with the
+    # pattern claim that cites it, never as an unused closure row.
+    cited_counter = any(
+        counter_fact.id in item.value.source_fact_ids for item in claims
+    )
     return AssessmentExportGraph(
         snapshot=stored(snapshot, "snapshot"),
         snapshot_created_at_text="2026-07-20T10:00:00+02:00",
         claims=tuple(claims),
-        facts=(stored(fact, "fact"), stored(counter_fact, "counter_fact")),
-        evidence_items=(evidence, counter_evidence),
+        facts=(
+            (stored(fact, "fact"), stored(counter_fact, "counter_fact"))
+            if cited_counter
+            else (stored(fact, "fact"),)
+        ),
+        evidence_items=(evidence, counter_evidence) if cited_counter else (evidence,),
         raw_logs=(raw,),
         gaps=(stored(gap, "gap"),),
         contradictions=(stored(contradiction, "contradiction"),),
@@ -201,11 +211,17 @@ def assessment_graph(
                 evidence_item_id=evidence.id,
                 support_type="direct",
             ),
-            FactSourceRecord(
-                fact_id=counter_fact.id,
-                evidence_item_id=counter_evidence.id,
-                support_type="direct",
-            ),
+        )
+        + (
+            (
+                FactSourceRecord(
+                    fact_id=counter_fact.id,
+                    evidence_item_id=counter_evidence.id,
+                    support_type="direct",
+                ),
+            )
+            if cited_counter
+            else ()
         ),
     )
 
