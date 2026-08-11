@@ -635,8 +635,9 @@ def _verify_branch(
     # stale identity, provenance, source IDs, or render hash.
     manifest = ResumeManifest.model_validate_json(members["manifest.json"])
     branch_row, branch_value = load_current_branch(connection, branch)
+    graph = load_branch_graph(connection, branch_row=branch_row, branch=branch_value)
     expected = build_branch_manifest(
-        load_branch_graph(connection, branch_row=branch_row, branch=branch_value),
+        graph,
         {name: members[name] for name in BRANCH_MEMBERS[:-1]},
         created_at=manifest.created_at,
     )
@@ -693,6 +694,11 @@ def _verify_branch(
             (branch,),
         )
     }
+    # §13.10: the persisted graph owns render order, so the published sequence
+    # is compared with it directly. A set comparison would accept three
+    # consistently reversed outputs, which every later field check still passes.
+    if [item.value.id for item in graph.bullets] != rendered:
+        raise AssertionError("Vera Example rendered bullets are not in persisted order")
     if sorted(stored) != sorted(rendered):
         raise AssertionError("Vera Example rendered bullet set is not branch-complete")
     for finding in report.findings:
