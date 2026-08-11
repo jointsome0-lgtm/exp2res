@@ -41,6 +41,16 @@ FORBIDDEN_OWNER_NOUN_PATTERNS = tuple(
 
 GOLDEN_PROSE_MEMBERS = ("report.md", "report.html", "self_claims.json")
 
+# The §16.12 generated voice a bullet pack run produces: §18 bullet prose and
+# the verifier reasons that ride into verification_report.json beside it. Both
+# goldens are marker-exempt in scripts/check_public_hygiene.py, so this is where
+# their invented-but-owner-free wording is held; the canned Stage 8, 10, and 11
+# responses behind them are covered by the corpus scan below.
+GENERATED_BULLET_PROSE = (
+    "tests/goldens/branch/bullet_pack.md",
+    "tests/goldens/branch/verification_report.json",
+)
+
 CORPUS_PROSE_DIRECTORY = REPOSITORY_ROOT / "examples" / "vera" / "corpus" / "llm"
 
 
@@ -213,10 +223,15 @@ def test_generated_prose_in_goldens_carries_no_third_person_owner_nouns() -> Non
         lowered = text.lower()
         for pattern in FORBIDDEN_OWNER_NOUN_PATTERNS:
             assert not pattern.search(lowered), (member, pattern.pattern)
-        # §16.14 forbids the owner's personal name in generated prose, so the
-        # prose goldens are marker-exempt (scripts/check_public_hygiene.py);
-        # fixture lineage lives in the vera entity IDs instead.
         assert "vera example" not in lowered, member
+
+
+def test_generated_bullet_prose_never_names_the_owner() -> None:
+    for relative in GENERATED_BULLET_PROSE:
+        lowered = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8").lower()
+        for pattern in FORBIDDEN_OWNER_NOUN_PATTERNS:
+            assert not pattern.search(lowered), (relative, pattern.pattern)
+        assert "vera example" not in lowered, relative
 
 
 def test_every_canned_corpus_response_is_generated_voice_only() -> None:

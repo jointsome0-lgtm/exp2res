@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 CORPUS_NAME = "vera-example-fixtures"
-CORPUS_VERSION = "2.0.0"
+CORPUS_VERSION = "2.1.0"
 MARKER = "Vera Example"
 PERSONA_SOURCE = "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md"
 ROOT = Path(__file__).resolve().parent / "corpus"
@@ -647,6 +647,96 @@ DEMO_RESPONSES = {
         "reason": "The narrower evidence-bound summary is supported.",
         "unsupported_phrases": [], "counterevidence": [], "suggested_rewrite": None,
     },
+    # §15.9: the parse keeps each demand's wording and required-versus-preferred
+    # modality, and reports the vacancy's self-declared fiction as context.
+    "demo-jd-parse.json": {
+        "title": "Technical Writer, Platform Documentation",
+        "company": "Examplia GmbH",
+        "parsed": {
+            "requirements": [
+                {"kind": "required_skill",
+                 "text": "Two or more years writing developer-facing documentation.",
+                 "keywords": ["developer documentation", "technical writing"]},
+                {"kind": "required_skill",
+                 "text": "Hands-on familiarity with Kubernetes concepts and kubectl workflows.",
+                 "keywords": ["Kubernetes", "kubectl"]},
+                {"kind": "required_skill",
+                 "text": "Comfortable working in Git: branches, pull requests, reviews.",
+                 "keywords": ["Git", "pull requests"]},
+                {"kind": "preferred_skill",
+                 "text": "Python scripting for documentation tooling (link checkers, linters).",
+                 "keywords": ["Python", "documentation tooling"]},
+                {"kind": "preferred_skill",
+                 "text": "Experience producing video tutorials.",
+                 "keywords": ["video tutorials"]},
+                {"kind": "preferred_skill", "text": "On-page SEO basics.",
+                 "keywords": ["SEO"]},
+            ],
+            "seniority_signals": [],
+            "domain_signals": ["internal developer platform", "platform documentation"],
+            "keywords": ["Git", "Kubernetes", "Python", "SEO", "developer documentation",
+                         "documentation tooling", "kubectl", "pull requests",
+                         "technical writing", "video tutorials"],
+            "red_flags": ["The vacancy declares itself a fictional demo posting."],
+        },
+        "warnings": [],
+    },
+    # §15.6: one claim-guided multi-sentence bullet and one facts-only bullet.
+    # The kubectl runbook work is the only demand this corpus reaches; the
+    # ingress correction carries no demand at all, and the two-year tenure,
+    # Git, Python scripting, video-tutorial, and SEO demands stay unmatched.
+    "demo-bullets.json": {
+        "bullets": [
+            {
+                "text": (
+                    "Drafted and validated the kubectl troubleshooting runbook for "
+                    "the K8s Playbook. Every documented step was walked on the toy "
+                    "cluster before it was written down."
+                ),
+                "target_section": "selected_projects",
+                "target_role_relevance": "high",
+                "matched_jd_requirements": ["jdreq_demo_0002"],
+                "source_fact_ids": ["fact_demo_0001", "fact_demo_0002", "fact_demo_0003"],
+                "source_self_claim_ids": ["claim_demo_0003"],
+            },
+            {
+                "text": (
+                    "Reopened the ingress guide after finding placeholder TLS text "
+                    "and resumed the draft."
+                ),
+                "target_section": "selected_projects",
+                "target_role_relevance": "medium",
+                "matched_jd_requirements": [],
+                "source_fact_ids": ["fact_demo_0003"],
+                "source_self_claim_ids": [],
+            },
+        ],
+        "warnings": [],
+    },
+    "demo-bullet-verification.json": {
+        "findings": [
+            {
+                "bullet_id": "bullet_demo_0001",
+                "status": "supported",
+                "unsupported_phrases": [],
+                "suggested_rewrite": None,
+                "reason": (
+                    "Every material assertion resolves to the supplied fact, "
+                    "evidence-item, and raw-log closure."
+                ),
+            },
+            {
+                "bullet_id": "bullet_demo_0002",
+                "status": "supported",
+                "unsupported_phrases": [],
+                "suggested_rewrite": None,
+                "reason": (
+                    "The correction record carries the reopened guide and the "
+                    "resumed draft."
+                ),
+            },
+        ],
+    },
 }
 
 DESIGN_DOC = """# K8s Playbook — information architecture
@@ -798,7 +888,8 @@ def replay() -> dict:
          "note": "snapshot_step names the exact --snapshot anchor (§14.10 has no "
                  "latest default); the harness resolves it to E4's snapshot ID",
          "expect": {"status": "ok", "supported_bullets_min": 1,
-                    "unmatched_requirements": ["video tutorials", "SEO"]}},
+                    "unmatched_requirements": ["Two or more years",
+                                               "video tutorials", "SEO"]}},
         {"step": "E11", "kind": "bullets", "jd_file": "jds/jd-junior-backend-clouddocs.md",
          "branch": "backend-clouddocs", "snapshot_step": "E4",
          "clock": "2026-07-12T11:00:00+02:00",

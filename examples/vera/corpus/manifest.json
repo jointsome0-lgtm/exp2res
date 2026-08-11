@@ -14,10 +14,13 @@
     "jds/jd-junior-backend-clouddocs.md": "7b7b1778eb49920a31b8aaea65f480017b34a8c8aba0efec6bf288cb972bc96c",
     "llm/demo-assessment-overclaim.json": "ad15abb9c990c9c65f9152a5018a188fa508a8ed3428e3de49ac5f1b21da31f5",
     "llm/demo-assessment-supported.json": "8b95e8c0d636775d765ecccad92a192006c956cc5e94e75c8b64091e55c3f3c5",
+    "llm/demo-bullet-verification.json": "79ba54c15f3cd8b3c53af584728b7ddfa284daeefb213a4d4a61b5a0c5176138",
+    "llm/demo-bullets.json": "dee37efbd089bec6907b706176f239cd724461e27ce97b96999a49e0c4a62a4b",
     "llm/demo-detection.json": "330ba6c351bd6dad44876862739cfd23986a46ceda7e11dfe86722bc13c84de3",
     "llm/demo-extract-call-01.json": "1f9f595ab33652c23ac4430a59d0de99dc97ebb8c1021156f4581ea909703229",
     "llm/demo-extract-call-02.json": "34695d066883b6d83841f516955be93bd8a7945e97d25b498e0a740197836785",
     "llm/demo-extract-call-03.json": "8b3bf8297d446a9e4088f81a7b9cc3c4265d6772efedfe174d4cec21a212ea71",
+    "llm/demo-jd-parse.json": "f1f7ac6699c90a83b15d90031832976d1aa8658259b1c8f0efe1ab38274f7e1f",
     "llm/demo-verification-narrowed.json": "db8d046b183a8b9ed4694bcf89060b798fecbcf3408861fd618bd20441814af8",
     "llm/demo-verification-rejected.json": "683a3dd9308686c86ef32f7dc0950ee927407e3be31cd3ebbb1fa63b5670f18d",
     "llm/demo-verification-supported.json": "86812c940b2ee32463ae8f1eb6d17b1f8fb2ac3b62023beebdc85cdd5c4a43d2",
@@ -38,10 +41,10 @@
     "logs/daily-2026-07-08.md": "e1e0c545e1640da568f69ca4636728fff98006867743c4bcaf8978907f3348ce",
     "logs/retro-2026-05-strength.json": "89a02739084ecf21c18b11ddac64c8bd4ce725808ede96d2cf9968198e801c16",
     "logs/retro-2026-06-k8s.json": "c92f84c5c5b058238892697dd5ee01f4c3fe0a054684f7488ac4183c23d303af",
-    "replay.json": "ccc4f2773da717844cb8c5ab012fd5ac3413c0390587928beea7bcd7b426faa5"
+    "replay.json": "7d8953f23345b0a6e700b0a6ce026ff5134479ded2c95de36e84f6bdec0f8c0a"
   },
   "generator": "examples/vera/corpus.py",
   "persona": "Vera Example",
   "persona_source": "https://github.com/jointsome0-lgtm/selfos/blob/main/docs/persona.md",
-  "version": "2.0.0"
+  "version": "2.1.0"
 }

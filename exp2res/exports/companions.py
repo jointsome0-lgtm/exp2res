@@ -225,6 +225,11 @@ class ClaimLink(ExportDocument):
         # consumer never reads a counter fact as support.
         if not set(self.counter_fact_ids).issubset(self.source_fact_ids):
             raise ValueError("counter fact is not a source fact")
+        # §16.1/§27: an exported claim resolves a chain through at least one
+        # fact. An empty link would satisfy every closure comparison while
+        # leaving the claim it stands for outside its own fact edges.
+        if not self.source_fact_ids:
+            raise ValueError("claim link carries no source fact")
         return self
 
 
@@ -243,6 +248,15 @@ class FactLink(ExportDocument):
     def unique_ids(cls, value: list[str]) -> list[str]:
         return _require_unique(value)
 
+    @model_validator(mode="after")
+    def grounded_fact(self) -> "FactLink":
+        # §12: a persisted fact always selects evidence, and that evidence
+        # always names its log. An empty link would satisfy every closure
+        # comparison while leaving the fact it stands for ungrounded.
+        if not self.evidence_item_ids or not self.source_log_ids:
+            raise ValueError("fact link carries no evidence or log")
+        return self
+
 
 class EvidenceLink(ExportDocument):
     evidence_item_id: str
@@ -252,6 +266,41 @@ class EvidenceLink(ExportDocument):
     @classmethod
     def structural_ids(cls, value: str) -> str:
         return validate_structural(value)
+
+
+def _reach_facts(claim_links: list[ClaimLink], fact_ids: set[str]) -> set[str]:
+    reached: set[str] = set()
+    for link in claim_links:
+        if not set(link.source_fact_ids).issubset(fact_ids):
+            raise ValueError("claim link reaches an unlinked fact")
+        reached.update(link.source_fact_ids)
+    return reached
+
+
+def _validate_fact_closure(
+    reached_facts: set[str],
+    fact_links: list[FactLink],
+    evidence_links: list[EvidenceLink],
+) -> None:
+    # §13.12: both companions carry the same fact → evidence → log closure, so
+    # an unused extra member fails export exactly like a missing one.
+    if reached_facts != {item.fact_id for item in fact_links}:
+        raise ValueError("fact links disagree with the reached closure")
+    evidence_ids = {item.evidence_item_id for item in evidence_links}
+    evidence_logs = {item.evidence_item_id: item.raw_log_id for item in evidence_links}
+    reached_evidence: set[str] = set()
+    for link in fact_links:
+        if not set(link.evidence_item_ids).issubset(evidence_ids):
+            raise ValueError("fact link reaches an unlinked evidence item")
+        reached_evidence.update(link.evidence_item_ids)
+        # Each edge is checked on its own: comparing only the union would
+        # accept two facts whose logs are swapped between them.
+        if set(link.source_log_ids) != {
+            evidence_logs[item] for item in link.evidence_item_ids
+        }:
+            raise ValueError("fact link logs disagree with its own evidence")
+    if reached_evidence != evidence_ids:
+        raise ValueError("evidence links disagree with the reached closure")
 
 
 class AssessmentEvidenceMapDocument(ExportDocument):
@@ -285,6 +334,13 @@ class AssessmentEvidenceMapDocument(ExportDocument):
                 raise ValueError("evidence-map links are duplicate or unordered")
         if self.rendered_claim_ids != grouped_ids[0]:
             raise ValueError("rendered claim IDs disagree with claim links")
+        # §13.12: every rendered claim round-trips through its own fact edges
+        # into the evidence and log rows, so an unresolved or unused member is
+        # rejected here exactly as it is in the bullet-pack map.
+        fact_ids = {item.fact_id for item in self.fact_links}
+        _validate_fact_closure(
+            _reach_facts(self.claim_links, fact_ids), self.fact_links, self.evidence_links
+        )
         return self
 
 
@@ -358,30 +414,29 @@ class BulletPackEvidenceMapDocument(ExportDocument):
         # each cited claim and each reached fact carries its own closure row.
         claim_ids = {item.claim_id for item in self.claim_links}
         fact_ids = {item.fact_id for item in self.fact_links}
-        evidence_ids = {item.evidence_item_id for item in self.evidence_links}
+        fact_logs = {item.fact_id: set(item.source_log_ids) for item in self.fact_links}
         reached_facts: set[str] = set()
+        cited_claims: set[str] = set()
         for bullet in self.rendered_bullets:
             if not set(bullet.source_self_claim_ids).issubset(claim_ids):
                 raise ValueError("rendered bullet cites an unlinked claim")
             if not set(bullet.source_fact_ids).issubset(fact_ids):
                 raise ValueError("rendered bullet cites an unlinked fact")
+            # §18: a bullet's logs equal — not contain — the closure reached
+            # through its own facts, so an unresolved or surplus log ID fails
+            # the document exactly as it fails the persisted graph.
+            own_logs: set[str] = set()
+            for fact_id in bullet.source_fact_ids:
+                own_logs |= fact_logs[fact_id]
+            if set(bullet.source_log_ids) != own_logs:
+                raise ValueError("rendered bullet logs disagree with its fact closure")
+            cited_claims.update(bullet.source_self_claim_ids)
             reached_facts.update(bullet.source_fact_ids)
-        for link in self.claim_links:
-            if not set(link.source_fact_ids).issubset(fact_ids):
-                raise ValueError("claim link reaches an unlinked fact")
-            reached_facts.update(link.source_fact_ids)
-        # An unused extra member fails export exactly like a missing one.
-        if reached_facts != fact_ids:
-            raise ValueError("fact links disagree with the reached closure")
-        reached_evidence: set[str] = set()
-        reached_logs: set[str] = set()
-        for link in self.fact_links:
-            reached_evidence.update(link.evidence_item_ids)
-            reached_logs.update(link.source_log_ids)
-        if reached_evidence != evidence_ids:
-            raise ValueError("evidence links disagree with the reached closure")
-        if reached_logs != {item.raw_log_id for item in self.evidence_links}:
-            raise ValueError("evidence links disagree with the reached logs")
+        # An unused claim link is an unused closure member like any other.
+        if cited_claims != claim_ids:
+            raise ValueError("claim links disagree with the cited closure")
+        reached_facts |= _reach_facts(self.claim_links, fact_ids)
+        _validate_fact_closure(reached_facts, self.fact_links, self.evidence_links)
         return self
 
 

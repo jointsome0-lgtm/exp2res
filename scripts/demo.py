@@ -22,16 +22,27 @@ from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
 import exp2res.services.assessment as assessment_service
+import exp2res.services.bullets as bullets_service
 import exp2res.services.capture as capture_service
 import exp2res.services.detection as detection_service
 import exp2res.services.extraction as extraction_service
+import exp2res.services.job_descriptions as jd_service
 from exp2res.cli import app
 from exp2res.exports.companions import (
     AssessmentEvidenceMapDocument,
+    BulletPackEvidenceMapDocument,
     SelfClaimsDocument,
+    VerificationReportDocument,
 )
+from exp2res.exports.branch import load_branch_graph, load_current_branch
 from exp2res.exports.graph import load_assessment_graph, load_current_snapshot
-from exp2res.storage.repository import hydrate_assessment_snapshot
+from exp2res.exports.managed import ResumeManifest, build_branch_manifest
+from exp2res.domain.verification import aggregate_verification_status
+from exp2res.storage.repository import (
+    STAGE10_ANCHOR_ALLOWLIST,
+    hydrate_assessment_snapshot,
+    list_self_claims_for_snapshot,
+)
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import (
     AttemptTelemetry,
@@ -43,7 +54,13 @@ from exp2res.pipeline.stage3 import run_fact_extraction
 from exp2res.pipeline.stage4 import run_detection_generation
 from exp2res.pipeline.stage6 import run_assessment_generation
 from exp2res.pipeline.stage7 import run_assessment_verification
-from exp2res.services.export import export_assessment as real_export_assessment
+from exp2res.pipeline.stage8 import run_job_description_parse
+from exp2res.pipeline.stage10 import run_bullet_generation
+from exp2res.pipeline.stage11 import run_bullet_verification
+from exp2res.services.export import (
+    export_assessment as real_export_assessment,
+    export_bullet_pack as real_export_bullet_pack,
+)
 from exp2res.storage.workspace import (
     CURRENT_SCHEMA_VERSION,
     initialize_workspace as real_initialize_workspace,
@@ -57,7 +74,7 @@ GOLDEN_TRANSCRIPT = ROOT / "demo" / "transcript.txt"
 GOLDEN_CAST = ROOT / "demo.cast"
 WORKSPACE_LABEL = "demo/workspace"
 FIXED_CLOCK = datetime.fromisoformat("2026-07-15T12:30:00+00:00")
-CORPUS_VERSION = "2.0.0"
+CORPUS_VERSION = "2.1.0"
 ENVELOPE_VERSION = 2
 EXPORT_MEMBERS = (
     "report.md",
@@ -66,6 +83,14 @@ EXPORT_MEMBERS = (
     "evidence_map.json",
     "manifest.json",
 )
+BRANCH_MEMBERS = (
+    "bullet_pack.md",
+    "evidence_map.json",
+    "verification_report.json",
+    "manifest.json",
+)
+DEMO_BRANCH = "docs-examplia"
+DEMO_VACANCY = "examples/vera/corpus/jds/jd-docs-engineer-examplia.md"
 PRIVATE_HOME_MARKERS = (b"/home/", b"/Users/", b"/root/", b"\\Users\\")
 # Canned §15 prose the mirror must actually render, in §16.14's second-person
 # and subject-free forms. Pinned here so a corpus rewording fails this check
@@ -91,6 +116,8 @@ class DemoIds:
             "raw_log": "log", "evidence_item": "evi", "fact": "fact",
             "gap": "gap", "contradiction": "contradiction",
             "snapshot": "snapshot", "claim": "claim", "finding": "finding",
+            "job_description": "jd", "jd_requirement": "jdreq",
+            "branch": "branch", "bullet": "bullet",
             "run": "run", "gen": "gen",
         }
         self.counts[kind] += 1
@@ -337,6 +364,44 @@ def _current_snapshot(workspace: Path) -> str:
     return row[0]
 
 
+def _current_branch(workspace: Path) -> str:
+    with read_database(workspace) as connection:
+        row = connection.execute(
+            "SELECT id FROM resume_branches WHERE superseded_at IS NULL"
+        ).fetchone()
+    if row is None:
+        raise AssertionError("Vera Example demo has no current bullet-pack branch")
+    return row[0]
+
+
+def _unmatched_demands(workspace: Path, branch: str) -> list[str]:
+    """§18: demands the pack's current bullets leave unanswered, from the rows."""
+
+    with read_database(workspace) as connection:
+        parsed = connection.execute(
+            "SELECT jd.parsed_json FROM job_descriptions AS jd "
+            "JOIN resume_branches AS branch ON branch.job_description_id = jd.id "
+            "WHERE branch.id = ?",
+            (branch,),
+        ).fetchone()
+        matched = {
+            requirement_id
+            for (raw,) in connection.execute(
+                "SELECT matched_jd_requirements_json FROM resume_bullets "
+                "WHERE branch_id = ? AND superseded_at IS NULL",
+                (branch,),
+            )
+            for requirement_id in json.loads(raw)
+        }
+    if parsed is None:
+        raise AssertionError("Vera Example demo branch has no parsed vacancy")
+    return [
+        item["text"]
+        for item in json.loads(parsed[0])["requirements"]
+        if item["id"] not in matched
+    ]
+
+
 def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     workspace = workspace.resolve()
     if workspace.is_relative_to(ROOT.resolve()):
@@ -482,6 +547,54 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     invoke(transcript, workspace, ["logs", "show", "--log-id", "log_demo_0002"])
     invoke(transcript, workspace, ["logs", "show", "--log-id", "log_demo_0003"])
 
+    transcript.section("Act 3 — job-targeted verified bullet pack")
+    clock.set("2026-07-12T10:00:00+02:00")
+    _stage_command(
+        transcript, workspace, ids, clock,
+        service=jd_service, stage_name="run_job_description_parse",
+        real_stage=run_job_description_parse,
+        response_names=["demo-jd-parse.json"],
+        arguments=["jd", "add", DEMO_VACANCY],
+    )
+    invoke(transcript, workspace, ["jd", "list"])
+    clock.set("2026-07-12T10:05:00+02:00")
+    _stage_command(
+        transcript, workspace, ids, clock,
+        service=bullets_service, stage_name="run_bullet_generation",
+        real_stage=run_bullet_generation, response_names=["demo-bullets.json"],
+        arguments=[
+            "bullets", "generate",
+            "--jd", "jd_demo_0001",
+            "--snapshot", published_snapshot,
+            "--branch", DEMO_BRANCH,
+        ],
+    )
+    published_branch = _current_branch(workspace)
+    clock.set("2026-07-12T10:07:00+02:00")
+    _stage_command(
+        transcript, workspace, ids, clock,
+        service=bullets_service, stage_name="run_bullet_verification",
+        real_stage=run_bullet_verification,
+        response_names=["demo-bullet-verification.json"],
+        arguments=["bullets", "verify", "--branch", DEMO_BRANCH],
+    )
+
+    def deterministic_bullet_export(selected_workspace: Path, *, branch_name: str):
+        return real_export_bullet_pack(
+            selected_workspace, branch_name=branch_name, clock=clock
+        )
+
+    clock.set("2026-07-12T10:10:00+02:00")
+    with replaced(cli_module, "export_bullet_pack", deterministic_bullet_export):
+        invoke(transcript, workspace, ["bullets", "export", "--branch", DEMO_BRANCH])
+    unmatched = _unmatched_demands(workspace, published_branch)
+    transcript.note(
+        "Act 3 result: two supported bullets published under "
+        f"out/branch/{published_branch}; {len(unmatched)} demands stay unmatched "
+        "because the invented corpus reaches none of them:\n"
+        + "\n".join(f"  - {demand}" for demand in unmatched)
+    )
+
     state = {
         "persona": "Vera Example",
         "corpus_version": CORPUS_VERSION,
@@ -489,6 +602,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
         "envelope_version": ENVELOPE_VERSION,
         "blocked_snapshot_id": blocked_snapshot,
         "published_snapshot_id": published_snapshot,
+        "published_branch_id": published_branch,
         "blocked_verify_exit": verify_result.exit_code,
         "blocked_export_exit": export_result.exit_code,
     }
@@ -505,6 +619,216 @@ def exported_bytes(workspace: Path, snapshot_id: str) -> dict[str, bytes]:
     return {name: (root / name).read_bytes() for name in EXPORT_MEMBERS}
 
 
+def branch_bytes(workspace: Path, branch_id: str) -> dict[str, bytes]:
+    root = workspace / "out" / "branch" / branch_id
+    return {name: (root / name).read_bytes() for name in BRANCH_MEMBERS}
+
+
+def _verify_branch(
+    workspace: Path, connection, branch: str, members: dict[str, bytes]
+) -> None:
+    """§13.12: the pack's own closure, checked against persisted rows alone."""
+
+    # §13.14: the manifest is a typed claim about which branch generation the
+    # published bytes came from, so it is rebuilt from the persisted graph and
+    # compared whole. Member hashes alone would accept correct bytes carried by
+    # stale identity, provenance, source IDs, or render hash.
+    manifest = ResumeManifest.model_validate_json(members["manifest.json"])
+    branch_row, branch_value = load_current_branch(connection, branch)
+    graph = load_branch_graph(connection, branch_row=branch_row, branch=branch_value)
+    expected = build_branch_manifest(
+        graph,
+        {name: members[name] for name in BRANCH_MEMBERS[:-1]},
+        created_at=manifest.created_at,
+    )
+    if manifest != expected:
+        raise AssertionError("Vera Example branch manifest disagrees with persisted state")
+
+    evidence_map = BulletPackEvidenceMapDocument.model_validate_json(
+        members["evidence_map.json"]
+    )
+    report = VerificationReportDocument.model_validate_json(
+        members["verification_report.json"]
+    )
+    # §13.12: both companions name the exported branch itself, so a
+    # structurally valid but wrong ID cannot pass as the pack's identity.
+    if evidence_map.entity_id != branch or report.branch_id != branch:
+        raise AssertionError("Vera Example companions name another branch")
+    rendered = [item.bullet_id for item in evidence_map.rendered_bullets]
+    if [item.bullet_id for item in report.findings] != rendered:
+        raise AssertionError("Vera Example verification report is not pack-ordered")
+    if any(item.verification_status != "supported" for item in report.findings):
+        raise AssertionError("Vera Example published a bullet without support")
+
+    anchored = connection.execute(
+        "SELECT branch.assessment_snapshot_id, snapshot.verification_status "
+        "FROM resume_branches AS branch "
+        "JOIN assessment_snapshots AS snapshot "
+        "ON snapshot.id = branch.assessment_snapshot_id "
+        "WHERE branch.id = ? AND branch.superseded_at IS NULL "
+        "AND snapshot.superseded_at IS NULL",
+        (branch,),
+    ).fetchone()
+    if anchored is None:
+        raise AssertionError("Vera Example published branch or its anchor is not current")
+    anchor_snapshot, anchor_status = anchored
+    # §16.11: every gated consumer re-reduces the anchor aggregate from its own
+    # current claims rather than trusting the stored one, then applies the
+    # Stage 10 allowlist to it.
+    anchor_members = list_self_claims_for_snapshot(connection, anchor_snapshot)
+    if anchor_status != aggregate_verification_status(
+        item.verification_status for item in anchor_members
+    ):
+        raise AssertionError("Vera Example branch anchor aggregate is stale")
+    if anchor_status not in STAGE10_ANCHOR_ALLOWLIST:
+        raise AssertionError("Vera Example branch anchor is not export-eligible")
+
+    stored = {
+        row[0]: row
+        for row in connection.execute(
+            "SELECT id, verification_status, text, target_section, "
+            "matched_jd_requirements_json, source_fact_ids_json, "
+            "source_log_ids_json, source_self_claim_ids_json, "
+            "unsupported_phrases_json, verifier_reason FROM resume_bullets "
+            "WHERE branch_id = ? AND superseded_at IS NULL",
+            (branch,),
+        )
+    }
+    # §13.10: the persisted graph owns render order, so the published sequence
+    # is compared with it directly. A set comparison would accept three
+    # consistently reversed outputs, which every later field check still passes.
+    if [item.value.id for item in graph.bullets] != rendered:
+        raise AssertionError("Vera Example rendered bullets are not in persisted order")
+    if sorted(stored) != sorted(rendered):
+        raise AssertionError("Vera Example rendered bullet set is not branch-complete")
+    for finding in report.findings:
+        row = stored[finding.bullet_id]
+        if (
+            finding.verification_status,
+            list(finding.unsupported_phrases),
+            finding.verifier_reason,
+        ) != (row[1], json.loads(row[8]), row[9]):
+            raise AssertionError(
+                f"Vera Example published verdict is stale: {finding.bullet_id}"
+            )
+    # §13.12: the pack projects the current rows, so every exported bullet
+    # field is the persisted one rather than merely a valid-looking value.
+    for item in evidence_map.rendered_bullets:
+        row = stored[item.bullet_id]
+        if (
+            item.text,
+            item.target_section,
+            list(item.matched_jd_requirements),
+            list(item.source_fact_ids),
+            list(item.source_log_ids),
+            list(item.source_self_claim_ids),
+        ) != (row[2], row[3], *(json.loads(value) for value in row[4:8])):
+            raise AssertionError(
+                f"Vera Example exported bullet differs from its row: {item.bullet_id}"
+            )
+
+    pack = members["bullet_pack.md"].decode("utf-8")
+    # §13.10/§24.51: the pack projects the evidence map's bullets in that exact
+    # order, so a reordering renderer is a failure, not a substring match.
+    if [line[2:] for line in pack.splitlines() if line.startswith("- ")] != [
+        item.text for item in evidence_map.rendered_bullets
+    ]:
+        raise AssertionError("Vera Example pack does not render the mapped bullet order")
+    fact_links = {item.fact_id: item for item in evidence_map.fact_links}
+    evidence_links = {
+        item.evidence_item_id: item for item in evidence_map.evidence_links
+    }
+    claim_links = {item.claim_id: item for item in evidence_map.claim_links}
+
+    def verify_fact_closure(fact_id: str) -> None:
+        fact = fact_links[fact_id]
+        if not fact.evidence_item_ids or not fact.source_log_ids:
+            raise AssertionError(f"Vera Example bullet fact closure is incomplete: {fact_id}")
+        if connection.execute(
+            "SELECT 1 FROM experience_facts WHERE id = ? AND superseded_at IS NULL",
+            (fact_id,),
+        ).fetchone() is None:
+            raise AssertionError(
+                f"Vera Example bullet fact is missing or superseded: {fact_id}"
+            )
+        # §13.12: the exported closure must be the persisted one, so every
+        # exported edge is read back from fact_sources and evidence_items
+        # rather than merely resolving to rows that happen to exist.
+        persisted_evidence = {
+            row[0]
+            for row in connection.execute(
+                "SELECT evidence_item_id FROM fact_sources WHERE fact_id = ?",
+                (fact_id,),
+            )
+        }
+        if set(fact.evidence_item_ids) != persisted_evidence:
+            raise AssertionError(
+                f"Vera Example exported fact evidence differs from fact_sources: {fact_id}"
+            )
+        persisted_logs = set()
+        for evidence_id in fact.evidence_item_ids:
+            link = evidence_links[evidence_id]
+            stored_log = connection.execute(
+                "SELECT raw_log_id FROM evidence_items WHERE id = ?", (evidence_id,)
+            ).fetchone()
+            if stored_log is None:
+                raise AssertionError(
+                    f"Vera Example bullet evidence item is missing: {evidence_id}"
+                )
+            if link.raw_log_id != stored_log[0]:
+                raise AssertionError(
+                    f"Vera Example exported evidence/log edge is not the persisted "
+                    f"one: {evidence_id}"
+                )
+            if connection.execute(
+                "SELECT 1 FROM raw_logs WHERE id = ?", (link.raw_log_id,)
+            ).fetchone() is None:
+                raise AssertionError(
+                    f"Vera Example bullet raw log is missing: {link.raw_log_id}"
+                )
+            persisted_logs.add(stored_log[0])
+        if set(fact.source_log_ids) != persisted_logs:
+            raise AssertionError(
+                f"Vera Example exported fact logs differ from the persisted "
+                f"evidence: {fact_id}"
+            )
+
+    for item in evidence_map.rendered_bullets:
+        if not item.source_fact_ids:
+            raise AssertionError(f"Vera Example bullet has no fact closure: {item.bullet_id}")
+        for fact_id in item.source_fact_ids:
+            verify_fact_closure(fact_id)
+        # §16.11: Stage 10 may only cite current `supported` claims of the
+        # branch's anchor, so a claim-guided bullet proves that membership and
+        # its own fact closure, not just the bullet's direct facts.
+        for claim_id in item.source_self_claim_ids:
+            claim = claim_links.get(claim_id)
+            if claim is None:
+                raise AssertionError(f"Vera Example bullet claim is unmapped: {claim_id}")
+            stored_claim = connection.execute(
+                "SELECT source_fact_ids_json, counter_fact_ids_json FROM self_claims "
+                "WHERE id = ? AND snapshot_id = ? AND superseded_at IS NULL "
+                "AND verification_status = 'supported'",
+                (claim_id, anchor_snapshot),
+            ).fetchone()
+            if stored_claim is None:
+                raise AssertionError(
+                    f"Vera Example bullet claim is not a current supported "
+                    f"anchor member: {claim_id}"
+                )
+            if not claim.source_fact_ids:
+                raise AssertionError(f"Vera Example bullet claim has no fact closure: {claim_id}")
+            if set(claim.source_fact_ids) != set(
+                json.loads(stored_claim[0])
+            ) or set(claim.counter_fact_ids) != set(json.loads(stored_claim[1])):
+                raise AssertionError(
+                    f"Vera Example exported claim provenance is not the persisted "
+                    f"one: {claim_id}"
+                )
+            for fact_id in claim.source_fact_ids:
+                verify_fact_closure(fact_id)
+
+
 def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, bytes], bytes]:
     state = json.loads((workspace / "demo-state.json").read_text(encoding="utf-8"))
     if state["persona"] != "Vera Example" or state["corpus_version"] != CORPUS_VERSION:
@@ -516,7 +840,9 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
 
     blocked = state["blocked_snapshot_id"]
     published = state["published_snapshot_id"]
+    branch = state["published_branch_id"]
     members = exported_bytes(workspace, published)
+    branch_members = branch_bytes(workspace, branch)
     manifest = json.loads(members["manifest.json"])
     recorded = {item["name"]: item["sha256"] for item in manifest["members"]}
     for name in ("report.md", "report.html", "self_claims.json", "evidence_map.json"):
@@ -552,6 +878,7 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
             raise AssertionError("Vera Example mirror snapshot is not supported/current")
         if (workspace / "out" / "assessment" / blocked).exists():
             raise AssertionError("Vera Example blocked export was published")
+        _verify_branch(workspace, connection, branch, branch_members)
 
         claim_links = {item.claim_id: item for item in evidence_map.claim_links}
         fact_links = {item.fact_id: item for item in evidence_map.fact_links}
@@ -606,7 +933,11 @@ def _verify_one(workspace: Path, *, golden: bytes | None) -> tuple[dict[str, byt
         raise AssertionError("Vera Example transcript exposes an absolute private path")
     if golden is not None and transcript != golden:
         raise AssertionError("Vera Example checked transcript is stale; regenerate it")
-    return members, transcript
+    published_bytes = {
+        **{f"assessment/{name}": value for name, value in members.items()},
+        **{f"branch/{name}": value for name, value in branch_members.items()},
+    }
+    return published_bytes, transcript
 
 
 def _verify_cast() -> None:

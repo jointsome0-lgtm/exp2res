@@ -1,0 +1,18 @@
+{
+  "findings": [
+    {
+      "bullet_id": "bullet_demo_0001",
+      "reason": "Every material assertion resolves to the supplied fact, evidence-item, and raw-log closure.",
+      "status": "supported",
+      "suggested_rewrite": null,
+      "unsupported_phrases": []
+    },
+    {
+      "bullet_id": "bullet_demo_0002",
+      "reason": "The correction record carries the reopened guide and the resumed draft.",
+      "status": "supported",
+      "suggested_rewrite": null,
+      "unsupported_phrases": []
+    }
+  ]
+}
