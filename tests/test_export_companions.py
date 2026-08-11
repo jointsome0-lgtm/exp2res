@@ -204,6 +204,24 @@ def test_bullet_pack_map_rejects_a_fact_link_with_no_evidence_or_log() -> None:
         BulletPackEvidenceMapDocument.model_validate(emptied)
 
 
+def test_bullet_pack_map_rejects_a_claim_link_with_no_source_fact() -> None:
+    # §21.48: the claim-guided row must round-trip through its own claim's
+    # direct-fact edges, which an empty claim link would silently skip while
+    # the bullets' own facts keep the reached-fact union complete.
+    pinned = json.loads(
+        (REPOSITORY_ROOT / "tests" / "goldens" / "branch" / "evidence_map.json")
+        .read_text(encoding="utf-8")
+    )
+    emptied = dict(pinned)
+    first, *rest = pinned["claim_links"]
+    emptied["claim_links"] = [
+        {**first, "source_fact_ids": [], "counter_fact_ids": []},
+        *rest,
+    ]
+    with pytest.raises(ValidationError):
+        BulletPackEvidenceMapDocument.model_validate(emptied)
+
+
 def test_render_input_hash_covers_gap_lifecycle_and_verification_at_same_ids() -> None:
     graph = assessment_graph(all_sections=False)
     answered = graph_with_gap_answered(graph, True)

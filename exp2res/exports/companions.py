@@ -225,6 +225,11 @@ class ClaimLink(ExportDocument):
         # consumer never reads a counter fact as support.
         if not set(self.counter_fact_ids).issubset(self.source_fact_ids):
             raise ValueError("counter fact is not a source fact")
+        # §16.1/§27: an exported claim resolves a chain through at least one
+        # fact. An empty link would satisfy every closure comparison while
+        # leaving the claim it stands for outside its own fact edges.
+        if not self.source_fact_ids:
+            raise ValueError("claim link carries no source fact")
         return self
 
 
