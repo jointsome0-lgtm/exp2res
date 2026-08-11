@@ -17,6 +17,7 @@ from exp2res.exports.companions import (
     build_self_claims_document,
     companion_bytes,
 )
+from exp2res.exports.graph import id_key
 from exp2res.exports.managed import (
     assessment_member_bytes,
     build_assessment_manifest,
@@ -92,6 +93,58 @@ def test_closed_companion_models_reject_extra_missing_and_wrong_version(
 ) -> None:
     with pytest.raises(ValidationError):
         model.model_validate(payload)
+
+
+def test_evidence_map_attributes_each_claim_to_its_own_persisted_facts() -> None:
+    # §13.12: the closure union is not a substitute for attribution. Each link
+    # is built from one persisted claim row, so exchanging two claims' edges
+    # produces a different document even though the reached facts are equal.
+    graph = assessment_graph()
+    document = build_evidence_map_document(graph)
+    linked = {link.claim_id: link for link in document.claim_links}
+    for record in graph.claims:
+        link = linked[record.value.id]
+        assert list(link.source_fact_ids) == sorted(
+            record.value.source_fact_ids, key=id_key
+        )
+        assert list(link.counter_fact_ids) == sorted(
+            record.value.counter_fact_ids, key=id_key
+        )
+
+    pattern = next(
+        item for item in graph.claims if item.value.claim_kind == "pattern_signal"
+    )
+    other = next(
+        item
+        for item in graph.claims
+        if item.value.source_fact_ids != pattern.value.source_fact_ids
+    )
+    exchanged = {
+        pattern.value.id: other.value,
+        other.value.id: pattern.value,
+    }
+    swapped = replace(
+        graph,
+        claims=tuple(
+            replace(
+                record,
+                value=record.value.model_copy(
+                    update={
+                        "source_fact_ids": exchanged[record.value.id].source_fact_ids,
+                        "counter_fact_ids": exchanged[record.value.id].counter_fact_ids,
+                    }
+                ),
+            )
+            if record.value.id in exchanged
+            else record
+            for record in graph.claims
+        ),
+    )
+    exported = build_evidence_map_document(swapped)
+    assert {link.fact_id for link in exported.fact_links} == {
+        link.fact_id for link in document.fact_links
+    }
+    assert exported.claim_links != document.claim_links
 
 
 @pytest.mark.parametrize(
