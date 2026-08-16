@@ -19,7 +19,6 @@ from exp2res.config import load_workspace_config
 from exp2res.domain.models import JobDescription, validate_free_text
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     JdDeleteResult,
     JobDescriptionProjection,
     Outcome,
@@ -130,9 +129,7 @@ def _committed_effects(
 
 
 def _created_job_descriptions(created: Iterable[str]) -> AffectedIds:
-    return AffectedIds(
-        created=[EntityIdGroup(entity_type="job_description", ids=list(created))]
-    )
+    return AffectedIds.of(created=(("job_description", created),))
 
 
 def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
@@ -643,15 +640,7 @@ def jd_delete_affected(deleted: JobDescriptionDeleteOutcome) -> AffectedIds:
         ),
         ("job_description", (deleted.selected.id,)),
     )
-    return AffectedIds(
-        created=[],
-        superseded=[],
-        deleted=[
-            EntityIdGroup(entity_type=entity_type, ids=list(ids))
-            for entity_type, ids in classes
-            if ids
-        ],
-    )
+    return AffectedIds.of(deleted=classes)
 
 
 def jd_delete_result(deleted: JobDescriptionDeleteOutcome) -> JdDeleteResult:

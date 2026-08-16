@@ -15,7 +15,6 @@ from pydantic import BaseModel, ValidationError
 from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     Outcome,
 )
 from exp2res.domain.enums import VerificationStatus
@@ -649,17 +648,10 @@ def bullets_verify_outcome(verified: Stage11Result) -> Outcome:
         # outside that allowlist is the class-10 consumer gate for the branch.
         exit_code=10 if verified.export_blocked else 0,
         diagnostic_class="verifier_gate_blocked" if verified.export_blocked else None,
-        affected_ids=AffectedIds(
-            created=[
-                EntityIdGroup(
-                    entity_type="verification_finding",
-                    ids=[item.id for item in findings],
-                )
-            ],
-            # §13.11 supersedes nothing: the bullets it verifies stay current
-            # and only their denormalized verdict fields change.
-            superseded=[],
-            deleted=[],
+        # §13.11 supersedes nothing: the bullets it verifies stay current and
+        # only their denormalized verdict fields change.
+        affected_ids=AffectedIds.of(
+            created=(("verification_finding", (item.id for item in findings)),)
         ),
         run_ids=[verified.run_id],
         findings=findings,

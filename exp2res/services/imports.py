@@ -11,10 +11,8 @@ from typing import Any, Mapping, Optional
 
 from pydantic import ValidationError
 
-from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     ImportCounts,
     ImportRecordGroups,
     ImportRecordResult,
@@ -594,33 +592,26 @@ def import_created(imported: ImportOutcome) -> AffectedIds:
     keep the input order its `result` records are reported in.
     """
 
-    groups = []
-    for entity_type, ids in (
-        (
-            "evidence_item",
-            [
-                item_id
-                for record in imported.accepted
-                for item_id in record.evidence_item_ids
-            ],
-        ),
-        (
-            "raw_log",
-            [
-                record.raw_log_id
-                for record in imported.accepted
-                if record.raw_log_id is not None
-            ],
-        ),
-    ):
-        if ids:
-            groups.append(
-                EntityIdGroup(
-                    entity_type=entity_type,
-                    ids=sorted(ids, key=id_key),
-                )
-            )
-    return AffectedIds(created=groups, superseded=[], deleted=[])
+    return AffectedIds.of(
+        created=(
+            (
+                "evidence_item",
+                [
+                    item_id
+                    for record in imported.accepted
+                    for item_id in record.evidence_item_ids
+                ],
+            ),
+            (
+                "raw_log",
+                [
+                    record.raw_log_id
+                    for record in imported.accepted
+                    if record.raw_log_id is not None
+                ],
+            ),
+        )
+    )
 
 
 def import_result(imported: ImportOutcome) -> ImportResult:

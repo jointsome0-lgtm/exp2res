@@ -25,7 +25,6 @@ from exp2res.domain.models import (
 )
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     InvalidatedBranch,
     Outcome,
 )
@@ -678,36 +677,22 @@ def run_bullet_generation(
 
 
 def bullets_generate_outcome(generated: Stage10Result) -> Outcome:
-    """One §14.14 rule 5 composition for completed and interrupted swaps."""
+    """One §14.14 rule 5 composition for completed and interrupted swaps.
 
-    created_groups: list[EntityIdGroup] = []
-    if generated.branch_id is not None:
-        created_groups.append(
-            EntityIdGroup(entity_type="resume_branch", ids=[generated.branch_id])
-        )
-        # §14.14 rule 5 orders every reported group by its stable identity, and
-        # a production bullet ID carries no writer-order information.
-        created_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=sorted(generated.bullet_ids, key=id_key),
-            )
-        )
-    superseded_groups: list[EntityIdGroup] = []
-    if generated.superseded_branch_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_branch",
-                ids=list(generated.superseded_branch_ids),
-            )
-        )
-    if generated.superseded_bullet_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=list(generated.superseded_bullet_ids),
-            )
-        )
+    A blocked generation commits neither branch nor bullets, so both created
+    groups empty together and drop themselves.
+    """
+
+    affected = AffectedIds.of(
+        created=(
+            ("resume_branch", [generated.branch_id] if generated.branch_id else []),
+            ("resume_bullet", generated.bullet_ids),
+        ),
+        superseded=(
+            ("resume_branch", generated.superseded_branch_ids),
+            ("resume_bullet", generated.superseded_bullet_ids),
+        ),
+    )
     # §13.10/§14.14: an empty writer array is a completed semantic result with
     # no branch — class 10 `blocked` under its own stable class, never a failed
     # run and never an empty branch.
@@ -729,11 +714,7 @@ def bullets_generate_outcome(generated: Stage10Result) -> Outcome:
     return Outcome(
         exit_code=10 if blocked else 0,
         diagnostic_class="no_bullet_generated" if blocked else None,
-        affected_ids=AffectedIds(
-            created=created_groups,
-            superseded=superseded_groups,
-            deleted=[],
-        ),
+        affected_ids=affected,
         generation_ids=sorted(
             {
                 *(

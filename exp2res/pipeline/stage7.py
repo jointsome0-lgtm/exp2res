@@ -16,7 +16,6 @@ from exp2res.domain.canonical import id_key
 from exp2res.domain.enums import VerificationStatus
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     InvalidatedBranch,
     Outcome,
 )
@@ -624,30 +623,14 @@ def assess_verify_outcome(verified: Stage7Result) -> Outcome:
     return Outcome(
         exit_code=10 if blocked else 0,
         diagnostic_class="verifier_gate_blocked" if blocked else None,
-        affected_ids=AffectedIds(
-            created=[
-                EntityIdGroup(
-                    entity_type="verification_finding",
-                    ids=[item.id for item in findings],
-                )
-            ],
+        affected_ids=AffectedIds.of(
+            created=(("verification_finding", (item.id for item in findings)),),
             # §13.7: a changed verifier state supersedes the branches
             # anchored to this snapshot, so the envelope reports them.
-            superseded=[
-                group
-                for group in (
-                    EntityIdGroup(
-                        entity_type="resume_branch",
-                        ids=list(verified.superseded_branch_ids),
-                    ),
-                    EntityIdGroup(
-                        entity_type="resume_bullet",
-                        ids=list(verified.superseded_bullet_ids),
-                    ),
-                )
-                if group.ids
-            ],
-            deleted=[],
+            superseded=(
+                ("resume_branch", verified.superseded_branch_ids),
+                ("resume_bullet", verified.superseded_bullet_ids),
+            ),
         ),
         generation_ids=list(verified.superseded_generation_ids),
         run_ids=[verified.run_id],

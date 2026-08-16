@@ -18,7 +18,6 @@ from exp2res.domain.models import Contradiction, GapQuestion
 from exp2res.domain.results import (
     AffectedIds,
     DetectionsGenerateResult,
-    EntityIdGroup,
     invalidated_view,
     InvalidatedBranch,
     InvalidatedView,
@@ -657,65 +656,25 @@ def run_detection_generation(
         return build_result(residual_paths)
 
 
-def detection_groups(
-    gap_ids: list[str], contradiction_ids: list[str]
-) -> list[EntityIdGroup]:
-    gap_ids = sorted(set(gap_ids), key=id_key)
-    contradiction_ids = sorted(
-        set(contradiction_ids), key=id_key
-    )
-    groups: list[EntityIdGroup] = []
-    if gap_ids:
-        groups.append(EntityIdGroup(entity_type="gap_question", ids=gap_ids))
-    if contradiction_ids:
-        groups.append(
-            EntityIdGroup(entity_type="contradiction", ids=contradiction_ids)
-        )
-    return groups
-
-
 def detections_generate_outcome(generated: Stage4Result) -> Outcome:
     """One §14.14 rule 5 composition for completed and interrupted swaps."""
 
     gaps = list(generated.current_gaps)
     contradictions = list(generated.current_contradictions)
-    created_gap_ids = list(generated.created_gap_ids)
-    created_contradiction_ids = list(generated.created_contradiction_ids)
-    superseded_gap_ids = list(generated.superseded_gap_ids)
-    superseded_contradiction_ids = list(
-        generated.superseded_contradiction_ids
+    affected = AffectedIds.of(
+        created=(
+            ("gap_question", generated.created_gap_ids),
+            ("contradiction", generated.created_contradiction_ids),
+        ),
+        superseded=(
+            ("gap_question", generated.superseded_gap_ids),
+            ("contradiction", generated.superseded_contradiction_ids),
+            ("self_claim", generated.superseded_claim_ids),
+            ("assessment_snapshot", generated.superseded_snapshot_ids),
+            ("resume_branch", generated.superseded_branch_ids),
+            ("resume_bullet", generated.superseded_bullet_ids),
+        ),
     )
-    superseded_groups = detection_groups(
-        superseded_gap_ids, superseded_contradiction_ids
-    )
-    if generated.superseded_claim_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="self_claim",
-                ids=list(generated.superseded_claim_ids),
-            )
-        )
-    if generated.superseded_snapshot_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="assessment_snapshot",
-                ids=list(generated.superseded_snapshot_ids),
-            )
-        )
-    if generated.superseded_branch_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_branch",
-                ids=list(generated.superseded_branch_ids),
-            )
-        )
-    if generated.superseded_bullet_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=list(generated.superseded_bullet_ids),
-            )
-        )
     invalidated_views = list(generated.invalidated_views)
     if generated.short_circuited:
         human = (
@@ -740,7 +699,7 @@ def detections_generate_outcome(generated: Stage4Result) -> Outcome:
             if name not in replaced
         ]
         invalidated = (
-            ", ".join(group.entity_type for group in superseded_groups)
+            ", ".join(group.entity_type for group in affected.superseded)
             or "none"
         )
         described = (
@@ -760,13 +719,7 @@ def detections_generate_outcome(generated: Stage4Result) -> Outcome:
             f"Invalidated artifact classes: {invalidated}."
         )
     return Outcome(
-        affected_ids=AffectedIds(
-            created=detection_groups(
-                created_gap_ids, created_contradiction_ids
-            ),
-            superseded=superseded_groups,
-            deleted=[],
-        ),
+        affected_ids=affected,
         generation_ids=sorted(
             {
                 *(

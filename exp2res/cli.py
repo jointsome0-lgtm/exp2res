@@ -36,7 +36,6 @@ from exp2res.domain.results import (
     CLIEnvelope,
     CommandPath,
     ContradictionsResult,
-    EntityIdGroup,
     EvidenceItemProjection,
     FactsListResult,
     GapsListResult,
@@ -280,7 +279,7 @@ def _status_for(exit_code: int) -> str:
 
 
 def _empty_affected() -> AffectedIds:
-    return AffectedIds(created=[], superseded=[], deleted=[])
+    return AffectedIds()
 
 
 def _schema_result(status: SchemaStatus) -> SchemaResult:
@@ -777,20 +776,14 @@ def db_migrate(context: typer.Context) -> None:
 
 
 def _merge_affected(*values: AffectedIds) -> AffectedIds:
-    def merge(field_name: str) -> list[EntityIdGroup]:
+    def merge(field_name: str) -> list[tuple[str, set[str]]]:
         grouped: dict[str, set[str]] = {}
         for value in values:
             for group in getattr(value, field_name):
                 grouped.setdefault(group.entity_type, set()).update(group.ids)
-        return [
-            EntityIdGroup(
-                entity_type=entity_type,
-                ids=sorted(ids, key=id_key),
-            )
-            for entity_type, ids in grouped.items()
-        ]
+        return list(grouped.items())
 
-    return AffectedIds(
+    return AffectedIds.of(
         created=merge("created"),
         superseded=merge("superseded"),
         deleted=merge("deleted"),
@@ -810,23 +803,12 @@ def _correction_affected(captured: CorrectionOutcome) -> AffectedIds:
         "resume_bullet": captured.superseded_bullet_ids,
         "self_claim": captured.superseded_claim_ids,
     }
-    return AffectedIds(
-        created=[
-            EntityIdGroup(
-                entity_type="evidence_item",
-                ids=sorted(
-                    (item.id for item in captured.evidence_items),
-                    key=id_key,
-                ),
-            ),
-            EntityIdGroup(entity_type="raw_log", ids=[captured.raw_log.id]),
-        ],
-        superseded=[
-            EntityIdGroup(entity_type=kind, ids=list(ids))
-            for kind, ids in superseded.items()
-            if ids
-        ],
-        deleted=[],
+    return AffectedIds.of(
+        created=(
+            ("evidence_item", (item.id for item in captured.evidence_items)),
+            ("raw_log", [captured.raw_log.id]),
+        ),
+        superseded=superseded.items(),
     )
 
 
@@ -1712,19 +1694,11 @@ def gaps_answer(
         # after commit. It supersedes no snapshot and reports no §13.13 rule 9
         # regeneration command — the view needs re-export, not regeneration.
         return Outcome(
-            affected_ids=AffectedIds(
-                created=[
-                    EntityIdGroup(
-                        entity_type="evidence_item",
-                        ids=sorted(
-                            evidence_ids,
-                            key=id_key,
-                        ),
-                    ),
-                    EntityIdGroup(entity_type="raw_log", ids=[bundle.raw_log.id]),
-                ],
-                superseded=[],
-                deleted=[],
+            affected_ids=AffectedIds.of(
+                created=(
+                    ("evidence_item", evidence_ids),
+                    ("raw_log", [bundle.raw_log.id]),
+                ),
             ),
             residual_paths=list(bundle.residual_paths),
             human_result=(
@@ -1864,15 +1838,7 @@ def _delete_affected(deleted: DeleteOutcome) -> AffectedIds:
         ("assessment_snapshot", deleted.purged_snapshot_ids),
         ("raw_log", (deleted.selected_log.id,)),
     )
-    return AffectedIds(
-        created=[],
-        superseded=[],
-        deleted=[
-            EntityIdGroup(entity_type=entity_type, ids=list(ids))
-            for entity_type, ids in classes
-            if ids
-        ],
-    )
+    return AffectedIds.of(deleted=classes)
 
 
 @logs_app.command("delete")

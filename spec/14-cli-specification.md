@@ -304,6 +304,7 @@ This contract binds every command-specific form above and every later §14 addit
      - `workspace` — canonical real discovered or overridden workspace-root path, the canonical `init` target, or `null` when no root was established.
      - `affected_ids` — closed object with exactly `created`, `superseded`, and `deleted`.
        - Each of the three is a list of closed `{entity_type: str, ids: list[str]}` groups, so per-table IDs remain typed by class.
+       - A group appears only for a class with at least one ID; a class with none is omitted rather than carried as an empty `ids` list, so which classes a result names is determined by its effects alone.
      - `generation_ids` — duplicate-free produced or invalidated §12 rule 13 generation IDs.
      - `run_ids` — duplicate-free §12.13 processing-run IDs created or directly inspected by the command.
      - `invalidated_views` — complete list of closed `{scope: AssessmentScope, snapshot_id: str, regeneration_command: str}` §13.13 rule 9 reports.

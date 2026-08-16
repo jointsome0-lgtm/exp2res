@@ -20,7 +20,6 @@ from exp2res.domain.calibration import (
 from exp2res.domain.enums import AssessmentScope
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     InvalidatedBranch,
     Outcome,
     extend_committed,
@@ -999,58 +998,39 @@ def run_assessment_repair(
     return committed_result(residual_paths, stored_snapshot, stored_claims)
 
 
+def _swap_affected(result: Stage6Result) -> AffectedIds:
+    """The §14.14 rule 5 groups of one Stage 6 view swap.
+
+    Generation and repair supersede the same four classes in the same order —
+    only the reasons differ — so the composition is shared rather than kept in
+    step by hand.
+    """
+
+    return AffectedIds.of(
+        created=(
+            ("assessment_snapshot", [result.snapshot_id] if result.snapshot_id else []),
+            ("self_claim", result.created_claim_ids),
+        ),
+        superseded=(
+            ("self_claim", result.superseded_claim_ids),
+            ("assessment_snapshot", result.superseded_snapshot_ids),
+            ("resume_branch", result.superseded_branch_ids),
+            ("resume_bullet", result.superseded_bullet_ids),
+        ),
+    )
+
+
 def assess_generate_outcome(generated: Stage6Result) -> Outcome:
     """One §14.14 rule 5 composition for completed and interrupted swaps."""
 
     assert generated.snapshot is not None and generated.snapshot_id is not None
-    created_groups = [
-        EntityIdGroup(
-            entity_type="assessment_snapshot", ids=[generated.snapshot_id]
-        ),
-        EntityIdGroup(
-            entity_type="self_claim", ids=list(generated.created_claim_ids)
-        ),
-    ]
-    superseded_groups: list[EntityIdGroup] = []
-    if generated.superseded_claim_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="self_claim",
-                ids=list(generated.superseded_claim_ids),
-            )
-        )
-    if generated.superseded_snapshot_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="assessment_snapshot",
-                ids=list(generated.superseded_snapshot_ids),
-            )
-        )
-    if generated.superseded_branch_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_branch",
-                ids=list(generated.superseded_branch_ids),
-            )
-        )
-    if generated.superseded_bullet_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=list(generated.superseded_bullet_ids),
-            )
-        )
     prior = (
         ""
         if generated.replaced_view is None
         else f"; superseded {generated.replaced_view.snapshot_id}"
     )
     return Outcome(
-        affected_ids=AffectedIds(
-            created=created_groups,
-            superseded=superseded_groups,
-            deleted=[],
-        ),
+        affected_ids=_swap_affected(generated),
         generation_ids=sorted(
             {
                 *(
@@ -1084,44 +1064,8 @@ def repair_outcome(repaired: Stage6Result) -> Outcome:
         for claim in repaired.claims
         if claim.metadata.get("adopted_rewrite_of_claim_id") in superseded_claim_ids
     )
-    created_groups = [
-        EntityIdGroup(
-            entity_type="assessment_snapshot", ids=[repaired.snapshot_id]
-        ),
-        EntityIdGroup(
-            entity_type="self_claim", ids=list(repaired.created_claim_ids)
-        ),
-    ]
-    superseded_groups = [
-        EntityIdGroup(
-            entity_type="self_claim",
-            ids=list(repaired.superseded_claim_ids),
-        ),
-        EntityIdGroup(
-            entity_type="assessment_snapshot",
-            ids=list(repaired.superseded_snapshot_ids),
-        ),
-    ]
-    if repaired.superseded_branch_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_branch",
-                ids=list(repaired.superseded_branch_ids),
-            )
-        )
-    if repaired.superseded_bullet_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=list(repaired.superseded_bullet_ids),
-            )
-        )
     return Outcome(
-        affected_ids=AffectedIds(
-            created=created_groups,
-            superseded=superseded_groups,
-            deleted=[],
-        ),
+        affected_ids=_swap_affected(repaired),
         generation_ids=sorted(
             {
                 *(

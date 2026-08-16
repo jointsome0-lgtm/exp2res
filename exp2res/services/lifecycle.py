@@ -14,7 +14,6 @@ from exp2res import __version__
 from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     InvalidatedBranch,
     InvalidatedView,
     Outcome,
@@ -119,6 +118,13 @@ class LifecycleResult:
 
     @property
     def affected_ids(self) -> AffectedIds:
+        """Merge both stages' §14.14 rule 5 reports, ordering classes by name.
+
+        The one `AffectedIds.of` caller without a fixed pair order to inherit:
+        two stages contribute overlapping classes, so neither stage's own
+        sequence is the merged order.
+        """
+
         created: dict[str, set[str]] = {}
         superseded: dict[str, set[str]] = {}
 
@@ -145,16 +151,9 @@ class LifecycleResult:
             add(superseded, "resume_branch", self.stage4.superseded_branch_ids)
             add(superseded, "resume_bullet", self.stage4.superseded_bullet_ids)
 
-        def groups(values: dict[str, set[str]]) -> list[EntityIdGroup]:
-            return [
-                EntityIdGroup(
-                    entity_type=entity_type,
-                    ids=sorted(ids, key=id_key),
-                )
-                for entity_type, ids in sorted(values.items())
-            ]
-
-        return AffectedIds(created=groups(created), superseded=groups(superseded), deleted=[])
+        return AffectedIds.of(
+            created=sorted(created.items()), superseded=sorted(superseded.items())
+        )
 
 
 def _held_transaction(
