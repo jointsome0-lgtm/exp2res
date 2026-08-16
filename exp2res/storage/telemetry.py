@@ -179,6 +179,27 @@ def require_running_run(
         raise IntegrityFailureError()
 
 
+def committed_runs(
+    connection: sqlite3.Connection, run_ids: list[str]
+) -> tuple[str, ...]:
+    """Which of `run_ids` survived as §12.13 rows, in the order allocated.
+
+    A failing stage allocates run IDs before it writes them, so the caller
+    cannot tell an allocated ID from a durable one. §14.14 rule 5 reports only
+    the runs that actually committed, and the allocation order is already the
+    rule's deterministic identity order.
+    """
+
+    if not run_ids:
+        return ()
+    placeholders = ",".join("?" for _ in run_ids)
+    rows = connection.execute(
+        f"SELECT id FROM processing_runs WHERE id IN ({placeholders})", run_ids
+    ).fetchall()
+    committed = {row[0] for row in rows}
+    return tuple(run_id for run_id in run_ids if run_id in committed)
+
+
 def _stored_metadata(connection: sqlite3.Connection, run_id: str) -> dict[str, str]:
     row = connection.execute(
         "SELECT metadata_json FROM processing_runs WHERE id = ?", (run_id,)

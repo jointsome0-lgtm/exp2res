@@ -14,6 +14,7 @@ from exp2res.llm.runner import CallBudgets, ContractRunner, PreparedCall, RawRes
 from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
 from exp2res.services.capture import new_id
 from exp2res.storage.repository import get_raw_log
+from exp2res.storage.telemetry import committed_runs
 from exp2res.storage.workspace import read_database, require_compatible
 
 
@@ -95,19 +96,6 @@ def build_llm_execution(
     return selection, budgets, LazyPreflightRunner(build_runner)
 
 
-def _committed_runs(workspace: Path, run_ids: list[str]) -> tuple[str, ...]:
-    if not run_ids:
-        return ()
-    placeholders = ",".join("?" for _ in run_ids)
-    with read_database(workspace) as connection:
-        rows = connection.execute(
-            f"SELECT id FROM processing_runs WHERE id IN ({placeholders})",
-            run_ids,
-        ).fetchall()
-    committed = {row[0] for row in rows}
-    return tuple(run_id for run_id in run_ids if run_id in committed)
-
-
 def run_extract(workspace: Path, *, log_id: str | None) -> Stage3Result:
     require_compatible(workspace)
     selection, budgets, runner = build_llm_execution(workspace)
@@ -134,7 +122,8 @@ def run_extract(workspace: Path, *, log_id: str | None) -> Stage3Result:
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        extend_committed(
-            error, run_ids=list(_committed_runs(workspace, allocated_runs))
-        )
+        with read_database(workspace) as connection:
+            extend_committed(
+                error, run_ids=list(committed_runs(connection, allocated_runs))
+            )
         raise
