@@ -17,7 +17,7 @@ from exp2res.exports.companions import (
     build_self_claims_document,
     companion_bytes,
 )
-from exp2res.exports.graph import id_key
+from exp2res.exports.graph import fs_id_key
 from exp2res.exports.managed import (
     assessment_member_bytes,
     build_assessment_manifest,
@@ -105,10 +105,10 @@ def test_evidence_map_attributes_each_claim_to_its_own_persisted_facts() -> None
     for record in graph.claims:
         link = linked[record.value.id]
         assert list(link.source_fact_ids) == sorted(
-            record.value.source_fact_ids, key=id_key
+            record.value.source_fact_ids, key=fs_id_key
         )
         assert list(link.counter_fact_ids) == sorted(
-            record.value.counter_fact_ids, key=id_key
+            record.value.counter_fact_ids, key=fs_id_key
         )
 
     pattern = next(

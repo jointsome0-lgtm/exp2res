@@ -13,7 +13,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 
 from pydantic import BaseModel, ValidationError
 
-from exp2res.domain.canonical import canonical_model_hash
+from exp2res.domain.canonical import canonical_model_hash, id_key
 from exp2res.domain.models import Contradiction, GapQuestion
 from exp2res.domain.results import (
     AffectedIds,
@@ -114,10 +114,6 @@ class _ResolvedDetection:
     warnings: tuple[ContractWarning, ...]
 
 
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
-
-
 def gap_structural_key(gap: GapCandidate | GapQuestion) -> GapStructuralKey:
     return (gap.target_type, gap.target_id, gap.reason, gap.priority)
 
@@ -130,7 +126,7 @@ def contradiction_structural_key(
         (contradiction.right_ref_type, contradiction.right_ref_id),
     }
     return tuple(
-        sorted(references, key=lambda ref: (_id_key(ref[0]), _id_key(ref[1])))
+        sorted(references, key=lambda ref: (id_key(ref[0]), id_key(ref[1])))
     )
 
 
@@ -319,7 +315,7 @@ def _matches_last_recorded_invocation(
     ).fetchall()
     if not rows:
         return False
-    latest = max(rows, key=lambda row: (utc_instant(row[0]), _id_key(row[1])))
+    latest = max(rows, key=lambda row: (utc_instant(row[0]), id_key(row[1])))
     return (
         latest[2] == selection.adapter
         and latest[3] == selection.model
@@ -361,7 +357,7 @@ def run_detection_generation(
     )
     with held as connection:
         facts = tuple(
-            sorted(list_experience_facts(connection), key=lambda fact: _id_key(fact.id))
+            sorted(list_experience_facts(connection), key=lambda fact: id_key(fact.id))
         )
         contexts = plan_lineages(connection, log_id=None)
         effective_logs = {
@@ -375,7 +371,7 @@ def run_detection_generation(
                 evidence_item=evidence_items[item_id],
                 raw_log=effective_logs[evidence_items[item_id].raw_log_id],
             )
-            for item_id in sorted(evidence_items, key=_id_key)
+            for item_id in sorted(evidence_items, key=id_key)
         )
         input_payload = DetectorInput(
             facts=list(facts), evidence_context=list(evidence_context)
@@ -388,7 +384,7 @@ def run_detection_generation(
                     *(entry.evidence_item.id for entry in evidence_context),
                     *(entry.raw_log.id for entry in evidence_context),
                 },
-                key=_id_key,
+                key=id_key,
             )
         )
         # §13.4 idempotent-rerun short-circuit: an unchanged input, adapter,
@@ -585,12 +581,12 @@ def run_detection_generation(
         # Capture the complete post-run sets while the command still owns the
         # writer lock, so the §14.7 result cannot race a following writer.
         current_gaps = tuple(
-            sorted(list_gap_questions(connection), key=lambda gap: _id_key(gap.id))
+            sorted(list_gap_questions(connection), key=lambda gap: id_key(gap.id))
         )
         current_contradictions = tuple(
             sorted(
                 list_contradictions(connection),
-                key=lambda contradiction: _id_key(contradiction.id),
+                key=lambda contradiction: id_key(contradiction.id),
             )
         )
 
@@ -609,24 +605,24 @@ def run_detection_generation(
                 superseded_gap_ids=superseded_gap_ids,
                 superseded_contradiction_ids=superseded_contradiction_ids,
                 superseded_claim_ids=tuple(
-                    sorted(superseded_claim_ids, key=_id_key)
+                    sorted(superseded_claim_ids, key=id_key)
                 ),
                 superseded_snapshot_ids=tuple(
-                    sorted(superseded_snapshot_ids, key=_id_key)
+                    sorted(superseded_snapshot_ids, key=id_key)
                 ),
                 superseded_branch_ids=branch_swap.branch_ids,
                 superseded_bullet_ids=branch_swap.bullet_ids,
                 invalidated_views=tuple(
                     sorted(
                         invalidated_views,
-                        key=lambda item: _id_key(item.snapshot_id),
+                        key=lambda item: id_key(item.snapshot_id),
                     )
                 ),
                 invalidated_branches=branch_swap.invalidated_branches,
                 residual_paths=residuals,
                 generation_id=generation_id,
                 superseded_generation_ids=tuple(
-                    sorted(superseded_generation_ids, key=_id_key)
+                    sorted(superseded_generation_ids, key=id_key)
                 ),
                 warnings=tuple(
                     warning
@@ -664,9 +660,9 @@ def run_detection_generation(
 def detection_groups(
     gap_ids: list[str], contradiction_ids: list[str]
 ) -> list[EntityIdGroup]:
-    gap_ids = sorted(set(gap_ids), key=lambda value: value.encode("utf-8"))
+    gap_ids = sorted(set(gap_ids), key=id_key)
     contradiction_ids = sorted(
-        set(contradiction_ids), key=lambda value: value.encode("utf-8")
+        set(contradiction_ids), key=id_key
     )
     groups: list[EntityIdGroup] = []
     if gap_ids:
@@ -780,7 +776,7 @@ def detections_generate_outcome(generated: Stage4Result) -> Outcome:
                 ),
                 *generated.superseded_generation_ids,
             },
-            key=lambda value: value.encode("utf-8"),
+            key=id_key,
         ),
         run_ids=[generated.run_id],
         warnings=list(generated.warnings),

@@ -15,6 +15,11 @@ TemporalPrecision = Literal[
 TemporalConfidence = Literal["low", "medium", "high", "unknown"]
 Confidence = Literal["low", "medium", "high", "unknown"]
 
+# §10's normative weak-to-strong order for both confidence aliases, which the
+# assignment order above does not carry. The aliases stay separate by §10's own
+# rule; the rank they share lives here once rather than once per comparison.
+CONFIDENCE_RANK = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
+
 AssessmentScope = Literal["global"]
 
 SelfClaimDimension = Literal[

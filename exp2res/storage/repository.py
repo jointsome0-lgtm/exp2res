@@ -15,6 +15,7 @@ from exp2res.domain.calibration import (
     claim_confidence_cap,
     pattern_generalization_cap,
 )
+from exp2res.domain.canonical import id_key
 from exp2res.domain.enums import VerificationStatus, VerificationTargetRefType
 from exp2res.domain.models import (
     Contradiction,
@@ -397,7 +398,7 @@ def insert_experience_fact(
     effective = [row for row in reached_logs.values() if not row["displaced"]]
     governing = max(
         effective,
-        key=lambda row: (utc_instant(row["recorded_at"]), row["id"].encode("utf-8")),
+        key=lambda row: (utc_instant(row["recorded_at"]), id_key(row["id"])),
     )
     if fact.project != governing["project"]:
         raise IntegrityFailureError()
@@ -536,8 +537,8 @@ def hydrate_experience_fact(
             raw_log_ids.add(source["raw_log_id"])
         if not direct or len(evidence_ids) != len(set(evidence_ids)):
             raise ValueError("invalid fact source set")
-        evidence_ids.sort(key=lambda value: value.encode("utf-8"))
-        source_log_ids = sorted(raw_log_ids, key=lambda value: value.encode("utf-8"))
+        evidence_ids.sort(key=id_key)
+        source_log_ids = sorted(raw_log_ids, key=id_key)
     except (
         AttributeError,
         json.JSONDecodeError,
@@ -617,7 +618,7 @@ def list_experience_facts(
     facts.sort(
         key=lambda item: (
             item.created_at.astimezone(timezone.utc),
-            item.id.encode("utf-8"),
+            id_key(item.id),
         )
     )
     return tuple(facts)
@@ -887,7 +888,7 @@ def list_assessment_snapshots(
     where = " WHERE superseded_at IS NULL" if current_only else ""
     rows = connection.execute("SELECT * FROM assessment_snapshots" + where).fetchall()
     return tuple(
-        sorted((hydrate_assessment_snapshot(row) for row in rows), key=lambda item: item.id.encode("utf-8"))
+        sorted((hydrate_assessment_snapshot(row) for row in rows), key=lambda item: id_key(item.id))
     )
 
 
@@ -903,7 +904,7 @@ def list_self_claims_for_snapshot(
         (snapshot_id,),
     ).fetchall()
     return tuple(
-        sorted((hydrate_self_claim(row) for row in rows), key=lambda item: item.id.encode("utf-8"))
+        sorted((hydrate_self_claim(row) for row in rows), key=lambda item: id_key(item.id))
     )
 
 
@@ -1363,7 +1364,7 @@ def list_gap_questions(
     gaps.sort(
         key=lambda item: (
             item.created_at.astimezone(timezone.utc),
-            item.id.encode("utf-8"),
+            id_key(item.id),
         )
     )
     return tuple(gaps)
@@ -1378,7 +1379,7 @@ def list_contradictions(
     contradictions.sort(
         key=lambda item: (
             item.created_at.astimezone(timezone.utc),
-            item.id.encode("utf-8"),
+            id_key(item.id),
         )
     )
     return tuple(contradictions)
@@ -1627,7 +1628,7 @@ def list_job_descriptions(
     job_descriptions.sort(
         key=lambda item: (
             item.created_at.astimezone(timezone.utc),
-            item.id.encode("utf-8"),
+            id_key(item.id),
         )
     )
     return tuple(job_descriptions)
@@ -1677,7 +1678,7 @@ def bullet_log_closure(
                 chunk,
             )
         )
-    return tuple(sorted(log_ids, key=lambda value: value.encode("utf-8")))
+    return tuple(sorted(log_ids, key=id_key))
 
 
 STAGE10_ANCHOR_ALLOWLIST = frozenset(
@@ -1845,7 +1846,7 @@ def insert_resume_bullet(
             raise IntegrityFailureError("bullet_log_missing")
     # §15.11 owns `source_log_ids` as a service derivation, so storage accepts
     # exactly the closure and never a writer-shaped subset or superset (§18).
-    if tuple(sorted(bullet.source_log_ids, key=lambda value: value.encode("utf-8"))) != (
+    if tuple(sorted(bullet.source_log_ids, key=id_key)) != (
         bullet_log_closure(connection, bullet.source_fact_ids)
     ):
         raise IntegrityFailureError("bullet_log_closure_mismatch")
@@ -1974,7 +1975,7 @@ def list_resume_branches(
     return tuple(
         sorted(
             (hydrate_resume_branch(row) for row in rows),
-            key=lambda item: item.id.encode("utf-8"),
+            key=lambda item: id_key(item.id),
         )
     )
 
@@ -2007,7 +2008,7 @@ def list_resume_bullets_for_branch(
     return tuple(
         sorted(
             (hydrate_resume_bullet(row) for row in rows),
-            key=lambda item: item.id.encode("utf-8"),
+            key=lambda item: id_key(item.id),
         )
     )
 

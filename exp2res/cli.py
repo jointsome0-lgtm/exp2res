@@ -21,6 +21,7 @@ except ImportError:  # typer releases that depend on an external click
     from click.exceptions import Abort, Exit, UsageError
 
 from exp2res.config import load_workspace_config, require_timezone
+from exp2res.domain.canonical import id_key
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
 from exp2res.domain.models import (
     ExperienceFact,
@@ -784,7 +785,7 @@ def _merge_affected(*values: AffectedIds) -> AffectedIds:
         return [
             EntityIdGroup(
                 entity_type=entity_type,
-                ids=sorted(ids, key=lambda item: item.encode("utf-8")),
+                ids=sorted(ids, key=id_key),
             )
             for entity_type, ids in grouped.items()
         ]
@@ -815,7 +816,7 @@ def _correction_affected(captured: CorrectionOutcome) -> AffectedIds:
                 entity_type="evidence_item",
                 ids=sorted(
                     (item.id for item in captured.evidence_items),
-                    key=lambda value: value.encode("utf-8"),
+                    key=id_key,
                 ),
             ),
             EntityIdGroup(entity_type="raw_log", ids=[captured.raw_log.id]),
@@ -851,7 +852,7 @@ def _decorate_lifecycle_error(
         ),
         generation_ids=sorted(
             {*base_generation_ids, *(progress.generation_ids if progress else ())},
-            key=lambda value: value.encode("utf-8"),
+            key=id_key,
         ),
         invalidated_views=list(
             merged_invalidated_views(
@@ -1241,7 +1242,7 @@ def _store_correction(
             *captured.superseded_generation_ids,
             *lifecycle.generation_ids,
         },
-        key=lambda value: value.encode("utf-8"),
+        key=id_key,
     )
     lifecycle.residual_paths = sorted(
         {*captured.residual_paths, *lifecycle.residual_paths},
@@ -1717,7 +1718,7 @@ def gaps_answer(
                         entity_type="evidence_item",
                         ids=sorted(
                             evidence_ids,
-                            key=lambda value: value.encode("utf-8"),
+                            key=id_key,
                         ),
                     ),
                     EntityIdGroup(entity_type="raw_log", ids=[bundle.raw_log.id]),
@@ -1956,7 +1957,7 @@ def logs_delete(
             affected_ids=_merge_affected(base_affected, lifecycle.affected_ids),
             generation_ids=sorted(
                 {*deleted.purged_generation_ids, *lifecycle.generation_ids},
-                key=lambda value: value.encode("utf-8"),
+                key=id_key,
             ),
             run_ids=lifecycle.run_ids,
             residual_paths=sorted(

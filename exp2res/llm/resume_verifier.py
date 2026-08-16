@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.models import (
     ExperienceFact,
     ParsedJD,
@@ -18,10 +19,6 @@ from exp2res.domain.models import (
 )
 
 from .contracts import ContractDefinition
-
-
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
 
 
 class VerifierJobDescription(StrictModel):
@@ -51,7 +48,7 @@ class ResumeVerifierInput(StrictModel):
     )
     @classmethod
     def objects_are_id_ordered(cls, value: list[object]) -> list[object]:
-        if value != sorted(value, key=lambda item: _id_key(item.id)):  # type: ignore[attr-defined]
+        if value != sorted(value, key=lambda item: id_key(item.id)):  # type: ignore[attr-defined]
             raise ValueError("objects must be ordered by ID bytes")
         if len({item.id for item in value}) != len(value):  # type: ignore[attr-defined]
             raise ValueError("duplicate object")

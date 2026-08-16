@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from exp2res import __version__
+from exp2res.domain.canonical import id_key
 from exp2res.domain.models import (
     AssessmentSnapshot,
     Contradiction,
@@ -39,10 +40,6 @@ class AssessmentDetails:
     claims: tuple[SelfClaim, ...]
     gaps: tuple[GapQuestion, ...]
     contradictions: tuple[Contradiction, ...]
-
-
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
 
 
 def run_assess_generate(workspace: Path) -> Stage6Result:
@@ -114,7 +111,7 @@ def run_assess_verify(workspace: Path, *, snapshot_id: str) -> Stage7Result:
 def list_current_snapshots(workspace: Path) -> tuple[AssessmentSnapshot, ...]:
     with read_database(workspace) as connection:
         snapshots = list_assessment_snapshots(connection)
-    return tuple(sorted(snapshots, key=lambda item: _id_key(item.id)))
+    return tuple(sorted(snapshots, key=lambda item: id_key(item.id)))
 
 
 def show_snapshot(workspace: Path, *, snapshot_id: str) -> AssessmentDetails:
@@ -139,9 +136,9 @@ def show_snapshot(workspace: Path, *, snapshot_id: str) -> AssessmentDetails:
             contradictions.append(contradiction)
     return AssessmentDetails(
         snapshot=snapshot,
-        claims=tuple(sorted(claims, key=lambda item: _id_key(item.id))),
-        gaps=tuple(sorted(gaps, key=lambda item: _id_key(item.id))),
+        claims=tuple(sorted(claims, key=lambda item: id_key(item.id))),
+        gaps=tuple(sorted(gaps, key=lambda item: id_key(item.id))),
         contradictions=tuple(
-            sorted(contradictions, key=lambda item: _id_key(item.id))
+            sorted(contradictions, key=lambda item: id_key(item.id))
         ),
     )

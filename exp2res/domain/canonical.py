@@ -1,12 +1,36 @@
-"""Canonical JSON serialization and hashing for validated domain payloads."""
+"""Canonical serialization, hashing and identity ordering for domain payloads."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
+from typing import Iterable
 
 from pydantic import BaseModel
+
+
+def id_key(value: str) -> bytes:
+    """Sort key for §14.14 rule 5's duplicate-free deterministic ID ordering.
+
+    Identities are ordered by their UTF-8 bytes, not by Python's code-point
+    comparison, so the order a workspace reports does not depend on the
+    interpreter's string collation.
+
+    This is *not* the ordering for filesystem-derived names: those may carry
+    undecodable bytes and use `exports.graph.fs_id_key`, which round-trips
+    them through `os.fsencode` instead of raising. The two agree on every
+    valid UTF-8 string; keeping them separately named keeps a caller from
+    silently adopting the wrong one.
+    """
+
+    return value.encode("utf-8")
+
+
+def byte_sorted(values: Iterable[str]) -> tuple[str, ...]:
+    """The `id_key` ordering applied to a whole collection."""
+
+    return tuple(sorted(values, key=id_key))
 
 
 _SIMPLE_ESCAPES = {

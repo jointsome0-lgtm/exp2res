@@ -12,6 +12,7 @@ from typing import Callable
 from pydantic import ValidationError
 
 from exp2res.config import load_workspace_config
+from exp2res.domain.canonical import id_key
 from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
 from exp2res.domain.results import (
     InvalidatedBranch,
@@ -90,10 +91,6 @@ class CorrectionOutcome:
     residual_paths: tuple[str, ...]
 
 
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
-
-
 def _capture_error(error: BaseException) -> InvalidInputError:
     failure = InvalidInputError()
     failure.diagnostic_class = "capture_validation_failed"
@@ -165,7 +162,7 @@ def _generation_ids(
                 ids,
             )
         )
-    return tuple(sorted(values, key=_id_key))
+    return tuple(sorted(values, key=id_key))
 
 
 def capture_correction(
@@ -292,7 +289,7 @@ def capture_correction(
             superseded_generation_ids = tuple(
                 sorted(
                     {*superseded_generation_ids, *branch_swap.superseded_generation_ids},
-                    key=_id_key,
+                    key=id_key,
                 )
             )
             mark_self_claims_superseded(connection, superseded_claim_ids, now)
@@ -328,15 +325,15 @@ def capture_correction(
                 raw_log=raw_log,
                 evidence_items=evidence_items,
                 superseded_fact_ids=superseded_fact_ids,
-                superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
+                superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=id_key)),
                 superseded_contradiction_ids=tuple(
-                    sorted(superseded_contradiction_ids, key=_id_key)
+                    sorted(superseded_contradiction_ids, key=id_key)
                 ),
                 superseded_claim_ids=tuple(
-                    sorted(superseded_claim_ids, key=_id_key)
+                    sorted(superseded_claim_ids, key=id_key)
                 ),
                 superseded_snapshot_ids=tuple(
-                    sorted(superseded_snapshot_ids, key=_id_key)
+                    sorted(superseded_snapshot_ids, key=id_key)
                 ),
                 superseded_branch_ids=branch_swap.branch_ids,
                 superseded_bullet_ids=branch_swap.bullet_ids,
@@ -344,7 +341,7 @@ def capture_correction(
                 invalidated_views=tuple(
                     sorted(
                         invalidated_views,
-                        key=lambda item: _id_key(item.snapshot_id),
+                        key=lambda item: id_key(item.snapshot_id),
                     )
                 ),
                 invalidated_branches=branch_swap.invalidated_branches,

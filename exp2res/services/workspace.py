@@ -10,6 +10,7 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
     EntityIdGroup,
@@ -86,7 +87,7 @@ def _capture_generation_ids(connection: sqlite3.Connection) -> tuple[str, ...]:
             )
             if row[0] is not None
         )
-    return tuple(sorted(generation_ids, key=lambda value: value.encode("utf-8")))
+    return tuple(sorted(generation_ids, key=id_key))
 
 
 def purge_workspace(

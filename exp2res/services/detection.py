@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from exp2res import __version__
+from exp2res.domain.canonical import id_key
 from exp2res.domain.models import Contradiction, GapQuestion
 from exp2res.domain.results import extend_committed
 from exp2res.errors import LLMInvocationError, SelectorNotFoundError
@@ -18,10 +19,6 @@ from exp2res.storage.repository import (
 )
 from exp2res.storage.telemetry import committed_runs
 from exp2res.storage.workspace import read_database, require_compatible
-
-
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
 
 
 def run_detections_generate(workspace: Path) -> Stage4Result:
@@ -59,13 +56,13 @@ def run_detections_generate(workspace: Path) -> Stage4Result:
 def list_current_gaps(workspace: Path) -> tuple[GapQuestion, ...]:
     with read_database(workspace) as connection:
         rows = list_gap_questions(connection)
-    return tuple(sorted(rows, key=lambda item: _id_key(item.id)))
+    return tuple(sorted(rows, key=lambda item: id_key(item.id)))
 
 
 def list_current_contradictions(workspace: Path) -> tuple[Contradiction, ...]:
     with read_database(workspace) as connection:
         rows = list_contradictions(connection)
-    return tuple(sorted(rows, key=lambda item: _id_key(item.id)))
+    return tuple(sorted(rows, key=lambda item: id_key(item.id)))
 
 
 def show_contradiction(

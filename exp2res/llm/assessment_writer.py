@@ -6,6 +6,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import Field, field_validator, model_validator
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.enums import (
     AssessmentScope,
     Confidence,
@@ -23,10 +24,6 @@ from exp2res.domain.models import (
 from .contracts import ContractDefinition, ContractWarning
 
 
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
-
-
 class AssessmentWriterInput(StrictModel):
     scope: AssessmentScope
     facts: list[ExperienceFact] = Field(max_length=1_000)
@@ -36,7 +33,7 @@ class AssessmentWriterInput(StrictModel):
     @field_validator("facts", "gaps", "contradictions")
     @classmethod
     def objects_are_id_ordered(cls, value: list[object]) -> list[object]:
-        if value != sorted(value, key=lambda item: _id_key(item.id)):  # type: ignore[attr-defined]
+        if value != sorted(value, key=lambda item: id_key(item.id)):  # type: ignore[attr-defined]
             raise ValueError("objects must be ordered by ID bytes")
         return value
 

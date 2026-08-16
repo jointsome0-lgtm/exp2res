@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.models import ExperienceFact
 from exp2res.storage.repository import list_experience_facts
-
-
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
 
 
 def select_assessment_view(
@@ -23,5 +20,5 @@ def select_assessment_view(
     """
 
     return tuple(
-        sorted(list_experience_facts(connection), key=lambda item: _id_key(item.id))
+        sorted(list_experience_facts(connection), key=lambda item: id_key(item.id))
     )

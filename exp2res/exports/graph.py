@@ -42,7 +42,7 @@ from exp2res.storage.repository import (
 T = TypeVar("T")
 
 
-def id_key(value: str) -> bytes:
+def fs_id_key(value: str) -> bytes:
     # Filesystem-derived names may carry surrogateescape'd undecodable bytes;
     # fsencode round-trips them and equals UTF-8 for every valid string, so a
     # stray non-UTF-8 managed entry sorts instead of raising.
@@ -92,7 +92,7 @@ class AssessmentExportGraph:
 
     def source_ids(self) -> dict[str, list[str]]:
         def merged(main: list[str], extra: list[str]) -> list[str]:
-            return sorted(set(main) | set(extra), key=id_key)
+            return sorted(set(main) | set(extra), key=fs_id_key)
 
         return {
             "self_claim_ids": [item.value.id for item in self.claims],
@@ -183,22 +183,22 @@ class AssessmentRenderInputBundle(_BundleModel):
 def _merged_stored(
     main: tuple[StoredRecord[T], ...], extra: tuple[StoredRecord[T], ...]
 ) -> list[StoredRecord[T]]:
-    return sorted((*main, *extra), key=lambda item: id_key(item.value.id))
+    return sorted((*main, *extra), key=lambda item: fs_id_key(item.value.id))
 
 
 def render_input_bundle(graph: AssessmentExportGraph) -> AssessmentRenderInputBundle:
     bundle_facts = _merged_stored(graph.facts, graph.supplemental_facts)
     bundle_evidence = sorted(
         (*graph.evidence_items, *graph.supplemental_evidence_items),
-        key=lambda item: id_key(item.id),
+        key=lambda item: fs_id_key(item.id),
     )
     bundle_raw_logs = sorted(
         (*graph.raw_logs, *graph.supplemental_raw_logs),
-        key=lambda item: id_key(item.id),
+        key=lambda item: fs_id_key(item.id),
     )
     bundle_fact_sources = sorted(
         (*graph.fact_sources, *graph.supplemental_fact_sources),
-        key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id)),
+        key=lambda item: (fs_id_key(item.fact_id), fs_id_key(item.evidence_item_id)),
     )
     return AssessmentRenderInputBundle(
         assessment_snapshots=[
@@ -352,7 +352,7 @@ def load_snapshot_claims(
         ):
             raise IntegrityFailureError("snapshot_claim_generation_mismatch")
         claims.append(stored)
-    claims.sort(key=lambda item: id_key(item.value.id))
+    claims.sort(key=lambda item: fs_id_key(item.value.id))
     return snapshot_record, claims
 
 
@@ -423,7 +423,7 @@ def load_supplemental_closure(
         supplemental_refs.get("evidence_item", set()) - set(evidence_ids)
     )
     ce_fact_evidence: dict[str, list[str]] = {}
-    for fact_id in sorted(ce_fact_ids, key=id_key):
+    for fact_id in sorted(ce_fact_ids, key=fs_id_key):
         row = connection.execute(
             "SELECT * FROM experience_facts WHERE id = ?", (fact_id,)
         ).fetchone()
@@ -452,19 +452,19 @@ def load_supplemental_closure(
                 )
             )
             row_evidence.append(source["evidence_item_id"])
-        if sorted(set(row_evidence), key=id_key) != list(fact.evidence_item_ids):
+        if sorted(set(row_evidence), key=fs_id_key) != list(fact.evidence_item_ids):
             raise IntegrityFailureError("fact_evidence_closure_incomplete")
         if not has_direct_source:
             raise IntegrityFailureError("supplemental_fact_direct_source_missing")
         ce_fact_evidence[fact_id] = list(fact.evidence_item_ids)
         ce_evidence_ids.update(set(fact.evidence_item_ids) - set(evidence_ids))
     ce_fact_sources.sort(
-        key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id))
+        key=lambda item: (fs_id_key(item.fact_id), fs_id_key(item.evidence_item_id))
     )
     ce_log_ids: set[str] = set(
         supplemental_refs.get("raw_log", set()) - set(raw_log_ids)
     )
-    for evidence_id in sorted(ce_evidence_ids, key=id_key):
+    for evidence_id in sorted(ce_evidence_ids, key=fs_id_key):
         row = connection.execute(
             "SELECT * FROM evidence_items WHERE id = ?", (evidence_id,)
         ).fetchone()
@@ -474,7 +474,7 @@ def load_supplemental_closure(
         ce_evidence.append(item)
         if item.raw_log_id not in set(raw_log_ids):
             ce_log_ids.add(item.raw_log_id)
-    for raw_log_id in sorted(ce_log_ids, key=id_key):
+    for raw_log_id in sorted(ce_log_ids, key=fs_id_key):
         row = connection.execute(
             "SELECT * FROM raw_logs WHERE id = ?", (raw_log_id,)
         ).fetchone()
@@ -491,7 +491,7 @@ def load_supplemental_closure(
         fact = fact_record.value
         derived_logs = sorted(
             {ce_log_by_evidence[item] for item in ce_fact_evidence[fact.id]},
-            key=id_key,
+            key=fs_id_key,
         )
         if derived_logs != list(fact.source_log_ids):
             raise IntegrityFailureError("fact_raw_log_closure_incomplete")
@@ -558,7 +558,7 @@ def load_assessment_graph(
                 raise IntegrityFailureError("snapshot_gap_set_stale")
             note_supplemental("raw_log", gap.answer_log_id)
         gap_records.append(_stored(row, gap))
-    gap_records.sort(key=lambda item: id_key(item.value.id))
+    gap_records.sort(key=lambda item: fs_id_key(item.value.id))
 
     contradiction_records: list[StoredRecord[Contradiction]] = []
     for contradiction_id in snapshot.contradiction_ids:
@@ -587,7 +587,7 @@ def load_assessment_graph(
             contradiction.right_ref_type, contradiction.right_ref_id
         )
         contradiction_records.append(_stored(row, contradiction))
-    contradiction_records.sort(key=lambda item: id_key(item.value.id))
+    contradiction_records.sort(key=lambda item: fs_id_key(item.value.id))
 
     # §13.12 inconsistent-input gate (evals 21.4/21.33): while this snapshot
     # is current, Stage 4 cannot have changed the detection sets without
@@ -627,7 +627,7 @@ def load_assessment_graph(
         note_supplemental(gap.target_type, gap.target_id)
         note_supplemental("raw_log", gap.answer_log_id)
         omitted_gap_records.append(_stored(row, gap))
-    omitted_gap_records.sort(key=lambda item: id_key(item.value.id))
+    omitted_gap_records.sort(key=lambda item: fs_id_key(item.value.id))
 
     fact_ids = {
         fact_id for item in claims for fact_id in item.value.source_fact_ids
@@ -636,7 +636,7 @@ def load_assessment_graph(
     fact_records: list[StoredRecord[ExperienceFact]] = []
     fact_source_records: list[FactSourceRecord] = []
     direct_fact_ids: set[str] = set()
-    for fact_id in sorted(fact_ids, key=id_key):
+    for fact_id in sorted(fact_ids, key=fs_id_key):
         row = connection.execute(
             "SELECT * FROM experience_facts WHERE id = ?", (fact_id,)
         ).fetchone()
@@ -665,7 +665,7 @@ def load_assessment_graph(
             )
         fact_records.append(_stored(row, fact))
     fact_source_records.sort(
-        key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id))
+        key=lambda item: (fs_id_key(item.fact_id), fs_id_key(item.evidence_item_id))
     )
 
     for claim_record in claims:
@@ -691,7 +691,7 @@ def load_assessment_graph(
 
     evidence_ids = sorted(
         {source.evidence_item_id for source in fact_source_records},
-        key=id_key,
+        key=fs_id_key,
     )
     evidence_items: list[EvidenceItem] = []
     for evidence_id in evidence_ids:
@@ -702,7 +702,7 @@ def load_assessment_graph(
             raise IntegrityFailureError("fact_evidence_missing")
         evidence_items.append(hydrate_evidence_item(row))
 
-    raw_log_ids = sorted({item.raw_log_id for item in evidence_items}, key=id_key)
+    raw_log_ids = sorted({item.raw_log_id for item in evidence_items}, key=fs_id_key)
     raw_logs: list[RawLog] = []
     for raw_log_id in raw_log_ids:
         row = connection.execute(
@@ -721,11 +721,11 @@ def load_assessment_graph(
         rows_by_fact[source.fact_id].append(source.evidence_item_id)
     for fact_record in fact_records:
         fact = fact_record.value
-        row_evidence = sorted(set(rows_by_fact.get(fact.id, [])), key=id_key)
+        row_evidence = sorted(set(rows_by_fact.get(fact.id, [])), key=fs_id_key)
         if row_evidence != list(fact.evidence_item_ids):
             raise IntegrityFailureError("fact_evidence_closure_incomplete")
         derived_logs = sorted(
-            {log_by_evidence[item] for item in row_evidence}, key=id_key
+            {log_by_evidence[item] for item in row_evidence}, key=fs_id_key
         )
         if derived_logs != list(fact.source_log_ids):
             raise IntegrityFailureError("fact_raw_log_closure_incomplete")

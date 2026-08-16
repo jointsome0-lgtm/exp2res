@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from .enums import CONFIDENCE_RANK
 from .models import OccurredAt
 
 # §16.7 maximum-uncertainty widths for non-range precisions; ranges use
@@ -17,8 +18,6 @@ _MAX_UNCERTAINTY_WIDTH: dict[str, timedelta] = {
     "quarter": timedelta(days=92),
     "year": timedelta(days=366),
 }
-
-_CONFIDENCE_ORDER = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
 
 
 @dataclass(frozen=True)
@@ -207,4 +206,4 @@ def placement_supports(candidate: OccurredAt, support: OccurredAt) -> bool:
 def confidence_exceeds(candidate: str, ceiling: str) -> bool:
     """Compare two §10 weak-to-strong ordered confidence values."""
 
-    return _CONFIDENCE_ORDER[candidate] > _CONFIDENCE_ORDER[ceiling]
+    return CONFIDENCE_RANK[candidate] > CONFIDENCE_RANK[ceiling]

@@ -11,6 +11,7 @@ import sqlite3
 from typing import Callable
 
 from exp2res import __version__
+from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
     EntityIdGroup,
@@ -59,7 +60,7 @@ class LifecycleResult:
             if self.stage4.generation_id is not None:
                 values.add(self.stage4.generation_id)
             values.update(self.stage4.superseded_generation_ids)
-        return tuple(sorted(values, key=lambda value: value.encode("utf-8")))
+        return tuple(sorted(values, key=id_key))
 
     @property
     def invalidated_views(self) -> tuple[InvalidatedView, ...]:
@@ -67,7 +68,7 @@ class LifecycleResult:
         for result in (self.stage3, self.stage4):
             if result:
                 by_id.update((item.snapshot_id, item) for item in result.invalidated_views)
-        return tuple(by_id[key] for key in sorted(by_id, key=lambda value: value.encode("utf-8")))
+        return tuple(by_id[key] for key in sorted(by_id, key=id_key))
 
     @property
     def invalidated_branches(self) -> tuple[InvalidatedBranch, ...]:
@@ -81,7 +82,7 @@ class LifecycleResult:
                 )
         return tuple(
             by_name[key]
-            for key in sorted(by_name, key=lambda value: value.encode("utf-8"))
+            for key in sorted(by_name, key=id_key)
         )
 
     @property
@@ -148,7 +149,7 @@ class LifecycleResult:
             return [
                 EntityIdGroup(
                     entity_type=entity_type,
-                    ids=sorted(ids, key=lambda value: value.encode("utf-8")),
+                    ids=sorted(ids, key=id_key),
                 )
                 for entity_type, ids in sorted(values.items())
             ]
