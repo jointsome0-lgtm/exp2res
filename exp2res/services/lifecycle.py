@@ -27,7 +27,11 @@ from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
 from exp2res.pipeline.stage4 import Stage4Result, run_detection_generation
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import build_llm_execution
-from exp2res.storage.telemetry import create_processing_run, finish_processing_run
+from exp2res.storage.telemetry import (
+    committed_runs,
+    create_processing_run,
+    finish_processing_run,
+)
 from exp2res.storage.workspace import require_compatible, writer_database
 
 
@@ -162,17 +166,6 @@ def _held_transaction(
     except BaseException:
         connection.rollback()
         raise
-
-
-def _committed_runs(
-    connection: sqlite3.Connection, run_ids: list[str]
-) -> tuple[str, ...]:
-    placeholders = ",".join("?" for _ in run_ids)
-    rows = connection.execute(
-        f"SELECT id FROM processing_runs WHERE id IN ({placeholders})", run_ids
-    ).fetchall()
-    committed = {row[0] for row in rows}
-    return tuple(item for item in run_ids if item in committed)
 
 
 def _has_current_assessment_view(connection: sqlite3.Connection) -> bool:
@@ -378,7 +371,7 @@ def run_recompute(
                     extend_committed(
                         cancelled,
                         run_ids=list(
-                            _committed_runs(connection, allocated_runs)
+                            committed_runs(connection, allocated_runs)
                         ),
                     )
                 except Exception:
@@ -390,7 +383,7 @@ def run_recompute(
                     extend_committed(
                         error,
                         run_ids=list(
-                            _committed_runs(connection, allocated_runs)
+                            committed_runs(connection, allocated_runs)
                         ),
                     )
                 except Exception:
@@ -405,7 +398,7 @@ def run_recompute(
                     extend_committed(
                         internal,
                         run_ids=list(
-                            _committed_runs(connection, allocated_runs)
+                            committed_runs(connection, allocated_runs)
                         ),
                     )
                 except Exception:

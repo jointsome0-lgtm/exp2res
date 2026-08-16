@@ -15,19 +15,8 @@ from exp2res.pipeline.stage10 import (
 from exp2res.pipeline.stage11 import Stage11Result, run_bullet_verification
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import build_llm_execution
+from exp2res.storage.telemetry import committed_runs
 from exp2res.storage.workspace import read_database, require_compatible
-
-
-def _committed_runs(workspace: Path, run_ids: list[str]) -> tuple[str, ...]:
-    if not run_ids:
-        return ()
-    placeholders = ",".join("?" for _ in run_ids)
-    with read_database(workspace) as connection:
-        rows = connection.execute(
-            f"SELECT id FROM processing_runs WHERE id IN ({placeholders})", run_ids
-        ).fetchall()
-    committed = {row[0] for row in rows}
-    return tuple(run_id for run_id in run_ids if run_id in committed)
 
 
 def run_bullets_generate(
@@ -60,9 +49,10 @@ def run_bullets_generate(
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        extend_committed(
-            error, run_ids=list(_committed_runs(workspace, allocated_runs))
-        )
+        with read_database(workspace) as connection:
+            extend_committed(
+                error, run_ids=list(committed_runs(connection, allocated_runs))
+            )
         raise
 
 
@@ -93,7 +83,8 @@ def run_bullets_verify(workspace: Path, *, branch_name: str) -> Stage11Result:
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        extend_committed(
-            error, run_ids=list(_committed_runs(workspace, allocated_runs))
-        )
+        with read_database(workspace) as connection:
+            extend_committed(
+                error, run_ids=list(committed_runs(connection, allocated_runs))
+            )
         raise
