@@ -38,7 +38,7 @@ from exp2res.errors import (
 from exp2res.exports.managed import branch_set_paths, remove_branch_sets
 from exp2res.pipeline.stage8 import Stage8Result, run_job_description_parse
 from exp2res.services.capture import new_id
-from exp2res.services.extraction import build_llm_execution
+from exp2res.services.extraction import RunTracking, build_llm_execution
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
@@ -147,14 +147,7 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         failure.public_message = "The vacancy text failed strict validation."
         raise failure from error
     selection, budgets, runner = build_llm_execution(workspace)
-    allocated_runs: list[str] = []
-
-    def tracking_id_factory(kind: str) -> str:
-        value = new_id(kind)
-        if kind == "run":
-            allocated_runs.append(value)
-        return value
-
+    tracking = RunTracking(new_id)
     try:
         return run_job_description_parse(
             workspace,
@@ -162,11 +155,11 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
             selection=selection,
             budgets=budgets,
             runner=runner,
-            id_factory=tracking_id_factory,
+            id_factory=tracking.allocate,
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        runs, created = _committed_effects(workspace, allocated_runs)
+        runs, created = _committed_effects(workspace, tracking.allocated_runs)
         # §14.14 rule 6: an interrupt delivered as Stage 8's business commit
         # returns leaves the row durable, so cancellation reports the created
         # job description rather than an effect-free envelope.
@@ -185,7 +178,7 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         # after Stage 8 returned from its commit — while its result is built,
         # or while the writer lock and connection tear down — where nothing
         # has classified it yet. A durable creation still gets reported.
-        runs, created = _committed_effects(workspace, allocated_runs)
+        runs, created = _committed_effects(workspace, tracking.allocated_runs)
         if not created:
             raise
         cancelled = OperationCancelledError()

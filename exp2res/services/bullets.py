@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from exp2res import __version__
-from exp2res.domain.results import extend_committed
 from exp2res.errors import LLMInvocationError
 from exp2res.pipeline.stage10 import (
     Stage10Result,
@@ -14,9 +13,8 @@ from exp2res.pipeline.stage10 import (
 )
 from exp2res.pipeline.stage11 import Stage11Result, run_bullet_verification
 from exp2res.services.capture import new_id
-from exp2res.services.extraction import build_llm_execution
-from exp2res.storage.telemetry import committed_runs
-from exp2res.storage.workspace import read_database, require_compatible
+from exp2res.services.extraction import RunTracking, build_llm_execution
+from exp2res.storage.workspace import require_compatible
 
 
 def run_bullets_generate(
@@ -28,14 +26,7 @@ def run_bullets_generate(
 ) -> Stage10Result:
     require_compatible(workspace)
     selection, budgets, runner = build_llm_execution(workspace)
-    allocated_runs: list[str] = []
-
-    def tracking_id_factory(kind: str) -> str:
-        value = new_id(kind)
-        if kind == "run":
-            allocated_runs.append(value)
-        return value
-
+    tracking = RunTracking(new_id)
     try:
         return run_bullet_generation(
             workspace,
@@ -45,14 +36,11 @@ def run_bullets_generate(
             selection=selection,
             budgets=budgets,
             runner=runner,
-            id_factory=tracking_id_factory,
+            id_factory=tracking.allocate,
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        with read_database(workspace) as connection:
-            extend_committed(
-                error, run_ids=list(committed_runs(connection, allocated_runs))
-            )
+        tracking.extend_committed_runs(workspace, error)
         raise
 
 
@@ -64,14 +52,7 @@ def run_bullets_verify(workspace: Path, *, branch_name: str) -> Stage11Result:
     # the stage's own writer transaction, where every sibling command puts it.
     branch_name = validated_branch_name(branch_name)
     selection, budgets, runner = build_llm_execution(workspace)
-    allocated_runs: list[str] = []
-
-    def tracking_id_factory(kind: str) -> str:
-        value = new_id(kind)
-        if kind == "run":
-            allocated_runs.append(value)
-        return value
-
+    tracking = RunTracking(new_id)
     try:
         return run_bullet_verification(
             workspace,
@@ -79,12 +60,9 @@ def run_bullets_verify(workspace: Path, *, branch_name: str) -> Stage11Result:
             selection=selection,
             budgets=budgets,
             runner=runner,
-            id_factory=tracking_id_factory,
+            id_factory=tracking.allocate,
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        with read_database(workspace) as connection:
-            extend_committed(
-                error, run_ids=list(committed_runs(connection, allocated_runs))
-            )
+        tracking.extend_committed_runs(workspace, error)
         raise

@@ -1,4 +1,4 @@
-"""Stage 3 execution wiring for the §14.6 extraction command."""
+"""Stage 3 execution wiring and the shared §14 stage-launch pieces."""
 
 from __future__ import annotations
 
@@ -96,21 +96,46 @@ def build_llm_execution(
     return selection, budgets, LazyPreflightRunner(build_runner)
 
 
+class RunTracking:
+    """Record the run IDs one command allocates, for its failure to report.
+
+    §14.14 rule 5: `run_ids` reports the processing runs the command created,
+    and a failed stage's durable telemetry row is exactly what `runs show`
+    needs — so a raised §15 failure carries the committed run IDs out to the
+    envelope instead of dropping them with the Outcome. Allocation happens
+    inside the stage under its writer authority and the read back happens
+    once that authority is gone, so only `committed_runs` can tell a durable
+    row from an ID no stage ever wrote.
+
+    `new_id` is a parameter rather than this module's global so that each
+    command's own allocator — the one its tests replace — stays the one that
+    runs.
+    """
+
+    def __init__(self, new_id: Callable[[str], str]) -> None:
+        self.allocated_runs: list[str] = []
+        self._new_id = new_id
+
+    def allocate(self, kind: str) -> str:
+        value = self._new_id(kind)
+        if kind == "run":
+            self.allocated_runs.append(value)
+        return value
+
+    def extend_committed_runs(
+        self, workspace: Path, error: BaseException
+    ) -> None:
+        with read_database(workspace) as connection:
+            extend_committed(
+                error,
+                run_ids=list(committed_runs(connection, self.allocated_runs)),
+            )
+
+
 def run_extract(workspace: Path, *, log_id: str | None) -> Stage3Result:
     require_compatible(workspace)
     selection, budgets, runner = build_llm_execution(workspace)
-    # §14.14 rule 5: `run_ids` reports the processing runs the command
-    # created, and a failed extraction's durable telemetry row is exactly
-    # what `runs show` needs — so a raised §15 failure carries the committed
-    # run IDs out to the envelope instead of dropping them with the Outcome.
-    allocated_runs: list[str] = []
-
-    def tracking_id_factory(kind: str) -> str:
-        value = new_id(kind)
-        if kind == "run":
-            allocated_runs.append(value)
-        return value
-
+    tracking = RunTracking(new_id)
     try:
         return run_fact_extraction(
             workspace,
@@ -118,12 +143,9 @@ def run_extract(workspace: Path, *, log_id: str | None) -> Stage3Result:
             selection=selection,
             budgets=budgets,
             runner=runner,
-            id_factory=tracking_id_factory,
+            id_factory=tracking.allocate,
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        with read_database(workspace) as connection:
-            extend_committed(
-                error, run_ids=list(committed_runs(connection, allocated_runs))
-            )
+        tracking.extend_committed_runs(workspace, error)
         raise
