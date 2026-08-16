@@ -1,10 +1,12 @@
 # exp2res — agent instructions
 
-Implementation-stage project (SDD v0.3, implementation-ready; executor entry point: issue #88). The specification — `SDD.md` (map) + `spec/` (body, one file per §) — remains the binding contract; code lands phase by phase under §22 and never silently deviates from it. Spec refinement continues through issues and the Decision Log.
+Implementation-stage project (SDD v0.3, implementation-ready). The specification — `SDD.md` (map) + `spec/` (body, one file per §) — remains the binding contract; code lands phase by phase under §22 and never silently deviates from it. Spec refinement continues through issues and the Decision Log.
 
 ## Current implementation frontier
 
-Phases 1–3 are merged and their issues closed (Phase 1: #69/#71 → #82; Phase 2: #70 + #99; Phase 3a: #73 → #97, the first verified global Mirror; Phase 3b: [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98), the first browser surface, serving that Mirror and unanswered Gap Questions on loopback through `exp2res view serve`; entry point #88). [#75](https://github.com/jointsome0-lgtm/exp2res/issues/75) remains the sequencing authority for what follows. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices. [#76](https://github.com/jointsome0-lgtm/exp2res/issues/76) is resolved (2026-08-05): the spec removes the persisted Stage 5 signal layer in favor of §15.4's non-persisted patterns, and the follow-up implementation issue [#239](https://github.com/jointsome0-lgtm/exp2res/issues/239) landed it in code, tests, and the schema-9 migration (2026-08-07). [selfos#25](https://github.com/jointsome0-lgtm/selfos/issues/25) governs URL-only shell composition.
+Phase status has one home: README's "§22 phase status" paragraph. Sequencing has one home: the open issues. Neither is restated here, so neither goes stale here.
+
+[selfos#25](https://github.com/jointsome0-lgtm/selfos/issues/25) governs URL-only shell composition.
 
 ## Public data boundary
 
@@ -19,9 +21,7 @@ Treat this as a public engine repository in the [selfos topology](https://github
 
 ## Canon
 
-Specification: `SDD.md` is the map (§ index and numbering rules); the body lives in `spec/` (one file per §, file names start with the § number); a § may additionally own an authored canon artifact beside its file in `spec/` (for example `spec/21-evals-cases.toml`) — normative spec text linked from the § file and named in its map line; decisions live in `DECISION-LOG.md`. The map is imported into session context (line below); @-importing the body or the log is forbidden:
-- point task → pick the § from the map's index and read its file in `spec/` plus every authored canon artifact that file links;
-- full read (all of `spec/` in index order, including authored canon artifacts) — only for full-pass reviews or cross-section decisions.
+Specification: `SDD.md` is the map (§ index and numbering rules); the body lives in `spec/` (one file per §, file names start with the § number); a § may additionally own an authored canon artifact beside its file in `spec/` (for example `spec/21-evals-cases.toml`) — normative spec text linked from the § file and named in its map line; decisions live in `DECISION-LOG.md`. The map is imported into session context (line below); @-importing the body or the log is forbidden. The map's Layout paragraph owns the point-read and full-pass protocol.
 
 @SDD.md
 
@@ -89,13 +89,6 @@ lanes, and review policy stay local to each repository.
 - **Invented data only in public repositories.** Examples and fixtures carry
   no real personal data, credentials, or local agent/tool state.
 <!-- END SDD-CONVENTIONS -->
-
-Unloading gate (local, temporary): execution of the unloading-by-maturity
-rule above is sequenced by the Great unloading tracker
-[#231](https://github.com/jointsome0-lgtm/exp2res/issues/231) and starts
-only after the great cleansing master #191 closes. The altitude rule for
-new decisions is effective immediately. Remove this paragraph when #231
-unblocks.
 
 Git worktrees: create them only in `.worktrees/<name>` inside the repo (globally gitignored via `~/.config/git/ignore`), never as sibling directories. Any work that will open a PR branches and builds in such a worktree, never in the primary checkout — the primary checkout stays on a clean `main` so parallel sessions don't fight for its index. Trivial read-only work and single-file doc edits on a clean main need no worktree. Remove the worktree and delete its local branch once its PR merges.
 
