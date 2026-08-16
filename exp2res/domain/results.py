@@ -79,12 +79,14 @@ class EntityIdGroup(StrictModel):
 def _entity_groups(
     pairs: Iterable[tuple[str, Iterable[str]]]
 ) -> list[EntityIdGroup]:
-    groups: list[EntityIdGroup] = []
+    merged: dict[str, set[str]] = {}
     for entity_type, ids in pairs:
-        ordered = byte_sorted(set(ids))
-        if ordered:
-            groups.append(EntityIdGroup(entity_type=entity_type, ids=list(ordered)))
-    return groups
+        merged.setdefault(entity_type, set()).update(ids)
+    return [
+        EntityIdGroup(entity_type=entity_type, ids=list(byte_sorted(ids)))
+        for entity_type, ids in merged.items()
+        if ids
+    ]
 
 
 class AffectedIds(StrictModel):
@@ -103,15 +105,14 @@ class AffectedIds(StrictModel):
         """Build the three §14.14 rule 5 lists from `(entity_type, ids)` pairs.
 
         Rule 5 wants entity groups duplicate-free and deterministically ordered
-        by class and identity. Identity ordering is `id_key`'s and happens here
-        once, instead of being restated correctly at each composition. Class
-        ordering stays the caller's pair order: it is fixed per command, which
-        is the stable class order the rule asks for, and no command wants its
-        classes alphabetized.
+        by class and identity, and omits a class with no ID to report. All
+        three happen here once, instead of being restated correctly at each
+        composition: pairs repeating a class merge into its first-seen
+        position, IDs order by `id_key`, and an empty class drops out.
 
-        A class with nothing to report is dropped rather than emitted as an
-        empty `ids` list, so one command cannot name a class on one run and
-        omit it on the next depending on which branch composed the envelope.
+        Class ordering is otherwise the caller's pair order, which is fixed per
+        command. The one caller that merges several stages' reports has no such
+        order to inherit and sorts its class names at the call site.
         """
 
         return cls(

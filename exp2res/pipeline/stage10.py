@@ -677,10 +677,12 @@ def run_bullet_generation(
 
 
 def bullets_generate_outcome(generated: Stage10Result) -> Outcome:
-    """One §14.14 rule 5 composition for completed and interrupted swaps."""
+    """One §14.14 rule 5 composition for completed and interrupted swaps.
 
-    # A branch and its bullets are created together, so an absent branch drops
-    # both groups on its own.
+    A blocked generation commits neither branch nor bullets, so both created
+    groups empty together and drop themselves.
+    """
+
     affected = AffectedIds.of(
         created=(
             ("resume_branch", [generated.branch_id] if generated.branch_id else []),

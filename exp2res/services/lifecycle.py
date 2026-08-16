@@ -118,6 +118,13 @@ class LifecycleResult:
 
     @property
     def affected_ids(self) -> AffectedIds:
+        """Merge both stages' §14.14 rule 5 reports, ordering classes by name.
+
+        The one `AffectedIds.of` caller without a fixed pair order to inherit:
+        two stages contribute overlapping classes, so neither stage's own
+        sequence is the merged order.
+        """
+
         created: dict[str, set[str]] = {}
         superseded: dict[str, set[str]] = {}
 
@@ -144,8 +151,6 @@ class LifecycleResult:
             add(superseded, "resume_branch", self.stage4.superseded_branch_ids)
             add(superseded, "resume_bullet", self.stage4.superseded_bullet_ids)
 
-        # A recompute merges two stages' reports, so class order comes from the
-        # merged class names rather than from either stage's own sequence.
         return AffectedIds.of(
             created=sorted(created.items()), superseded=sorted(superseded.items())
         )
