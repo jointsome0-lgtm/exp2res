@@ -4,12 +4,7 @@ Read [AGENTS.md](AGENTS.md) first: it is the shared agent contract for this
 repository (SDD refinement rules, the spec canon, shared skills) and applies
 to Claude Code in full.
 
-Per the canon the SDD map is imported below:
-
-- For a point task read only the § file you need in `spec/` plus any canon
-  artifact it links.
-- Never @-import the spec body or the log.
-- Decisions live in [DECISION-LOG.md](DECISION-LOG.md).
+Per the canon the SDD map is imported below.
 
 @SDD.md
 
