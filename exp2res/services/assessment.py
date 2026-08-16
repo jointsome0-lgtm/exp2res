@@ -12,6 +12,7 @@ from exp2res.domain.models import (
     GapQuestion,
     SelfClaim,
 )
+from exp2res.domain.results import extend_committed
 from exp2res.errors import LLMInvocationError, SelectorNotFoundError
 from exp2res.pipeline.stage6 import (
     Stage6Result,
@@ -78,7 +79,9 @@ def run_assess_generate(workspace: Path) -> Stage6Result:
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        error.run_ids = _committed_runs(workspace, allocated_runs)
+        extend_committed(
+            error, run_ids=list(_committed_runs(workspace, allocated_runs))
+        )
         raise
 
 
@@ -111,7 +114,9 @@ def run_assess_verify(workspace: Path, *, snapshot_id: str) -> Stage7Result:
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        error.run_ids = _committed_runs(workspace, allocated_runs)
+        extend_committed(
+            error, run_ids=list(_committed_runs(workspace, allocated_runs))
+        )
         raise
 
 

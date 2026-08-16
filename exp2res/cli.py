@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -30,8 +30,8 @@ from exp2res.domain.models import (
 from exp2res.domain.results import (
     AffectedIds,
     AssessListResult,
-    AssessmentExportResult,
     AssessShowResult,
+    AssessmentExportResult,
     CLIEnvelope,
     CommandPath,
     ContradictionsResult,
@@ -47,16 +47,19 @@ from exp2res.domain.results import (
     LogsDeleteResult,
     LogsListResult,
     LogsShowResult,
-    merged_invalidated_branches,
-    merged_invalidated_views,
     Outcome,
-    render_path,
-    render_text,
     Retry,
     SchemaProjection,
     SchemaResult,
     SelectedLogProjection,
     SnapshotListItem,
+    carry_committed,
+    committed_outcome,
+    extend_committed,
+    merged_invalidated_branches,
+    merged_invalidated_views,
+    render_path,
+    render_text,
 )
 from exp2res.errors import (
     Exp2ResError,
@@ -246,6 +249,23 @@ class Controls:
     workspace_override: str | None
     verbose: bool
     quiet: bool
+
+
+def _carry_stage(
+    error: Exp2ResError,
+    kind: type,
+    project: Callable[[object], Outcome],
+) -> None:
+    """§14.14 rules 5/6: report the stage swap an interrupt did not undo.
+
+    The committed result rides on the error; its own projection turns it into
+    exactly the envelope the successful path would have emitted, so an
+    interrupted command reports the same effects it actually performed.
+    """
+
+    carried = getattr(error, "stage_result", None)
+    if isinstance(carried, kind):
+        carry_committed(error, project(carried))
 
 
 def _status_for(exit_code: int) -> str:
@@ -521,33 +541,13 @@ def _run_operation(
         )
         typer.echo(error.public_message, err=True)
     except Exp2ResError as error:
-        outcome = Outcome(
+        # §14.14 rules 5/6: whatever the failing operation already committed
+        # rides on the error as one projection, so the envelope is that
+        # projection re-stamped with the error's own classification.
+        outcome = replace(
+            committed_outcome(error),
             exit_code=error.exit_code,
             diagnostic_class=error.diagnostic_class,
-            affected_ids=getattr(error, "affected_ids", AffectedIds()),
-            generation_ids=list(getattr(error, "generation_ids", ()) or ()),
-            # §14.14 rule 5: a failed §15 invocation still reports the
-            # committed processing runs it created (LLMInvocationError
-            # carries them; other error classes leave the default empty).
-            run_ids=list(getattr(error, "run_ids", ()) or ()),
-            invalidated_views=list(
-                getattr(error, "invalidated_views", ()) or ()
-            ),
-            invalidated_branches=list(
-                getattr(error, "invalidated_branches", ()) or ()
-            ),
-            residual_paths=list(getattr(error, "residual_paths", ()) or ()),
-            # §14.14 rule 5: findings are committed §11.14 rows, so an error
-            # carrying a durable verification pass reports them exactly like
-            # the affected IDs beside them.
-            findings=list(getattr(error, "findings", ()) or ()),
-            warnings=list(getattr(error, "warnings", ()) or ()),
-            retry=getattr(error, "retry", None),
-            result=getattr(error, "result", None),
-            # §14.14 rule 6: a class-9 exit after a committed lifecycle
-            # boundary reports that effect in both modes, so an error carrying
-            # a committed result may carry its human rendering too.
-            human_result=getattr(error, "human_result", "") or "",
         )
         typer.echo(error.public_message, err=True)
         if not controls.json_output:
@@ -843,37 +843,36 @@ def _decorate_lifecycle_error(
     progress = cast(
         LifecycleResult | None, getattr(error, "lifecycle_result", None)
     )
-    error.affected_ids = _merge_affected(
-        base_affected or AffectedIds(),
-        progress.affected_ids if progress else AffectedIds(),
-    )
-    error.generation_ids = tuple(
-        sorted(
+    extend_committed(
+        error,
+        affected_ids=_merge_affected(
+            base_affected or AffectedIds(),
+            progress.affected_ids if progress else AffectedIds(),
+        ),
+        generation_ids=sorted(
             {*base_generation_ids, *(progress.generation_ids if progress else ())},
             key=lambda value: value.encode("utf-8"),
-        )
-    )
-    error.invalidated_views = tuple(
-        merged_invalidated_views(
-            base_invalidated_views,
-            progress.invalidated_views if progress else (),
-        )
-    )
-    error.invalidated_branches = tuple(
-        merged_invalidated_branches(
-            base_invalidated_branches,
-            progress.invalidated_branches if progress else (),
-        )
-    )
-    error.residual_paths = tuple(
-        sorted(
+        ),
+        invalidated_views=list(
+            merged_invalidated_views(
+                base_invalidated_views,
+                progress.invalidated_views if progress else (),
+            )
+        ),
+        invalidated_branches=list(
+            merged_invalidated_branches(
+                base_invalidated_branches,
+                progress.invalidated_branches if progress else (),
+            )
+        ),
+        residual_paths=sorted(
             {*base_residual_paths, *(progress.residual_paths if progress else ())},
             key=os.fsencode,
-        )
+        ),
+        warnings=list(progress.warnings) if progress else [],
+        retry=retry,
+        result=result,
     )
-    error.warnings = progress.warnings if progress else ()
-    error.retry = retry
-    error.result = result
 
 
 def _validate_non_prompt_period(
@@ -1192,7 +1191,7 @@ def _store_correction(
                 except Exception:
                     progress = None
                 if progress is not None:
-                    error.run_ids = progress.run_ids
+                    extend_committed(error, run_ids=list(progress.run_ids))
                     error.lifecycle_result = progress
                 # §14.14 rule 6: the committed capture is reported in
                 # the cancelled envelope with its failed `13.13` run and
@@ -1295,19 +1294,25 @@ def _import_decorate(error: Exp2ResError) -> None:
     committed = cast(ImportOutcome | None, getattr(error, "import_outcome", None))
     if committed is None:
         return
-    error.affected_ids = import_created(committed)
-    if getattr(error, "import_classified", False):
+    extend_committed(
+        error,
+        affected_ids=import_created(committed),
         # Rule 5 nulls a result only when none exists yet; an interrupt after
         # the last record leaves a complete one.
-        error.result = import_result(committed)
-    # Human mode reads no `affected_ids`, so the same boundary is rendered as
-    # the committed records' own lines.
-    error.human_result = "\n".join(
-        [f"{_import_ending(error)}, {len(committed.accepted)} committed"]
-        + [
-            import_record_line(record, "accepted")
-            for record in committed.accepted
-        ]
+        result=(
+            import_result(committed)
+            if getattr(error, "import_classified", False)
+            else None
+        ),
+        # Human mode reads no `affected_ids`, so the same boundary is rendered
+        # as the committed records' own lines.
+        human_result="\n".join(
+            [f"{_import_ending(error)}, {len(committed.accepted)} committed"]
+            + [
+                import_record_line(record, "accepted")
+                for record in committed.accepted
+            ]
+        ),
     )
 
 
@@ -1406,19 +1411,7 @@ def extract_command(
         try:
             extracted = run_extract(workspace, log_id=log_id)
         except Exp2ResError as error:
-            # §14.14 rules 5/6: an interrupt after the committed Stage 3
-            # swap carries the complete result on the error; fold it into
-            # the fields the cancelled/failed envelope reads, warnings
-            # included, so the direct-extract path drops nothing.
-            carried = getattr(error, "stage_result", None)
-            if isinstance(carried, Stage3Result):
-                committed = stage3_outcome(carried)
-                error.affected_ids = committed.affected_ids
-                error.generation_ids = committed.generation_ids
-                error.invalidated_views = committed.invalidated_views
-                error.invalidated_branches = committed.invalidated_branches
-                error.residual_paths = committed.residual_paths
-                error.warnings = committed.warnings
+            _carry_stage(error, Stage3Result, stage3_outcome)
             raise
         return stage3_outcome(extracted)
 
@@ -1488,21 +1481,7 @@ def detections_generate(context: typer.Context) -> None:
         try:
             generated = run_detections_generate(workspace)
         except Exp2ResError as error:
-            # §14.14 rules 5/6: an interrupt after the committed Stage 4 swap
-            # carries the complete result on the error; fold it into the
-            # fields the cancelled envelope reads.
-            carried = getattr(error, "stage_result", None)
-            if isinstance(carried, Stage4Result):
-                committed = detections_generate_outcome(carried)
-                error.affected_ids = committed.affected_ids
-                error.generation_ids = committed.generation_ids
-                error.run_ids = committed.run_ids
-                error.invalidated_views = committed.invalidated_views
-                error.invalidated_branches = committed.invalidated_branches
-                error.residual_paths = committed.residual_paths
-                error.warnings = committed.warnings
-                error.result = committed.result
-                error.human_result = committed.human_result
+            _carry_stage(error, Stage4Result, detections_generate_outcome)
             raise
         return detections_generate_outcome(generated)
 
@@ -1523,18 +1502,7 @@ def assess_generate(context: typer.Context) -> None:
         try:
             generated = run_assess_generate(workspace)
         except Exp2ResError as error:
-            # §14.14 rules 5/6: an interrupt after the committed §13.6 swap
-            # carries the complete result on the error; fold it into the
-            # fields the cancelled envelope reads.
-            carried = getattr(error, "stage_result", None)
-            if isinstance(carried, Stage6Result):
-                committed = assess_generate_outcome(carried)
-                error.affected_ids = committed.affected_ids
-                error.generation_ids = committed.generation_ids
-                error.run_ids = committed.run_ids
-                error.invalidated_branches = committed.invalidated_branches
-                error.residual_paths = committed.residual_paths
-                error.warnings = committed.warnings
+            _carry_stage(error, Stage6Result, assess_generate_outcome)
             raise
         return assess_generate_outcome(generated)
 
@@ -1552,17 +1520,7 @@ def assess_repair(
         try:
             repaired = run_assess_repair(workspace, snapshot_id=snapshot_id)
         except Exp2ResError as error:
-            # §14.14 rules 5/6: an interrupt after the committed §13.6
-            # swap carries the complete result on the error; fold it into
-            # the fields the cancelled envelope reads.
-            carried = getattr(error, "stage_result", None)
-            if isinstance(carried, Stage6Result):
-                committed = repair_outcome(carried)
-                error.affected_ids = committed.affected_ids
-                error.generation_ids = committed.generation_ids
-                error.run_ids = committed.run_ids
-                error.invalidated_branches = committed.invalidated_branches
-                error.residual_paths = committed.residual_paths
+            _carry_stage(error, Stage6Result, repair_outcome)
             raise
         return repair_outcome(repaired)
 
@@ -1590,18 +1548,7 @@ def assess_verify(
         try:
             verified = run_assess_verify(workspace, snapshot_id=snapshot_id)
         except Exp2ResError as error:
-            # §14.14 rules 5/6: an interrupt after the committed §13.7 pass
-            # carries the complete result on the error; fold it into the
-            # fields the cancelled envelope reads.
-            carried = getattr(error, "stage_result", None)
-            if isinstance(carried, Stage7Result):
-                committed = assess_verify_outcome(carried)
-                error.affected_ids = committed.affected_ids
-                error.generation_ids = committed.generation_ids
-                error.run_ids = committed.run_ids
-                error.findings = committed.findings
-                error.invalidated_branches = committed.invalidated_branches
-                error.residual_paths = committed.residual_paths
+            _carry_stage(error, Stage7Result, assess_verify_outcome)
             raise
         if verified.snapshot_status in {"unsupported", "rejected"}:
             typer.echo(
@@ -1970,7 +1917,7 @@ def logs_delete(
                     except Exception:
                         progress = None
                     if progress is not None:
-                        error.run_ids = progress.run_ids
+                        extend_committed(error, run_ids=list(progress.run_ids))
                         error.lifecycle_result = progress
                     _decorate_lifecycle_error(
                         error,
@@ -2048,9 +1995,7 @@ def jd_add(
             # The service returned a durable parse; §14.14 rule 6 keeps it
             # reported even when the interrupt lands in result assembly.
             cancelled = OperationCancelledError()
-            cancelled.affected_ids = jd_add_affected(parsed)
-            cancelled.run_ids = [parsed.run_id]
-            cancelled.warnings = list(parsed.warnings)
+            carry_committed(cancelled, jd_add_outcome(parsed))
             raise cancelled from None
 
     _run_command(context, "jd add", operation)
@@ -2139,12 +2084,9 @@ def jd_delete(
                 getattr(error, "delete_outcome", None),
             )
             if committed is not None:
-                error.affected_ids = jd_delete_affected(committed)
-                error.generation_ids = list(committed.purged_generation_ids)
-                error.run_ids = [committed.run_id]
-                error.residual_paths = list(committed.residual_paths)
-                error.result = jd_delete_result(committed)
-                error.human_result = jd_delete_human_result(committed)
+                # The error's own class-9 classification replaces the
+                # projection's on emission, so carrying it whole is safe.
+                carry_committed(error, jd_delete_outcome(committed))
                 raise
             # §14.14 rule 6: managed cleanup ran before the transaction, so
             # its effects are reported even though nothing was deleted — no
@@ -2154,9 +2096,12 @@ def jd_delete(
                 getattr(error, "cleanup_outcome", None),
             )
             if cleaned is not None:
-                error.residual_paths = list(cleaned.residual_paths)
-                error.result = _jd_cleanup_result(cleaned)
-                error.human_result = _jd_cleanup_human_result(cleaned)
+                extend_committed(
+                    error,
+                    residual_paths=list(cleaned.residual_paths),
+                    result=_jd_cleanup_result(cleaned),
+                    human_result=_jd_cleanup_human_result(cleaned),
+                )
             raise
         try:
             return jd_delete_outcome(deleted)
@@ -2164,12 +2109,7 @@ def jd_delete(
             # The service returned a durable deletion; §14.14 rule 6 keeps it
             # reported even when the interrupt lands in result assembly.
             cancelled = OperationCancelledError()
-            cancelled.affected_ids = jd_delete_affected(deleted)
-            cancelled.generation_ids = list(deleted.purged_generation_ids)
-            cancelled.run_ids = [deleted.run_id]
-            cancelled.residual_paths = list(deleted.residual_paths)
-            cancelled.result = jd_delete_result(deleted)
-            cancelled.human_result = jd_delete_human_result(deleted)
+            carry_committed(cancelled, jd_delete_outcome(deleted))
             raise cancelled from None
 
     _run_command(context, "jd delete", operation)
@@ -2194,12 +2134,7 @@ def bullets_generate(
                 branch_name=branch_name,
             )
         except Exp2ResError as error:
-            # §14.14 rules 5/6: an interrupt after the committed §13.10 swap
-            # carries the complete result on the error; fold it into the
-            # fields the cancelled envelope reads.
-            carried = getattr(error, "stage_result", None)
-            if isinstance(carried, Stage10Result):
-                _carry_generated_pack(error, carried)
+            _carry_stage(error, Stage10Result, bullets_generate_outcome)
             raise
         try:
             return bullets_generate_outcome(generated)
@@ -2208,25 +2143,10 @@ def bullets_generate(
             # reported even when the interrupt lands in result assembly.
             cancelled = OperationCancelledError()
             cancelled.stage_result = generated
-            _carry_generated_pack(cancelled, generated)
+            _carry_stage(cancelled, Stage10Result, bullets_generate_outcome)
             raise cancelled from None
 
     _run_command(context, "bullets generate", operation)
-
-
-def _carry_generated_pack(error: Exp2ResError, generated: Stage10Result) -> None:
-    """Fold a committed §13.10 swap into the fields a failed envelope reads."""
-
-    committed = bullets_generate_outcome(generated)
-    error.affected_ids = committed.affected_ids
-    error.generation_ids = committed.generation_ids
-    error.run_ids = committed.run_ids
-    error.invalidated_branches = committed.invalidated_branches
-    error.residual_paths = committed.residual_paths
-    error.warnings = committed.warnings
-    # Human mode renders only `human_result`, so without it the durable swap
-    # would be reported to `--json` callers alone.
-    error.human_result = committed.human_result
 
 
 @bullets_app.command("verify")
@@ -2241,12 +2161,7 @@ def bullets_verify(
         try:
             verified = run_bullets_verify(workspace, branch_name=branch_name)
         except Exp2ResError as error:
-            # §14.14 rules 5/6: an interrupt after the committed §13.11 pass
-            # carries the complete result on the error; fold it into the
-            # fields the cancelled envelope reads.
-            carried = getattr(error, "stage_result", None)
-            if isinstance(carried, Stage11Result):
-                _carry_verified_pass(error, carried)
+            _carry_stage(error, Stage11Result, bullets_verify_outcome)
             raise
         try:
             if verified.export_blocked:
@@ -2261,7 +2176,7 @@ def bullets_verify(
             # for a whole-branch finding set is not a negligible window.
             cancelled = OperationCancelledError()
             cancelled.stage_result = verified
-            _carry_verified_pass(cancelled, verified)
+            _carry_stage(cancelled, Stage11Result, bullets_verify_outcome)
             raise cancelled from None
 
     _run_command(context, "bullets verify", operation)
@@ -2306,19 +2221,6 @@ def bullets_export(
     _run_command(context, "bullets export", operation)
 
 
-def _carry_verified_pass(error: Exp2ResError, verified: Stage11Result) -> None:
-    """Fold a committed §13.11 pass into the fields a failed envelope reads."""
-
-    committed = bullets_verify_outcome(verified)
-    error.affected_ids = committed.affected_ids
-    error.run_ids = committed.run_ids
-    error.findings = committed.findings
-    error.residual_paths = committed.residual_paths
-    # Human mode renders only `human_result`, so without it the durable pass
-    # would be reported to `--json` callers alone.
-    error.human_result = committed.human_result
-
-
 @workspace_app.command("purge")
 def workspace_purge(
     context: typer.Context,
@@ -2341,9 +2243,7 @@ def workspace_purge(
                 getattr(error, "purge_outcome", None),
             )
             if committed is not None:
-                error.affected_ids = purge_affected(committed)
-                error.generation_ids = committed.generation_ids
-                error.residual_paths = committed.residual_paths
+                carry_committed(error, purge_outcome(committed))
             raise
         try:
             return purge_outcome(purged)
@@ -2351,9 +2251,7 @@ def workspace_purge(
             # The service returned a durable purge; §14.14 rule 6 keeps it
             # reported even when the interrupt lands in result assembly.
             cancelled = OperationCancelledError()
-            cancelled.affected_ids = purge_affected(purged)
-            cancelled.generation_ids = list(purged.generation_ids)
-            cancelled.residual_paths = list(purged.residual_paths)
+            carry_committed(cancelled, purge_outcome(purged))
             raise cancelled from None
 
     _run_command(context, "workspace purge", operation)

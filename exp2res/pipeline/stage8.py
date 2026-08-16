@@ -16,6 +16,7 @@ from exp2res.domain.results import (
     AffectedIds,
     EntityIdGroup,
     Outcome,
+    extend_committed,
 )
 from exp2res.domain.models import JDRequirement, JobDescription, ParsedJD
 from exp2res.errors import LLMCancelledError
@@ -178,7 +179,9 @@ def run_job_description_parse(
         # Only cancellation: a failed run persisted nothing its advisories
         # could describe.
         if resolved_parses and not getattr(error, "warnings", None):
-            error.warnings = list(resolved_parses[-1].warnings)
+            extend_committed(
+                error, warnings=list(resolved_parses[-1].warnings)
+            )
         raise
 
 

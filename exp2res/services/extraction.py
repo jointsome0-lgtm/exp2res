@@ -7,6 +7,7 @@ from typing import Callable
 
 from exp2res import __version__
 from exp2res.config import call_budgets, load_workspace_config
+from exp2res.domain.results import extend_committed
 from exp2res.errors import LLMInvocationError, SelectorNotFoundError
 from exp2res.llm.registry import LLMSelection, registration_for, resolve_selection
 from exp2res.llm.runner import CallBudgets, ContractRunner, PreparedCall, RawResult
@@ -133,5 +134,7 @@ def run_extract(workspace: Path, *, log_id: str | None) -> Stage3Result:
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        error.run_ids = _committed_runs(workspace, allocated_runs)
+        extend_committed(
+            error, run_ids=list(_committed_runs(workspace, allocated_runs))
+        )
         raise

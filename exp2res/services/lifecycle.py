@@ -17,6 +17,7 @@ from exp2res.domain.results import (
     InvalidatedBranch,
     InvalidatedView,
     Outcome,
+    extend_committed,
     merged_invalidated_branches,
     merged_invalidated_views,
 )
@@ -374,16 +375,26 @@ def run_recompute(
                 # in-stage path raises.
                 cancelled = LLMCancelledError()
                 try:
-                    cancelled.run_ids = _committed_runs(connection, allocated_runs)
+                    extend_committed(
+                        cancelled,
+                        run_ids=list(
+                            _committed_runs(connection, allocated_runs)
+                        ),
+                    )
                 except Exception:
-                    cancelled.run_ids = ()
+                    extend_committed(cancelled, run_ids=[])
                 cancelled.lifecycle_result = progress
                 raise cancelled from error
             if isinstance(error, Exp2ResError):
                 try:
-                    error.run_ids = _committed_runs(connection, allocated_runs)
+                    extend_committed(
+                        error,
+                        run_ids=list(
+                            _committed_runs(connection, allocated_runs)
+                        ),
+                    )
                 except Exception:
-                    error.run_ids = ()
+                    extend_committed(error, run_ids=[])
                 error.lifecycle_result = progress
                 raise
             if isinstance(error, Exception):
@@ -391,9 +402,14 @@ def run_recompute(
                 # committed lifecycle result for the class-1 envelope.
                 internal = Exp2ResError()
                 try:
-                    internal.run_ids = _committed_runs(connection, allocated_runs)
+                    extend_committed(
+                        internal,
+                        run_ids=list(
+                            _committed_runs(connection, allocated_runs)
+                        ),
+                    )
                 except Exception:
-                    internal.run_ids = ()
+                    extend_committed(internal, run_ids=[])
                 internal.lifecycle_result = progress
                 raise internal from error
             raise

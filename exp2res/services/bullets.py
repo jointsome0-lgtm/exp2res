@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from exp2res import __version__
+from exp2res.domain.results import extend_committed
 from exp2res.errors import LLMInvocationError
 from exp2res.pipeline.stage10 import (
     Stage10Result,
@@ -59,7 +60,9 @@ def run_bullets_generate(
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        error.run_ids = _committed_runs(workspace, allocated_runs)
+        extend_committed(
+            error, run_ids=list(_committed_runs(workspace, allocated_runs))
+        )
         raise
 
 
@@ -90,5 +93,7 @@ def run_bullets_verify(workspace: Path, *, branch_name: str) -> Stage11Result:
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        error.run_ids = _committed_runs(workspace, allocated_runs)
+        extend_committed(
+            error, run_ids=list(_committed_runs(workspace, allocated_runs))
+        )
         raise

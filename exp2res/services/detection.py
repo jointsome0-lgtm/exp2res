@@ -6,6 +6,7 @@ from pathlib import Path
 
 from exp2res import __version__
 from exp2res.domain.models import Contradiction, GapQuestion
+from exp2res.domain.results import extend_committed
 from exp2res.errors import LLMInvocationError, SelectorNotFoundError
 from exp2res.pipeline.stage4 import Stage4Result, run_detection_generation
 from exp2res.services.capture import new_id
@@ -60,7 +61,9 @@ def run_detections_generate(workspace: Path) -> Stage4Result:
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        error.run_ids = _committed_runs(workspace, allocated_runs)
+        extend_committed(
+            error, run_ids=list(_committed_runs(workspace, allocated_runs))
+        )
         raise
 
 

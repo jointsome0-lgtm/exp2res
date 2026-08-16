@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from exp2res.domain.results import committed_outcome
 from exp2res.errors import (
     IntegrityFailureError,
     NothingToRepairError,
@@ -594,7 +595,7 @@ def test_failed_swap_leaves_a_durable_failed_run(workspace: Path) -> None:
     assert run is not None and tuple(run) == ("failed", "business_commit_failed", None)
     # §14.14 rule 5: the raised error carries the durable failed run's ID
     # so the command envelope can report it.
-    assert caught.value.run_ids == (run_id,)
+    assert committed_outcome(caught.value).run_ids == [run_id]
     assert calls == 0
     # The failed run owns no business rows: the prior view stays current
     # with its verified claims untouched.

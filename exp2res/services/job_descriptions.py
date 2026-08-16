@@ -23,6 +23,8 @@ from exp2res.domain.results import (
     JobDescriptionProjection,
     Outcome,
     PurgedBranchProjection,
+    committed_outcome,
+    extend_committed,
     render_path,
 )
 from exp2res.errors import (
@@ -167,12 +169,18 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         )
     except LLMInvocationError as error:
         runs, created = _committed_effects(workspace, allocated_runs)
-        error.run_ids = runs
         # §14.14 rule 6: an interrupt delivered as Stage 8's business commit
         # returns leaves the row durable, so cancellation reports the created
         # job description rather than an effect-free envelope.
-        if created:
-            error.affected_ids = _created_job_descriptions(created)
+        extend_committed(
+            error,
+            run_ids=list(runs),
+            **(
+                {"affected_ids": _created_job_descriptions(created)}
+                if created
+                else {}
+            ),
+        )
         raise
     except KeyboardInterrupt as error:
         # The same rule one frame further out: the interrupt may also land
@@ -183,9 +191,12 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         if not created:
             raise
         cancelled = OperationCancelledError()
-        cancelled.run_ids = list(runs)
-        cancelled.affected_ids = _created_job_descriptions(created)
-        cancelled.warnings = list(getattr(error, "warnings", ()) or ())
+        extend_committed(
+            cancelled,
+            run_ids=list(runs),
+            affected_ids=_created_job_descriptions(created),
+            warnings=list(committed_outcome(error).warnings),
+        )
         raise cancelled from None
 
 
