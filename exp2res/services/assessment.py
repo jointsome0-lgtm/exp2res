@@ -13,7 +13,6 @@ from exp2res.domain.models import (
     GapQuestion,
     SelfClaim,
 )
-from exp2res.domain.results import extend_committed
 from exp2res.errors import LLMInvocationError, SelectorNotFoundError
 from exp2res.pipeline.stage6 import (
     Stage6Result,
@@ -22,7 +21,7 @@ from exp2res.pipeline.stage6 import (
 )
 from exp2res.pipeline.stage7 import Stage7Result, run_assessment_verification
 from exp2res.services.capture import new_id
-from exp2res.services.extraction import build_llm_execution
+from exp2res.services.extraction import RunTracking, build_llm_execution
 from exp2res.storage.repository import (
     get_assessment_snapshot,
     get_contradiction,
@@ -30,7 +29,6 @@ from exp2res.storage.repository import (
     list_assessment_snapshots,
     list_self_claims_for_snapshot,
 )
-from exp2res.storage.telemetry import committed_runs
 from exp2res.storage.workspace import read_database, require_compatible
 
 
@@ -47,28 +45,18 @@ def run_assess_generate(workspace: Path) -> Stage6Result:
 
     require_compatible(workspace)
     selection, budgets, runner = build_llm_execution(workspace)
-    allocated_runs: list[str] = []
-
-    def tracking_id_factory(kind: str) -> str:
-        value = new_id(kind)
-        if kind == "run":
-            allocated_runs.append(value)
-        return value
-
+    tracking = RunTracking(new_id)
     try:
         return run_assessment_generation(
             workspace,
             selection=selection,
             budgets=budgets,
             runner=runner,
-            id_factory=tracking_id_factory,
+            id_factory=tracking.allocate,
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        with read_database(workspace) as connection:
-            extend_committed(
-                error, run_ids=list(committed_runs(connection, allocated_runs))
-            )
+        tracking.extend_committed_runs(workspace, error)
         raise
 
 
@@ -82,14 +70,7 @@ def run_assess_repair(workspace: Path, *, snapshot_id: str) -> Stage6Result:
 def run_assess_verify(workspace: Path, *, snapshot_id: str) -> Stage7Result:
     require_compatible(workspace)
     selection, budgets, runner = build_llm_execution(workspace)
-    allocated_runs: list[str] = []
-
-    def tracking_id_factory(kind: str) -> str:
-        value = new_id(kind)
-        if kind == "run":
-            allocated_runs.append(value)
-        return value
-
+    tracking = RunTracking(new_id)
     try:
         return run_assessment_verification(
             workspace,
@@ -97,14 +78,11 @@ def run_assess_verify(workspace: Path, *, snapshot_id: str) -> Stage7Result:
             selection=selection,
             budgets=budgets,
             runner=runner,
-            id_factory=tracking_id_factory,
+            id_factory=tracking.allocate,
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        with read_database(workspace) as connection:
-            extend_committed(
-                error, run_ids=list(committed_runs(connection, allocated_runs))
-            )
+        tracking.extend_committed_runs(workspace, error)
         raise
 
 
