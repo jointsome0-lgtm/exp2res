@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
+import os
 from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
@@ -394,6 +395,55 @@ class Outcome:
     # Class 8 covers every non-cancelled completion, so a residual observed
     # beside one promotes exactly as it does for class 0 and class 10.
     completed_report: bool = False
+
+
+# §14.14 rules 5/6 require a failed or cancelled command to report the effects
+# it already committed. An exception is the only channel a raising operation
+# shares with §14's emitter, so the projection rides on it — as one whole
+# `Outcome` under this single slot, never as loose per-field attributes. Keeping
+# the slot untyped here is deliberate: `exp2res/errors.py` is the package's only
+# import-free leaf, and declaring the field there would bind the bottom of the
+# import graph to pydantic, the domain models and the LLM contract layer.
+_COMMITTED_SLOT = "committed_outcome"
+
+
+def committed_outcome(error: BaseException) -> Outcome:
+    """What `error` already committed, or an empty projection.
+
+    `ManagedOutputIncompleteError` declares `residual_paths` itself — naming
+    the paths it failed to clean up is that error's whole identity, not a
+    projection someone attached to it — so the two sources are merged here.
+    §14.14 rule 5 wants the complete set, and either alone can be partial.
+    """
+
+    carried = getattr(error, _COMMITTED_SLOT, None)
+    outcome = carried if isinstance(carried, Outcome) else Outcome()
+    declared = getattr(error, "residual_paths", None)
+    if declared:
+        return replace(
+            outcome,
+            residual_paths=sorted(
+                {*outcome.residual_paths, *declared}, key=os.fsencode
+            ),
+        )
+    return outcome
+
+
+def carry_committed(error: BaseException, outcome: Outcome) -> None:
+    """Record a complete committed projection on `error`, replacing any prior."""
+
+    setattr(error, _COMMITTED_SLOT, outcome)
+
+
+def extend_committed(error: BaseException, **fields: object) -> None:
+    """Merge further committed effects onto what `error` already carries.
+
+    Layering matters: an inner service records the processing runs it created
+    before an outer command adds the swap those runs produced, and neither
+    knows what the other contributed.
+    """
+
+    carry_committed(error, replace(committed_outcome(error), **fields))
 
 
 def render_text(value: str) -> str:

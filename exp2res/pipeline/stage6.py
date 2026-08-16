@@ -22,6 +22,7 @@ from exp2res.domain.results import (
     EntityIdGroup,
     InvalidatedBranch,
     Outcome,
+    extend_committed,
 )
 from exp2res.domain.models import (
     AssessmentSnapshot,
@@ -721,7 +722,7 @@ def run_assessment_repair(
                 durable, _interrupted = finalize_durable_run("cancelled")
                 if durable:
                     cancelled = OperationCancelledError()
-                    cancelled.run_ids = (run_id,)
+                    extend_committed(cancelled, run_ids=[run_id])
                     raise cancelled from run_error
             raise
 
@@ -954,13 +955,15 @@ def run_assessment_repair(
             # non-typed storage failure is wrapped to reach the envelope.
             if isinstance(swap_error, KeyboardInterrupt) or finalization_interrupted:
                 cancelled = OperationCancelledError()
-                cancelled.run_ids = (run_id,) if durable_run else ()
+                extend_committed(
+                    cancelled, run_ids=[run_id] if durable_run else []
+                )
                 raise cancelled from swap_error
             if isinstance(swap_error, Exp2ResError):
-                swap_error.run_ids = (run_id,)
+                extend_committed(swap_error, run_ids=[run_id])
                 raise
             wrapped = IntegrityFailureError(failure_code)
-            wrapped.run_ids = (run_id,)
+            extend_committed(wrapped, run_ids=[run_id])
             raise wrapped from swap_error
 
         # §13 stale-export trigger class 1: the swap is already committed;
