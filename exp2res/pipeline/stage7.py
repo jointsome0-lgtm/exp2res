@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 
 from pydantic import BaseModel, ValidationError
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.enums import VerificationStatus
 from exp2res.domain.results import (
     AffectedIds,
@@ -110,10 +111,6 @@ class _ResolvedVerification:
     bundle_refs: frozenset[tuple[str, str]]
 
 
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
-
-
 def _require_current_members(
     connection: sqlite3.Connection,
     *,
@@ -198,7 +195,7 @@ def _build_bundle(
         source_facts = tuple(
             sorted(
                 (current_facts[item] for item in fact_ids),
-                key=lambda item: _id_key(item.id),
+                key=lambda item: id_key(item.id),
             )
         )
     except KeyError as error:
@@ -213,7 +210,7 @@ def _build_bundle(
         item.raw_log_id for item in source_evidence if isinstance(item, EvidenceItem)
     }
     source_logs_list: list[RawLog] = []
-    for log_id in sorted(non_displaced_log_ids, key=_id_key):
+    for log_id in sorted(non_displaced_log_ids, key=id_key):
         raw_log = get_raw_log(connection, log_id)
         if raw_log is None:
             raise IntegrityFailureError("assessment_bundle_log_invalid")
@@ -370,7 +367,7 @@ def run_assessment_verification(
         # integrity-checked against snapshot.contradiction_ids above — is view
         # context for check 14; it deepens into no evidence closure.
         current_contradictions = tuple(
-            sorted(list_contradictions(connection), key=lambda item: _id_key(item.id))
+            sorted(list_contradictions(connection), key=lambda item: id_key(item.id))
         )
         bundles = tuple(
             _build_bundle(
@@ -398,7 +395,7 @@ def run_assessment_verification(
                             # they cannot ground counterevidence.
                             *(item.id for item in current_contradictions),
                         },
-                        key=_id_key,
+                        key=id_key,
                     )
                 ),
                 enrich=_enrich_for(bundle),
@@ -525,7 +522,7 @@ def run_assessment_verification(
         findings = tuple(
             sorted(
                 list_verification_findings(connection, run_id=run_id),
-                key=lambda item: _id_key(item.id),
+                key=lambda item: id_key(item.id),
             )
         )
         current_claims = list_self_claims_for_snapshot(connection, snapshot_id)

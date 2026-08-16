@@ -26,7 +26,7 @@ from exp2res.domain.models import (
     validate_structural,
 )
 
-from .graph import AssessmentExportGraph, id_key
+from .graph import AssessmentExportGraph, fs_id_key
 from .markdown import normalize_generated_text
 
 if TYPE_CHECKING:  # pragma: no cover - `branch` imports this module's siblings
@@ -42,7 +42,7 @@ def _require_unique(values: list[str]) -> list[str]:
         validate_structural(value)
     if len(values) != len(set(values)):
         raise ValueError("duplicate typed ID")
-    if values != sorted(values, key=id_key):
+    if values != sorted(values, key=fs_id_key):
         raise ValueError("typed IDs are not byte ordered")
     return values
 
@@ -182,7 +182,7 @@ class SelfClaimExport(ExportDocument):
     ) -> list[CounterevidenceExport]:
         keys = [(item.source_ref_type, item.source_ref_id) for item in value]
         if len(keys) != len(set(keys)) or keys != sorted(
-            keys, key=lambda item: (id_key(item[0]), id_key(item[1]))
+            keys, key=lambda item: (fs_id_key(item[0]), fs_id_key(item[1]))
         ):
             raise ValueError("counterevidence is duplicate or unordered")
         return value
@@ -199,7 +199,7 @@ class SelfClaimsDocument(ExportDocument):
     def ordered_rows(self) -> "SelfClaimsDocument":
         for rows in (self.claims, self.unknowns, self.contradictions):
             ids = [item.id for item in rows]
-            if len(ids) != len(set(ids)) or ids != sorted(ids, key=id_key):
+            if len(ids) != len(set(ids)) or ids != sorted(ids, key=fs_id_key):
                 raise ValueError("document rows are duplicate or unordered")
         return self
 
@@ -330,7 +330,7 @@ class AssessmentEvidenceMapDocument(ExportDocument):
             [item.evidence_item_id for item in self.evidence_links],
         )
         for ids in grouped_ids:
-            if len(ids) != len(set(ids)) or ids != sorted(ids, key=id_key):
+            if len(ids) != len(set(ids)) or ids != sorted(ids, key=fs_id_key):
                 raise ValueError("evidence-map links are duplicate or unordered")
         if self.rendered_claim_ids != grouped_ids[0]:
             raise ValueError("rendered claim IDs disagree with claim links")
@@ -408,7 +408,7 @@ class BulletPackEvidenceMapDocument(ExportDocument):
             [item.fact_id for item in self.fact_links],
             [item.evidence_item_id for item in self.evidence_links],
         ):
-            if len(ids) != len(set(ids)) or ids != sorted(ids, key=id_key):
+            if len(ids) != len(set(ids)) or ids != sorted(ids, key=fs_id_key):
                 raise ValueError("evidence-map links are duplicate or unordered")
         # §13.12: every rendered bullet round-trips through the typed links, so
         # each cited claim and each reached fact carries its own closure row.
@@ -520,8 +520,8 @@ def build_self_claims_document(graph: AssessmentExportGraph) -> SelfClaimsDocume
             for item in sorted(
                 claim.counterevidence,
                 key=lambda item: (
-                    id_key(item.source_ref_type),
-                    id_key(item.source_ref_id),
+                    fs_id_key(item.source_ref_type),
+                    fs_id_key(item.source_ref_id),
                 ),
             )
         ]
@@ -538,8 +538,8 @@ def build_self_claims_document(graph: AssessmentExportGraph) -> SelfClaimsDocume
                     if claim.uncertainty is None
                     else normalize_generated_text(claim.uncertainty)
                 ),
-                source_fact_ids=sorted(claim.source_fact_ids, key=id_key),
-                counter_fact_ids=sorted(claim.counter_fact_ids, key=id_key),
+                source_fact_ids=sorted(claim.source_fact_ids, key=fs_id_key),
+                counter_fact_ids=sorted(claim.counter_fact_ids, key=fs_id_key),
                 counterevidence=counterevidence,
             )
         )
@@ -571,16 +571,16 @@ def build_evidence_map_document(
         claim_links=[
             ClaimLink(
                 claim_id=item.value.id,
-                source_fact_ids=sorted(item.value.source_fact_ids, key=id_key),
-                counter_fact_ids=sorted(item.value.counter_fact_ids, key=id_key),
+                source_fact_ids=sorted(item.value.source_fact_ids, key=fs_id_key),
+                counter_fact_ids=sorted(item.value.counter_fact_ids, key=fs_id_key),
             )
             for item in graph.claims
         ],
         fact_links=[
             FactLink(
                 fact_id=item.value.id,
-                evidence_item_ids=sorted(item.value.evidence_item_ids, key=id_key),
-                source_log_ids=sorted(item.value.source_log_ids, key=id_key),
+                evidence_item_ids=sorted(item.value.evidence_item_ids, key=fs_id_key),
+                source_log_ids=sorted(item.value.source_log_ids, key=fs_id_key),
             )
             for item in graph.facts
         ],
@@ -605,29 +605,29 @@ def build_bullet_pack_evidence_map(
                 text=normalize_generated_text(item.value.text),
                 target_section=item.value.target_section,
                 matched_jd_requirements=sorted(
-                    item.value.matched_jd_requirements, key=id_key
+                    item.value.matched_jd_requirements, key=fs_id_key
                 ),
                 source_self_claim_ids=sorted(
-                    item.value.source_self_claim_ids, key=id_key
+                    item.value.source_self_claim_ids, key=fs_id_key
                 ),
-                source_fact_ids=sorted(item.value.source_fact_ids, key=id_key),
-                source_log_ids=sorted(item.value.source_log_ids, key=id_key),
+                source_fact_ids=sorted(item.value.source_fact_ids, key=fs_id_key),
+                source_log_ids=sorted(item.value.source_log_ids, key=fs_id_key),
             )
             for item in graph.bullets
         ],
         claim_links=[
             ClaimLink(
                 claim_id=item.value.id,
-                source_fact_ids=sorted(item.value.source_fact_ids, key=id_key),
-                counter_fact_ids=sorted(item.value.counter_fact_ids, key=id_key),
+                source_fact_ids=sorted(item.value.source_fact_ids, key=fs_id_key),
+                counter_fact_ids=sorted(item.value.counter_fact_ids, key=fs_id_key),
             )
             for item in graph.claims
         ],
         fact_links=[
             FactLink(
                 fact_id=item.value.id,
-                evidence_item_ids=sorted(item.value.evidence_item_ids, key=id_key),
-                source_log_ids=sorted(item.value.source_log_ids, key=id_key),
+                evidence_item_ids=sorted(item.value.evidence_item_ids, key=fs_id_key),
+                source_log_ids=sorted(item.value.source_log_ids, key=fs_id_key),
             )
             for item in graph.facts
         ],

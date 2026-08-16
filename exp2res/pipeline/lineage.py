@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import timezone
 import sqlite3
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.models import EvidenceItem, RawLog
 from exp2res.errors import IntegrityFailureError, SelectorNotFoundError
 from exp2res.llm.fact_extractor import (
@@ -15,12 +16,8 @@ from exp2res.llm.fact_extractor import (
 from exp2res.storage.repository import hydrate_evidence_item, hydrate_raw_log
 
 
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
-
-
 def _log_order(log: RawLog) -> tuple[object, bytes]:
-    return (log.recorded_at.astimezone(timezone.utc), _id_key(log.id))
+    return (log.recorded_at.astimezone(timezone.utc), id_key(log.id))
 
 
 @dataclass(frozen=True)
@@ -122,7 +119,7 @@ def plan_lineages(
                 for raw_id in effective_ids
                 for item in items_by_log[raw_id]
             ),
-            key=lambda item: _id_key(item.id),
+            key=lambda item: id_key(item.id),
         )
         displaced_items = sorted(
             (
@@ -132,7 +129,7 @@ def plan_lineages(
                 for item in items_by_log[member.id]
                 if item.strength != "manual_claim"
             ),
-            key=lambda item: _id_key(item.id),
+            key=lambda item: id_key(item.id),
         )
         descriptors = tuple(
             DisplacedSupportDescriptor(

@@ -13,6 +13,7 @@ import unicodedata
 
 from pydantic import BaseModel, ValidationError
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.enums import ResumeTargetSection
 from exp2res.domain.models import (
     AssessmentSnapshot,
@@ -112,10 +113,6 @@ class _ResolvedPack:
     warnings: tuple[ContractWarning, ...]
 
 
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
-
-
 def _selected_facts(
     connection: sqlite3.Connection, facts: Sequence[ExperienceFact]
 ) -> tuple[SelectedFact, ...]:
@@ -128,9 +125,9 @@ def _selected_facts(
         )
     }
     selected: list[SelectedFact] = []
-    for fact in sorted(facts, key=lambda item: _id_key(item.id)):
+    for fact in sorted(facts, key=lambda item: id_key(item.id)):
         evidence: list[FactEvidence] = []
-        for item_id in sorted(fact.evidence_item_ids, key=_id_key):
+        for item_id in sorted(fact.evidence_item_ids, key=id_key):
             item = context[item_id]
             if isinstance(item, DisplacedSupportDescriptor):
                 # §13.3 rule 10: the descriptor stands in for a displaced
@@ -286,7 +283,7 @@ def require_current_claim_facts(
             # so only damaged state has one — and the closure is the whole
             # provenance such a claim would lack.
             raise IntegrityFailureError("claim_source_facts_empty")
-        for fact_id in sorted(set(claim.source_fact_ids) - current, key=_id_key):
+        for fact_id in sorted(set(claim.source_fact_ids) - current, key=id_key):
             stored = get_experience_fact(connection, fact_id)
             raise IntegrityFailureError(
                 "claim_fact_missing" if stored is None else "claim_fact_superseded"
@@ -405,7 +402,7 @@ def run_bullet_generation(
                         for item in members
                         if item.verification_status == "supported"
                     ),
-                    key=lambda item: _id_key(item.id),
+                    key=lambda item: id_key(item.id),
                 )
             )
             require_current_claim_facts(connection, supported, facts)
@@ -457,7 +454,7 @@ def run_bullet_generation(
                                 ),
                                 *(claim.id for claim in supported),
                             },
-                            key=_id_key,
+                            key=id_key,
                         )
                     ),
                     enrich=_enrich_for(input_payload),
@@ -580,7 +577,7 @@ def run_bullet_generation(
                     superseded_bullet_ids=replaced.bullet_ids,
                     generation_id=generation_id,
                     superseded_generation_ids=tuple(
-                        sorted(superseded_generation_ids, key=_id_key)
+                        sorted(superseded_generation_ids, key=id_key)
                     ),
                     invalidated_branches=replaced.invalidated_branches,
                     residual_paths=residuals,
@@ -693,7 +690,7 @@ def bullets_generate_outcome(generated: Stage10Result) -> Outcome:
         created_groups.append(
             EntityIdGroup(
                 entity_type="resume_bullet",
-                ids=sorted(generated.bullet_ids, key=lambda value: value.encode("utf-8")),
+                ids=sorted(generated.bullet_ids, key=id_key),
             )
         )
     superseded_groups: list[EntityIdGroup] = []
@@ -746,7 +743,7 @@ def bullets_generate_outcome(generated: Stage10Result) -> Outcome:
                 ),
                 *generated.superseded_generation_ids,
             },
-            key=lambda value: value.encode("utf-8"),
+            key=id_key,
         ),
         run_ids=[generated.run_id],
         invalidated_branches=list(generated.invalidated_branches),

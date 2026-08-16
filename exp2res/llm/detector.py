@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import Field, field_validator, model_validator
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.enums import DetectionRefType, GapPriority, GapTrigger
 from exp2res.domain.models import (
     QUESTION_LIMIT,
@@ -16,10 +17,6 @@ from exp2res.domain.models import (
 )
 
 from .contracts import ContractDefinition, ContractWarning
-
-
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
 
 
 class EvidenceContextEntry(StrictModel):
@@ -42,7 +39,7 @@ class DetectorInput(StrictModel):
     def facts_are_id_ordered(
         cls, value: list[ExperienceFact]
     ) -> list[ExperienceFact]:
-        if value != sorted(value, key=lambda fact: _id_key(fact.id)):
+        if value != sorted(value, key=lambda fact: id_key(fact.id)):
             raise ValueError("facts must be ordered by ID bytes")
         return value
 
@@ -52,7 +49,7 @@ class DetectorInput(StrictModel):
         cls, value: list[EvidenceContextEntry]
     ) -> list[EvidenceContextEntry]:
         if value != sorted(
-            value, key=lambda entry: _id_key(entry.evidence_item.id)
+            value, key=lambda entry: id_key(entry.evidence_item.id)
         ):
             raise ValueError("evidence context must be ordered by evidence ID bytes")
         return value

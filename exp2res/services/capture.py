@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
     EntityIdGroup,
@@ -491,9 +492,7 @@ def capture_gap_answer_file(
 
 def capture_outcome(bundle) -> Outcome:
     evidence_ids = [item.id for item in bundle.evidence_items]
-    reported_evidence_ids = sorted(
-        evidence_ids, key=lambda value: value.encode("utf-8")
-    )
+    reported_evidence_ids = sorted(evidence_ids, key=id_key)
     return Outcome(
         affected_ids=AffectedIds(
             created=[

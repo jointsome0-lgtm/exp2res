@@ -31,7 +31,7 @@ from .companions import (
     build_verification_report,
     companion_bytes,
 )
-from .graph import AssessmentExportGraph, id_key, render_input_bundle
+from .graph import AssessmentExportGraph, fs_id_key, render_input_bundle
 from .html import render_report_html
 from .report import render_report
 
@@ -93,7 +93,7 @@ class AssessmentSourceIds(_ManifestModel):
             validate_structural(item)
         if len(value) != len(set(value)):
             raise ValueError("duplicate source ID")
-        if value != sorted(value, key=id_key):
+        if value != sorted(value, key=fs_id_key):
             raise ValueError("source IDs are not byte ordered")
         return value
 
@@ -151,7 +151,7 @@ class AssessmentManifest(_ManifestModel):
     @model_validator(mode="after")
     def exact_member_set(self) -> "AssessmentManifest":
         names = [item.name for item in self.members]
-        if names != sorted(_MEMBER_NAMES, key=id_key):
+        if names != sorted(_MEMBER_NAMES, key=fs_id_key):
             raise ValueError("manifest member set or order is invalid")
         return self
 
@@ -189,7 +189,7 @@ class ResumeSourceIds(_ManifestModel):
             validate_structural(item)
         if len(value) != len(set(value)):
             raise ValueError("duplicate source ID")
-        if value != sorted(value, key=id_key):
+        if value != sorted(value, key=fs_id_key):
             raise ValueError("source IDs are not byte ordered")
         return value
 
@@ -247,7 +247,7 @@ class ResumeManifest(_ManifestModel):
     @model_validator(mode="after")
     def exact_member_set(self) -> "ResumeManifest":
         names = [item.name for item in self.members]
-        if names != sorted(_RESUME_MEMBER_NAMES, key=id_key):
+        if names != sorted(_RESUME_MEMBER_NAMES, key=fs_id_key):
             raise ValueError("manifest member set or order is invalid")
         return self
 
@@ -319,7 +319,7 @@ def build_assessment_manifest(
                 name=name,
                 sha256=hashlib.sha256(members[name]).hexdigest(),
             )
-            for name in sorted(_MEMBER_NAMES, key=id_key)
+            for name in sorted(_MEMBER_NAMES, key=fs_id_key)
         ],
     )
 
@@ -371,7 +371,7 @@ def build_branch_manifest(
                 name=name,
                 sha256=hashlib.sha256(members[name]).hexdigest(),
             )
-            for name in sorted(_RESUME_MEMBER_NAMES, key=id_key)
+            for name in sorted(_RESUME_MEMBER_NAMES, key=fs_id_key)
         ],
     )
 
@@ -593,7 +593,7 @@ def _remove_tree(path: Path, out_root: Path) -> bool:
         return False
     try:
         with os.scandir(path) as entries:
-            names = sorted((entry.name for entry in entries), key=id_key)
+            names = sorted((entry.name for entry in entries), key=fs_id_key)
         for name in names:
             child = path / name
             info = child.lstat()
@@ -662,7 +662,7 @@ def _directory_names(path: Path, out_root: Path) -> list[str]:
     descriptor = _open_directory_fd(path, out_root)
     try:
         with os.scandir(descriptor) as entries:
-            return sorted((entry.name for entry in entries), key=id_key)
+            return sorted((entry.name for entry in entries), key=fs_id_key)
     finally:
         os.close(descriptor)
 
@@ -689,7 +689,7 @@ def _inspect_set(
         if stat.S_IMODE(path.lstat().st_mode) != 0o700:
             return None
         names = _directory_names(path, out_root)
-        if names != sorted(all_names, key=id_key):
+        if names != sorted(all_names, key=fs_id_key):
             return None
         manifest_path = path / "manifest.json"
         if stat.S_IMODE(manifest_path.lstat().st_mode) != 0o600:
@@ -790,7 +790,7 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
                     _fsync_directory(parent, out_root)
                 except OSError:
                     residuals.add(str(parent))
-    return tuple(sorted(residuals, key=id_key))
+    return tuple(sorted(residuals, key=fs_id_key))
 
 
 def _managed_set_paths(
@@ -805,7 +805,7 @@ def _managed_set_paths(
     that no longer exists, so a completed removal clears its own pending report.
     """
 
-    selected = tuple(sorted(set(entity_ids), key=id_key))
+    selected = tuple(sorted(set(entity_ids), key=fs_id_key))
     try:
         _root, out_root = _canonical_roots(workspace)
     except ManagedOutputIncompleteError:
@@ -847,7 +847,7 @@ def _remove_managed_sets(
     (§14.14 rule 6).
     """
 
-    selected = tuple(sorted(set(entity_ids), key=id_key))
+    selected = tuple(sorted(set(entity_ids), key=fs_id_key))
     for entity_id in selected:
         if ENTITY_ID.fullmatch(entity_id) is None:
             raise IntegrityFailureError("managed_output_entity_id_invalid")
@@ -903,7 +903,7 @@ def _remove_managed_sets(
     # than claiming a removal a crash could undo.
     if removed_ledger is not None:
         removed_ledger.extend(unlinked)
-    return tuple(sorted(residuals, key=id_key))
+    return tuple(sorted(residuals, key=fs_id_key))
 
 
 def assessment_set_paths(
@@ -987,7 +987,7 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
                 _fsync_directory(parent, out_root)
             except OSError:
                 residuals.add(str(parent))
-    return tuple(sorted(residuals, key=id_key))
+    return tuple(sorted(residuals, key=fs_id_key))
 
 
 @dataclass(frozen=True)
@@ -1131,7 +1131,7 @@ def _build_candidate(
             raise ManagedOutputIncompleteError((str(candidate),)) from None
         raise
     try:
-        for name in sorted(member_names, key=id_key):
+        for name in sorted(member_names, key=fs_id_key):
             _write_private_file(candidate / name, members[name], out_root)
         _write_private_file(candidate / "manifest.json", manifest_bytes(manifest), out_root)
         if _inspect_set(candidate, parent, out_root) != manifest:
@@ -1276,7 +1276,7 @@ def _publish_set(
                 except OSError as error:
                     raise ManagedOutputIncompleteError((str(parent),)) from error
                 paths = tuple(
-                    str(final_path / name) for name in sorted(all_names, key=id_key)
+                    str(final_path / name) for name in sorted(all_names, key=fs_id_key)
                 )
                 return prior_manifest, paths
 
@@ -1335,7 +1335,7 @@ def _publish_set(
         ):
             raise ManagedOutputIncompleteError((str(final_path),))
         paths = tuple(
-            str(final_path / name) for name in sorted(all_names, key=id_key)
+            str(final_path / name) for name in sorted(all_names, key=fs_id_key)
         )
         return current, paths
     except BaseException:

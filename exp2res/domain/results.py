@@ -11,6 +11,7 @@ from pydantic import ConfigDict, Field, model_validator
 
 from exp2res.llm.contracts import ContractWarning
 
+from .canonical import id_key
 from .enums import (
     AssessmentScope,
     CLIResultStatus,
@@ -211,9 +212,7 @@ def merged_invalidated_views(*collections) -> list[InvalidatedView]:
     by_id = {
         item.snapshot_id: item for collection in collections for item in collection
     }
-    return [
-        by_id[key] for key in sorted(by_id, key=lambda value: value.encode("utf-8"))
-    ]
+    return [by_id[key] for key in sorted(by_id, key=id_key)]
 
 
 class FormerViewProjection(StrictModel):
@@ -255,10 +254,7 @@ def merged_invalidated_branches(*collections) -> list[InvalidatedBranch]:
     # §13.13 rule 9 identifies a branch report by the branch name: one command
     # may supersede the same named branch through several lifecycle steps.
     by_name = {item.name: item for collection in collections for item in collection}
-    return [
-        by_name[key]
-        for key in sorted(by_name, key=lambda value: value.encode("utf-8"))
-    ]
+    return [by_name[key] for key in sorted(by_name, key=id_key)]
 
 
 class SnapshotListItem(StrictModel):

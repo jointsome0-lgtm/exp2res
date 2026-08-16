@@ -17,6 +17,7 @@ from typing import Callable, Iterator
 from urllib.parse import quote
 
 from exp2res import __version__
+from exp2res.domain.canonical import id_key
 from exp2res.errors import (
     MigrationFailedError,
     MigrationInterrupted,
@@ -167,7 +168,7 @@ def _assessment_set_cleanup(
             row[0] for row in connection.execute("SELECT id FROM resume_branches")
         ]
         residuals.extend(remove_branch_sets(workspace, branch_ids))
-    return tuple(sorted(set(residuals), key=lambda value: value.encode("utf-8")))
+    return tuple(sorted(set(residuals), key=id_key))
 
 
 def _entry_kind(path: Path) -> int | None:

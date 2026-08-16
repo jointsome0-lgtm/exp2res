@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .enums import Confidence
-
-
-_CONFIDENCE_ORDER = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
+from .enums import CONFIDENCE_RANK, Confidence
 
 
 def pattern_generalization_cap(
@@ -19,12 +16,12 @@ def pattern_generalization_cap(
     """Return §9.4's pattern-generalization cap for one pattern-citing claim."""
 
     confidences = tuple(supporting_confidences)
-    cap = max(confidences, key=_CONFIDENCE_ORDER.__getitem__, default="unknown")
+    cap = max(confidences, key=CONFIDENCE_RANK.__getitem__, default="unknown")
     if cap == "high" and not (
         len(confidences) >= 2 and distinct_source_log_count >= 2
     ):
         cap = "medium"
-    if has_counter_facts and _CONFIDENCE_ORDER[cap] > _CONFIDENCE_ORDER["medium"]:
+    if has_counter_facts and CONFIDENCE_RANK[cap] > CONFIDENCE_RANK["medium"]:
         cap = "medium"
     return cap
 
@@ -34,6 +31,6 @@ def claim_confidence_cap(*, source_confidences: Iterable[Confidence]) -> str:
 
     return max(
         tuple(source_confidences),
-        key=_CONFIDENCE_ORDER.__getitem__,
+        key=CONFIDENCE_RANK.__getitem__,
         default="unknown",
     )

@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 
 from pydantic import BaseModel, ValidationError
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.models import ExperienceFact, RawLog
 from exp2res.errors import LLMCancelledError
 from exp2res.domain.results import (
@@ -102,12 +103,8 @@ class _ResolvedLineage:
     warnings: tuple[ContractWarning, ...]
 
 
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
-
-
 def _log_order(log: RawLog) -> tuple[object, bytes]:
-    return (log.recorded_at.astimezone(timezone.utc), _id_key(log.id))
+    return (log.recorded_at.astimezone(timezone.utc), id_key(log.id))
 
 
 def _effective_logs_for(
@@ -266,7 +263,7 @@ def _resolve_for(
                     context.item_to_log_id[item_id]
                     for item_id in candidate.evidence_item_ids
                 },
-                key=_id_key,
+                key=id_key,
             )
             occurred = (
                 governing.occurred
@@ -293,7 +290,7 @@ def _resolve_for(
                     themes=candidate.themes,
                     occurred=occurred,
                     source_log_ids=selected_log_ids,
-                    evidence_item_ids=sorted(candidate.evidence_item_ids, key=_id_key),
+                    evidence_item_ids=sorted(candidate.evidence_item_ids, key=id_key),
                     confidence=candidate.confidence,
                     metadata={},
                 )
@@ -365,7 +362,7 @@ def _current_fact_ids_for_lineage(
         """,
         member_ids,
     ).fetchall()
-    return tuple(sorted((row[0] for row in rows), key=_id_key))
+    return tuple(sorted((row[0] for row in rows), key=id_key))
 
 
 def run_fact_extraction(
@@ -573,26 +570,26 @@ def run_fact_extraction(
                     item.generation_id for item in resolved_lineages if item.facts
                 ),
                 superseded_generation_ids=tuple(
-                    sorted(superseded_generation_ids, key=_id_key)
+                    sorted(superseded_generation_ids, key=id_key)
                 ),
                 # §14.14 rule 5: envelope ID collections are ID-byte-ordered;
                 # the listing helpers return creation-time order.
-                superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=_id_key)),
+                superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=id_key)),
                 superseded_contradiction_ids=tuple(
-                    sorted(superseded_contradiction_ids, key=_id_key)
+                    sorted(superseded_contradiction_ids, key=id_key)
                 ),
                 superseded_claim_ids=tuple(
-                    sorted(superseded_claim_ids, key=_id_key)
+                    sorted(superseded_claim_ids, key=id_key)
                 ),
                 superseded_snapshot_ids=tuple(
-                    sorted(superseded_snapshot_ids, key=_id_key)
+                    sorted(superseded_snapshot_ids, key=id_key)
                 ),
                 superseded_branch_ids=branch_swap.branch_ids,
                 superseded_bullet_ids=branch_swap.bullet_ids,
                 invalidated_views=tuple(
                     sorted(
                         invalidated_views,
-                        key=lambda item: _id_key(item.snapshot_id),
+                        key=lambda item: id_key(item.snapshot_id),
                     )
                 ),
                 invalidated_branches=branch_swap.invalidated_branches,
@@ -706,7 +703,7 @@ def stage3_outcome(extracted: Stage3Result) -> Outcome:
         # duplicate-free and deterministically ordered.
         generation_ids=sorted(
             {*extracted.generation_ids, *extracted.superseded_generation_ids},
-            key=lambda value: value.encode("utf-8"),
+            key=id_key,
         ),
         run_ids=[extracted.run_id],
         invalidated_views=invalidated_views,

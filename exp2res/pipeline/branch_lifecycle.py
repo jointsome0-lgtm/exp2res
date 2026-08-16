@@ -15,6 +15,7 @@ from datetime import datetime
 import sqlite3
 from typing import Iterable
 
+from exp2res.domain.canonical import byte_sorted, id_key
 from exp2res.domain.results import InvalidatedBranch, invalidated_branch
 from exp2res.errors import IntegrityFailureError
 from exp2res.storage.repository import (
@@ -34,10 +35,6 @@ class BranchSupersession:
 
     def __bool__(self) -> bool:
         return bool(self.branch_ids)
-
-
-def _byte_sorted(values: Iterable[str]) -> tuple[str, ...]:
-    return tuple(sorted(values, key=lambda value: value.encode("utf-8")))
 
 
 def _former_view_scope(connection: sqlite3.Connection, snapshot_id: str) -> str:
@@ -109,11 +106,11 @@ def supersede_branches(
         connection, (branch.id for branch in branches), superseded_at
     )
     return BranchSupersession(
-        branch_ids=_byte_sorted(branch.id for branch in branches),
-        bullet_ids=_byte_sorted(bullet_ids),
-        superseded_generation_ids=_byte_sorted(generation_ids),
+        branch_ids=byte_sorted(branch.id for branch in branches),
+        bullet_ids=byte_sorted(bullet_ids),
+        superseded_generation_ids=byte_sorted(generation_ids),
         invalidated_branches=tuple(
-            sorted(reports, key=lambda item: item.name.encode("utf-8"))
+            sorted(reports, key=lambda item: id_key(item.name))
         ),
     )
 

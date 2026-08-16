@@ -6,6 +6,7 @@ from typing import Optional
 
 from pydantic import Field, field_validator, model_validator
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.enums import (
     AssessmentScope,
     ResumeTargetSection,
@@ -24,10 +25,6 @@ from exp2res.domain.models import (
 from exp2res.llm.fact_extractor import DisplacedSupportDescriptor
 
 from .contracts import ContractDefinition, ContractWarning
-
-
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
 
 
 class BranchContext(StrictModel):
@@ -101,14 +98,14 @@ class SelectedFact(StrictModel):
     @field_validator("evidence")
     @classmethod
     def evidence_is_id_ordered(cls, value: list[FactEvidence]) -> list[FactEvidence]:
-        if value != sorted(value, key=lambda item: _id_key(item.evidence_item.id)):
+        if value != sorted(value, key=lambda item: id_key(item.evidence_item.id)):
             raise ValueError("evidence must be ordered by ID bytes")
         return value
 
     @model_validator(mode="after")
     def evidence_is_the_fact_closure(self) -> "SelectedFact":
         supplied = [item.evidence_item.id for item in self.evidence]
-        if supplied != sorted(self.fact.evidence_item_ids, key=_id_key):
+        if supplied != sorted(self.fact.evidence_item_ids, key=id_key):
             raise ValueError("evidence is not the fact's complete §12.4 set")
         # §13.3 rule 7 derives `source_log_ids` as exactly the duplicate-free
         # set of raw-log IDs reached through those items, so a bundle whose
@@ -135,7 +132,7 @@ class ResumeWriterInput(StrictModel):
     def facts_are_current_and_ordered(
         cls, value: list[SelectedFact]
     ) -> list[SelectedFact]:
-        if value != sorted(value, key=lambda item: _id_key(item.fact.id)):
+        if value != sorted(value, key=lambda item: id_key(item.fact.id)):
             raise ValueError("selected facts must be ordered by ID bytes")
         # §13.10 submits the exact current fact set: a repeat is an assembly
         # defect that would weight one fact's evidence twice on the wire, and
@@ -149,7 +146,7 @@ class ResumeWriterInput(StrictModel):
     @field_validator("supported_self_claims")
     @classmethod
     def claims_are_supported_and_ordered(cls, value: list[SelfClaim]) -> list[SelfClaim]:
-        if value != sorted(value, key=lambda item: _id_key(item.id)):
+        if value != sorted(value, key=lambda item: id_key(item.id)):
             raise ValueError("self claims must be ordered by ID bytes")
         # Equal adjacent members stay sorted, so ordering never catches a
         # repeat: §13.10 supplies the supported member set exactly once.

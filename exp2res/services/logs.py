@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sqlite3
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.models import RawLog
 from exp2res.domain.results import (
     InvalidatedBranch,
@@ -101,7 +102,7 @@ def delete_log(
             evidence_ids = tuple(
                 sorted(
                     (item.id for item in get_evidence_for_log(connection, log_id)),
-                    key=lambda value: value.encode("utf-8"),
+                    key=id_key,
                 )
             )
             purged_fact_ids = tuple(
@@ -196,7 +197,7 @@ def delete_log(
                             f"SELECT DISTINCT generation_id FROM {table}"
                         )
                     },
-                    key=lambda value: value.encode("utf-8"),
+                    key=id_key,
                 )
             )
             residual_paths.extend(_remove_managed_backups(workspace))

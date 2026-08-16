@@ -13,6 +13,7 @@ from typing import Callable, Iterable
 
 from pydantic import ValidationError
 
+from exp2res.domain.canonical import id_key
 from exp2res import __version__
 from exp2res.config import load_workspace_config
 from exp2res.domain.models import JobDescription, validate_free_text
@@ -303,7 +304,7 @@ def _dependent_purge_targets(
                 )
                 for row in connection.execute(statement, (job_description_id,))
             },
-            key=lambda value: value.encode("utf-8"),
+            key=id_key,
         )
     )
     return bullet_ids, finding_ids, generation_ids

@@ -11,6 +11,7 @@ from typing import Any, Mapping, Optional
 
 from pydantic import ValidationError
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
     EntityIdGroup,
@@ -616,7 +617,7 @@ def import_created(imported: ImportOutcome) -> AffectedIds:
             groups.append(
                 EntityIdGroup(
                     entity_type=entity_type,
-                    ids=sorted(ids, key=lambda value: value.encode("utf-8")),
+                    ids=sorted(ids, key=id_key),
                 )
             )
     return AffectedIds(created=groups, superseded=[], deleted=[])

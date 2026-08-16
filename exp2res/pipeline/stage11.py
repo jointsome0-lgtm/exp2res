@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 
 from pydantic import BaseModel, ValidationError
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
     EntityIdGroup,
@@ -106,10 +107,6 @@ class _VerifierBundle:
     input_ids: tuple[str, ...]
 
 
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
-
-
 def _build_bundle(
     connection: sqlite3.Connection,
     *,
@@ -128,7 +125,7 @@ def _build_bundle(
 
     fact_ids = {fact_id for bullet in bullets for fact_id in bullet.source_fact_ids}
     source_facts: list[ExperienceFact] = []
-    for fact_id in sorted(fact_ids, key=_id_key):
+    for fact_id in sorted(fact_ids, key=id_key):
         fact = get_experience_fact(connection, fact_id)
         if fact is None:
             raise IntegrityFailureError("bullet_fact_missing")
@@ -153,7 +150,7 @@ def _build_bundle(
         item.raw_log_id for item in evidence_context if isinstance(item, EvidenceItem)
     }
     source_logs: list[RawLog] = []
-    for log_id in sorted(retained_log_ids, key=_id_key):
+    for log_id in sorted(retained_log_ids, key=id_key):
         raw_log = get_raw_log(connection, log_id)
         if raw_log is None:
             raise IntegrityFailureError("bullet_source_log_missing")
@@ -171,7 +168,7 @@ def _build_bundle(
         )
     }
     source_claims: list[SelfClaim] = []
-    for claim_id in sorted(claim_ids, key=_id_key):
+    for claim_id in sorted(claim_ids, key=id_key):
         claim = members.get(claim_id)
         if claim is None:
             raise IntegrityFailureError("bullet_claim_outside_branch_snapshot")
@@ -225,7 +222,7 @@ def _build_bundle(
                 *(log_id for bullet in bullets for log_id in bullet.source_log_ids),
                 *(claim.id for claim in source_claims),
             },
-            key=_id_key,
+            key=id_key,
         )
     )
     return _VerifierBundle(
@@ -359,7 +356,7 @@ def _recovered_result(
         findings = tuple(
             sorted(
                 list_verification_findings(connection, run_id=run_id),
-                key=lambda item: _id_key(item.id),
+                key=lambda item: id_key(item.id),
             )
         )
         statuses = tuple(
@@ -544,7 +541,7 @@ def run_bullet_verification(
                 findings = tuple(
                     sorted(
                         list_verification_findings(connection, run_id=run_id),
-                        key=lambda item: _id_key(item.id),
+                        key=lambda item: id_key(item.id),
                     )
                 )
                 verified = list_resume_bullets_for_branch(

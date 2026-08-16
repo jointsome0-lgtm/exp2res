@@ -73,7 +73,7 @@ from .graph import (
     _require_reference,
     _stored,
     assessment_integrity_failure,
-    id_key,
+    fs_id_key,
     load_snapshot_claims,
     load_supplemental_closure,
 )
@@ -195,7 +195,7 @@ def require_consistent_bullets(
         # that passed the write boundary may legitimately hold the closure
         # unsorted. Comparing positionally would fail a valid pack.
         closure = bullet_log_closure(connection, bullet.source_fact_ids)
-        if tuple(sorted(bullet.source_log_ids, key=id_key)) != closure:
+        if tuple(sorted(bullet.source_log_ids, key=fs_id_key)) != closure:
             raise IntegrityFailureError("bullet_log_closure_mismatch")
 
 
@@ -350,11 +350,11 @@ class BranchExportGraph:
         # or gates one, so a gate-only anchor member belongs to the second
         # surface and not this one.
         def merged(main: list[str], extra: list[str]) -> list[str]:
-            return sorted(set(main) | set(extra), key=id_key)
+            return sorted(set(main) | set(extra), key=fs_id_key)
 
         return {
             "resume_bullet_ids": sorted(
-                (item.value.id for item in self.bullets), key=id_key
+                (item.value.id for item in self.bullets), key=fs_id_key
             ),
             "assessment_snapshot_ids": [self.snapshot.value.id],
             "job_description_ids": [self.job_description.id],
@@ -376,7 +376,7 @@ class BranchExportGraph:
                     requirement.id
                     for requirement in self.job_description.parsed.requirements
                 ),
-                key=id_key,
+                key=fs_id_key,
             ),
         }
 
@@ -443,7 +443,7 @@ def load_anchor_references(
         raise IntegrityFailureError("snapshot_contradiction_reference_invalid")
 
     gaps: list[StoredRecord[GapQuestion]] = []
-    for gap_id in sorted(snapshot.gap_question_ids, key=id_key):
+    for gap_id in sorted(snapshot.gap_question_ids, key=fs_id_key):
         row = connection.execute(
             "SELECT * FROM gap_questions WHERE id = ?", (gap_id,)
         ).fetchone()
@@ -457,7 +457,7 @@ def load_anchor_references(
         gaps.append(_stored(row, gap))
 
     contradictions: list[StoredRecord[Contradiction]] = []
-    for contradiction_id in sorted(snapshot.contradiction_ids, key=id_key):
+    for contradiction_id in sorted(snapshot.contradiction_ids, key=fs_id_key):
         row = connection.execute(
             "SELECT * FROM contradictions WHERE id = ?", (contradiction_id,)
         ).fetchone()
@@ -523,7 +523,7 @@ def load_branch_graph(
     anchor_fact_ids = {
         fact_id for item in members for fact_id in item.value.source_fact_ids
     }
-    ordered_anchor_facts = sorted(anchor_fact_ids, key=id_key)
+    ordered_anchor_facts = sorted(anchor_fact_ids, key=fs_id_key)
     for fact_id in ordered_anchor_facts:
         fact = get_experience_fact(connection, fact_id)
         if fact is None or fact.superseded_at is not None:
@@ -575,7 +575,7 @@ def load_branch_graph(
     }
     claim_records: list[StoredRecord[SelfClaim]] = []
     supplemental_refs: dict[str, set[str]] = {}
-    for claim_id in sorted(claim_ids, key=id_key):
+    for claim_id in sorted(claim_ids, key=fs_id_key):
         record = by_id.get(claim_id)
         if record is None:
             raise IntegrityFailureError("bullet_claim_not_member")
@@ -620,7 +620,7 @@ def load_branch_graph(
 
     fact_records: list[StoredRecord[ExperienceFact]] = []
     fact_source_records: list[FactSourceRecord] = []
-    for fact_id in sorted(fact_ids, key=id_key):
+    for fact_id in sorted(fact_ids, key=fs_id_key):
         row = connection.execute(
             "SELECT * FROM experience_facts WHERE id = ?", (fact_id,)
         ).fetchone()
@@ -646,11 +646,11 @@ def load_branch_graph(
             )
         fact_records.append(_stored(row, fact))
     fact_source_records.sort(
-        key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id))
+        key=lambda item: (fs_id_key(item.fact_id), fs_id_key(item.evidence_item_id))
     )
 
     evidence_ids = sorted(
-        {source.evidence_item_id for source in fact_source_records}, key=id_key
+        {source.evidence_item_id for source in fact_source_records}, key=fs_id_key
     )
     evidence_items: list[EvidenceItem] = []
     for evidence_id in evidence_ids:
@@ -661,7 +661,7 @@ def load_branch_graph(
             raise IntegrityFailureError("fact_evidence_missing")
         evidence_items.append(hydrate_evidence_item(row))
 
-    raw_log_ids = sorted({item.raw_log_id for item in evidence_items}, key=id_key)
+    raw_log_ids = sorted({item.raw_log_id for item in evidence_items}, key=fs_id_key)
     raw_logs: list[RawLog] = []
     for raw_log_id in raw_log_ids:
         row = connection.execute(
@@ -680,11 +680,11 @@ def load_branch_graph(
         rows_by_fact[source.fact_id].append(source.evidence_item_id)
     for fact_record in fact_records:
         fact = fact_record.value
-        row_evidence = sorted(set(rows_by_fact.get(fact.id, [])), key=id_key)
+        row_evidence = sorted(set(rows_by_fact.get(fact.id, [])), key=fs_id_key)
         if row_evidence != list(fact.evidence_item_ids):
             raise IntegrityFailureError("fact_evidence_closure_incomplete")
         derived_logs = sorted(
-            {log_by_evidence[item] for item in row_evidence}, key=id_key
+            {log_by_evidence[item] for item in row_evidence}, key=fs_id_key
         )
         if derived_logs != list(fact.source_log_ids):
             raise IntegrityFailureError("fact_raw_log_closure_incomplete")
@@ -719,7 +719,7 @@ def load_branch_graph(
         item.id for item in closure.raw_logs
     }
     corrections: dict[str, RawLog] = {}
-    for log_id in sorted(closure_log_ids, key=id_key):
+    for log_id in sorted(closure_log_ids, key=fs_id_key):
         for row in connection.execute(
             "SELECT * FROM raw_logs WHERE corrects_log_id = ?", (log_id,)
         ).fetchall():
@@ -729,7 +729,7 @@ def load_branch_graph(
     supplemental_raw_logs = tuple(
         sorted(
             (*closure.raw_logs, *corrections.values()),
-            key=lambda item: id_key(item.id),
+            key=lambda item: fs_id_key(item.id),
         )
     )
 
@@ -792,15 +792,15 @@ def branch_render_input_bundle(graph: BranchExportGraph) -> BranchRenderInputBun
     bundle_facts = _merged_stored(graph.facts, graph.supplemental_facts)
     bundle_evidence = sorted(
         (*graph.evidence_items, *graph.supplemental_evidence_items),
-        key=lambda item: id_key(item.id),
+        key=lambda item: fs_id_key(item.id),
     )
     bundle_raw_logs = sorted(
         (*graph.raw_logs, *graph.supplemental_raw_logs),
-        key=lambda item: id_key(item.id),
+        key=lambda item: fs_id_key(item.id),
     )
     bundle_fact_sources = sorted(
         (*graph.fact_sources, *graph.supplemental_fact_sources),
-        key=lambda item: (id_key(item.fact_id), id_key(item.evidence_item_id)),
+        key=lambda item: (fs_id_key(item.fact_id), fs_id_key(item.evidence_item_id)),
     )
     return BranchRenderInputBundle(
         resume_branches=[
@@ -816,7 +816,7 @@ def branch_render_input_bundle(graph: BranchExportGraph) -> BranchRenderInputBun
                 generation_id=item.generation_id,
                 produced_by_run_id=item.produced_by_run_id,
             )
-            for item in sorted(graph.bullets, key=lambda item: id_key(item.value.id))
+            for item in sorted(graph.bullets, key=lambda item: fs_id_key(item.value.id))
         ],
         assessment_snapshots=[
             SnapshotRenderEntry(
@@ -834,7 +834,7 @@ def branch_render_input_bundle(graph: BranchExportGraph) -> BranchRenderInputBun
                 produced_by_run_id=item.produced_by_run_id,
             )
             for item in sorted(
-                graph.anchor_claims, key=lambda item: id_key(item.value.id)
+                graph.anchor_claims, key=lambda item: fs_id_key(item.value.id)
             )
         ],
         experience_facts=[

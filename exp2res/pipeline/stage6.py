@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 
 from pydantic import BaseModel, ValidationError
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.calibration import (
     claim_confidence_cap,
     pattern_generalization_cap,
@@ -124,10 +125,6 @@ class _ResolvedAssessment:
     warnings: tuple[ContractWarning, ...]
 
 
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
-
-
 def claim_counter_fact_ids(
     candidate: object, patterns: Sequence[ScratchPattern]
 ) -> list[str]:
@@ -148,7 +145,7 @@ def claim_counter_fact_ids(
             for label in candidate.source_pattern_labels
         )
     )
-    return sorted(cited, key=_id_key)
+    return sorted(cited, key=id_key)
 
 
 def _pattern_cap(
@@ -271,9 +268,9 @@ def _resolve_for(
             scope="global",
             title="Self-Assessment — Global",
             summary=narrative.claim,
-            gap_question_ids=sorted((item.id for item in gaps), key=_id_key),  # type: ignore[attr-defined]
+            gap_question_ids=sorted((item.id for item in gaps), key=id_key),  # type: ignore[attr-defined]
             contradiction_ids=sorted(
-                (item.id for item in contradictions), key=_id_key  # type: ignore[attr-defined]
+                (item.id for item in contradictions), key=id_key  # type: ignore[attr-defined]
             ),
             verification_status="unverified",
             metadata={},
@@ -287,7 +284,7 @@ def _resolve_for(
                 claim=candidate.claim,
                 claim_kind=candidate.claim_kind,
                 dimension=candidate.dimension,
-                source_fact_ids=sorted(candidate.source_fact_ids, key=_id_key),
+                source_fact_ids=sorted(candidate.source_fact_ids, key=id_key),
                 counter_fact_ids=claim_counter_fact_ids(candidate, output.patterns),
                 confidence=candidate.confidence,
                 verification_status="unverified",
@@ -328,11 +325,11 @@ def run_assessment_generation(
         gaps = tuple(
             sorted(
                 (gap for gap in list_gap_questions(connection) if not gap.answered),
-                key=lambda item: _id_key(item.id),
+                key=lambda item: id_key(item.id),
             )
         )
         contradictions = tuple(
-            sorted(list_contradictions(connection), key=lambda item: _id_key(item.id))
+            sorted(list_contradictions(connection), key=lambda item: id_key(item.id))
         )
 
         # §15.4 rejects an empty `source_fact_ids` on every claim, so a
@@ -357,7 +354,7 @@ def run_assessment_generation(
                             *(item.id for item in gaps),
                             *(item.id for item in contradictions),
                         },
-                        key=_id_key,
+                        key=id_key,
                     )
                 ),
                 enrich=_enrich_for(input_payload),
@@ -474,7 +471,7 @@ def run_assessment_generation(
             if orphan is not None:
                 raise IntegrityFailureError("current_claim_superseded_snapshot")
             snapshot_id = candidate.snapshot.id
-            created_claim_ids = tuple(sorted((item.id for item in candidate.claims), key=_id_key))
+            created_claim_ids = tuple(sorted((item.id for item in candidate.claims), key=id_key))
             # Pre-commit pending report: the paths this supersession makes
             # stale are reported before COMMIT, so an interrupt anywhere in
             # the commit-to-cleanup window still reports the retained set. A
@@ -538,14 +535,14 @@ def run_assessment_generation(
                 snapshot_id=snapshot_id,
                 created_claim_ids=created_claim_ids,
                 superseded_snapshot_ids=tuple(
-                    sorted(superseded_snapshot_ids, key=_id_key)
+                    sorted(superseded_snapshot_ids, key=id_key)
                 ),
-                superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=_id_key)),
+                superseded_claim_ids=tuple(sorted(superseded_claim_ids, key=id_key)),
                 superseded_branch_ids=branch_swap.branch_ids,
                 superseded_bullet_ids=branch_swap.bullet_ids,
                 generation_id=generation_id,
                 superseded_generation_ids=tuple(
-                    sorted(superseded_generation_ids, key=_id_key)
+                    sorted(superseded_generation_ids, key=id_key)
                 ),
                 replaced_view=replaced_view,
                 invalidated_branches=branch_swap.invalidated_branches,
@@ -607,7 +604,7 @@ def run_assessment_repair(
                 list_self_claims_for_snapshot(
                     connection, snapshot_id, current_only=False
                 ),
-                key=lambda item: _id_key(item.id),
+                key=lambda item: id_key(item.id),
             )
         )
         if not members:
@@ -642,7 +639,7 @@ def run_assessment_repair(
             if not findings:
                 raise RewriteUnavailableError()
             latest = max(
-                findings, key=lambda item: (item.created_at, _id_key(item.id))
+                findings, key=lambda item: (item.created_at, id_key(item.id))
             )
             if latest.suggested_rewrite is None:
                 raise RewriteUnavailableError()
@@ -740,7 +737,7 @@ def run_assessment_repair(
                 run_id=run_id,
                 snapshot_id=new_snapshot.id,
                 created_claim_ids=tuple(
-                    sorted((item.id for item in new_claims), key=_id_key)
+                    sorted((item.id for item in new_claims), key=id_key)
                 ),
                 superseded_snapshot_ids=superseded_snapshot_ids,
                 superseded_claim_ids=superseded_claim_ids,
@@ -748,7 +745,7 @@ def run_assessment_repair(
                 superseded_bullet_ids=branch_swap.bullet_ids,
                 generation_id=generation_id,
                 superseded_generation_ids=tuple(
-                    sorted(superseded_generation_ids, key=_id_key)
+                    sorted(superseded_generation_ids, key=id_key)
                 ),
                 replaced_view=replaced_view,
                 invalidated_branches=branch_swap.invalidated_branches,
@@ -855,11 +852,11 @@ def run_assessment_repair(
                         for gap in list_gap_questions(connection)
                         if not gap.answered
                     ),
-                    key=_id_key,
+                    key=id_key,
                 ),
                 contradiction_ids=sorted(
                     (item.id for item in list_contradictions(connection)),
-                    key=_id_key,
+                    key=id_key,
                 ),
                 verification_status="unverified",
                 metadata={"repaired_from_snapshot_id": snapshot.id},
@@ -989,7 +986,7 @@ def run_assessment_repair(
             cancelled.stage_result = committed_result(
                 unfinished_stale_paths(pending_stale_paths, repair_cleaned_sets),
                 new_snapshot,
-                sorted(new_claims, key=lambda item: _id_key(item.id)),
+                sorted(new_claims, key=lambda item: id_key(item.id)),
             )
             raise cancelled from None
         stored_snapshot = next(
@@ -1063,7 +1060,7 @@ def assess_generate_outcome(generated: Stage6Result) -> Outcome:
                 ),
                 *generated.superseded_generation_ids,
             },
-            key=lambda value: value.encode("utf-8"),
+            key=id_key,
         ),
         run_ids=[generated.run_id],
         invalidated_branches=list(generated.invalidated_branches),
@@ -1134,7 +1131,7 @@ def repair_outcome(repaired: Stage6Result) -> Outcome:
                 ),
                 *repaired.superseded_generation_ids,
             },
-            key=lambda value: value.encode("utf-8"),
+            key=id_key,
         ),
         run_ids=[repaired.run_id],
         invalidated_branches=list(repaired.invalidated_branches),

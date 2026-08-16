@@ -11,6 +11,7 @@ from typing import Any, Callable, Iterable, Pattern, Sequence
 
 from pydantic import BaseModel
 
+from exp2res.domain.canonical import id_key
 from exp2res.errors import LLMCancelledError, LLMInvocationError
 from exp2res.llm.adapter import invoke_contract, name_failing_surface
 from exp2res.llm.contracts import ContractDefinition, prompt_policy_hash
@@ -165,7 +166,7 @@ def run_complete_stage(
         else tuple(
             sorted(
                 {item for call in planned for item in call.input_ids},
-                key=lambda value: value.encode("utf-8"),
+                key=id_key,
             )
         )
     )

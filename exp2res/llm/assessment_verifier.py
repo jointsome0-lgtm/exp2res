@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.enums import (
     AssessmentScope,
     CounterevidenceRefType,
@@ -23,10 +24,6 @@ from exp2res.domain.models import (
 from exp2res.llm.fact_extractor import DisplacedSupportDescriptor
 
 from .contracts import ContractDefinition
-
-
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
 
 
 class AssessmentVerifierInput(StrictModel):
@@ -49,7 +46,7 @@ class AssessmentVerifierInput(StrictModel):
     )
     @classmethod
     def objects_are_id_ordered(cls, value: list[object]) -> list[object]:
-        if value != sorted(value, key=lambda item: _id_key(item.id)):  # type: ignore[attr-defined]
+        if value != sorted(value, key=lambda item: id_key(item.id)):  # type: ignore[attr-defined]
             raise ValueError("objects must be ordered by ID bytes")
         return value
 

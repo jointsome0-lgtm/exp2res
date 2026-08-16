@@ -16,7 +16,7 @@ from typing import Literal, Union
 from exp2res.domain.models import SelfClaim
 from exp2res.errors import IntegrityFailureError
 
-from .graph import AssessmentExportGraph, id_key
+from .graph import AssessmentExportGraph, fs_id_key
 
 
 HEADINGS = (
@@ -120,7 +120,7 @@ def claim_section(claim: SelfClaim) -> int:
 
 def _id_segments(values) -> list[Segment]:
     segments: list[Segment] = []
-    for position, value in enumerate(sorted(values, key=id_key)):
+    for position, value in enumerate(sorted(values, key=fs_id_key)):
         if position:
             segments.append(Lit(", "))
         segments.append(Val(value, "token"))
@@ -134,7 +134,7 @@ def _sources_line(claim: SelfClaim) -> Line:
     # the durable trace of the discarded §15.4 patterns' counter facts.
     counter = set(claim.counter_fact_ids)
     segments: list[Segment] = [Key("Sources")]
-    for position, fact_id in enumerate(sorted(claim.source_fact_ids, key=id_key)):
+    for position, fact_id in enumerate(sorted(claim.source_fact_ids, key=fs_id_key)):
         if position:
             segments.append(Lit(", "))
         segments.append(Val(fact_id, "token"))
@@ -150,8 +150,8 @@ def _counterevidence_children(claim: SelfClaim) -> tuple[Block, ...]:
     for item in sorted(
         claim.counterevidence,
         key=lambda item: (
-            id_key(item.source_ref_type),
-            id_key(item.source_ref_id),
+            fs_id_key(item.source_ref_type),
+            fs_id_key(item.source_ref_id),
         ),
     ):
         children.append(
@@ -203,7 +203,7 @@ def _strong_fact_blocks(graph: AssessmentExportGraph) -> tuple[Block, ...]:
                 supporting[fact_id].add(claim.id)
 
     blocks: list[Block] = []
-    for fact_id in sorted(supporting, key=id_key):
+    for fact_id in sorted(supporting, key=fs_id_key):
         fact = facts[fact_id]
         blocks.append(
             Block(

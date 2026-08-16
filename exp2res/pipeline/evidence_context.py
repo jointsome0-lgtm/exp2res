@@ -5,14 +5,11 @@ from __future__ import annotations
 import sqlite3
 from typing import Sequence
 
+from exp2res.domain.canonical import id_key
 from exp2res.domain.models import EvidenceItem, ExperienceFact
 from exp2res.errors import IntegrityFailureError
 from exp2res.llm.fact_extractor import DisplacedSupportDescriptor
 from exp2res.storage.repository import hydrate_evidence_item
-
-
-def _id_key(value: str) -> bytes:
-    return value.encode("utf-8")
 
 
 def project_evidence_context(
@@ -23,7 +20,7 @@ def project_evidence_context(
 ) -> tuple[EvidenceItem | DisplacedSupportDescriptor, ...]:
     evidence_ids = sorted(
         {item_id for fact in facts for item_id in fact.evidence_item_ids},
-        key=_id_key,
+        key=id_key,
     )
     context: list[EvidenceItem | DisplacedSupportDescriptor] = []
     for item_id in evidence_ids:
