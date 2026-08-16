@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 import os
-from typing import Literal
+from typing import Iterable, Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
 from exp2res.llm.contracts import ContractWarning
 
-from .canonical import id_key
+from .canonical import byte_sorted, id_key
 from .enums import (
     AssessmentScope,
     CLIResultStatus,
@@ -76,10 +76,49 @@ class EntityIdGroup(StrictModel):
     ids: list[str]
 
 
+def _entity_groups(
+    pairs: Iterable[tuple[str, Iterable[str]]]
+) -> list[EntityIdGroup]:
+    groups: list[EntityIdGroup] = []
+    for entity_type, ids in pairs:
+        ordered = byte_sorted(set(ids))
+        if ordered:
+            groups.append(EntityIdGroup(entity_type=entity_type, ids=list(ordered)))
+    return groups
+
+
 class AffectedIds(StrictModel):
     created: list[EntityIdGroup] = Field(default_factory=list)
     superseded: list[EntityIdGroup] = Field(default_factory=list)
     deleted: list[EntityIdGroup] = Field(default_factory=list)
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        created: Iterable[tuple[str, Iterable[str]]] = (),
+        superseded: Iterable[tuple[str, Iterable[str]]] = (),
+        deleted: Iterable[tuple[str, Iterable[str]]] = (),
+    ) -> AffectedIds:
+        """Build the three §14.14 rule 5 lists from `(entity_type, ids)` pairs.
+
+        Rule 5 wants entity groups duplicate-free and deterministically ordered
+        by class and identity. Identity ordering is `id_key`'s and happens here
+        once, instead of being restated correctly at each composition. Class
+        ordering stays the caller's pair order: it is fixed per command, which
+        is the stable class order the rule asks for, and no command wants its
+        classes alphabetized.
+
+        A class with nothing to report is dropped rather than emitted as an
+        empty `ids` list, so one command cannot name a class on one run and
+        omit it on the next depending on which branch composed the envelope.
+        """
+
+        return cls(
+            created=_entity_groups(created),
+            superseded=_entity_groups(superseded),
+            deleted=_entity_groups(deleted),
+        )
 
 
 class Retry(StrictModel):

@@ -13,7 +13,6 @@ from typing import Callable
 from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     Outcome,
 )
 from exp2res import __version__
@@ -240,14 +239,7 @@ def _purge_locked(
 
 
 def purge_affected(purged: PurgeOutcome) -> AffectedIds:
-    return AffectedIds(
-        created=[],
-        superseded=[],
-        deleted=[
-            EntityIdGroup(entity_type=entity_type, ids=list(ids))
-            for entity_type, ids in purged.deleted_ids
-        ],
-    )
+    return AffectedIds.of(deleted=purged.deleted_ids)
 
 
 def purge_outcome(purged: PurgeOutcome) -> Outcome:

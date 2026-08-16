@@ -14,7 +14,6 @@ from pydantic import BaseModel
 
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     Outcome,
     extend_committed,
 )
@@ -281,15 +280,8 @@ def _run_locked_parse(
 
 
 def jd_add_affected(parsed: Stage8Result) -> AffectedIds:
-    return AffectedIds(
-        created=[
-            EntityIdGroup(
-                entity_type="job_description",
-                ids=[parsed.job_description_id],
-            )
-        ],
-        superseded=[],
-        deleted=[],
+    return AffectedIds.of(
+        created=(("job_description", [parsed.job_description_id]),)
     )
 
 

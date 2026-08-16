@@ -18,7 +18,6 @@ from exp2res.domain.models import ExperienceFact, RawLog
 from exp2res.errors import LLMCancelledError
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     invalidated_view,
     InvalidatedBranch,
     InvalidatedView,
@@ -640,64 +639,19 @@ def stage3_outcome(extracted: Stage3Result) -> Outcome:
     """One §14.14 rule 5 composition for completed and interrupted swaps."""
 
     created = list(extracted.created)
-    superseded = list(extracted.superseded)
-    superseded_groups: list[EntityIdGroup] = []
-    if superseded:
-        superseded_groups.append(
-            EntityIdGroup(entity_type="experience_fact", ids=superseded)
-        )
-    if extracted.superseded_gap_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="gap_question",
-                ids=list(extracted.superseded_gap_ids),
-            )
-        )
-    if extracted.superseded_contradiction_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="contradiction",
-                ids=list(extracted.superseded_contradiction_ids),
-            )
-        )
-    if extracted.superseded_claim_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="self_claim",
-                ids=list(extracted.superseded_claim_ids),
-            )
-        )
-    if extracted.superseded_snapshot_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="assessment_snapshot",
-                ids=list(extracted.superseded_snapshot_ids),
-            )
-        )
-    if extracted.superseded_branch_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_branch",
-                ids=list(extracted.superseded_branch_ids),
-            )
-        )
-    if extracted.superseded_bullet_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=list(extracted.superseded_bullet_ids),
-            )
-        )
     invalidated_views = list(extracted.invalidated_views)
     return Outcome(
-        affected_ids=AffectedIds(
-            created=(
-                [EntityIdGroup(entity_type="experience_fact", ids=created)]
-                if created
-                else []
+        affected_ids=AffectedIds.of(
+            created=(("experience_fact", created),),
+            superseded=(
+                ("experience_fact", extracted.superseded),
+                ("gap_question", extracted.superseded_gap_ids),
+                ("contradiction", extracted.superseded_contradiction_ids),
+                ("self_claim", extracted.superseded_claim_ids),
+                ("assessment_snapshot", extracted.superseded_snapshot_ids),
+                ("resume_branch", extracted.superseded_branch_ids),
+                ("resume_bullet", extracted.superseded_bullet_ids),
             ),
-            superseded=superseded_groups,
-            deleted=[],
         ),
         # §14.14 rule 5: produced OR invalidated generation IDs,
         # duplicate-free and deterministically ordered.
@@ -711,6 +665,7 @@ def stage3_outcome(extracted: Stage3Result) -> Outcome:
         residual_paths=list(extracted.residual_paths),
         warnings=list(extracted.warnings),
         human_result=(
-            f"Extracted {len(created)} facts ({len(superseded)} superseded)."
+            f"Extracted {len(created)} facts "
+            f"({len(extracted.superseded)} superseded)."
         ),
     )

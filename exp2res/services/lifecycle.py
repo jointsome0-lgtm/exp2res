@@ -14,7 +14,6 @@ from exp2res import __version__
 from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
-    EntityIdGroup,
     InvalidatedBranch,
     InvalidatedView,
     Outcome,
@@ -145,16 +144,11 @@ class LifecycleResult:
             add(superseded, "resume_branch", self.stage4.superseded_branch_ids)
             add(superseded, "resume_bullet", self.stage4.superseded_bullet_ids)
 
-        def groups(values: dict[str, set[str]]) -> list[EntityIdGroup]:
-            return [
-                EntityIdGroup(
-                    entity_type=entity_type,
-                    ids=sorted(ids, key=id_key),
-                )
-                for entity_type, ids in sorted(values.items())
-            ]
-
-        return AffectedIds(created=groups(created), superseded=groups(superseded), deleted=[])
+        # A recompute merges two stages' reports, so class order comes from the
+        # merged class names rather than from either stage's own sequence.
+        return AffectedIds.of(
+            created=sorted(created.items()), superseded=sorted(superseded.items())
+        )
 
 
 def _held_transaction(
