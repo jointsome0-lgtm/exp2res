@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
@@ -205,6 +206,15 @@ def posix_single_quote(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
 
 
+def merged_invalidated_views(*collections) -> list[InvalidatedView]:
+    by_id = {
+        item.snapshot_id: item for collection in collections for item in collection
+    }
+    return [
+        by_id[key] for key in sorted(by_id, key=lambda value: value.encode("utf-8"))
+    ]
+
+
 class FormerViewProjection(StrictModel):
     scope: AssessmentScope
     snapshot_id: str
@@ -238,6 +248,16 @@ def invalidated_branch(
         former_view=FormerViewProjection(scope=scope, snapshot_id=snapshot_id),
         regeneration_command_shape=shape,
     )
+
+
+def merged_invalidated_branches(*collections) -> list[InvalidatedBranch]:
+    # §13.13 rule 9 identifies a branch report by the branch name: one command
+    # may supersede the same named branch through several lifecycle steps.
+    by_name = {item.name: item for collection in collections for item in collection}
+    return [
+        by_name[key]
+        for key in sorted(by_name, key=lambda value: value.encode("utf-8"))
+    ]
 
 
 class SnapshotListItem(StrictModel):
@@ -345,3 +365,73 @@ class CLIEnvelope(StrictModel):
         if (self.diagnostic_class is None) != (self.exit_code == 0):
             raise ValueError("diagnostic class and exit code disagree")
         return self
+
+
+@dataclass
+class Outcome:
+    """What a command produced, before §14 turns it into a `CLIEnvelope`.
+
+    Each stage and service that owns a result type also owns the projection
+    from that result into this shape, so adding a stage stays a one-file
+    change; §14 composes the envelope and never re-derives a projection.
+    """
+
+    exit_code: int = 0
+    diagnostic_class: str | None = None
+    affected_ids: AffectedIds = field(default_factory=AffectedIds)
+    generation_ids: list[str] = field(default_factory=list)
+    run_ids: list[str] = field(default_factory=list)
+    invalidated_views: list[InvalidatedView] = field(default_factory=list)
+    invalidated_branches: list[InvalidatedBranch] = field(default_factory=list)
+    findings: list[VerificationFinding] = field(default_factory=list)
+    residual_paths: list[str] = field(default_factory=list)
+    warnings: list[ContractWarning] = field(default_factory=list)
+    result: ResultPayload | None = None
+    human_result: str = ""
+    retry: Retry | None = None
+    # §14.14 rule 4: a nonzero *completion* — today only a fully classified
+    # §19.4 import result with rejections — rather than a rejected input.
+    # Class 8 covers every non-cancelled completion, so a residual observed
+    # beside one promotes exactly as it does for class 0 and class 10.
+    completed_report: bool = False
+
+
+def render_text(value: str) -> str:
+    """Escape one source-derived string into an unambiguous single line.
+
+    The literal backslash is escaped first, so every escape this renderer
+    introduces stays injective: a control byte and a name that literally
+    spells its escape keep distinct rendered identities. Control characters
+    are then escaped because a legal name may hold a newline, a tab, or a
+    terminal escape sequence, and one record must stay one record in both
+    the envelope and the human rendering. A real character takes the
+    four-digit `\\uNNNN` form, keeping it distinct from the two-digit
+    `\\xNN` an undecodable byte takes in `render_path`.
+    """
+
+    escaped = value.replace("\\", "\\\\")
+    return "".join(
+        character
+        if not (
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or 0x80 <= ord(character) <= 0x9F
+        )
+        else f"\\u{ord(character):04x}"
+        for character in escaped
+    )
+
+
+def render_path(path: str) -> str:
+    """Render one filesystem path so the envelope can carry it losslessly.
+
+    Undecodable POSIX names surface as surrogate-escaped strings that neither
+    UTF-8 stdout nor the JSON envelope can encode, so they take the same
+    backslash form as every other escape `render_text` applies.
+    """
+
+    return (
+        render_text(path)
+        .encode("utf-8", "surrogateescape")
+        .decode("utf-8", "backslashreplace")
+    )

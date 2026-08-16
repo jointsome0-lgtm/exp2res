@@ -16,6 +16,9 @@ from exp2res.domain.results import (
     EntityIdGroup,
     InvalidatedBranch,
     InvalidatedView,
+    Outcome,
+    merged_invalidated_branches,
+    merged_invalidated_views,
 )
 from exp2res.errors import Exp2ResError, LLMCancelledError, LLMInvocationError
 from exp2res.llm.contracts import ContractWarning
@@ -401,4 +404,33 @@ def run_recompute(
         no_current_assessment_view=(
             not has_current_view and not partial.invalidated_views
         ),
+    )
+
+
+def lifecycle_outcome(
+    recomputed: LifecycleResult,
+    *,
+    base_invalidated_views: tuple[InvalidatedView, ...] = (),
+    base_invalidated_branches: tuple[InvalidatedBranch, ...] = (),
+) -> Outcome:
+    invalidated_views = merged_invalidated_views(
+        base_invalidated_views, recomputed.invalidated_views
+    )
+    invalidated_branches = merged_invalidated_branches(
+        base_invalidated_branches, recomputed.invalidated_branches
+    )
+    no_view = (
+        "\nNo current assessment view exists; run exp2res assess generate."
+        if recomputed.no_current_assessment_view
+        else ""
+    )
+    return Outcome(
+        affected_ids=recomputed.affected_ids,
+        generation_ids=list(recomputed.generation_ids),
+        run_ids=list(recomputed.run_ids),
+        invalidated_views=invalidated_views,
+        invalidated_branches=invalidated_branches,
+        residual_paths=list(recomputed.residual_paths),
+        warnings=list(recomputed.warnings),
+        human_result="Recomputed derived state through Stage 5." + no_view,
     )

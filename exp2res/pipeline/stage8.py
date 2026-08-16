@@ -12,6 +12,11 @@ from typing import Callable, Iterable, Pattern, Sequence, cast
 
 from pydantic import BaseModel
 
+from exp2res.domain.results import (
+    AffectedIds,
+    EntityIdGroup,
+    Outcome,
+)
 from exp2res.domain.models import JDRequirement, JobDescription, ParsedJD
 from exp2res.errors import LLMCancelledError
 from exp2res.llm.contracts import ContractWarning
@@ -270,3 +275,34 @@ def _run_locked_parse(
             ),
             warnings=resolved.warnings,
         )
+
+
+def jd_add_affected(parsed: Stage8Result) -> AffectedIds:
+    return AffectedIds(
+        created=[
+            EntityIdGroup(
+                entity_type="job_description",
+                ids=[parsed.job_description_id],
+            )
+        ],
+        superseded=[],
+        deleted=[],
+    )
+
+
+def jd_add_outcome(parsed: Stage8Result) -> Outcome:
+    requirement_count = len(parsed.requirement_ids)
+    return Outcome(
+        affected_ids=jd_add_affected(parsed),
+        run_ids=[parsed.run_id],
+        warnings=list(parsed.warnings),
+        # §14.14 rule 5 declares no `jd add` result: the standard envelope
+        # fields carry it, and the parse itself stays unexposed under the
+        # rule 7 per-record-inspection deferral.
+        result=None,
+        human_result=(
+            f"Added job description {parsed.job_description_id} with "
+            f"{requirement_count} typed "
+            f"requirement{'' if requirement_count == 1 else 's'}."
+        ),
+    )

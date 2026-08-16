@@ -13,7 +13,12 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 from pydantic import BaseModel, ValidationError
 
 from exp2res.domain.enums import VerificationStatus
-from exp2res.domain.results import InvalidatedBranch
+from exp2res.domain.results import (
+    AffectedIds,
+    EntityIdGroup,
+    InvalidatedBranch,
+    Outcome,
+)
 from exp2res.domain.models import (
     AssessmentSnapshot,
     Contradiction,
@@ -578,3 +583,82 @@ def run_assessment_verification(
             )
             raise cancelled from None
         return build_result(residual_paths)
+
+
+def verification_human_result(
+    snapshot_id: str,
+    snapshot_status: str,
+    findings: list[VerificationFinding],
+) -> str:
+    lines = [f"Snapshot {snapshot_id}: {snapshot_status}"]
+    for finding in findings:
+        lines.extend(
+            [
+                "",
+                f"Finding {finding.id}",
+                f"Target claim: {finding.target_id}",
+                f"Status: {finding.status}",
+                f"Reason: {finding.reason}",
+                "Unsupported phrases:",
+            ]
+        )
+        lines.extend(
+            f"- {phrase}" for phrase in finding.unsupported_phrases
+        )
+        if not finding.unsupported_phrases:
+            lines.append("- none")
+        if finding.suggested_rewrite is not None:
+            lines.append(f"Suggested rewrite: {finding.suggested_rewrite}")
+        lines.append("Counterevidence:")
+        lines.extend(
+            f"- {item.statement} [{item.source_ref_type}:{item.source_ref_id}]"
+            for item in finding.counterevidence
+        )
+        if not finding.counterevidence:
+            lines.append("- none")
+    return "\n".join(lines)
+
+
+def assess_verify_outcome(verified: Stage7Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted passes."""
+
+    findings = list(verified.findings)
+    blocked = verified.snapshot_status in {"unsupported", "rejected"}
+    return Outcome(
+        exit_code=10 if blocked else 0,
+        diagnostic_class="verifier_gate_blocked" if blocked else None,
+        affected_ids=AffectedIds(
+            created=[
+                EntityIdGroup(
+                    entity_type="verification_finding",
+                    ids=[item.id for item in findings],
+                )
+            ],
+            # §13.7: a changed verifier state supersedes the branches
+            # anchored to this snapshot, so the envelope reports them.
+            superseded=[
+                group
+                for group in (
+                    EntityIdGroup(
+                        entity_type="resume_branch",
+                        ids=list(verified.superseded_branch_ids),
+                    ),
+                    EntityIdGroup(
+                        entity_type="resume_bullet",
+                        ids=list(verified.superseded_bullet_ids),
+                    ),
+                )
+                if group.ids
+            ],
+            deleted=[],
+        ),
+        generation_ids=list(verified.superseded_generation_ids),
+        run_ids=[verified.run_id],
+        findings=findings,
+        invalidated_branches=list(verified.invalidated_branches),
+        residual_paths=list(verified.residual_paths),
+        result=None,
+        human_result=verification_human_result(
+            verified.snapshot_id, verified.snapshot_status, findings
+        ),
+    )

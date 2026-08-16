@@ -787,7 +787,7 @@ def test_interrupt_in_cli_result_assembly_still_reports_the_purge(
         raw_text="Vera Example result assembly interrupt",
         clock=lambda: FIXED_NOW,
     )
-    real_outcome = cli._purge_outcome
+    real_outcome = cli.purge_outcome
     raised: list[int] = []
 
     def interrupt_once(purged):
@@ -796,7 +796,7 @@ def test_interrupt_in_cli_result_assembly_still_reports_the_purge(
             raise KeyboardInterrupt()
         return real_outcome(purged)
 
-    monkeypatch.setattr(cli, "_purge_outcome", interrupt_once)
+    monkeypatch.setattr(cli, "purge_outcome", interrupt_once)
 
     result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
 
