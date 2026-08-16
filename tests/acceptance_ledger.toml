@@ -87,7 +87,7 @@ status = "partial"
 phases = ["3"]
 evals = ["21.16", "21.48"]
 issues = []
-note = "The public export assessment CLI now publishes deterministic golden-matched report.md through the managed writer and closed envelope; the bullet-pack half of the shared eval has landed, so what keeps 21.48 partial is its pinned bullet-pack goldens rather than a missing export"
+note = "The public export assessment CLI now publishes deterministic golden-matched report.md through the managed writer and closed envelope, and 21.48 is covered end to end; the item stays partial only on the Stage 10 self-claim column 21.16 still leaves open"
 
 ["24.12"]
 status = "partial"
@@ -99,8 +99,9 @@ nodes = [
   "tests/test_stage12_bullet_pack.py::test_the_pack_renders_every_section_heading_and_no_filler",
   "tests/test_stage12_bullet_pack.py::test_re_exporting_the_same_branch_state_is_byte_identical",
   "tests/test_cli_bullets.py::test_export_reports_only_the_closed_manifest_path_projection",
+  "tests/test_vera_replay_export.py::test_vera_e10_cli_bullet_pack_matches_pinned_goldens",
 ]
-note = "bullets export publishes exactly bullet_pack.md, evidence_map.json, verification_report.json, and the §13.14 manifest under out/branch/<branch-id>/, byte-identical on re-export with nothing outside §13.12 written; the item stays partial only because its two linked evals still carry uncovered clauses — pinned bullet-pack goldens under 21.48 and the Stage 10 self-claim column under 21.16"
+note = "bullets export publishes exactly bullet_pack.md, evidence_map.json, verification_report.json, and the §13.14 manifest under out/branch/<branch-id>/, byte-identical on re-export with nothing outside §13.12 written, and the Vera E10 replay pins all three members against golden files; the item stays partial only on the Stage 10 self-claim column 21.16 still leaves open"
 
 ["24.13"]
 status = "partial"
@@ -375,14 +376,16 @@ issues = []
 note = "The assessment half proves private candidate construction, manifest-last flush, rollback publication, no-follow containment, lock-held every-writer preamble recovery/reporting, stale cleanup, and deletion; resume publication now runs that same extracted protocol under out/branch/<branch-id>/ with 0700/0600 modes, refuses to publish behind an unresolved candidate residual, and leaves the anchor snapshot's set untouched — the hostile-display-name and crash-injection matrices still exercise the assessment kind only"
 
 ["24.51"]
-status = "partial"
+status = "met"
 phases = ["3", "4"]
 evals = ["21.48"]
-issues = ["#79"]
+issues = []
 nodes = [
   "tests/test_demo.py::test_vera_first_mirror_demo_is_closed_current_blocking_and_deterministic",
+  "tests/test_vera_replay_export.py::test_vera_e10_cli_bullet_pack_matches_pinned_goldens",
+  "tests/test_vera_replay_export.py::test_vera_e11_cli_learning_evidence_never_reaches_production_claims",
 ]
-note = "Assessment report.md, self_claims.json, evidence_map.json, closed export envelope, §17's closed positional escape rule with its CommonMark round trip, pinned Vera E6 goldens, and the Vera first-mirror demo's clean-workspace closure, blocked-overclaim refusal, checked asciinema stream, and repeated transcript/member bytes are covered against the §13.12 version-3 signal-free companions; bullet_pack.md, its evidence_map.json, and verification_report.json now prove repeated byte-identical export, extra-forbid version-3 validation, full closure round trip, one same-order finding per rendered bullet, and both §14.14 export envelope forms — pinned bullet-pack golden files and the Vera E10/E11 replay remain"
+note = "Assessment report.md, self_claims.json, evidence_map.json, closed export envelope, §17's closed positional escape rule with its CommonMark round trip, pinned Vera E6 goldens, and the Vera demo's clean-workspace closure, blocked-overclaim refusal, published bullet pack, checked asciinema stream, and repeated transcript/member bytes are covered against the §13.12 version-3 signal-free companions; bullet_pack.md, its evidence_map.json, and verification_report.json prove repeated byte-identical export, extra-forbid version-3 validation, full closure round trip, one same-order finding per rendered bullet, both §14.14 export envelope forms, and — through the Vera E10/E11 replay — pinned golden bytes over a claim-guided and a facts-only bullet plus the §16.11 refusal that publishes nothing"
 
 ["24.52"]
 status = "pending"

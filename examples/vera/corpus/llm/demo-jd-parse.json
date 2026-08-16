@@ -1,0 +1,75 @@
+{
+  "company": "Examplia GmbH",
+  "parsed": {
+    "domain_signals": [
+      "internal developer platform",
+      "platform documentation"
+    ],
+    "keywords": [
+      "Git",
+      "Kubernetes",
+      "Python",
+      "SEO",
+      "developer documentation",
+      "documentation tooling",
+      "kubectl",
+      "pull requests",
+      "technical writing",
+      "video tutorials"
+    ],
+    "red_flags": [
+      "The vacancy declares itself a fictional demo posting."
+    ],
+    "requirements": [
+      {
+        "keywords": [
+          "developer documentation",
+          "technical writing"
+        ],
+        "kind": "required_skill",
+        "text": "Two or more years writing developer-facing documentation."
+      },
+      {
+        "keywords": [
+          "Kubernetes",
+          "kubectl"
+        ],
+        "kind": "required_skill",
+        "text": "Hands-on familiarity with Kubernetes concepts and kubectl workflows."
+      },
+      {
+        "keywords": [
+          "Git",
+          "pull requests"
+        ],
+        "kind": "required_skill",
+        "text": "Comfortable working in Git: branches, pull requests, reviews."
+      },
+      {
+        "keywords": [
+          "Python",
+          "documentation tooling"
+        ],
+        "kind": "preferred_skill",
+        "text": "Python scripting for documentation tooling (link checkers, linters)."
+      },
+      {
+        "keywords": [
+          "video tutorials"
+        ],
+        "kind": "preferred_skill",
+        "text": "Experience producing video tutorials."
+      },
+      {
+        "keywords": [
+          "SEO"
+        ],
+        "kind": "preferred_skill",
+        "text": "On-page SEO basics."
+      }
+    ],
+    "seniority_signals": []
+  },
+  "title": "Technical Writer, Platform Documentation",
+  "warnings": []
+}
