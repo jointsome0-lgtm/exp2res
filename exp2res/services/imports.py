@@ -11,6 +11,15 @@ from typing import Any, Mapping, Optional
 
 from pydantic import ValidationError
 
+from exp2res.domain.results import (
+    AffectedIds,
+    EntityIdGroup,
+    ImportCounts,
+    ImportRecordGroups,
+    ImportRecordResult,
+    ImportResult,
+    Outcome,
+)
 from exp2res.config import load_workspace_config
 from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
 from exp2res.errors import (
@@ -567,3 +576,112 @@ def import_payload(
         internal.import_classified = is_complete(internal.import_outcome)
         raise internal from error
     return report()
+
+
+def import_record_line(record: ImportedRecord, outcome_name: str) -> str:
+    return (
+        f"{record.record_number}\t{outcome_name}\t"
+        f"{record.source_record_id or '-'}\t{record.raw_log_id or '-'}"
+    )
+
+
+def import_created(imported: ImportOutcome) -> AffectedIds:
+    """Report the rows committed accepted records left behind.
+
+    §14.14 rule 5 orders every entity group by its own stable identity, and an
+    entity ID is allocated randomly under §12 rule 11 — so neither group may
+    keep the input order its `result` records are reported in.
+    """
+
+    groups = []
+    for entity_type, ids in (
+        (
+            "evidence_item",
+            [
+                item_id
+                for record in imported.accepted
+                for item_id in record.evidence_item_ids
+            ],
+        ),
+        (
+            "raw_log",
+            [
+                record.raw_log_id
+                for record in imported.accepted
+                if record.raw_log_id is not None
+            ],
+        ),
+    ):
+        if ids:
+            groups.append(
+                EntityIdGroup(
+                    entity_type=entity_type,
+                    ids=sorted(ids, key=lambda value: value.encode("utf-8")),
+                )
+            )
+    return AffectedIds(created=groups, superseded=[], deleted=[])
+
+
+def import_result(imported: ImportOutcome) -> ImportResult:
+    return ImportResult(
+        counts=ImportCounts(
+            accepted=len(imported.accepted),
+            duplicate=len(imported.duplicate),
+            rejected=len(imported.rejected),
+        ),
+        records=ImportRecordGroups(
+            accepted=import_record_group(imported.accepted),
+            duplicate=import_record_group(imported.duplicate),
+            rejected=import_record_group(imported.rejected),
+        ),
+    )
+
+
+def import_outcome(imported: ImportOutcome) -> Outcome:
+    """Project one §19.4 classification into its §14.14 envelope.
+
+    Every established record appears exactly once under its input
+    `record_number`, and none of the three lists is ever truncated: §14.14
+    rule 5 exempts local stdout from §11's list caps precisely so a large
+    payload still reports every record.
+    """
+
+    result = import_result(imported)
+    lines = [
+        f"accepted {result.counts.accepted}, "
+        f"duplicate {result.counts.duplicate}, "
+        f"rejected {result.counts.rejected}"
+    ]
+    for outcome_name, group in (
+        ("accepted", imported.accepted),
+        ("duplicate", imported.duplicate),
+        ("rejected", imported.rejected),
+    ):
+        lines.extend(import_record_line(record, outcome_name) for record in group)
+    # §14.14 rule 5: a fully classified result with rejections is a completed
+    # report, so it exits through class 2 still carrying its complete result.
+    rejected = result.counts.rejected > 0
+    return Outcome(
+        exit_code=2 if rejected else 0,
+        diagnostic_class="import_records_rejected" if rejected else None,
+        affected_ids=import_created(imported),
+        result=result,
+        # §14.14 rule 4: this class 2 is a completion, not a rejected input, so
+        # an incomplete managed-output cleanup observed beside it still
+        # promotes to class 8 the way a completed class 0 or 10 does.
+        completed_report=True,
+        human_result="\n".join(lines),
+    )
+
+
+def import_record_group(
+    records: tuple[ImportedRecord, ...],
+) -> list[ImportRecordResult]:
+    return [
+        ImportRecordResult(
+            record_number=record.record_number,
+            source_record_id=record.source_record_id,
+            raw_log_id=record.raw_log_id,
+        )
+        for record in records
+    ]

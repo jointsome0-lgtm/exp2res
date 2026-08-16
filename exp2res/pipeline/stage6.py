@@ -17,7 +17,12 @@ from exp2res.domain.calibration import (
     pattern_generalization_cap,
 )
 from exp2res.domain.enums import AssessmentScope
-from exp2res.domain.results import InvalidatedBranch
+from exp2res.domain.results import (
+    AffectedIds,
+    EntityIdGroup,
+    InvalidatedBranch,
+    Outcome,
+)
 from exp2res.domain.models import (
     AssessmentSnapshot,
     ExperienceFact,
@@ -992,3 +997,151 @@ def run_assessment_repair(
         stored_claims = list_self_claims_for_snapshot(connection, new_snapshot.id)
 
     return committed_result(residual_paths, stored_snapshot, stored_claims)
+
+
+def assess_generate_outcome(generated: Stage6Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted swaps."""
+
+    assert generated.snapshot is not None and generated.snapshot_id is not None
+    created_groups = [
+        EntityIdGroup(
+            entity_type="assessment_snapshot", ids=[generated.snapshot_id]
+        ),
+        EntityIdGroup(
+            entity_type="self_claim", ids=list(generated.created_claim_ids)
+        ),
+    ]
+    superseded_groups: list[EntityIdGroup] = []
+    if generated.superseded_claim_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="self_claim",
+                ids=list(generated.superseded_claim_ids),
+            )
+        )
+    if generated.superseded_snapshot_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="assessment_snapshot",
+                ids=list(generated.superseded_snapshot_ids),
+            )
+        )
+    if generated.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(generated.superseded_branch_ids),
+            )
+        )
+    if generated.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(generated.superseded_bullet_ids),
+            )
+        )
+    prior = (
+        ""
+        if generated.replaced_view is None
+        else f"; superseded {generated.replaced_view.snapshot_id}"
+    )
+    return Outcome(
+        affected_ids=AffectedIds(
+            created=created_groups,
+            superseded=superseded_groups,
+            deleted=[],
+        ),
+        generation_ids=sorted(
+            {
+                *(
+                    [generated.generation_id]
+                    if generated.generation_id is not None
+                    else []
+                ),
+                *generated.superseded_generation_ids,
+            },
+            key=lambda value: value.encode("utf-8"),
+        ),
+        run_ids=[generated.run_id],
+        invalidated_branches=list(generated.invalidated_branches),
+        residual_paths=list(generated.residual_paths),
+        warnings=list(generated.warnings),
+        result=None,
+        human_result=(
+            f"Created {generated.snapshot.id} — {generated.snapshot.title}; "
+            f"{len(generated.claims)} claims{prior}."
+        ),
+    )
+
+
+def repair_outcome(repaired: Stage6Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted swaps."""
+
+    assert repaired.snapshot is not None and repaired.snapshot_id is not None
+    superseded_claim_ids = set(repaired.superseded_claim_ids)
+    adopted = sum(
+        1
+        for claim in repaired.claims
+        if claim.metadata.get("adopted_rewrite_of_claim_id") in superseded_claim_ids
+    )
+    created_groups = [
+        EntityIdGroup(
+            entity_type="assessment_snapshot", ids=[repaired.snapshot_id]
+        ),
+        EntityIdGroup(
+            entity_type="self_claim", ids=list(repaired.created_claim_ids)
+        ),
+    ]
+    superseded_groups = [
+        EntityIdGroup(
+            entity_type="self_claim",
+            ids=list(repaired.superseded_claim_ids),
+        ),
+        EntityIdGroup(
+            entity_type="assessment_snapshot",
+            ids=list(repaired.superseded_snapshot_ids),
+        ),
+    ]
+    if repaired.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(repaired.superseded_branch_ids),
+            )
+        )
+    if repaired.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(repaired.superseded_bullet_ids),
+            )
+        )
+    return Outcome(
+        affected_ids=AffectedIds(
+            created=created_groups,
+            superseded=superseded_groups,
+            deleted=[],
+        ),
+        generation_ids=sorted(
+            {
+                *(
+                    [repaired.generation_id]
+                    if repaired.generation_id is not None
+                    else []
+                ),
+                *repaired.superseded_generation_ids,
+            },
+            key=lambda value: value.encode("utf-8"),
+        ),
+        run_ids=[repaired.run_id],
+        invalidated_branches=list(repaired.invalidated_branches),
+        residual_paths=list(repaired.residual_paths),
+        result=None,
+        human_result=(
+            f"Repaired {repaired.snapshot.id} — {repaired.snapshot.title}; "
+            f"adopted {adopted} of {len(repaired.claims)} claims; "
+            f"superseded {repaired.superseded_snapshot_ids[0]}. "
+            f"Every claim is unverified; run exp2res assess verify "
+            f"--snapshot {repaired.snapshot.id}."
+        ),
+    )

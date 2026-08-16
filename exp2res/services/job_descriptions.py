@@ -16,7 +16,15 @@ from pydantic import ValidationError
 from exp2res import __version__
 from exp2res.config import load_workspace_config
 from exp2res.domain.models import JobDescription, validate_free_text
-from exp2res.domain.results import AffectedIds, EntityIdGroup
+from exp2res.domain.results import (
+    AffectedIds,
+    EntityIdGroup,
+    JdDeleteResult,
+    JobDescriptionProjection,
+    Outcome,
+    PurgedBranchProjection,
+    render_path,
+)
 from exp2res.errors import (
     IdCollisionError,
     InvalidInputError,
@@ -611,3 +619,93 @@ def _delete_locked(
         outcome = build_outcome(tuple(residual_paths))
         committed.append(outcome)
         return outcome
+
+
+def jd_delete_affected(deleted: JobDescriptionDeleteOutcome) -> AffectedIds:
+    classes = (
+        ("verification_finding", deleted.purged_finding_ids),
+        ("resume_bullet", deleted.purged_bullet_ids),
+        (
+            "resume_branch",
+            tuple(branch.id for branch in deleted.purged_branches),
+        ),
+        ("job_description", (deleted.selected.id,)),
+    )
+    return AffectedIds(
+        created=[],
+        superseded=[],
+        deleted=[
+            EntityIdGroup(entity_type=entity_type, ids=list(ids))
+            for entity_type, ids in classes
+            if ids
+        ],
+    )
+
+
+def jd_delete_result(deleted: JobDescriptionDeleteOutcome) -> JdDeleteResult:
+    return JdDeleteResult(
+        selected_job_description=job_description_projection(deleted.selected),
+        purged_branches=[
+            PurgedBranchProjection(id=branch.id, name=branch.name)
+            for branch in deleted.purged_branches
+        ],
+        # Undecodable POSIX names reach here surrogate-escaped from
+        # `os.scandir`; the envelope serializes with `ensure_ascii=False`, so
+        # the same rendering the residual finalizer applies keeps a committed
+        # removal reportable instead of failing stdout encoding.
+        removed_managed_paths=[
+            render_path(path) for path in deleted.removed_managed_paths
+        ],
+    )
+
+
+def jd_delete_human_result(deleted: JobDescriptionDeleteOutcome) -> str:
+    # §14.15 requires the same reporting in both modes: the closed result
+    # record is serialized only under `--json`, so every purged branch and
+    # every removed managed path is named here too.
+    lines = [
+        f"Deleted job description {deleted.selected.id}; no derived "
+        "state remained."
+        if not deleted.purged_branches
+        else (
+            f"Deleted job description {deleted.selected.id} and "
+            f"{len(deleted.purged_branches)} dependent branch"
+            f"{'' if len(deleted.purged_branches) == 1 else 'es'}."
+        )
+    ]
+    lines.extend(
+        f"Purged branch: {branch.id}\t{branch.name}"
+        for branch in deleted.purged_branches
+    )
+    lines.extend(
+        f"Removed managed path: {path}"
+        for path in jd_delete_result(deleted).removed_managed_paths
+    )
+    return "\n".join(lines)
+
+
+def jd_delete_outcome(deleted: JobDescriptionDeleteOutcome) -> Outcome:
+    exit_code = 8 if deleted.residual_paths else 0
+    return Outcome(
+        exit_code=exit_code,
+        diagnostic_class="deletion_incomplete" if exit_code else None,
+        affected_ids=jd_delete_affected(deleted),
+        generation_ids=list(deleted.purged_generation_ids),
+        run_ids=[deleted.run_id],
+        residual_paths=list(deleted.residual_paths),
+        result=jd_delete_result(deleted),
+        human_result=jd_delete_human_result(deleted),
+    )
+
+
+def job_description_projection(
+    job_description: JobDescription,
+) -> JobDescriptionProjection:
+    """§14.15: the discovery projection, with `raw_text` and `parsed` absent."""
+
+    return JobDescriptionProjection(
+        id=job_description.id,
+        created_at=job_description.created_at,
+        title=job_description.title,
+        company=job_description.company,
+    )

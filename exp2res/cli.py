@@ -24,38 +24,34 @@ from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.enums import TemporalConfidence, TemporalPrecision
 from exp2res.domain.models import (
     ExperienceFact,
-    JobDescription,
     OccurredAt,
     SelfClaim,
-    VerificationFinding,
 )
 from exp2res.domain.results import (
     AffectedIds,
-    AssessmentExportResult,
     AssessListResult,
+    AssessmentExportResult,
     AssessShowResult,
     CLIEnvelope,
     CommandPath,
     ContradictionsResult,
-    DetectionsGenerateResult,
-    EvidenceItemProjection,
     EntityIdGroup,
+    EvidenceItemProjection,
     FactsListResult,
     GapsListResult,
-    ImportCounts,
-    ImportRecordGroups,
-    ImportRecordResult,
-    ImportResult,
     InvalidatedBranch,
     InvalidatedView,
     JdDeleteResult,
     JdListResult,
-    JobDescriptionProjection,
     LogProjection,
     LogsDeleteResult,
     LogsListResult,
     LogsShowResult,
-    PurgedBranchProjection,
+    merged_invalidated_branches,
+    merged_invalidated_views,
+    Outcome,
+    render_path,
+    render_text,
     Retry,
     SchemaProjection,
     SchemaResult,
@@ -74,12 +70,12 @@ from exp2res.errors import (
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
-from exp2res.llm.contracts import ContractWarning
 from exp2res.services.capture import (
     capture_daily,
     capture_daily_file,
     capture_gap_answer,
     capture_gap_answer_file,
+    capture_outcome,
     capture_retro,
     capture_retro_file,
     validate_gap_answer_selection,
@@ -92,9 +88,18 @@ from exp2res.services.correction import (
     read_correction_source,
     validate_correction_selection,
 )
-from exp2res.pipeline.stage10 import Stage10Result, validated_branch_name
-from exp2res.pipeline.stage11 import Stage11Result
+from exp2res.pipeline.stage10 import (
+    bullets_generate_outcome,
+    Stage10Result,
+    validated_branch_name,
+)
+from exp2res.pipeline.stage11 import (
+    bullets_verify_outcome,
+    Stage11Result,
+)
 from exp2res.services.bullets import run_bullets_generate, run_bullets_verify
+from exp2res.pipeline.stage6 import assess_generate_outcome, repair_outcome
+from exp2res.pipeline.stage7 import assess_verify_outcome
 from exp2res.services.assessment import (
     Stage6Result,
     Stage7Result,
@@ -104,6 +109,7 @@ from exp2res.services.assessment import (
     run_assess_verify,
     show_snapshot,
 )
+from exp2res.pipeline.stage4 import detections_generate_outcome
 from exp2res.services.detection import (
     Stage4Result,
     list_current_contradictions,
@@ -111,6 +117,7 @@ from exp2res.services.detection import (
     run_detections_generate,
     show_contradiction,
 )
+from exp2res.pipeline.stage3 import stage3_outcome
 from exp2res.services.extraction import (
     Stage3Result,
     run_extract,
@@ -122,17 +129,26 @@ from exp2res.services.export import (
     require_export_eligible,
 )
 from exp2res.services.facts import list_facts, show_fact
-from exp2res.pipeline.stage8 import Stage8Result
+from exp2res.pipeline.stage8 import (
+    jd_add_affected,
+    jd_add_outcome,
+)
 from exp2res.services.job_descriptions import (
+    delete_job_description,
+    jd_delete_affected,
+    jd_delete_human_result,
+    jd_delete_outcome,
+    jd_delete_result,
+    job_description_projection,
     JobDescriptionCleanupOutcome,
     JobDescriptionDeleteOutcome,
-    delete_job_description,
     list_job_descriptions,
     run_jd_add_file,
     show_job_description,
 )
 from exp2res.services.logs import DeleteOutcome, delete_log, list_logs, show_log
 from exp2res.services.lifecycle import (
+    lifecycle_outcome,
     LifecycleResult,
     record_cancelled_lifecycle,
     run_recompute,
@@ -144,15 +160,22 @@ from exp2res.services.view_server import (
     validate_bind,
 )
 from exp2res.services.imports import (
-    ImportOutcome,
-    ImportedRecord,
+    import_created,
     import_design_document,
+    import_outcome,
     import_payload,
+    import_record_line,
+    import_result,
+    ImportOutcome,
 )
 from exp2res.services.time_input import parse_occurred, workspace_zone
-from exp2res.services.workspace import PurgeOutcome, purge_workspace
+from exp2res.services.workspace import (
+    purge_affected,
+    purge_outcome,
+    purge_workspace,
+    PurgeOutcome,
+)
 from exp2res.storage.repository import (
-    BULLET_EXPORT_ALLOWLIST,
     current_branch_by_folded_name,
     get_assessment_snapshot,
 )
@@ -225,44 +248,6 @@ class Controls:
     quiet: bool
 
 
-@dataclass
-class Outcome:
-    exit_code: int = 0
-    diagnostic_class: str | None = None
-    affected_ids: AffectedIds = field(default_factory=AffectedIds)
-    generation_ids: list[str] = field(default_factory=list)
-    run_ids: list[str] = field(default_factory=list)
-    invalidated_views: list[InvalidatedView] = field(default_factory=list)
-    invalidated_branches: list[InvalidatedBranch] = field(default_factory=list)
-    findings: list[VerificationFinding] = field(default_factory=list)
-    residual_paths: list[str] = field(default_factory=list)
-    warnings: list[ContractWarning] = field(default_factory=list)
-    result: (
-        SchemaResult
-        | ImportResult
-        | LogsListResult
-        | LogsShowResult
-        | LogsDeleteResult
-        | FactsListResult
-        | DetectionsGenerateResult
-        | GapsListResult
-        | ContradictionsResult
-        | AssessListResult
-        | AssessShowResult
-        | JdListResult
-        | JdDeleteResult
-        | AssessmentExportResult
-        | None
-    ) = None
-    human_result: str = ""
-    retry: Retry | None = None
-    # §14.14 rule 4: a nonzero *completion* — today only a fully classified
-    # §19.4 import result with rejections — rather than a rejected input.
-    # Class 8 covers every non-cancelled completion, so a residual observed
-    # beside one promotes exactly as it does for class 0 and class 10.
-    completed_report: bool = False
-
-
 def _status_for(exit_code: int) -> str:
     if exit_code == 0:
         return "ok"
@@ -319,47 +304,6 @@ def _evidence_projection(item) -> EvidenceItemProjection:
         uri=item.uri,
         path=item.path,
         strength=item.strength,
-    )
-
-
-def _render_text(value: str) -> str:
-    """Escape one source-derived string into an unambiguous single line.
-
-    The literal backslash is escaped first, so every escape this renderer
-    introduces stays injective: a control byte and a name that literally
-    spells its escape keep distinct rendered identities. Control characters
-    are then escaped because a legal name may hold a newline, a tab, or a
-    terminal escape sequence, and one record must stay one record in both
-    the envelope and the human rendering. A real character takes the
-    four-digit `\\uNNNN` form, keeping it distinct from the two-digit
-    `\\xNN` an undecodable byte takes in `_render_path`.
-    """
-
-    escaped = value.replace("\\", "\\\\")
-    return "".join(
-        character
-        if not (
-            ord(character) < 0x20
-            or ord(character) == 0x7F
-            or 0x80 <= ord(character) <= 0x9F
-        )
-        else f"\\u{ord(character):04x}"
-        for character in escaped
-    )
-
-
-def _render_path(path: str) -> str:
-    """Render one filesystem path so the envelope can carry it losslessly.
-
-    Undecodable POSIX names surface as surrogate-escaped strings that neither
-    UTF-8 stdout nor the JSON envelope can encode, so they take the same
-    backslash form as every other escape `_render_text` applies.
-    """
-
-    return (
-        _render_text(path)
-        .encode("utf-8", "surrogateescape")
-        .decode("utf-8", "backslashreplace")
     )
 
 
@@ -642,7 +586,7 @@ def _run_operation(
         observed_residuals.append(path)
     residual_paths = sorted(
         {
-            _render_path(path)
+            render_path(path)
             for path in {*outcome.residual_paths, *observed_residuals}
         },
         key=os.fsencode,
@@ -831,29 +775,6 @@ def db_migrate(context: typer.Context) -> None:
     _run_command(context, "db migrate", operation)
 
 
-def _capture_outcome(bundle) -> Outcome:
-    evidence_ids = [item.id for item in bundle.evidence_items]
-    reported_evidence_ids = sorted(
-        evidence_ids, key=lambda value: value.encode("utf-8")
-    )
-    return Outcome(
-        affected_ids=AffectedIds(
-            created=[
-                EntityIdGroup(
-                    entity_type="evidence_item", ids=reported_evidence_ids
-                ),
-                EntityIdGroup(entity_type="raw_log", ids=[bundle.raw_log.id]),
-            ],
-            superseded=[],
-            deleted=[],
-        ),
-        human_result=(
-            f"Created raw log {bundle.raw_log.id} with evidence "
-            f"{', '.join(evidence_ids)}."
-        ),
-    )
-
-
 def _merge_affected(*values: AffectedIds) -> AffectedIds:
     def merge(field_name: str) -> list[EntityIdGroup]:
         grouped: dict[str, set[str]] = {}
@@ -908,25 +829,6 @@ def _correction_affected(captured: CorrectionOutcome) -> AffectedIds:
     )
 
 
-def _views(*collections) -> list[InvalidatedView]:
-    by_id = {
-        item.snapshot_id: item for collection in collections for item in collection
-    }
-    return [
-        by_id[key] for key in sorted(by_id, key=lambda value: value.encode("utf-8"))
-    ]
-
-
-def _branches(*collections) -> list[InvalidatedBranch]:
-    # §13.13 rule 9 identifies a branch report by the branch name: one command
-    # may supersede the same named branch through several lifecycle steps.
-    by_name = {item.name: item for collection in collections for item in collection}
-    return [
-        by_name[key]
-        for key in sorted(by_name, key=lambda value: value.encode("utf-8"))
-    ]
-
-
 def _decorate_lifecycle_error(
     error: Exp2ResError,
     *,
@@ -952,13 +854,13 @@ def _decorate_lifecycle_error(
         )
     )
     error.invalidated_views = tuple(
-        _views(
+        merged_invalidated_views(
             base_invalidated_views,
             progress.invalidated_views if progress else (),
         )
     )
     error.invalidated_branches = tuple(
-        _branches(
+        merged_invalidated_branches(
             base_invalidated_branches,
             progress.invalidated_branches if progress else (),
         )
@@ -972,35 +874,6 @@ def _decorate_lifecycle_error(
     error.warnings = progress.warnings if progress else ()
     error.retry = retry
     error.result = result
-
-
-def _lifecycle_outcome(
-    recomputed: LifecycleResult,
-    *,
-    base_invalidated_views: tuple[InvalidatedView, ...] = (),
-    base_invalidated_branches: tuple[InvalidatedBranch, ...] = (),
-) -> Outcome:
-    invalidated_views = _views(
-        base_invalidated_views, recomputed.invalidated_views
-    )
-    invalidated_branches = _branches(
-        base_invalidated_branches, recomputed.invalidated_branches
-    )
-    no_view = (
-        "\nNo current assessment view exists; run exp2res assess generate."
-        if recomputed.no_current_assessment_view
-        else ""
-    )
-    return Outcome(
-        affected_ids=recomputed.affected_ids,
-        generation_ids=list(recomputed.generation_ids),
-        run_ids=list(recomputed.run_ids),
-        invalidated_views=invalidated_views,
-        invalidated_branches=invalidated_branches,
-        residual_paths=list(recomputed.residual_paths),
-        warnings=list(recomputed.warnings),
-        human_result="Recomputed derived state through Stage 5." + no_view,
-    )
 
 
 def _validate_non_prompt_period(
@@ -1033,7 +906,7 @@ def log_today(
         artifact_values = tuple(artifacts or ())
         validate_artifact_locator_count(artifact_values)
         if source_file is not None:
-            return _capture_outcome(
+            return capture_outcome(
                 capture_daily_file(
                     workspace,
                     source_path=source_file,
@@ -1047,7 +920,7 @@ def log_today(
         # Fail closed on the local-time contract before collecting owner text.
         workspace_zone(require_timezone(load_workspace_config(workspace)))
         raw_text = typer.prompt("Describe what happened", err=True)
-        return _capture_outcome(
+        return capture_outcome(
             capture_daily(
                 workspace,
                 raw_text=raw_text,
@@ -1083,7 +956,7 @@ def log_retro(
                 confidence=cast(TemporalConfidence, confidence),
                 timezone_name=timezone_name,
             )
-            return _capture_outcome(
+            return capture_outcome(
                 capture_retro_file(
                     workspace,
                     source_path=source_file,
@@ -1132,7 +1005,7 @@ def log_retro(
             confidence=cast(TemporalConfidence, confidence_value),
             timezone_name=timezone_name,
         )
-        return _capture_outcome(
+        return capture_outcome(
             capture_retro(
                 workspace,
                 occurred=occurred,
@@ -1356,7 +1229,7 @@ def _store_correction(
             )
             raise
 
-    lifecycle = _lifecycle_outcome(
+    lifecycle = lifecycle_outcome(
         recomputed,
         base_invalidated_views=captured.invalidated_views,
         base_invalidated_branches=captured.invalidated_branches,
@@ -1400,122 +1273,13 @@ def recompute_command(
         except Exp2ResError as error:
             _decorate_lifecycle_error(error, retry=retry)
             raise
-        return _lifecycle_outcome(recomputed)
+        return lifecycle_outcome(recomputed)
 
     _run_command(context, "recompute", operation)
 
 
-def _import_record_group(
-    records: tuple[ImportedRecord, ...],
-) -> list[ImportRecordResult]:
-    return [
-        ImportRecordResult(
-            record_number=record.record_number,
-            source_record_id=record.source_record_id,
-            raw_log_id=record.raw_log_id,
-        )
-        for record in records
-    ]
-
-
-def _import_result(imported: ImportOutcome) -> ImportResult:
-    return ImportResult(
-        counts=ImportCounts(
-            accepted=len(imported.accepted),
-            duplicate=len(imported.duplicate),
-            rejected=len(imported.rejected),
-        ),
-        records=ImportRecordGroups(
-            accepted=_import_record_group(imported.accepted),
-            duplicate=_import_record_group(imported.duplicate),
-            rejected=_import_record_group(imported.rejected),
-        ),
-    )
-
-
 def _import_ending(error: Exp2ResError) -> str:
     return "cancelled" if isinstance(error, OperationCancelledError) else "failed"
-
-
-def _import_record_line(record: ImportedRecord, outcome_name: str) -> str:
-    return (
-        f"{record.record_number}\t{outcome_name}\t"
-        f"{record.source_record_id or '-'}\t{record.raw_log_id or '-'}"
-    )
-
-
-def _import_created(imported: ImportOutcome) -> AffectedIds:
-    """Report the rows committed accepted records left behind.
-
-    §14.14 rule 5 orders every entity group by its own stable identity, and an
-    entity ID is allocated randomly under §12 rule 11 — so neither group may
-    keep the input order its `result` records are reported in.
-    """
-
-    groups = []
-    for entity_type, ids in (
-        (
-            "evidence_item",
-            [
-                item_id
-                for record in imported.accepted
-                for item_id in record.evidence_item_ids
-            ],
-        ),
-        (
-            "raw_log",
-            [
-                record.raw_log_id
-                for record in imported.accepted
-                if record.raw_log_id is not None
-            ],
-        ),
-    ):
-        if ids:
-            groups.append(
-                EntityIdGroup(
-                    entity_type=entity_type,
-                    ids=sorted(ids, key=lambda value: value.encode("utf-8")),
-                )
-            )
-    return AffectedIds(created=groups, superseded=[], deleted=[])
-
-
-def _import_outcome(imported: ImportOutcome) -> Outcome:
-    """Project one §19.4 classification into its §14.14 envelope.
-
-    Every established record appears exactly once under its input
-    `record_number`, and none of the three lists is ever truncated: §14.14
-    rule 5 exempts local stdout from §11's list caps precisely so a large
-    payload still reports every record.
-    """
-
-    result = _import_result(imported)
-    lines = [
-        f"accepted {result.counts.accepted}, "
-        f"duplicate {result.counts.duplicate}, "
-        f"rejected {result.counts.rejected}"
-    ]
-    for outcome_name, group in (
-        ("accepted", imported.accepted),
-        ("duplicate", imported.duplicate),
-        ("rejected", imported.rejected),
-    ):
-        lines.extend(_import_record_line(record, outcome_name) for record in group)
-    # §14.14 rule 5: a fully classified result with rejections is a completed
-    # report, so it exits through class 2 still carrying its complete result.
-    rejected = result.counts.rejected > 0
-    return Outcome(
-        exit_code=2 if rejected else 0,
-        diagnostic_class="import_records_rejected" if rejected else None,
-        affected_ids=_import_created(imported),
-        result=result,
-        # §14.14 rule 4: this class 2 is a completion, not a rejected input, so
-        # an incomplete managed-output cleanup observed beside it still
-        # promotes to class 8 the way a completed class 0 or 10 does.
-        completed_report=True,
-        human_result="\n".join(lines),
-    )
 
 
 def _import_decorate(error: Exp2ResError) -> None:
@@ -1531,17 +1295,17 @@ def _import_decorate(error: Exp2ResError) -> None:
     committed = cast(ImportOutcome | None, getattr(error, "import_outcome", None))
     if committed is None:
         return
-    error.affected_ids = _import_created(committed)
+    error.affected_ids = import_created(committed)
     if getattr(error, "import_classified", False):
         # Rule 5 nulls a result only when none exists yet; an interrupt after
         # the last record leaves a complete one.
-        error.result = _import_result(committed)
+        error.result = import_result(committed)
     # Human mode reads no `affected_ids`, so the same boundary is rendered as
     # the committed records' own lines.
     error.human_result = "\n".join(
         [f"{_import_ending(error)}, {len(committed.accepted)} committed"]
         + [
-            _import_record_line(record, "accepted")
+            import_record_line(record, "accepted")
             for record in committed.accepted
         ]
     )
@@ -1556,7 +1320,7 @@ def _import_command(
                 workspace, source_system=source_system, payload_path=payload
             )
             try:
-                return _import_outcome(imported)
+                return import_outcome(imported)
             except KeyboardInterrupt:
                 # The classification is complete and durable; an interrupt in
                 # result assembly still reports it under §14.14 rule 6.
@@ -1620,7 +1384,7 @@ def import_file(
     # reports `result = null` with its created IDs in `affected_ids`, exactly
     # as the §14.2 captures whose record shape it shares do.
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        return _capture_outcome(
+        return capture_outcome(
             import_design_document(
                 workspace, source_path=source_path, project=project
             )
@@ -1648,7 +1412,7 @@ def extract_command(
             # included, so the direct-extract path drops nothing.
             carried = getattr(error, "stage_result", None)
             if isinstance(carried, Stage3Result):
-                committed = _stage3_outcome(carried)
+                committed = stage3_outcome(carried)
                 error.affected_ids = committed.affected_ids
                 error.generation_ids = committed.generation_ids
                 error.invalidated_views = committed.invalidated_views
@@ -1656,90 +1420,9 @@ def extract_command(
                 error.residual_paths = committed.residual_paths
                 error.warnings = committed.warnings
             raise
-        return _stage3_outcome(extracted)
+        return stage3_outcome(extracted)
 
     _run_command(context, "extract", operation)
-
-
-def _stage3_outcome(extracted: Stage3Result) -> Outcome:
-    """One §14.14 rule 5 composition for completed and interrupted swaps."""
-
-    created = list(extracted.created)
-    superseded = list(extracted.superseded)
-    superseded_groups: list[EntityIdGroup] = []
-    if superseded:
-        superseded_groups.append(
-            EntityIdGroup(entity_type="experience_fact", ids=superseded)
-        )
-    if extracted.superseded_gap_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="gap_question",
-                ids=list(extracted.superseded_gap_ids),
-            )
-        )
-    if extracted.superseded_contradiction_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="contradiction",
-                ids=list(extracted.superseded_contradiction_ids),
-            )
-        )
-    if extracted.superseded_claim_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="self_claim",
-                ids=list(extracted.superseded_claim_ids),
-            )
-        )
-    if extracted.superseded_snapshot_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="assessment_snapshot",
-                ids=list(extracted.superseded_snapshot_ids),
-            )
-        )
-    if extracted.superseded_branch_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_branch",
-                ids=list(extracted.superseded_branch_ids),
-            )
-        )
-    if extracted.superseded_bullet_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=list(extracted.superseded_bullet_ids),
-            )
-        )
-    invalidated_views = list(extracted.invalidated_views)
-    return Outcome(
-        affected_ids=AffectedIds(
-            created=(
-                [EntityIdGroup(entity_type="experience_fact", ids=created)]
-                if created
-                else []
-            ),
-            superseded=superseded_groups,
-            deleted=[],
-        ),
-        # §14.14 rule 5: produced OR invalidated generation IDs,
-        # duplicate-free and deterministically ordered.
-        generation_ids=sorted(
-            {*extracted.generation_ids, *extracted.superseded_generation_ids},
-            key=lambda value: value.encode("utf-8"),
-        ),
-        run_ids=[extracted.run_id],
-        invalidated_views=invalidated_views,
-        invalidated_branches=list(extracted.invalidated_branches),
-        residual_paths=list(extracted.residual_paths),
-        warnings=list(extracted.warnings),
-        human_result=(
-            f"Extracted {len(created)} facts ({len(superseded)} superseded)."
-        ),
-    )
-
 
 
 def _fact_human_line(fact: ExperienceFact) -> str:
@@ -1796,23 +1479,6 @@ def _fact_human_block(fact: ExperienceFact) -> str:
     )
 
 
-def _detection_groups(
-    gap_ids: list[str], contradiction_ids: list[str]
-) -> list[EntityIdGroup]:
-    gap_ids = sorted(set(gap_ids), key=lambda value: value.encode("utf-8"))
-    contradiction_ids = sorted(
-        set(contradiction_ids), key=lambda value: value.encode("utf-8")
-    )
-    groups: list[EntityIdGroup] = []
-    if gap_ids:
-        groups.append(EntityIdGroup(entity_type="gap_question", ids=gap_ids))
-    if contradiction_ids:
-        groups.append(
-            EntityIdGroup(entity_type="contradiction", ids=contradiction_ids)
-        )
-    return groups
-
-
 @detections_app.command("generate")
 def detections_generate(context: typer.Context) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
@@ -1827,7 +1493,7 @@ def detections_generate(context: typer.Context) -> None:
             # fields the cancelled envelope reads.
             carried = getattr(error, "stage_result", None)
             if isinstance(carried, Stage4Result):
-                committed = _detections_generate_outcome(carried)
+                committed = detections_generate_outcome(carried)
                 error.affected_ids = committed.affected_ids
                 error.generation_ids = committed.generation_ids
                 error.run_ids = committed.run_ids
@@ -1838,126 +1504,9 @@ def detections_generate(context: typer.Context) -> None:
                 error.result = committed.result
                 error.human_result = committed.human_result
             raise
-        return _detections_generate_outcome(generated)
+        return detections_generate_outcome(generated)
 
     _run_command(context, "detections generate", operation)
-
-
-def _detections_generate_outcome(generated: Stage4Result) -> Outcome:
-    """One §14.14 rule 5 composition for completed and interrupted swaps."""
-
-    gaps = list(generated.current_gaps)
-    contradictions = list(generated.current_contradictions)
-    created_gap_ids = list(generated.created_gap_ids)
-    created_contradiction_ids = list(generated.created_contradiction_ids)
-    superseded_gap_ids = list(generated.superseded_gap_ids)
-    superseded_contradiction_ids = list(
-        generated.superseded_contradiction_ids
-    )
-    superseded_groups = _detection_groups(
-        superseded_gap_ids, superseded_contradiction_ids
-    )
-    if generated.superseded_claim_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="self_claim",
-                ids=list(generated.superseded_claim_ids),
-            )
-        )
-    if generated.superseded_snapshot_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="assessment_snapshot",
-                ids=list(generated.superseded_snapshot_ids),
-            )
-        )
-    if generated.superseded_branch_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_branch",
-                ids=list(generated.superseded_branch_ids),
-            )
-        )
-    if generated.superseded_bullet_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=list(generated.superseded_bullet_ids),
-            )
-        )
-    invalidated_views = list(generated.invalidated_views)
-    if generated.short_circuited:
-        human = (
-            "Retained both current detection sets without a provider "
-            "call: the input, model selection, and prompt policy are "
-            "unchanged since the last completed detection run."
-        )
-    elif generated.retained:
-        human = "Retained both current detection sets unchanged."
-    else:
-        replaced = [
-            name
-            for name, kept in (
-                ("gap", generated.retained_gap_set),
-                ("contradiction", generated.retained_contradiction_set),
-            )
-            if not kept
-        ]
-        kept_names = [
-            name
-            for name in ("gap", "contradiction")
-            if name not in replaced
-        ]
-        invalidated = (
-            ", ".join(group.entity_type for group in superseded_groups)
-            or "none"
-        )
-        described = (
-            f"Replaced the complete {' and '.join(replaced)} "
-            f"set{'s' if len(replaced) > 1 else ''}"
-        )
-        if kept_names:
-            described += (
-                f"; retained the {kept_names[0]} set unchanged"
-            )
-        human = (
-            f"{described}. "
-            f"Current gaps ({len(gaps)}): "
-            f"{', '.join(gap.id for gap in gaps) or 'none'}. "
-            f"Current contradictions ({len(contradictions)}): "
-            f"{', '.join(item.id for item in contradictions) or 'none'}. "
-            f"Invalidated artifact classes: {invalidated}."
-        )
-    return Outcome(
-        affected_ids=AffectedIds(
-            created=_detection_groups(
-                created_gap_ids, created_contradiction_ids
-            ),
-            superseded=superseded_groups,
-            deleted=[],
-        ),
-        generation_ids=sorted(
-            {
-                *(
-                    [generated.generation_id]
-                    if generated.generation_id is not None
-                    else []
-                ),
-                *generated.superseded_generation_ids,
-            },
-            key=lambda value: value.encode("utf-8"),
-        ),
-        run_ids=[generated.run_id],
-        warnings=list(generated.warnings),
-        invalidated_views=invalidated_views,
-        invalidated_branches=list(generated.invalidated_branches),
-        residual_paths=list(generated.residual_paths),
-        result=DetectionsGenerateResult(
-            gaps=gaps,
-            contradictions=contradictions,
-        ),
-        human_result=human,
-    )
 
 
 def _claim_human_line(claim: SelfClaim) -> str:
@@ -1965,40 +1514,6 @@ def _claim_human_line(claim: SelfClaim) -> str:
         f"{claim.id}\t{claim.claim_kind}\t{claim.dimension}\t"
         f"{claim.confidence}\t{claim.verification_status}"
     )
-
-
-def _verification_human_result(
-    snapshot_id: str,
-    snapshot_status: str,
-    findings: list[VerificationFinding],
-) -> str:
-    lines = [f"Snapshot {snapshot_id}: {snapshot_status}"]
-    for finding in findings:
-        lines.extend(
-            [
-                "",
-                f"Finding {finding.id}",
-                f"Target claim: {finding.target_id}",
-                f"Status: {finding.status}",
-                f"Reason: {finding.reason}",
-                "Unsupported phrases:",
-            ]
-        )
-        lines.extend(
-            f"- {phrase}" for phrase in finding.unsupported_phrases
-        )
-        if not finding.unsupported_phrases:
-            lines.append("- none")
-        if finding.suggested_rewrite is not None:
-            lines.append(f"Suggested rewrite: {finding.suggested_rewrite}")
-        lines.append("Counterevidence:")
-        lines.extend(
-            f"- {item.statement} [{item.source_ref_type}:{item.source_ref_id}]"
-            for item in finding.counterevidence
-        )
-        if not finding.counterevidence:
-            lines.append("- none")
-    return "\n".join(lines)
 
 
 @assess_app.command("generate")
@@ -2013,7 +1528,7 @@ def assess_generate(context: typer.Context) -> None:
             # fields the cancelled envelope reads.
             carried = getattr(error, "stage_result", None)
             if isinstance(carried, Stage6Result):
-                committed = _assess_generate_outcome(carried)
+                committed = assess_generate_outcome(carried)
                 error.affected_ids = committed.affected_ids
                 error.generation_ids = committed.generation_ids
                 error.run_ids = committed.run_ids
@@ -2021,84 +1536,9 @@ def assess_generate(context: typer.Context) -> None:
                 error.residual_paths = committed.residual_paths
                 error.warnings = committed.warnings
             raise
-        return _assess_generate_outcome(generated)
+        return assess_generate_outcome(generated)
 
     _run_command(context, "assess generate", operation)
-
-
-def _assess_generate_outcome(generated: Stage6Result) -> Outcome:
-    """One §14.14 rule 5 composition for completed and interrupted swaps."""
-
-    assert generated.snapshot is not None and generated.snapshot_id is not None
-    created_groups = [
-        EntityIdGroup(
-            entity_type="assessment_snapshot", ids=[generated.snapshot_id]
-        ),
-        EntityIdGroup(
-            entity_type="self_claim", ids=list(generated.created_claim_ids)
-        ),
-    ]
-    superseded_groups: list[EntityIdGroup] = []
-    if generated.superseded_claim_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="self_claim",
-                ids=list(generated.superseded_claim_ids),
-            )
-        )
-    if generated.superseded_snapshot_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="assessment_snapshot",
-                ids=list(generated.superseded_snapshot_ids),
-            )
-        )
-    if generated.superseded_branch_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_branch",
-                ids=list(generated.superseded_branch_ids),
-            )
-        )
-    if generated.superseded_bullet_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=list(generated.superseded_bullet_ids),
-            )
-        )
-    prior = (
-        ""
-        if generated.replaced_view is None
-        else f"; superseded {generated.replaced_view.snapshot_id}"
-    )
-    return Outcome(
-        affected_ids=AffectedIds(
-            created=created_groups,
-            superseded=superseded_groups,
-            deleted=[],
-        ),
-        generation_ids=sorted(
-            {
-                *(
-                    [generated.generation_id]
-                    if generated.generation_id is not None
-                    else []
-                ),
-                *generated.superseded_generation_ids,
-            },
-            key=lambda value: value.encode("utf-8"),
-        ),
-        run_ids=[generated.run_id],
-        invalidated_branches=list(generated.invalidated_branches),
-        residual_paths=list(generated.residual_paths),
-        warnings=list(generated.warnings),
-        result=None,
-        human_result=(
-            f"Created {generated.snapshot.id} — {generated.snapshot.title}; "
-            f"{len(generated.claims)} claims{prior}."
-        ),
-    )
 
 
 @assess_app.command("repair")
@@ -2117,89 +1557,16 @@ def assess_repair(
             # the fields the cancelled envelope reads.
             carried = getattr(error, "stage_result", None)
             if isinstance(carried, Stage6Result):
-                committed = _repair_outcome(carried)
+                committed = repair_outcome(carried)
                 error.affected_ids = committed.affected_ids
                 error.generation_ids = committed.generation_ids
                 error.run_ids = committed.run_ids
                 error.invalidated_branches = committed.invalidated_branches
                 error.residual_paths = committed.residual_paths
             raise
-        return _repair_outcome(repaired)
+        return repair_outcome(repaired)
 
     _run_command(context, "assess repair", operation)
-
-
-def _repair_outcome(repaired: Stage6Result) -> Outcome:
-    """One §14.14 rule 5 composition for completed and interrupted swaps."""
-
-    assert repaired.snapshot is not None and repaired.snapshot_id is not None
-    superseded_claim_ids = set(repaired.superseded_claim_ids)
-    adopted = sum(
-        1
-        for claim in repaired.claims
-        if claim.metadata.get("adopted_rewrite_of_claim_id") in superseded_claim_ids
-    )
-    created_groups = [
-        EntityIdGroup(
-            entity_type="assessment_snapshot", ids=[repaired.snapshot_id]
-        ),
-        EntityIdGroup(
-            entity_type="self_claim", ids=list(repaired.created_claim_ids)
-        ),
-    ]
-    superseded_groups = [
-        EntityIdGroup(
-            entity_type="self_claim",
-            ids=list(repaired.superseded_claim_ids),
-        ),
-        EntityIdGroup(
-            entity_type="assessment_snapshot",
-            ids=list(repaired.superseded_snapshot_ids),
-        ),
-    ]
-    if repaired.superseded_branch_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_branch",
-                ids=list(repaired.superseded_branch_ids),
-            )
-        )
-    if repaired.superseded_bullet_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=list(repaired.superseded_bullet_ids),
-            )
-        )
-    return Outcome(
-        affected_ids=AffectedIds(
-            created=created_groups,
-            superseded=superseded_groups,
-            deleted=[],
-        ),
-        generation_ids=sorted(
-            {
-                *(
-                    [repaired.generation_id]
-                    if repaired.generation_id is not None
-                    else []
-                ),
-                *repaired.superseded_generation_ids,
-            },
-            key=lambda value: value.encode("utf-8"),
-        ),
-        run_ids=[repaired.run_id],
-        invalidated_branches=list(repaired.invalidated_branches),
-        residual_paths=list(repaired.residual_paths),
-        result=None,
-        human_result=(
-            f"Repaired {repaired.snapshot.id} — {repaired.snapshot.title}; "
-            f"adopted {adopted} of {len(repaired.claims)} claims; "
-            f"superseded {repaired.superseded_snapshot_ids[0]}. "
-            f"Every claim is unverified; run exp2res assess verify "
-            f"--snapshot {repaired.snapshot.id}."
-        ),
-    )
 
 
 @assess_app.command("verify")
@@ -2228,7 +1595,7 @@ def assess_verify(
             # fields the cancelled envelope reads.
             carried = getattr(error, "stage_result", None)
             if isinstance(carried, Stage7Result):
-                committed = _assess_verify_outcome(carried)
+                committed = assess_verify_outcome(carried)
                 error.affected_ids = committed.affected_ids
                 error.generation_ids = committed.generation_ids
                 error.run_ids = committed.run_ids
@@ -2241,54 +1608,9 @@ def assess_verify(
                 "Assessment verification completed, but assessment export is blocked.",
                 err=True,
             )
-        return _assess_verify_outcome(verified)
+        return assess_verify_outcome(verified)
 
     _run_command(context, "assess verify", operation)
-
-
-def _assess_verify_outcome(verified: Stage7Result) -> Outcome:
-    """One §14.14 rule 5 composition for completed and interrupted passes."""
-
-    findings = list(verified.findings)
-    blocked = verified.snapshot_status in {"unsupported", "rejected"}
-    return Outcome(
-        exit_code=10 if blocked else 0,
-        diagnostic_class="verifier_gate_blocked" if blocked else None,
-        affected_ids=AffectedIds(
-            created=[
-                EntityIdGroup(
-                    entity_type="verification_finding",
-                    ids=[item.id for item in findings],
-                )
-            ],
-            # §13.7: a changed verifier state supersedes the branches
-            # anchored to this snapshot, so the envelope reports them.
-            superseded=[
-                group
-                for group in (
-                    EntityIdGroup(
-                        entity_type="resume_branch",
-                        ids=list(verified.superseded_branch_ids),
-                    ),
-                    EntityIdGroup(
-                        entity_type="resume_bullet",
-                        ids=list(verified.superseded_bullet_ids),
-                    ),
-                )
-                if group.ids
-            ],
-            deleted=[],
-        ),
-        generation_ids=list(verified.superseded_generation_ids),
-        run_ids=[verified.run_id],
-        findings=findings,
-        invalidated_branches=list(verified.invalidated_branches),
-        residual_paths=list(verified.residual_paths),
-        result=None,
-        human_result=_verification_human_result(
-            verified.snapshot_id, verified.snapshot_status, findings
-        ),
-    )
 
 
 @assess_app.command("list")
@@ -2679,7 +2001,7 @@ def logs_delete(
                     result=result,
                 )
                 raise
-        lifecycle = _lifecycle_outcome(recomputed)
+        lifecycle = lifecycle_outcome(recomputed)
         exit_code = 8 if deleted.residual_paths or lifecycle.residual_paths else 0
         return Outcome(
             exit_code=exit_code,
@@ -2694,10 +2016,10 @@ def logs_delete(
                 {*deleted.residual_paths, *lifecycle.residual_paths},
                 key=os.fsencode,
             ),
-            invalidated_views=_views(
+            invalidated_views=merged_invalidated_views(
                 deleted.invalidated_views, lifecycle.invalidated_views
             ),
-            invalidated_branches=_branches(
+            invalidated_branches=merged_invalidated_branches(
                 deleted.invalidated_branches, lifecycle.invalidated_branches
             ),
             warnings=lifecycle.warnings,
@@ -2708,61 +2030,6 @@ def logs_delete(
         )
 
     _run_command(context, "logs delete", operation)
-
-
-def _purge_affected(purged: PurgeOutcome) -> AffectedIds:
-    return AffectedIds(
-        created=[],
-        superseded=[],
-        deleted=[
-            EntityIdGroup(entity_type=entity_type, ids=list(ids))
-            for entity_type, ids in purged.deleted_ids
-        ],
-    )
-
-
-def _job_description_projection(
-    job_description: JobDescription,
-) -> JobDescriptionProjection:
-    """§14.15: the discovery projection, with `raw_text` and `parsed` absent."""
-
-    return JobDescriptionProjection(
-        id=job_description.id,
-        created_at=job_description.created_at,
-        title=job_description.title,
-        company=job_description.company,
-    )
-
-
-def _jd_add_affected(parsed: Stage8Result) -> AffectedIds:
-    return AffectedIds(
-        created=[
-            EntityIdGroup(
-                entity_type="job_description",
-                ids=[parsed.job_description_id],
-            )
-        ],
-        superseded=[],
-        deleted=[],
-    )
-
-
-def _jd_add_outcome(parsed: Stage8Result) -> Outcome:
-    requirement_count = len(parsed.requirement_ids)
-    return Outcome(
-        affected_ids=_jd_add_affected(parsed),
-        run_ids=[parsed.run_id],
-        warnings=list(parsed.warnings),
-        # §14.14 rule 5 declares no `jd add` result: the standard envelope
-        # fields carry it, and the parse itself stays unexposed under the
-        # rule 7 per-record-inspection deferral.
-        result=None,
-        human_result=(
-            f"Added job description {parsed.job_description_id} with "
-            f"{requirement_count} typed "
-            f"requirement{'' if requirement_count == 1 else 's'}."
-        ),
-    )
 
 
 @jd_app.command("add")
@@ -2776,12 +2043,12 @@ def jd_add(
         require_compatible(workspace)
         parsed = run_jd_add_file(workspace, source_path=source_path)
         try:
-            return _jd_add_outcome(parsed)
+            return jd_add_outcome(parsed)
         except KeyboardInterrupt:
             # The service returned a durable parse; §14.14 rule 6 keeps it
             # reported even when the interrupt lands in result assembly.
             cancelled = OperationCancelledError()
-            cancelled.affected_ids = _jd_add_affected(parsed)
+            cancelled.affected_ids = jd_add_affected(parsed)
             cancelled.run_ids = [parsed.run_id]
             cancelled.warnings = list(parsed.warnings)
             raise cancelled from None
@@ -2800,8 +2067,8 @@ def jd_list(context: typer.Context) -> None:
                     item.created_at.isoformat(),
                     # §16.13 permits a tab or newline inside parsed source
                     # text; unescaped, one record could pose as several.
-                    _render_text(item.title) if item.title else "-",
-                    _render_text(item.company) if item.company else "-",
+                    render_text(item.title) if item.title else "-",
+                    render_text(item.company) if item.company else "-",
                 )
             )
             for item in job_descriptions
@@ -2809,7 +2076,7 @@ def jd_list(context: typer.Context) -> None:
         return Outcome(
             result=JdListResult(
                 job_descriptions=[
-                    _job_description_projection(item) for item in job_descriptions
+                    job_description_projection(item) for item in job_descriptions
                 ]
             ),
             human_result=human or "No job descriptions.",
@@ -2818,68 +2085,12 @@ def jd_list(context: typer.Context) -> None:
     _run_command(context, "jd list", operation)
 
 
-def _jd_delete_result(deleted: JobDescriptionDeleteOutcome) -> JdDeleteResult:
-    return JdDeleteResult(
-        selected_job_description=_job_description_projection(deleted.selected),
-        purged_branches=[
-            PurgedBranchProjection(id=branch.id, name=branch.name)
-            for branch in deleted.purged_branches
-        ],
-        # Undecodable POSIX names reach here surrogate-escaped from
-        # `os.scandir`; the envelope serializes with `ensure_ascii=False`, so
-        # the same rendering the residual finalizer applies keeps a committed
-        # removal reportable instead of failing stdout encoding.
-        removed_managed_paths=[
-            _render_path(path) for path in deleted.removed_managed_paths
-        ],
-    )
-
-
-def _jd_delete_outcome(deleted: JobDescriptionDeleteOutcome) -> Outcome:
-    exit_code = 8 if deleted.residual_paths else 0
-    return Outcome(
-        exit_code=exit_code,
-        diagnostic_class="deletion_incomplete" if exit_code else None,
-        affected_ids=_jd_delete_affected(deleted),
-        generation_ids=list(deleted.purged_generation_ids),
-        run_ids=[deleted.run_id],
-        residual_paths=list(deleted.residual_paths),
-        result=_jd_delete_result(deleted),
-        human_result=_jd_delete_human_result(deleted),
-    )
-
-
-def _jd_delete_human_result(deleted: JobDescriptionDeleteOutcome) -> str:
-    # §14.15 requires the same reporting in both modes: the closed result
-    # record is serialized only under `--json`, so every purged branch and
-    # every removed managed path is named here too.
-    lines = [
-        f"Deleted job description {deleted.selected.id}; no derived "
-        "state remained."
-        if not deleted.purged_branches
-        else (
-            f"Deleted job description {deleted.selected.id} and "
-            f"{len(deleted.purged_branches)} dependent branch"
-            f"{'' if len(deleted.purged_branches) == 1 else 'es'}."
-        )
-    ]
-    lines.extend(
-        f"Purged branch: {branch.id}\t{branch.name}"
-        for branch in deleted.purged_branches
-    )
-    lines.extend(
-        f"Removed managed path: {path}"
-        for path in _jd_delete_result(deleted).removed_managed_paths
-    )
-    return "\n".join(lines)
-
-
 def _jd_cleanup_result(cleaned: JobDescriptionCleanupOutcome) -> JdDeleteResult:
     return JdDeleteResult(
-        selected_job_description=_job_description_projection(cleaned.selected),
+        selected_job_description=job_description_projection(cleaned.selected),
         purged_branches=[],
         removed_managed_paths=[
-            _render_path(path) for path in cleaned.removed_managed_paths
+            render_path(path) for path in cleaned.removed_managed_paths
         ],
     )
 
@@ -2894,27 +2105,6 @@ def _jd_cleanup_human_result(cleaned: JobDescriptionCleanupOutcome) -> str:
         for path in _jd_cleanup_result(cleaned).removed_managed_paths
     )
     return "\n".join(lines)
-
-
-def _jd_delete_affected(deleted: JobDescriptionDeleteOutcome) -> AffectedIds:
-    classes = (
-        ("verification_finding", deleted.purged_finding_ids),
-        ("resume_bullet", deleted.purged_bullet_ids),
-        (
-            "resume_branch",
-            tuple(branch.id for branch in deleted.purged_branches),
-        ),
-        ("job_description", (deleted.selected.id,)),
-    )
-    return AffectedIds(
-        created=[],
-        superseded=[],
-        deleted=[
-            EntityIdGroup(entity_type=entity_type, ids=list(ids))
-            for entity_type, ids in classes
-            if ids
-        ],
-    )
 
 
 @jd_app.command("delete")
@@ -2949,12 +2139,12 @@ def jd_delete(
                 getattr(error, "delete_outcome", None),
             )
             if committed is not None:
-                error.affected_ids = _jd_delete_affected(committed)
+                error.affected_ids = jd_delete_affected(committed)
                 error.generation_ids = list(committed.purged_generation_ids)
                 error.run_ids = [committed.run_id]
                 error.residual_paths = list(committed.residual_paths)
-                error.result = _jd_delete_result(committed)
-                error.human_result = _jd_delete_human_result(committed)
+                error.result = jd_delete_result(committed)
+                error.human_result = jd_delete_human_result(committed)
                 raise
             # §14.14 rule 6: managed cleanup ran before the transaction, so
             # its effects are reported even though nothing was deleted — no
@@ -2969,22 +2159,20 @@ def jd_delete(
                 error.human_result = _jd_cleanup_human_result(cleaned)
             raise
         try:
-            return _jd_delete_outcome(deleted)
+            return jd_delete_outcome(deleted)
         except KeyboardInterrupt:
             # The service returned a durable deletion; §14.14 rule 6 keeps it
             # reported even when the interrupt lands in result assembly.
             cancelled = OperationCancelledError()
-            cancelled.affected_ids = _jd_delete_affected(deleted)
+            cancelled.affected_ids = jd_delete_affected(deleted)
             cancelled.generation_ids = list(deleted.purged_generation_ids)
             cancelled.run_ids = [deleted.run_id]
             cancelled.residual_paths = list(deleted.residual_paths)
-            cancelled.result = _jd_delete_result(deleted)
-            cancelled.human_result = _jd_delete_human_result(deleted)
+            cancelled.result = jd_delete_result(deleted)
+            cancelled.human_result = jd_delete_human_result(deleted)
             raise cancelled from None
 
     _run_command(context, "jd delete", operation)
-
-
 
 
 @bullets_app.command("generate")
@@ -3014,7 +2202,7 @@ def bullets_generate(
                 _carry_generated_pack(error, carried)
             raise
         try:
-            return _bullets_generate_outcome(generated)
+            return bullets_generate_outcome(generated)
         except KeyboardInterrupt:
             # The service returned a durable swap; §14.14 rule 6 keeps it
             # reported even when the interrupt lands in result assembly.
@@ -3029,7 +2217,7 @@ def bullets_generate(
 def _carry_generated_pack(error: Exp2ResError, generated: Stage10Result) -> None:
     """Fold a committed §13.10 swap into the fields a failed envelope reads."""
 
-    committed = _bullets_generate_outcome(generated)
+    committed = bullets_generate_outcome(generated)
     error.affected_ids = committed.affected_ids
     error.generation_ids = committed.generation_ids
     error.run_ids = committed.run_ids
@@ -3039,83 +2227,6 @@ def _carry_generated_pack(error: Exp2ResError, generated: Stage10Result) -> None
     # Human mode renders only `human_result`, so without it the durable swap
     # would be reported to `--json` callers alone.
     error.human_result = committed.human_result
-
-
-def _bullets_generate_outcome(generated: Stage10Result) -> Outcome:
-    """One §14.14 rule 5 composition for completed and interrupted swaps."""
-
-    created_groups: list[EntityIdGroup] = []
-    if generated.branch_id is not None:
-        created_groups.append(
-            EntityIdGroup(entity_type="resume_branch", ids=[generated.branch_id])
-        )
-        # §14.14 rule 5 orders every reported group by its stable identity, and
-        # a production bullet ID carries no writer-order information.
-        created_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=sorted(generated.bullet_ids, key=lambda value: value.encode("utf-8")),
-            )
-        )
-    superseded_groups: list[EntityIdGroup] = []
-    if generated.superseded_branch_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_branch",
-                ids=list(generated.superseded_branch_ids),
-            )
-        )
-    if generated.superseded_bullet_ids:
-        superseded_groups.append(
-            EntityIdGroup(
-                entity_type="resume_bullet",
-                ids=list(generated.superseded_bullet_ids),
-            )
-        )
-    # §13.10/§14.14: an empty writer array is a completed semantic result with
-    # no branch — class 10 `blocked` under its own stable class, never a failed
-    # run and never an empty branch.
-    blocked = generated.branch_id is None
-    replaced = (
-        ""
-        if not generated.superseded_branch_ids
-        else f"; superseded {generated.superseded_branch_ids[0]}"
-    )
-    human_result = (
-        f"No bullet was generated for branch {generated.branch_name}: the "
-        "supplied evidence supports none."
-        if blocked
-        else (
-            f"Created {generated.branch_id} — {generated.branch_name}; "
-            f"{len(generated.bullet_ids)} bullets{replaced}."
-        )
-    )
-    return Outcome(
-        exit_code=10 if blocked else 0,
-        diagnostic_class="no_bullet_generated" if blocked else None,
-        affected_ids=AffectedIds(
-            created=created_groups,
-            superseded=superseded_groups,
-            deleted=[],
-        ),
-        generation_ids=sorted(
-            {
-                *(
-                    [generated.generation_id]
-                    if generated.generation_id is not None
-                    else []
-                ),
-                *generated.superseded_generation_ids,
-            },
-            key=lambda value: value.encode("utf-8"),
-        ),
-        run_ids=[generated.run_id],
-        invalidated_branches=list(generated.invalidated_branches),
-        residual_paths=list(generated.residual_paths),
-        warnings=list(generated.warnings),
-        result=None,
-        human_result=human_result,
-    )
 
 
 @bullets_app.command("verify")
@@ -3143,7 +2254,7 @@ def bullets_verify(
                     "Bullet verification completed, but bullet-pack export is blocked.",
                     err=True,
                 )
-            return _bullets_verify_outcome(verified)
+            return bullets_verify_outcome(verified)
         except KeyboardInterrupt:
             # The service returned a durable pass; §14.14 rule 6 keeps it
             # reported even when the interrupt lands in result assembly, which
@@ -3198,7 +2309,7 @@ def bullets_export(
 def _carry_verified_pass(error: Exp2ResError, verified: Stage11Result) -> None:
     """Fold a committed §13.11 pass into the fields a failed envelope reads."""
 
-    committed = _bullets_verify_outcome(verified)
+    committed = bullets_verify_outcome(verified)
     error.affected_ids = committed.affected_ids
     error.run_ids = committed.run_ids
     error.findings = committed.findings
@@ -3206,80 +2317,6 @@ def _carry_verified_pass(error: Exp2ResError, verified: Stage11Result) -> None:
     # Human mode renders only `human_result`, so without it the durable pass
     # would be reported to `--json` callers alone.
     error.human_result = committed.human_result
-
-
-def _bullets_verify_outcome(verified: Stage11Result) -> Outcome:
-    """One §14.14 rule 5 composition for completed and interrupted passes."""
-
-    findings = list(verified.findings)
-    return Outcome(
-        # §16.11: only a `supported` bullet may enter the pack, so one bullet
-        # outside that allowlist is the class-10 consumer gate for the branch.
-        exit_code=10 if verified.export_blocked else 0,
-        diagnostic_class="verifier_gate_blocked" if verified.export_blocked else None,
-        affected_ids=AffectedIds(
-            created=[
-                EntityIdGroup(
-                    entity_type="verification_finding",
-                    ids=[item.id for item in findings],
-                )
-            ],
-            # §13.11 supersedes nothing: the bullets it verifies stay current
-            # and only their denormalized verdict fields change.
-            superseded=[],
-            deleted=[],
-        ),
-        run_ids=[verified.run_id],
-        findings=findings,
-        residual_paths=list(verified.residual_paths),
-        result=None,
-        human_result=_bullet_verification_human_result(verified),
-    )
-
-
-def _bullet_verification_human_result(verified: Stage11Result) -> str:
-    """Present the complete §14.10 findings, advisory rewrites included."""
-
-    blocked = [
-        bullet_id
-        for bullet_id, status in verified.bullet_statuses
-        if status not in BULLET_EXPORT_ALLOWLIST
-    ]
-    lines = [
-        f"Branch {verified.branch_id} — {verified.branch_name}: "
-        f"{len(verified.bullet_statuses) - len(blocked)} of "
-        f"{len(verified.bullet_statuses)} bullets supported."
-    ]
-    for finding in _findings_in_bullet_order(verified):
-        lines.extend(
-            [
-                "",
-                f"Finding {finding.id}",
-                f"Target bullet: {finding.target_id}",
-                f"Status: {finding.status}",
-                f"Reason: {finding.reason}",
-                "Unsupported phrases:",
-            ]
-        )
-        lines.extend(f"- {phrase}" for phrase in finding.unsupported_phrases)
-        if not finding.unsupported_phrases:
-            lines.append("- none")
-        if finding.suggested_rewrite is not None:
-            # §13.11: advisory only — presented, never applied. Revised
-            # wording requires an explicit `bullets generate`.
-            lines.append(f"Suggested rewrite (advisory): {finding.suggested_rewrite}")
-    return "\n".join(lines)
-
-
-def _findings_in_bullet_order(verified: Stage11Result) -> list[VerificationFinding]:
-    """Order the pass's findings by their target bullet's own ID bytes."""
-
-    by_target = {finding.target_id: finding for finding in verified.findings}
-    return [
-        by_target[bullet_id]
-        for bullet_id, _status in verified.bullet_statuses
-        if bullet_id in by_target
-    ]
 
 
 @workspace_app.command("purge")
@@ -3304,39 +2341,22 @@ def workspace_purge(
                 getattr(error, "purge_outcome", None),
             )
             if committed is not None:
-                error.affected_ids = _purge_affected(committed)
+                error.affected_ids = purge_affected(committed)
                 error.generation_ids = committed.generation_ids
                 error.residual_paths = committed.residual_paths
             raise
         try:
-            return _purge_outcome(purged)
+            return purge_outcome(purged)
         except KeyboardInterrupt:
             # The service returned a durable purge; §14.14 rule 6 keeps it
             # reported even when the interrupt lands in result assembly.
             cancelled = OperationCancelledError()
-            cancelled.affected_ids = _purge_affected(purged)
+            cancelled.affected_ids = purge_affected(purged)
             cancelled.generation_ids = list(purged.generation_ids)
             cancelled.residual_paths = list(purged.residual_paths)
             raise cancelled from None
 
     _run_command(context, "workspace purge", operation)
-
-
-def _purge_outcome(purged: PurgeOutcome) -> Outcome:
-    exit_code = 8 if purged.residual_paths else 0
-    return Outcome(
-        exit_code=exit_code,
-        diagnostic_class="deletion_incomplete" if exit_code else None,
-        affected_ids=_purge_affected(purged),
-        generation_ids=list(purged.generation_ids),
-        residual_paths=list(purged.residual_paths),
-        result=None,
-        # One home for the incompleteness claim: `_run_command` appends it
-        # from the merged residual set, which this operation cannot see.
-        human_result=(
-            "Purged the workspace database; the initialized workspace remains."
-        ),
-    )
 
 
 class _ServeCancellation:

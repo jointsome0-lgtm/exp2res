@@ -488,7 +488,7 @@ def test_an_interrupt_in_result_assembly_keeps_the_complete_result(
     def interrupt_projection(_imported):
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(cli_module, "_import_outcome", interrupt_projection)
+    monkeypatch.setattr(cli_module, "import_outcome", interrupt_projection)
     result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
 
     assert result.exit_code == 9
@@ -961,7 +961,7 @@ def test_a_signal_during_failure_reporting_keeps_the_same_boundary(
         return persist(*args, **kwargs)
 
     monkeypatch.setattr(imports_service, "_persist", fail_after_two)
-    created_ids = cli_module._import_created
+    created_ids = cli_module.import_created
     reports = {"count": 0}
 
     def interrupt_the_first_report(*args, **kwargs):
@@ -971,7 +971,7 @@ def test_a_signal_during_failure_reporting_keeps_the_same_boundary(
             raise KeyboardInterrupt()
         return created_ids(*args, **kwargs)
 
-    monkeypatch.setattr(cli_module, "_import_created", interrupt_the_first_report)
+    monkeypatch.setattr(cli_module, "import_created", interrupt_the_first_report)
     result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
     monkeypatch.undo()
 

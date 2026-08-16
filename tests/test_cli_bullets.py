@@ -12,7 +12,7 @@ import exp2res.cli as cli_module
 import exp2res.pipeline.stage10 as stage10_module
 import exp2res.pipeline.stage11 as stage11_module
 import exp2res.services.bullets as bullets_service
-from exp2res.cli import _bullets_generate_outcome, app
+from exp2res.cli import bullets_generate_outcome, app
 from exp2res.pipeline.stage10 import Stage10Result
 from exp2res.storage.repository import (
     list_resume_branches,
@@ -125,7 +125,7 @@ def test_a_no_bullet_response_is_a_blocked_completion(
 def test_created_bullet_ids_are_ordered_by_their_stable_identity() -> None:
     """§14.14 rule 5: reported groups order by identity, not writer order."""
 
-    outcome = _bullets_generate_outcome(
+    outcome = bullets_generate_outcome(
         Stage10Result(
             run_id="run_vera_0001",
             branch_name=BRANCH_NAME,
@@ -153,7 +153,7 @@ def test_an_interrupt_in_result_assembly_still_reports_the_swap(
     """§14.14 rule 6: composition is inside the durable swap's guarded window."""
 
     _facts, snapshot_id = arrange(workspace, monkeypatch, one_bullet)
-    compose = cli_module._bullets_generate_outcome
+    compose = cli_module.bullets_generate_outcome
     attempts: list[object] = []
 
     def interrupt_first(generated):
@@ -162,7 +162,7 @@ def test_an_interrupt_in_result_assembly_still_reports_the_swap(
             raise KeyboardInterrupt()
         return compose(generated)
 
-    monkeypatch.setattr(cli_module, "_bullets_generate_outcome", interrupt_first)
+    monkeypatch.setattr(cli_module, "bullets_generate_outcome", interrupt_first)
 
     result, envelope = generate(workspace, snapshot_id)
 
@@ -467,7 +467,7 @@ def test_an_interrupt_in_verify_result_assembly_still_reports_the_pass(
     """§14.14 rule 6: the whole-branch finding set composes inside the guard."""
 
     _branch_id, bullet_id = generated_branch(workspace, monkeypatch)
-    compose = cli_module._bullets_verify_outcome
+    compose = cli_module.bullets_verify_outcome
     attempts: list[object] = []
 
     def interrupt_first(verified):
@@ -476,7 +476,7 @@ def test_an_interrupt_in_verify_result_assembly_still_reports_the_pass(
             raise KeyboardInterrupt()
         return compose(verified)
 
-    monkeypatch.setattr(cli_module, "_bullets_verify_outcome", interrupt_first)
+    monkeypatch.setattr(cli_module, "bullets_verify_outcome", interrupt_first)
 
     result, envelope = verify(
         workspace, monkeypatch, [verifier_response([finding(bullet_id)])]

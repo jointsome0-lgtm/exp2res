@@ -16,9 +16,13 @@ from pydantic import BaseModel, ValidationError
 from exp2res.domain.canonical import canonical_model_hash
 from exp2res.domain.models import Contradiction, GapQuestion
 from exp2res.domain.results import (
+    AffectedIds,
+    DetectionsGenerateResult,
+    EntityIdGroup,
+    invalidated_view,
     InvalidatedBranch,
     InvalidatedView,
-    invalidated_view,
+    Outcome,
 )
 from exp2res.errors import LLMCancelledError
 from exp2res.exports.managed import (
@@ -655,3 +659,137 @@ def run_detection_generation(
             )
             raise cancelled from None
         return build_result(residual_paths)
+
+
+def detection_groups(
+    gap_ids: list[str], contradiction_ids: list[str]
+) -> list[EntityIdGroup]:
+    gap_ids = sorted(set(gap_ids), key=lambda value: value.encode("utf-8"))
+    contradiction_ids = sorted(
+        set(contradiction_ids), key=lambda value: value.encode("utf-8")
+    )
+    groups: list[EntityIdGroup] = []
+    if gap_ids:
+        groups.append(EntityIdGroup(entity_type="gap_question", ids=gap_ids))
+    if contradiction_ids:
+        groups.append(
+            EntityIdGroup(entity_type="contradiction", ids=contradiction_ids)
+        )
+    return groups
+
+
+def detections_generate_outcome(generated: Stage4Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted swaps."""
+
+    gaps = list(generated.current_gaps)
+    contradictions = list(generated.current_contradictions)
+    created_gap_ids = list(generated.created_gap_ids)
+    created_contradiction_ids = list(generated.created_contradiction_ids)
+    superseded_gap_ids = list(generated.superseded_gap_ids)
+    superseded_contradiction_ids = list(
+        generated.superseded_contradiction_ids
+    )
+    superseded_groups = detection_groups(
+        superseded_gap_ids, superseded_contradiction_ids
+    )
+    if generated.superseded_claim_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="self_claim",
+                ids=list(generated.superseded_claim_ids),
+            )
+        )
+    if generated.superseded_snapshot_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="assessment_snapshot",
+                ids=list(generated.superseded_snapshot_ids),
+            )
+        )
+    if generated.superseded_branch_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_branch",
+                ids=list(generated.superseded_branch_ids),
+            )
+        )
+    if generated.superseded_bullet_ids:
+        superseded_groups.append(
+            EntityIdGroup(
+                entity_type="resume_bullet",
+                ids=list(generated.superseded_bullet_ids),
+            )
+        )
+    invalidated_views = list(generated.invalidated_views)
+    if generated.short_circuited:
+        human = (
+            "Retained both current detection sets without a provider "
+            "call: the input, model selection, and prompt policy are "
+            "unchanged since the last completed detection run."
+        )
+    elif generated.retained:
+        human = "Retained both current detection sets unchanged."
+    else:
+        replaced = [
+            name
+            for name, kept in (
+                ("gap", generated.retained_gap_set),
+                ("contradiction", generated.retained_contradiction_set),
+            )
+            if not kept
+        ]
+        kept_names = [
+            name
+            for name in ("gap", "contradiction")
+            if name not in replaced
+        ]
+        invalidated = (
+            ", ".join(group.entity_type for group in superseded_groups)
+            or "none"
+        )
+        described = (
+            f"Replaced the complete {' and '.join(replaced)} "
+            f"set{'s' if len(replaced) > 1 else ''}"
+        )
+        if kept_names:
+            described += (
+                f"; retained the {kept_names[0]} set unchanged"
+            )
+        human = (
+            f"{described}. "
+            f"Current gaps ({len(gaps)}): "
+            f"{', '.join(gap.id for gap in gaps) or 'none'}. "
+            f"Current contradictions ({len(contradictions)}): "
+            f"{', '.join(item.id for item in contradictions) or 'none'}. "
+            f"Invalidated artifact classes: {invalidated}."
+        )
+    return Outcome(
+        affected_ids=AffectedIds(
+            created=detection_groups(
+                created_gap_ids, created_contradiction_ids
+            ),
+            superseded=superseded_groups,
+            deleted=[],
+        ),
+        generation_ids=sorted(
+            {
+                *(
+                    [generated.generation_id]
+                    if generated.generation_id is not None
+                    else []
+                ),
+                *generated.superseded_generation_ids,
+            },
+            key=lambda value: value.encode("utf-8"),
+        ),
+        run_ids=[generated.run_id],
+        warnings=list(generated.warnings),
+        invalidated_views=invalidated_views,
+        invalidated_branches=list(generated.invalidated_branches),
+        residual_paths=list(generated.residual_paths),
+        result=DetectionsGenerateResult(
+            gaps=gaps,
+            contradictions=contradictions,
+        ),
+        human_result=human,
+    )

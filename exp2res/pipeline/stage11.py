@@ -12,6 +12,11 @@ from typing import Any, Callable, Iterable, Pattern, Sequence, cast
 
 from pydantic import BaseModel, ValidationError
 
+from exp2res.domain.results import (
+    AffectedIds,
+    EntityIdGroup,
+    Outcome,
+)
 from exp2res.domain.enums import VerificationStatus
 from exp2res.domain.models import (
     EvidenceItem,
@@ -602,3 +607,77 @@ __all__ = [
     "require_current_anchor",
     "run_bullet_verification",
 ]
+
+
+def bullet_verification_human_result(verified: Stage11Result) -> str:
+    """Present the complete §14.10 findings, advisory rewrites included."""
+
+    blocked = [
+        bullet_id
+        for bullet_id, status in verified.bullet_statuses
+        if status not in BULLET_EXPORT_ALLOWLIST
+    ]
+    lines = [
+        f"Branch {verified.branch_id} — {verified.branch_name}: "
+        f"{len(verified.bullet_statuses) - len(blocked)} of "
+        f"{len(verified.bullet_statuses)} bullets supported."
+    ]
+    for finding in findings_in_bullet_order(verified):
+        lines.extend(
+            [
+                "",
+                f"Finding {finding.id}",
+                f"Target bullet: {finding.target_id}",
+                f"Status: {finding.status}",
+                f"Reason: {finding.reason}",
+                "Unsupported phrases:",
+            ]
+        )
+        lines.extend(f"- {phrase}" for phrase in finding.unsupported_phrases)
+        if not finding.unsupported_phrases:
+            lines.append("- none")
+        if finding.suggested_rewrite is not None:
+            # §13.11: advisory only — presented, never applied. Revised
+            # wording requires an explicit `bullets generate`.
+            lines.append(f"Suggested rewrite (advisory): {finding.suggested_rewrite}")
+    return "\n".join(lines)
+
+
+def bullets_verify_outcome(verified: Stage11Result) -> Outcome:
+    """One §14.14 rule 5 composition for completed and interrupted passes."""
+
+    findings = list(verified.findings)
+    return Outcome(
+        # §16.11: only a `supported` bullet may enter the pack, so one bullet
+        # outside that allowlist is the class-10 consumer gate for the branch.
+        exit_code=10 if verified.export_blocked else 0,
+        diagnostic_class="verifier_gate_blocked" if verified.export_blocked else None,
+        affected_ids=AffectedIds(
+            created=[
+                EntityIdGroup(
+                    entity_type="verification_finding",
+                    ids=[item.id for item in findings],
+                )
+            ],
+            # §13.11 supersedes nothing: the bullets it verifies stay current
+            # and only their denormalized verdict fields change.
+            superseded=[],
+            deleted=[],
+        ),
+        run_ids=[verified.run_id],
+        findings=findings,
+        residual_paths=list(verified.residual_paths),
+        result=None,
+        human_result=bullet_verification_human_result(verified),
+    )
+
+
+def findings_in_bullet_order(verified: Stage11Result) -> list[VerificationFinding]:
+    """Order the pass's findings by their target bullet's own ID bytes."""
+
+    by_target = {finding.target_id: finding for finding in verified.findings}
+    return [
+        by_target[bullet_id]
+        for bullet_id, _status in verified.bullet_statuses
+        if bullet_id in by_target
+    ]

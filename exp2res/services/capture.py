@@ -10,6 +10,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from exp2res.domain.results import (
+    AffectedIds,
+    EntityIdGroup,
+    Outcome,
+)
 from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.models import (
     EvidenceItem,
@@ -481,4 +486,27 @@ def capture_gap_answer_file(
         clock=clock,
         id_factory=id_factory,
         timeout_ms=timeout_ms,
+    )
+
+
+def capture_outcome(bundle) -> Outcome:
+    evidence_ids = [item.id for item in bundle.evidence_items]
+    reported_evidence_ids = sorted(
+        evidence_ids, key=lambda value: value.encode("utf-8")
+    )
+    return Outcome(
+        affected_ids=AffectedIds(
+            created=[
+                EntityIdGroup(
+                    entity_type="evidence_item", ids=reported_evidence_ids
+                ),
+                EntityIdGroup(entity_type="raw_log", ids=[bundle.raw_log.id]),
+            ],
+            superseded=[],
+            deleted=[],
+        ),
+        human_result=(
+            f"Created raw log {bundle.raw_log.id} with evidence "
+            f"{', '.join(evidence_ids)}."
+        ),
     )

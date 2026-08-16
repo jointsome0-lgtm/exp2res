@@ -10,6 +10,11 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
+from exp2res.domain.results import (
+    AffectedIds,
+    EntityIdGroup,
+    Outcome,
+)
 from exp2res import __version__
 from exp2res.errors import OperationCancelledError, WorkspaceBusyError
 from exp2res.exports.managed import remove_all_managed_output_entries
@@ -231,3 +236,31 @@ def _purge_locked(
         final = outcome()
         committed.append(final)
         return final
+
+
+def purge_affected(purged: PurgeOutcome) -> AffectedIds:
+    return AffectedIds(
+        created=[],
+        superseded=[],
+        deleted=[
+            EntityIdGroup(entity_type=entity_type, ids=list(ids))
+            for entity_type, ids in purged.deleted_ids
+        ],
+    )
+
+
+def purge_outcome(purged: PurgeOutcome) -> Outcome:
+    exit_code = 8 if purged.residual_paths else 0
+    return Outcome(
+        exit_code=exit_code,
+        diagnostic_class="deletion_incomplete" if exit_code else None,
+        affected_ids=purge_affected(purged),
+        generation_ids=list(purged.generation_ids),
+        residual_paths=list(purged.residual_paths),
+        result=None,
+        # One home for the incompleteness claim: `_run_command` appends it
+        # from the merged residual set, which this operation cannot see.
+        human_result=(
+            "Purged the workspace database; the initialized workspace remains."
+        ),
+    )
