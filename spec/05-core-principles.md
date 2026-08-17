@@ -125,7 +125,7 @@ plan ≠ experience
 aspiration ≠ evidence
 experience fact ≠ resume claim
 Atlas artifact reference ≠ Exp2Res skill claim
-Tick-like event ≠ self-assessment conclusion
+Ephemeris event ≠ self-assessment conclusion
 ```
 
 Every promotion must be explicit and traceable. In V1, review means verification at the externally consumable projections under §16.11's consumer gates. Intermediate facts do not carry an owner confirmation, dispute, or override state, and V1 has no owner-verdict workflow on regenerated claims or bullets.

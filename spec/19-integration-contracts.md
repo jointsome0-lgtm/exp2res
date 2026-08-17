@@ -13,7 +13,7 @@
 
 ## §19.1 Activity-Domain Evidence Contract
 
-This source contract declares the closed JSON object below as the complete record the `ephemeris` importer accepts. It is the source-agnostic activity-domain evidence intake Exp2Res accepts, not a Tick-like wire contract.
+This source contract declares the closed JSON object below as the complete record the `ephemeris` importer accepts. It is the source-agnostic activity-domain evidence intake Exp2Res accepts, not an Ephemeris wire contract.
 
 ```json
 {
@@ -47,13 +47,13 @@ This source contract declares the closed JSON object below as the complete recor
 
 Adapter and time-field ownership:
 
-- The selfos-side adapter owns mapping Tick-like's events-replay records (`{timestamp, type, payload_version, payload}`) and calendar series into this record, including source-type interpretation and the §5.4 distinction between source recording time and described occurrence time.
+- The selfos-side adapter owns mapping Ephemeris's events-replay records (`{timestamp, type, payload_version, payload}`) and calendar series into this record, including source-type interpretation and the §5.4 distinction between source recording time and described occurrence time.
 - The adapter maps the stable upstream identity to `record_id`.
 - A source timestamp that records only capture/replay time never populates `occurred`.
 - A timestamp whose upstream semantics place the described activity may contribute to `occurred`.
 - Exp2Res assigns `RawLog.recorded_at` when the import enters the workspace, independently of `occurred`.
 - A source-only recording timestamp remains adapter-side provenance rather than being relabeled as either Exp2Res time field.
-- No field or accepted value in this contract depends on Tick-like's upstream schema.
+- No field or accepted value in this contract depends on Ephemeris's upstream schema.
 
 Import behavior:
 

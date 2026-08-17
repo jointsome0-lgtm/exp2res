@@ -6,7 +6,7 @@ The `## §21.N` headings below are the stable eval identities: issues, the Decis
 
 Enforces §16.3.
 
-## §21.2 No Automatic Skill From Tick-like
+## §21.2 No Automatic Skill From Ephemeris
 
 ## §21.3 Atlas Snapshot Does Not Equal Mastery
 

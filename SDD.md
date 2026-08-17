@@ -25,7 +25,7 @@ Rule-ordinal stability: rule ordinals inside a §'s numbered lists (cited as `§
 - §3 Core Purpose — orientation, not impressiveness
 - §4 Goals and Non-Goals — product/cognitive goals, V1 verified-bullet-pack scope and closed companions, deferred full resume document model, and forbidden inflations
 - §5 Core Principles — truth over comfort; owner-controlled, automation-append-only raw records with owner deletion authority; recorded_at ≠ occurred_at; no precision/ownership inflation; contradictions first-class; no automatic semantic promotion
-- §6 System Boundaries — relations to Tick-like activity intake, Atlas knowledge-state snapshots, upstream-acquired GitHub commit records, and the verified bullet-pack export projection
+- §6 System Boundaries — relations to Ephemeris activity intake, Atlas knowledge-state snapshots, upstream-acquired GitHub commit records, and the verified bullet-pack export projection
 - §7 High-Level Architecture — pipeline diagram
 - §8 Runtime Architecture — Python, Typer, SQLite, Pydantic, CLI-first; §8.1 one-business-writer/many-reader workspace locking, WAL discipline, secure_delete; database compatibility and migration owned by §12.14
 - §9 Domain Model — ontology, raw-versus-derived lifecycle, claim kinds; §9.2 confidence layers, §9.3 evidence strength, §9.4 evidence-to-confidence calibration including the owner-locator trust position
