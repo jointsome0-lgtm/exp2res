@@ -149,32 +149,26 @@ These views add no LLM transmission field, so §29.3 does not widen. They expose
 
 9. **Bounded transport envelope.**
 
-   - The raw request envelope is bounded before parsing or decoding: the request line is at most 8192 octets including its terminating CRLF; the header section after it is at most 32768 octets including every field-line CRLF and the terminating empty line; and it contains at most 64 field lines.
-   - Counts are cumulative across fragmented socket reads, so splitting one line or section never resets a bound.
-   - The parser may read at most one octet beyond the applicable byte cap to establish overflow and never buffers more than that capped component plus the one deciding octet.
-   - The accepted request-line grammar is exactly method, one SP, an origin-form request target, one SP, and `HTTP/1.1`, followed by CRLF.
-   - Origin-form begins with `/` and carries only the path plus optional query consumed by rule 6. Absolute-form, authority-form, asterisk-form, another HTTP version, extra whitespace, or any other target form is `malformed_request` before authority or method refusal and is never normalized into a route.
-   - The header section must contain exactly one syntactically valid `Host` field, recognizing that field name ASCII-case-insensitively and counting every spelling toward the same cardinality: absence or repetition is `malformed_request`, while its one parsed authority reaches rule 1 and is `authority_not_bound` unless it is exactly the bound address and port.
-   - Exceeding any bound or failing any request-envelope rule is `malformed_request`, closes the connection after that response, and performs no compatibility or business-state read.
+   - The raw request envelope is bounded before parsing or decoding: the request line is at most 8192 octets including its terminating CRLF; the header section after it is at most 32768 octets including every field-line CRLF and the terminating empty line; and it contains at most 64 field lines. No fragmented read resets a bound.
+   - The parser reads at most one octet beyond the applicable byte cap to establish overflow and buffers no more than that capped component plus the one deciding octet.
+   - Exactly one request-line shape is accepted: a method, one SP, an origin-form target beginning with `/` — the path plus optional query rule 6 consumes — one SP, and `HTTP/1.1`. Absolute-form, authority-form, asterisk-form, another HTTP version, extra whitespace, or any other target form is `malformed_request` before authority or method refusal and is never normalized into a route.
+   - The header section must contain exactly one syntactically valid `Host` field, recognizing that field name ASCII-case-insensitively and counting every spelling toward the same cardinality: absence or repetition is `malformed_request`, while its one parsed authority is the value rule 1 checks.
    - These limits are fixed service constants with no flag, environment, or configuration representation.
 
    The header grammar is exact.
 
-   - The request line, every field line, and the terminating empty line end in CRLF. A bare LF, bare CR, or line beginning with SP or HTAB is invalid, so obsolete folding is never unfolded.
-   - A field line is one or more ASCII `tchar` bytes, immediately followed by `:` with no intervening whitespace, then zero or more field-value bytes, then CRLF.
-   - `tchar` is an ASCII letter, digit, or one of `! # $ % & ' * + - . ^ _` `` ` `` `| ~`.
-   - A field value may contain only SP, HTAB, or visible ASCII `0x21`–`0x7e`. Every other control byte, DEL, or byte `0x80`–`0xff` is invalid.
-   - Leading and trailing SP/HTAB remain HTTP optional whitespace for the specific rule 1/rule 2 comparisons that trim it; no other byte is normalized.
-   - An empty value is syntactically valid unless a consulted field's owning rule rejects it.
-   - Any violation is `malformed_request` during transport parsing before authority or method evaluation.
+   - A field name is one or more ASCII `tchar` bytes, with nothing between it and its `:`. `tchar` is an ASCII letter, digit, or one of `! # $ % & ' * + - . ^ _` `` ` `` `| ~`.
+   - A field value may contain only SP, HTAB, or visible ASCII `0x21`–`0x7e`. Every other control byte, DEL, or byte `0x80`–`0xff` is invalid. An empty value is syntactically valid unless a consulted field's owning rule rejects it.
+   - Nothing outside that grammar is tolerated or repaired: the request line, every field line, and the terminating empty line end only in CRLF, no line is unfolded, and no byte is normalized beyond the leading and trailing SP/HTAB that rule 1's and rule 2's own comparisons trim.
+   - Exceeding any bound or violating any rule above is `malformed_request` under rule 7's transport-first order.
 
 10. **Bounded connection admission.**
 
     - At most 32 accepted connections are admitted into transport parsing or request handling at once.
-    - A slot is acquired immediately after `accept` and before the first request byte is read, remains held through response emission or connection close, and is then released.
-    - The server handles at most one request on a connection and rule 6 makes every response declare `Connection: close`, so no keep-alive or pipelined request re-enters handling through an existing slot.
+    - A slot is acquired immediately after `accept`, before the first request byte is read, and is released when its connection ends.
+    - The server handles at most one request on a connection, so no keep-alive or pipelined request re-enters handling through an existing slot.
     - The listener requests a backlog of 32 and the service maintains no application-level pending-connection queue.
-    - When all 32 slots are occupied, a newly accepted socket is closed immediately without reading, buffering, parsing, or emitting an HTTP response, so it is not a complete request under rule 7 and reaches no state.
+    - When all 32 slots are occupied, a newly accepted socket is closed immediately without reading, buffering, parsing, or emitting an HTTP response.
     - No thread, task, parser buffer, or request worker is created before a slot exists.
     - These are fixed service constants with no flag, environment, or configuration representation.
 
