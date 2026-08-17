@@ -484,6 +484,7 @@ def import_payload(
                 rejected=tuple(classified["rejected"]),
             )
 
+        replay = iter(records)
         try:
             with writer_database(workspace, timeout_ms=timeout_ms) as connection:
                 try:
@@ -493,7 +494,7 @@ def import_payload(
                     retained = retained_import_hashes(
                         connection, contract.source_system
                     )
-                    for parsed in records:
+                    for parsed in replay:
                         _classify(
                             connection,
                             parsed,

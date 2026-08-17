@@ -599,13 +599,15 @@ class PayloadFile:
     reading it whole is what exhausts memory. Each pass rewinds the one
     descriptor §29.4 rules 4–14 authorized and proved, so no pass can read a
     different filesystem object than the one that gate admitted.
+
+    Newline translation is off because JSONL delimits records by LF alone:
+    universal newlines would also break on CR, splitting one record whose
+    source voice legitimately carries it into two halves neither of which
+    parses. That is the same boundary the `splitlines()` note in
+    `PayloadRecords` guards, moved here with the decoding.
     """
 
     def __init__(self, stream: BinaryIO) -> None:
-        # JSONL delimits records by LF alone, so newline translation is off:
-        # universal newlines would also break on CR, splitting one record
-        # whose source voice legitimately carries it into two halves neither
-        # of which parses.
         self._text = io.TextIOWrapper(stream, encoding="utf-8", newline="\n")
 
     def _rewind(self) -> None:
@@ -640,6 +642,20 @@ class PayloadFile:
             raise _not_utf8() from error
         except OSError as error:
             raise InvalidInputError() from error
+
+    def identity(self) -> tuple[int, int, int]:
+        """What a later pass over this descriptor must still find.
+
+        The inode is fixed by the open, so only content can change: size and
+        modification time catch a rewrite, and the metadata time catches one
+        whose modification time was restored behind it.
+        """
+
+        try:
+            status = os.fstat(self._text.fileno())
+        except OSError as error:
+            raise InvalidInputError() from error
+        return (status.st_size, status.st_mtime_ns, status.st_ctime_ns)
 
     def release(self) -> None:
         """Drop the decoder without closing the descriptor its owner holds."""

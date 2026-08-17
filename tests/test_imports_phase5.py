@@ -13,6 +13,7 @@ import pytest
 from exp2res.config import load_workspace_config
 from exp2res.errors import (
     ForbiddenPathError,
+    ImportPayloadChangedError,
     ImportPayloadInvalidError,
     ImportPayloadTooLargeError,
     IntegrityFailureError,
@@ -525,6 +526,9 @@ def test_a_multi_record_payload_is_read_one_record_at_a_time() -> None:
         def text(self) -> str:
             raise AssertionError("a multi-record payload is never read whole")
 
+        def identity(self) -> tuple[int, int, int]:
+            return (1, 2, 3)
+
     records = PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
     assert records.total == 4
 
@@ -556,6 +560,60 @@ def test_a_payload_is_decoded_as_it_is_read(workspace: Path, tmp_path: Path) -> 
             for _ in lines:
                 pass
     assert failure.value.diagnostic_class == "input_not_utf8"
+
+
+def test_a_payload_rewritten_between_passes_is_refused(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 4 partitions one payload, so every pass must see the same one.
+
+    The open descriptor fixes the inode, not the bytes, so a rewrite in place
+    would otherwise let one pass establish boundaries a later pass no longer
+    finds.
+    """
+
+    path = tmp_path / "rewritten.jsonl"
+    original = [ephemeris_record(f"vera-ephemeris-{index:04d}") for index in range(3)]
+    write_payload(tmp_path, "rewritten.jsonl", original)
+    with open_payload_file(str(path), config=load_workspace_config(workspace)) as (
+        payload,
+        _,
+    ):
+        records = PayloadRecords(payload, contract=CONTRACTS["ephemeris"])
+        assert records.total == 3
+        write_payload(tmp_path, "rewritten.jsonl", original[:1])
+        with pytest.raises(ImportPayloadChangedError) as failure:
+            iter(records)
+
+    assert failure.value.diagnostic_class == "import_payload_changed"
+    assert failure.value.exit_code == 2
+    assert raw_rows(workspace) == []
+
+
+def test_a_payload_rewritten_during_the_import_is_reported(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 4 keeps committed records reportable behind that refusal.
+
+    A rewrite that lands after the replay begins is past preventing, so the
+    exhausted replay reconfirms rather than passing a torn payload off as a
+    partition.
+    """
+
+    path = tmp_path / "rewritten.jsonl"
+    original = [ephemeris_record(f"vera-ephemeris-{index:04d}") for index in range(3)]
+    write_payload(tmp_path, "rewritten.jsonl", original)
+    with open_payload_file(str(path), config=load_workspace_config(workspace)) as (
+        payload,
+        _,
+    ):
+        records = PayloadRecords(payload, contract=CONTRACTS["ephemeris"])
+        replay = iter(records)
+        assert next(replay).record_number == 1
+        write_payload(tmp_path, "rewritten.jsonl", original + original)
+        with pytest.raises(ImportPayloadChangedError):
+            for _ in replay:
+                pass
 
 
 def test_a_payload_that_is_not_utf8_commits_nothing(

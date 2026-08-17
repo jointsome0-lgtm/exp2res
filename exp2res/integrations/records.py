@@ -11,7 +11,11 @@ from exp2res.config import WorkspaceConfig
 from exp2res.domain.canonical import canonical_model_hash
 from exp2res.domain.enums import EntryType, EvidenceStrength, SourceType
 from exp2res.domain.models import OccurredAt, StrictModel, validate_structural
-from exp2res.errors import ImportPayloadInvalidError, ImportPayloadTooLargeError
+from exp2res.errors import (
+    ImportPayloadChangedError,
+    ImportPayloadInvalidError,
+    ImportPayloadTooLargeError,
+)
 
 # §11 rule 38's payload bounds. §19.4 rule 4 makes the total-object limit the
 # whole payload-size bound and adds no second numeric cap, so nothing here
@@ -218,6 +222,8 @@ class PayloadSource(Protocol):
 
     def text(self) -> str: ...
 
+    def identity(self) -> tuple[int, int, int]: ...
+
 
 class PayloadRecords:
     """Every §19.4 rule 5 input record boundary in one payload, in file order.
@@ -234,6 +240,13 @@ class PayloadRecords:
     the object cap the whole payload bound, and a conforming JSONL file can
     spend it on records whose text fields alone exhaust memory. One record is
     bounded by §11's own field limits, so a single-record payload is held.
+
+    Rule 4 partitions one payload, so every pass must see the same one. An
+    open descriptor fixes the inode but not the bytes, and a payload rewritten
+    between the passes would otherwise be reported as a complete result over a
+    boundary set no pass ever saw whole. Each replay therefore reconfirms the
+    payload before it yields and again once it is exhausted, which brackets
+    the import in checks rather than leaving the rewrite silent.
     """
 
     def __init__(self, payload: PayloadSource, *, contract: SourceContract) -> None:
@@ -245,11 +258,35 @@ class PayloadRecords:
         else:
             self._held = tuple(self._parse())
             self.total = len(self._held)
+        self._identity = payload.identity()
 
     def __iter__(self) -> Iterator[ParsedRecord]:
+        """Replay the boundaries, reconfirming the payload before yielding.
+
+        The check is eager rather than deferred into the generator so that a
+        caller taking this iterator before the §8.1 writer lock refuses an
+        already-rewritten payload with nothing committed.
+        """
+
+        self._reconfirm()
         if self._held is not None:
             return iter(self._held)
-        return self._parse()
+        return self._replay()
+
+    def _reconfirm(self) -> None:
+        if self._payload.identity() != self._identity:
+            raise ImportPayloadChangedError()
+
+    def _replay(self) -> Iterator[ParsedRecord]:
+        """Yield each boundary, then reconfirm the exhausted payload.
+
+        A rewrite that landed during the import is past preventing, but §19.4
+        rule 4 keeps the records already committed reportable, so the torn
+        payload is reported rather than passed off as a partition.
+        """
+
+        yield from self._parse()
+        self._reconfirm()
 
     def _parse(self) -> Iterator[ParsedRecord]:
         counter = [0]
