@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
+import hashlib
 import io
 import os
 from pathlib import Path, PurePosixPath
@@ -609,6 +610,7 @@ class PayloadFile:
 
     def __init__(self, stream: BinaryIO) -> None:
         self._text = io.TextIOWrapper(stream, encoding="utf-8", newline="\n")
+        self._digest: str | None = None
 
     def _rewind(self) -> None:
         try:
@@ -623,18 +625,34 @@ class PayloadFile:
         pass that reaches the offending bytes rather than before the first
         line is seen. Every caller drains one whole pass before any record
         commits, which keeps that refusal a payload-level one.
+
+        A pass that runs to exhaustion leaves `digest` describing what it
+        read; one abandoned part-way leaves it empty rather than describing a
+        prefix.
         """
 
+        self._digest = None
         self._rewind()
+        running = hashlib.sha256()
         try:
             for line in self._text:
+                running.update(line.encode("utf-8"))
                 yield line.rstrip("\n")
         except UnicodeDecodeError as error:
             raise _not_utf8() from error
         except OSError as error:
             raise InvalidInputError() from error
+        self._digest = running.hexdigest()
 
     def text(self) -> str:
+        """Read the whole payload, for the contracts that are one document.
+
+        No digest is taken: that reader serves a payload held rather than
+        replayed, and encoding a second copy of it to hash would give back
+        the residency this class exists to avoid.
+        """
+
+        self._digest = None
         self._rewind()
         try:
             return self._text.read()
@@ -643,19 +661,26 @@ class PayloadFile:
         except OSError as error:
             raise InvalidInputError() from error
 
-    def identity(self) -> tuple[int, int, int]:
-        """What a later pass over this descriptor must still find.
+    def identity(self) -> tuple[int, int]:
+        """What a later pass over this descriptor should still find.
 
-        The inode is fixed by the open, so only content can change: size and
-        modification time catch a rewrite, and the metadata time catches one
-        whose modification time was restored behind it.
+        A cheap staleness pair, not a proof: it is what the refusals that
+        happen before anything commits rest on, where a false alarm costs a
+        rerun and nothing more. Metadata times are deliberately absent —
+        changing a payload's mode or owner does not change the payload — so
+        an exact answer comes from `digest` instead.
         """
 
         try:
             status = os.fstat(self._text.fileno())
         except OSError as error:
             raise InvalidInputError() from error
-        return (status.st_size, status.st_mtime_ns, status.st_ctime_ns)
+        return (status.st_size, status.st_mtime_ns)
+
+    def digest(self) -> str | None:
+        """The SHA-256 of the last exhausted `lines` pass, or None."""
+
+        return self._digest
 
     def release(self) -> None:
         """Drop the decoder without closing the descriptor its owner holds."""

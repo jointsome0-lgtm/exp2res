@@ -222,7 +222,9 @@ class PayloadSource(Protocol):
 
     def text(self) -> str: ...
 
-    def identity(self) -> tuple[int, int, int]: ...
+    def identity(self) -> tuple[int, int]: ...
+
+    def digest(self) -> str | None: ...
 
 
 class PayloadRecords:
@@ -244,10 +246,14 @@ class PayloadRecords:
     Rule 4 partitions one payload, so every pass must see the same one. An
     open descriptor fixes the inode but not the bytes, and a payload rewritten
     under it would otherwise be reported as a complete result over a boundary
-    set no pass ever saw whole. Every pass is therefore bracketed: the
-    baseline is taken before the boundaries are established and rechecked once
-    they are, so a rewrite that lands mid-scan cannot become the baseline, and
-    each replay rechecks before it yields and again once it is exhausted.
+    set no pass ever saw whole. Two checks answer that, at the two points
+    where each is the right one. Size and modification time answer the
+    question cheaply wherever the answer can still prevent a commit — before
+    the boundaries are established, and again as a replay starts consuming —
+    so a false alarm there costs a rerun and nothing else. The content digest
+    of each exhausted pass answers it exactly once the replay is done, where
+    records have committed and a metadata change must not be mistaken for a
+    rewrite.
     """
 
     def __init__(self, payload: PayloadSource, *, contract: SourceContract) -> None:
@@ -261,6 +267,7 @@ class PayloadRecords:
             self._held = tuple(self._parse())
             self.total = len(self._held)
         self._reconfirm()
+        self._digest = payload.digest()
 
     def __iter__(self) -> Iterator[ParsedRecord]:
         """Replay the boundaries, reconfirming the payload before yielding.
@@ -279,20 +286,25 @@ class PayloadRecords:
         if self._payload.identity() != self._identity:
             raise ImportPayloadChangedError()
 
+    def _reconfirm_content(self) -> None:
+        if self._payload.digest() != self._digest:
+            raise ImportPayloadChangedError()
+
     def _replay(self) -> Iterator[ParsedRecord]:
-        """Reconfirm, yield each boundary, then reconfirm the exhausted payload.
+        """Check, yield each boundary, then compare what this pass actually read.
 
         The leading check is not the eager one repeated: `__iter__` runs before
         the §8.1 writer lock, and the wait for that lock is time enough for a
         rewrite to land, so consumption starts by asking again. A rewrite past
         that point is past preventing, but §19.4 rule 4 keeps the records
         already committed reportable, so the torn payload is reported rather
-        than passed off as a partition.
+        than passed off as a partition — and reported on the digests of the
+        two passes, which no change to the file's mode or owner disturbs.
         """
 
         self._reconfirm()
         yield from self._parse()
-        self._reconfirm()
+        self._reconfirm_content()
 
     def _parse(self) -> Iterator[ParsedRecord]:
         counter = [0]

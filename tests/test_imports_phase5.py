@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -528,8 +529,11 @@ def test_a_multi_record_payload_is_read_one_record_at_a_time() -> None:
         def text(self) -> str:
             raise AssertionError("a multi-record payload is never read whole")
 
-        def identity(self) -> tuple[int, int, int]:
-            return (1, 2, 3)
+        def identity(self) -> tuple[int, int]:
+            return (1, 2)
+
+        def digest(self) -> str:
+            return "vera-example-digest"
 
     records = PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
     assert records.total == 4
@@ -600,20 +604,23 @@ def test_a_payload_rewritten_during_the_first_pass_is_refused() -> None:
     `total` describing bytes no pass ever saw whole.
     """
 
-    state = {"identity": (1, 2, 3)}
+    state = {"identity": (1, 2)}
 
     class Source:
         def lines(self) -> Any:
             for index in range(3):
                 if index == 1:
-                    state["identity"] = (9, 9, 9)
+                    state["identity"] = (9, 9)
                 yield json.dumps(ephemeris_record(f"vera-ephemeris-{index:04d}"))
 
         def text(self) -> str:
             raise AssertionError("a multi-record payload is never read whole")
 
-        def identity(self) -> tuple[int, int, int]:
+        def identity(self) -> tuple[int, int]:
             return state["identity"]
+
+        def digest(self) -> str:
+            return "vera-example-digest"
 
     with pytest.raises(ImportPayloadChangedError):
         PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
@@ -627,7 +634,7 @@ def test_a_payload_rewritten_while_the_writer_lock_is_awaited_is_refused() -> No
     replay noticed.
     """
 
-    state = {"identity": (1, 2, 3)}
+    state = {"identity": (1, 2)}
 
     class Source:
         def lines(self) -> Any:
@@ -637,14 +644,77 @@ def test_a_payload_rewritten_while_the_writer_lock_is_awaited_is_refused() -> No
         def text(self) -> str:
             raise AssertionError("a multi-record payload is never read whole")
 
-        def identity(self) -> tuple[int, int, int]:
+        def identity(self) -> tuple[int, int]:
             return state["identity"]
+
+        def digest(self) -> str:
+            return "vera-example-digest"
 
     records = PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
     replay = iter(records)
-    state["identity"] = (9, 9, 9)
+    state["identity"] = (9, 9)
     with pytest.raises(ImportPayloadChangedError):
         next(replay)
+
+
+def test_a_metadata_only_change_is_not_a_payload_change(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """Changing a payload's mode or owner does not change the payload.
+
+    The refusal rests on size and modification time, neither of which a mode
+    change touches, and on the digest of what each pass read, which it
+    touches even less.
+    """
+
+    path = tmp_path / "chmod.jsonl"
+    write_payload(
+        tmp_path,
+        "chmod.jsonl",
+        [ephemeris_record(f"vera-ephemeris-{index:04d}") for index in range(2)],
+    )
+    with open_payload_file(str(path), config=load_workspace_config(workspace)) as (
+        payload,
+        _,
+    ):
+        records = PayloadRecords(payload, contract=CONTRACTS["ephemeris"])
+        os.chmod(path, 0o600)
+        assert [record.record_number for record in records] == [1, 2]
+
+
+def test_a_rewrite_leaving_no_metadata_trace_is_caught_by_content(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """The digest is what makes the answer exact rather than merely cheap.
+
+    Same length, modification time restored: nothing in the stat differs, so
+    only comparing what the two passes actually read finds the substitution.
+    """
+
+    path = tmp_path / "substituted.jsonl"
+    write_payload(
+        tmp_path,
+        "substituted.jsonl",
+        [ephemeris_record(f"vera-ephemeris-{index:04d}") for index in range(2)],
+    )
+    with open_payload_file(str(path), config=load_workspace_config(workspace)) as (
+        payload,
+        _,
+    ):
+        records = PayloadRecords(payload, contract=CONTRACTS["ephemeris"])
+        before = os.stat(path)
+        write_payload(
+            tmp_path,
+            "substituted.jsonl",
+            [ephemeris_record(f"vera-ephemeris-{index:04d}") for index in range(8, 10)],
+        )
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        assert payload.identity() == (before.st_size, before.st_mtime_ns)
+
+        replay = iter(records)
+        with pytest.raises(ImportPayloadChangedError):
+            for _ in replay:
+                pass
 
 
 def test_a_torn_payload_still_reports_its_complete_result(
@@ -652,17 +722,28 @@ def test_a_torn_payload_still_reports_its_complete_result(
 ) -> None:
     """§14.14 rule 5: every classified boundary carries the full typed result.
 
-    The rewrite lands after the only record has committed and leaves the file
-    the same length, so every boundary is classified and the refusal reports a
-    partition complete on its own terms rather than the null a record left
-    unreached would earn.
+    The substitution keeps every line's length, so the replay reads a mixture
+    of both versions, classifies every boundary it was told to expect, and
+    refuses on the digests. The result it carries is complete on its own
+    terms rather than the null a record left unreached would earn.
     """
 
+    def payload_records(project: str) -> list[dict]:
+        return [
+            ephemeris_record(f"vera-ephemeris-{index:04d}", project=project)
+            for index in range(200)
+        ]
+
     path = tmp_path / "torn.jsonl"
-    write_payload(tmp_path, "torn.jsonl", [ephemeris_record("vera-ephemeris-0001")])
+    write_payload(tmp_path, "torn.jsonl", payload_records("Vera Example Playbook"))
+    rewritten = [False]
 
     def rewriting_factory(kind: str) -> str:
-        write_payload(tmp_path, "torn.jsonl", [ephemeris_record("vera-ephemeris-0002")])
+        if not rewritten[0]:
+            rewritten[0] = True
+            write_payload(
+                tmp_path, "torn.jsonl", payload_records("Vera Example Notebook")
+            )
         return new_id(kind)
 
     with pytest.raises(ImportPayloadChangedError) as failure:
@@ -674,9 +755,9 @@ def test_a_torn_payload_still_reports_its_complete_result(
             id_factory=rewriting_factory,
         )
 
-    assert counts(failure.value.import_outcome) == (1, 0, 0)
+    assert counts(failure.value.import_outcome) == (200, 0, 0)
     assert failure.value.import_classified is True
-    assert len(raw_rows(workspace)) == 1
+    assert len(raw_rows(workspace)) == 200
 
 
 def test_a_payload_rewritten_during_the_import_is_reported(
