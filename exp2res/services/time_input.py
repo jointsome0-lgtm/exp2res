@@ -77,8 +77,16 @@ def today_occurred(*, now: datetime, timezone_name: str) -> OccurredAt:
     if now.tzinfo is None or now.utcoffset() is None:
         raise _time_error("invalid_time", "The service clock must carry an offset.")
     zone = workspace_zone(timezone_name)
-    return OccurredAt(
-        start=day_start(now.astimezone(zone).date(), zone),
+    try:
+        local_today = now.astimezone(zone).date()
+    except OverflowError as error:
+        raise _time_error("invalid_time", "The time value is invalid.") from error
+    # §11 rule 54 refuses a day at the end of the calendar, and this
+    # construction is as much a §14.14 input path as an owner-typed one — the
+    # derived day is still a value, not a workspace defect — so it leaves
+    # through the same translation rather than as exit class 1.
+    return _build_occurred(
+        start=day_start(local_today, zone),
         end=None,
         precision="exact_day",
         confidence="high",

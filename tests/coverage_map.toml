@@ -460,10 +460,11 @@ nodes = [
   "tests/test_mixed_script_gate.py::test_stored_mixed_script_content_hydrates_without_tripwire",
   "tests/test_capture_phase0.py::test_a_calendar_edge_placement_is_refused_at_the_boundary",
   "tests/test_capture_phase0.py::test_a_calendar_edge_local_time_is_owner_input_not_an_internal_error",
+  "tests/test_capture_phase0.py::test_a_derived_daily_placement_at_the_edge_stays_in_exit_class_two",
   "tests/test_facts_storage.py::test_a_stored_instant_with_no_utc_form_is_an_integrity_failure",
 ]
 phase = "5"
-note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit-offset preservation, Windows-path rejection, and the §16.13 input-relative mixed-script tripwire — content-free retry diagnostics, input-carried token acceptance, and ungated stored-content hydration — are covered; §11 rule 54's UTC-instant basis is now proven on both calendar ends across the transport boundary, owner input, and stored-row decoding, including the west-shifted start only the UTC basis catches; canonical hashing, generated-language scope, Unicode identities, and integration locators remain"
+note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit-offset preservation, Windows-path rejection, and the §16.13 input-relative mixed-script tripwire — content-free retry diagnostics, input-carried token acceptance, and ungated stored-content hydration — are covered; §11 rule 54's UTC-instant basis is now proven on both calendar ends across the transport boundary, owner input, the clock-derived daily placement, and stored-row decoding, including the west-shifted start only the UTC basis catches; canonical hashing, generated-language scope, Unicode identities, and integration locators remain"
 
 ["21.43"]
 status = "partial"

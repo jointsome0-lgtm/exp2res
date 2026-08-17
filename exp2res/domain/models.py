@@ -144,19 +144,23 @@ def validate_metadata(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
-_NUMERIC_STRING = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+_ISO_8601_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt_ ]")
 
 
 def _iso_8601_only(value: str) -> str:
     """§11 rules 3 and 6: the one granted bridge is an ISO 8601 string.
 
-    Pydantic's JSON-mode parser reads a bare numeric string as a Unix
-    timestamp too, which is a second string-to-`datetime` bridge rule 6
-    forbids. It is closed here rather than downstream because by then the
-    value is an instant indistinguishable from a spelled-out one.
+    Pydantic's JSON-mode parser reads a numeric string as a Unix timestamp
+    too — `"1780272000"`, but equally `".5"`, `"1."`, and `"20260601"` — which
+    is a second string-to-`datetime` bridge rule 6 forbids. The test is the
+    ISO date-and-separator prefix rather than any enumeration of numeric
+    spellings, so the grant stays an allowlist and no future spelling opens a
+    third bridge; the parse itself still belongs to the schema below. It is
+    closed here rather than downstream because by then the value is an
+    instant indistinguishable from a spelled-out one.
     """
 
-    if _NUMERIC_STRING.match(value):
+    if not _ISO_8601_DATETIME.match(value):
         raise ValueError("datetime must be an ISO 8601 string")
     return value
 
