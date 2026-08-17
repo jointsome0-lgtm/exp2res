@@ -9,8 +9,12 @@ import sys
 
 import pytest
 
-from exp2res.llm.assessment_verifier import ASSESSMENT_VERIFIER_INSTRUCTIONS
+from exp2res.llm.assessment_verifier import (
+    ASSESSMENT_VERIFIER_CONTRACT,
+    ASSESSMENT_VERIFIER_INSTRUCTIONS,
+)
 from exp2res.llm.assessment_writer import ASSESSMENT_WRITER_INSTRUCTIONS
+from exp2res.llm.contracts import strict_output_schema
 from exp2res.llm.detector import DETECTOR_INSTRUCTIONS
 from exp2res.llm.fact_extractor import FACT_EXTRACTOR_INSTRUCTIONS
 from exp2res.llm.jd_parser import JD_PARSER_INSTRUCTIONS
@@ -151,6 +155,12 @@ TWO_HALF_PINS = (
         "never soften, inflate, or reinterpret",
     ),
     (
+        "assessment-verifier",
+        "§16.7 rule 16",
+        "where additional linked evidence itself states the bound",
+        "claim what that record does not carry",
+    ),
+    (
         "fact-extractor",
         "§16.4",
         "at or below the strongest level the evidence that fact selects",
@@ -162,6 +172,20 @@ TWO_HALF_PINS = (
         "only as a record among that same fact's selected evidence states it",
         "never render an independent project, a competition, or learning",
     ),
+)
+
+
+# §10's ownership order, §16.7 rule 3's comparison instant, and rules 5-6's
+# widths and interval construction: bases the verifier's own assertions run
+# on, reachable through no other part of the call (#261).
+COMPARISON_BASIS_PINS = (
+    ("§10 via §16.4", "unknown < observed < studied < participated < experimented"),
+    ("§10 via §16.4", "contributed < implemented < built < designed < owned < led"),
+    ("§16.4", "a claim's general confidence does not change the supported"),
+    ("§16.7 rule 2", "makes no precision claim and has nothing to compare"),
+    ("§16.7 rule 3", "Compare always by the UTC instant"),
+    ("§16.7 rule 5", "year 366 days, quarter 92 days, month 31 days, week 7 days"),
+    ("§16.7 rule 6", "half-open interval from its start across that width"),
 )
 
 
@@ -201,6 +225,35 @@ def test_the_verifier_licenses_the_form_it_judges_candidates_against() -> None:
     # PR #226 review: the licence covers the grammatical form only, so it
     # cannot be read as an exemption for what the same prose asserts.
     assert "This exempts the form only" in licensed
+
+
+@pytest.mark.parametrize(("rule", "fragment"), COMPARISON_BASIS_PINS)
+def test_the_verifier_carries_the_bases_its_comparisons_run_on(
+    rule: str, fragment: str
+) -> None:
+    """§16.4 and §16.7 name comparison bases the verifier cannot derive (#261).
+
+    The block asserts a ceiling over §10's ownership order and containment
+    over §16.7's intervals, and it is the whole enforcement surface — no
+    deterministic checker analyses claim prose. Wording pins, not the rules
+    themselves: a rewrite carrying the same bases adjusts the fragments.
+    """
+
+    assert fragment in ASSESSMENT_VERIFIER_INSTRUCTIONS, (rule, fragment)
+
+
+def test_no_other_channel_carries_the_ownership_order_to_the_verifier() -> None:
+    """Why §10's order is spelled out here rather than cited (#261).
+
+    A runner call carries the fixed instruction, the serialized input, and
+    the output schema. `AssessmentVerifierOutput` declares no ownership
+    field, so the members reach the model only if this block names them; the
+    input carries one level per fact and never the ladder.
+    """
+
+    schema = json.dumps(strict_output_schema(ASSESSMENT_VERIFIER_CONTRACT))
+    for member in ("observed", "participated", "contributed", "built", "designed"):
+        assert member not in schema, member
 
 
 @pytest.mark.parametrize(
