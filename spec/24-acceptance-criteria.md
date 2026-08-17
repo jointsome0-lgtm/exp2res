@@ -15,7 +15,7 @@ V1 is acceptable when:
 11. Markdown self-assessment export works: Stage 12 publishes `report.md` in the selected snapshot's managed assessment set (§13.12).
 12. Verified bullet-pack export produces `bullet_pack.md` and its complete closed companion set (§13.12).
 13. Evidence maps are generated for assessment and resume outputs (§13.12).
-14. Tests cover no automatic semantic promotion across Tick-like, Atlas, and Exp2Res (§5.10).
+14. Tests cover no automatic semantic promotion across Ephemeris, Atlas, and Exp2Res (§5.10).
 15. Re-extraction never leaves more than one current fact generation for a correction lineage (§13.3 rule 11).
 16. A correction automatically recomputes its lineage and the complete current gaps and contradictions (§13.13).
 17. Raw-log owner deletion purges all current and historical derived rows (§13.13).
