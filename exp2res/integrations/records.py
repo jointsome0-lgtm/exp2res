@@ -280,13 +280,17 @@ class PayloadRecords:
             raise ImportPayloadChangedError()
 
     def _replay(self) -> Iterator[ParsedRecord]:
-        """Yield each boundary, then reconfirm the exhausted payload.
+        """Reconfirm, yield each boundary, then reconfirm the exhausted payload.
 
-        A rewrite that landed during the import is past preventing, but §19.4
-        rule 4 keeps the records already committed reportable, so the torn
-        payload is reported rather than passed off as a partition.
+        The leading check is not the eager one repeated: `__iter__` runs before
+        the §8.1 writer lock, and the wait for that lock is time enough for a
+        rewrite to land, so consumption starts by asking again. A rewrite past
+        that point is past preventing, but §19.4 rule 4 keeps the records
+        already committed reportable, so the torn payload is reported rather
+        than passed off as a partition.
         """
 
+        self._reconfirm()
         yield from self._parse()
         self._reconfirm()
 

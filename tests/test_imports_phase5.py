@@ -619,6 +619,34 @@ def test_a_payload_rewritten_during_the_first_pass_is_refused() -> None:
         PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
 
 
+def test_a_payload_rewritten_while_the_writer_lock_is_awaited_is_refused() -> None:
+    """The wait for the §8.1 writer lock sits between the two checks.
+
+    `__iter__` runs before the lock, so a rewrite landing during the wait
+    would otherwise be read, classified, and committed before the exhausted
+    replay noticed.
+    """
+
+    state = {"identity": (1, 2, 3)}
+
+    class Source:
+        def lines(self) -> Any:
+            for index in range(3):
+                yield json.dumps(ephemeris_record(f"vera-ephemeris-{index:04d}"))
+
+        def text(self) -> str:
+            raise AssertionError("a multi-record payload is never read whole")
+
+        def identity(self) -> tuple[int, int, int]:
+            return state["identity"]
+
+    records = PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
+    replay = iter(records)
+    state["identity"] = (9, 9, 9)
+    with pytest.raises(ImportPayloadChangedError):
+        next(replay)
+
+
 def test_a_torn_payload_still_reports_its_complete_result(
     workspace: Path, tmp_path: Path
 ) -> None:
