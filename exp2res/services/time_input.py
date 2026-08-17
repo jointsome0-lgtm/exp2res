@@ -35,7 +35,18 @@ def resolve_local(value: datetime, zone: ZoneInfo) -> datetime:
     candidates: list[datetime] = []
     for fold in (0, 1):
         candidate = value.replace(tzinfo=zone, fold=fold)
-        round_trip = candidate.astimezone(timezone.utc).astimezone(zone)
+        try:
+            round_trip = candidate.astimezone(timezone.utc).astimezone(zone)
+        except OverflowError as error:
+            # A local time within a day of either end of the calendar has no
+            # UTC instant in a zone offset the wrong way, so §11 rule 54 would
+            # refuse it downstream anyway. It is owner-typed input, so it
+            # leaves as §14.14 exit-class 2 rather than an escaping
+            # `OverflowError` — which, not being a `ValueError`, would
+            # otherwise reach the owner as exit 1.
+            raise _time_error(
+                "invalid_time", "The time value is invalid."
+            ) from error
         if (
             round_trip.replace(tzinfo=None) == value
             and candidate.utcoffset() == round_trip.utcoffset()

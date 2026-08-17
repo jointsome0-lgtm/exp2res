@@ -413,9 +413,10 @@ nodes = [
   "tests/test_llm_runner.py::test_datetime_outputs_validate_through_the_json_boundary",
   "tests/test_llm_runner.py::test_invalid_output_retries_once_then_fails_without_business_effect[extra-key]",
   "tests/test_llm_runner.py::test_invalid_output_retries_once_then_fails_without_business_effect[service-owned-injection]",
+  "tests/test_capture_phase0.py::test_a_json_datetime_admits_only_an_iso_8601_spelling",
 ]
 phase = "5"
-note = "Strict temporal construction, bounded acquisition on both owner-supplied file surfaces — capture and the §14.5 `import file` document — closed runner outputs, JSON datetime parsing, and service-owned-field rejection are covered; every later §15 and §19 shape plus stored hydration remain"
+note = "Strict temporal construction, bounded acquisition on both owner-supplied file surfaces — capture and the §14.5 `import file` document — closed runner outputs, JSON datetime parsing, and service-owned-field rejection are covered; the ISO 8601 string is now proven to be the only accepted string-to-datetime conversion, closing the Unix-timestamp reading against the case's no-other-conversion clause; every later §15 and §19 shape plus stored hydration remain"
 
 ["21.40"]
 status = "pending"
@@ -457,9 +458,12 @@ nodes = [
   "tests/test_mixed_script_gate.py::test_invented_token_takes_the_validation_retry_and_recovers",
   "tests/test_mixed_script_gate.py::test_input_carried_token_is_accepted_without_retry",
   "tests/test_mixed_script_gate.py::test_stored_mixed_script_content_hydrates_without_tripwire",
+  "tests/test_capture_phase0.py::test_a_calendar_edge_placement_is_refused_at_the_boundary",
+  "tests/test_capture_phase0.py::test_a_calendar_edge_local_time_is_owner_input_not_an_internal_error",
+  "tests/test_facts_storage.py::test_a_stored_instant_with_no_utc_form_is_an_integrity_failure",
 ]
 phase = "5"
-note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit-offset preservation, Windows-path rejection, and the §16.13 input-relative mixed-script tripwire — content-free retry diagnostics, input-carried token acceptance, and ungated stored-content hydration — are covered; canonical hashing, generated-language scope, Unicode identities, and integration locators remain"
+note = "Workspace-owned timezone resolution, DST gap/fold refusal, explicit-offset preservation, Windows-path rejection, and the §16.13 input-relative mixed-script tripwire — content-free retry diagnostics, input-carried token acceptance, and ungated stored-content hydration — are covered; §11 rule 54's UTC-instant basis is now proven on both calendar ends across the transport boundary, owner input, and stored-row decoding, including the west-shifted start only the UTC basis catches; canonical hashing, generated-language scope, Unicode identities, and integration locators remain"
 
 ["21.43"]
 status = "partial"

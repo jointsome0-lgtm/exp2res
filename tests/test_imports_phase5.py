@@ -962,8 +962,9 @@ def test_atlas_bound_whose_uncertainty_interval_overflows_is_rejected(
     """§19.4 rule 4: a record's own defect never aborts the whole import.
 
     A bound this close to `datetime.max` overflows when §16.7's precision
-    width is added, and `OverflowError` is not a `ValueError` Pydantic would
-    turn into a rejection.
+    width is added, so §11 rule 54 refuses it as an ordinary validation
+    failure — the raw `OverflowError` is not a `ValueError` and would escape
+    Pydantic instead of becoming this record's rejection.
     """
     record = atlas_record(
         as_of="9999-12-31T23:59:59+00:00",
@@ -990,7 +991,8 @@ def test_atlas_as_of_without_a_utc_instant_is_rejected(
     """§19.4 rule 5: an established record boundary always gets an outcome.
 
     This edge needs no precision width — the comparison instant alone has no
-    UTC form — so it reaches validation before any hashing does.
+    UTC form — so §11 rule 54 refuses it on the field itself, before any
+    hashing or containment check reaches it.
     """
     record = atlas_record(as_of="0001-01-01T00:00:00+14:00")
     payload = write_payload(tmp_path, "as-of.json", record)
@@ -1007,8 +1009,8 @@ def test_a_datetime_with_no_utc_form_rejects_only_its_own_record(
 ) -> None:
     """§19.4 rule 4: the records behind a defect still get their outcome.
 
-    §11 rule 4 accepts any offset-aware datetime, but §19.4 rule 3 hashes the
-    UTC canonical form, which this instant does not have. The failure lands
+    §11 rule 54 refuses an offset-aware datetime with no UTC instant, which
+    §19.4 rule 3's canonical hash would otherwise need. The failure lands
     after earlier records have committed, so it must not abort the run.
     """
     edge = {

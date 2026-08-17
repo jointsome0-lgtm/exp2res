@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime
 import os
 from typing import Iterable, Literal
 
@@ -22,6 +21,7 @@ from .enums import (
 )
 from .models import (
     AssessmentSnapshot,
+    BoundaryDatetime,
     Contradiction,
     ExperienceFact,
     GapQuestion,
@@ -141,7 +141,7 @@ class SchemaResult(StrictModel):
 
 class LogProjection(StrictModel):
     id: str
-    recorded_at: datetime
+    recorded_at: BoundaryDatetime
     entry_type: EntryType
     source_type: SourceType
     occurred: OccurredAt
@@ -188,7 +188,7 @@ class ImportResult(StrictModel):
 
 class EvidenceItemProjection(StrictModel):
     id: str
-    created_at: datetime
+    created_at: BoundaryDatetime
     raw_log_id: str
     title: str | None
     summary: str
@@ -301,7 +301,7 @@ class SnapshotListItem(StrictModel):
     id: str
     scope: AssessmentScope
     verification_status: VerificationStatus
-    created_at: datetime
+    created_at: BoundaryDatetime
 
 
 class AssessListResult(StrictModel):
@@ -319,7 +319,7 @@ class JobDescriptionProjection(StrictModel):
     """§14.14 rule 5's discovery projection: no `raw_text`, no `parsed`."""
 
     id: str
-    created_at: datetime
+    created_at: BoundaryDatetime
     title: str | None
     company: str | None
 

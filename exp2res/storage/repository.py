@@ -75,7 +75,13 @@ def utc_instant(stored: object) -> datetime:
         raise IntegrityFailureError() from error
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise IntegrityFailureError()
-    return parsed.astimezone(timezone.utc)
+    try:
+        return parsed.astimezone(timezone.utc)
+    except OverflowError as error:
+        # §11 rule 54 refuses such a value at the boundary now, but §11 rule 40
+        # does not grandfather rows already stored, so a row written before it
+        # fails closed here rather than escaping as an `OverflowError`.
+        raise IntegrityFailureError() from error
 
 
 def lineage_root(connection: sqlite3.Connection, raw_log_id: str) -> str:

@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import Literal
 
 TemporalPrecision = Literal[
@@ -11,6 +12,20 @@ TemporalPrecision = Literal[
     "approximate_range",
     "unknown",
 ]
+
+# §16.7 rule 5's maximum-uncertainty width per non-range precision; ranges use
+# their own `end - start` and `unknown` is unbounded, so neither appears. It
+# lives beside the alias it is keyed by, like CONFIDENCE_RANK below: §11's
+# boundary needs it to reject a placement whose interval is unrepresentable,
+# and §16.7's own arithmetic needs it, and one table serves both.
+MAX_UNCERTAINTY_WIDTH: dict[str, timedelta] = {
+    "exact_datetime": timedelta(0),
+    "exact_day": timedelta(days=1),
+    "week": timedelta(days=7),
+    "month": timedelta(days=31),
+    "quarter": timedelta(days=92),
+    "year": timedelta(days=366),
+}
 
 TemporalConfidence = Literal["low", "medium", "high", "unknown"]
 Confidence = Literal["low", "medium", "high", "unknown"]

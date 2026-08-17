@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from pathlib import PurePosixPath
 import re
 import unicodedata
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_core import core_schema
 
 from .enums import (
+    MAX_UNCERTAINTY_WIDTH,
     ActivityContext,
     AssessmentScope,
     ClaimKind,
@@ -142,6 +144,78 @@ def validate_metadata(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+_NUMERIC_STRING = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+
+
+def _iso_8601_only(value: str) -> str:
+    """§11 rules 3 and 6: the one granted bridge is an ISO 8601 string.
+
+    Pydantic's JSON-mode parser reads a bare numeric string as a Unix
+    timestamp too, which is a second string-to-`datetime` bridge rule 6
+    forbids. It is closed here rather than downstream because by then the
+    value is an instant indistinguishable from a spelled-out one.
+    """
+
+    if _NUMERIC_STRING.match(value):
+        raise ValueError("datetime must be an ISO 8601 string")
+    return value
+
+
+def _boundary_datetime(value: datetime) -> datetime:
+    """§11 rules 4 and 54: offset-aware, and with a UTC instant that exists.
+
+    Rule 4's awareness is what makes §11 rule 13's UTC normalization
+    meaningful; rule 54 is what makes it total. An offset-aware value at the
+    far edge of the calendar — `0001-01-01T00:00:00+14:00`, whose UTC form
+    would be year 0 — is aware and still has no canonical form, and every
+    hash, comparison, and export downstream needs one.
+    """
+
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("datetime must carry an offset")
+    try:
+        value.astimezone(timezone.utc)
+    except OverflowError as error:
+        raise ValueError("datetime has no representable UTC instant") from error
+    return value
+
+
+class _BoundaryDatetime:
+    """§11's one datetime boundary, applied identically wherever one arrives.
+
+    The two input modes stay separate deliberately. A Python-level before- or
+    wrap-validator would hand its result to the inner schema as a Python
+    object, which drops JSON mode and takes rule 3's ISO grant down with the
+    epoch reading it was meant to close; only a JSON/Python schema pair keeps
+    both halves. The JSON schema override restores the `date-time` format
+    annotation the custom core schema would otherwise omit, which §15's
+    provider-facing `schema_bytes` carries.
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source, handler):
+        return core_schema.no_info_after_validator_function(
+            _boundary_datetime,
+            core_schema.json_or_python_schema(
+                json_schema=core_schema.chain_schema(
+                    [
+                        core_schema.str_schema(),
+                        core_schema.no_info_plain_validator_function(_iso_8601_only),
+                        core_schema.datetime_schema(strict=False),
+                    ]
+                ),
+                python_schema=core_schema.datetime_schema(strict=True),
+            ),
+        )
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, schema, handler):
+        return handler(core_schema.datetime_schema())
+
+
+BoundaryDatetime = Annotated[datetime, _BoundaryDatetime]
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -152,17 +226,10 @@ class StrictModel(BaseModel):
 
 
 class OccurredAt(StrictModel):
-    start: Optional[datetime] = None
-    end: Optional[datetime] = None
+    start: Optional[BoundaryDatetime] = None
+    end: Optional[BoundaryDatetime] = None
     precision: TemporalPrecision
     confidence: TemporalConfidence
-
-    @field_validator("start", "end")
-    @classmethod
-    def aware_datetime(cls, value: Optional[datetime]) -> Optional[datetime]:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("datetime must carry an offset")
-        return value
 
     @model_validator(mode="after")
     def valid_shape(self) -> "OccurredAt":
@@ -177,6 +244,21 @@ class OccurredAt(StrictModel):
         if self.precision in non_range:
             if self.start is None or self.end is not None:
                 raise ValueError("invalid non-range temporal shape")
+            # §11 rule 54: a non-range placement is normalized to §16.7 rule
+            # 6's interval before anything compares it, so a start too close
+            # to the end of the calendar to carry its own width is refused
+            # here rather than at whichever consumer reaches it first. The
+            # width is added to the UTC instant, as §16.7 rule 3 requires —
+            # a west-of-UTC offset shifts the anchor later, so a start that
+            # carries its width in its own spelling need not carry it there.
+            try:
+                self.start.astimezone(timezone.utc) + MAX_UNCERTAINTY_WIDTH[
+                    self.precision
+                ]
+            except OverflowError as error:
+                raise ValueError(
+                    "placement has no representable uncertainty interval"
+                ) from error
         elif self.precision in {"date_range", "approximate_range"}:
             if self.start is None or (
                 self.end is not None and self.end <= self.start
@@ -190,7 +272,7 @@ class OccurredAt(StrictModel):
 
 class RawLog(StrictModel):
     id: str
-    recorded_at: datetime
+    recorded_at: BoundaryDatetime
     entry_type: EntryType
     source_type: SourceType
     occurred: OccurredAt
@@ -212,13 +294,6 @@ class RawLog(StrictModel):
             raise ValueError("project label canonicalizes to blank")
         return value
 
-    @field_validator("recorded_at")
-    @classmethod
-    def recorded_at_is_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("recorded_at must carry an offset")
-        return value
-
     @field_validator("raw_text")
     @classmethod
     def raw_text_policy(cls, value: str) -> str:
@@ -232,7 +307,7 @@ class RawLog(StrictModel):
 
 class EvidenceItem(StrictModel):
     id: str
-    created_at: datetime
+    created_at: BoundaryDatetime
     raw_log_id: str
     title: Optional[str] = None
     summary: str
@@ -245,13 +320,6 @@ class EvidenceItem(StrictModel):
     @classmethod
     def structural_fields(cls, value: Optional[str]) -> Optional[str]:
         return None if value is None else validate_structural(value)
-
-    @field_validator("created_at")
-    @classmethod
-    def created_at_is_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("created_at must carry an offset")
-        return value
 
     @field_validator("title", "summary")
     @classmethod
@@ -271,8 +339,8 @@ class EvidenceItem(StrictModel):
 
 class ExperienceFact(StrictModel):
     id: str
-    created_at: datetime
-    superseded_at: Optional[datetime] = None
+    created_at: BoundaryDatetime
+    superseded_at: Optional[BoundaryDatetime] = None
     claim: str
     claim_kind: ClaimKind = "observed_fact"
 
@@ -301,13 +369,6 @@ class ExperienceFact(StrictModel):
     @classmethod
     def structural_id(cls, value: str) -> str:
         return validate_structural(value)
-
-    @field_validator("created_at", "superseded_at")
-    @classmethod
-    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("datetime must carry an offset")
-        return value
 
     @field_validator("claim")
     @classmethod
@@ -369,8 +430,8 @@ class CounterevidenceItem(StrictModel):
 
 class SelfClaim(StrictModel):
     id: str
-    created_at: datetime
-    superseded_at: Optional[datetime] = None
+    created_at: BoundaryDatetime
+    superseded_at: Optional[BoundaryDatetime] = None
     snapshot_id: str
     claim: str
     claim_kind: ClaimKind
@@ -389,13 +450,6 @@ class SelfClaim(StrictModel):
     @classmethod
     def structural_fields(cls, value: str) -> str:
         return validate_structural(value)
-
-    @field_validator("created_at", "superseded_at")
-    @classmethod
-    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("datetime must carry an offset")
-        return value
 
     @field_validator("claim")
     @classmethod
@@ -440,8 +494,8 @@ class SelfClaim(StrictModel):
 
 class AssessmentSnapshot(StrictModel):
     id: str
-    created_at: datetime
-    superseded_at: Optional[datetime] = None
+    created_at: BoundaryDatetime
+    superseded_at: Optional[BoundaryDatetime] = None
     scope: AssessmentScope
     title: str
     summary: str
@@ -454,13 +508,6 @@ class AssessmentSnapshot(StrictModel):
     @classmethod
     def structural_id(cls, value: str) -> str:
         return validate_structural(value)
-
-    @field_validator("created_at", "superseded_at")
-    @classmethod
-    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("datetime must carry an offset")
-        return value
 
     @field_validator("title", "summary")
     @classmethod
@@ -484,7 +531,7 @@ class AssessmentSnapshot(StrictModel):
 
 class VerificationFinding(StrictModel):
     id: str
-    created_at: datetime
+    created_at: BoundaryDatetime
     produced_by_run_id: str
     target_type: VerificationTargetRefType
     target_id: str
@@ -500,13 +547,6 @@ class VerificationFinding(StrictModel):
     @classmethod
     def structural_fields(cls, value: str) -> str:
         return validate_structural(value)
-
-    @field_validator("created_at")
-    @classmethod
-    def timestamp_is_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("datetime must carry an offset")
-        return value
 
     @field_validator("reason")
     @classmethod
@@ -538,8 +578,8 @@ class VerificationFinding(StrictModel):
 
 class Contradiction(StrictModel):
     id: str
-    created_at: datetime
-    superseded_at: Optional[datetime] = None
+    created_at: BoundaryDatetime
+    superseded_at: Optional[BoundaryDatetime] = None
     title: str
     description: str
 
@@ -555,13 +595,6 @@ class Contradiction(StrictModel):
     def structural_fields(cls, value: str) -> str:
         return validate_structural(value)
 
-    @field_validator("created_at", "superseded_at")
-    @classmethod
-    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("datetime must carry an offset")
-        return value
-
     @field_validator("title", "description")
     @classmethod
     def text_fields(cls, value: str) -> str:
@@ -575,8 +608,8 @@ class Contradiction(StrictModel):
 
 class GapQuestion(StrictModel):
     id: str
-    created_at: datetime
-    superseded_at: Optional[datetime] = None
+    created_at: BoundaryDatetime
+    superseded_at: Optional[BoundaryDatetime] = None
 
     target_type: DetectionRefType
     target_id: str
@@ -592,13 +625,6 @@ class GapQuestion(StrictModel):
     @classmethod
     def structural_fields(cls, value: Optional[str]) -> Optional[str]:
         return None if value is None else validate_structural(value)
-
-    @field_validator("created_at", "superseded_at")
-    @classmethod
-    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("datetime must carry an offset")
-        return value
 
     @field_validator("question")
     @classmethod
@@ -655,7 +681,7 @@ class ParsedJD(StrictModel):
 
 class JobDescription(StrictModel):
     id: str
-    created_at: datetime
+    created_at: BoundaryDatetime
 
     title: Optional[str] = None
     company: Optional[str] = None
@@ -666,13 +692,6 @@ class JobDescription(StrictModel):
     @classmethod
     def structural_id(cls, value: str) -> str:
         return validate_structural(value)
-
-    @field_validator("created_at")
-    @classmethod
-    def created_at_is_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("datetime must carry an offset")
-        return value
 
     @field_validator("title", "company")
     @classmethod
@@ -691,8 +710,8 @@ class ResumeBranch(StrictModel):
     assessment_snapshot_id: str
     job_description_id: str
 
-    created_at: datetime
-    superseded_at: Optional[datetime] = None
+    created_at: BoundaryDatetime
+    superseded_at: Optional[BoundaryDatetime] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("id", "assessment_snapshot_id", "job_description_id")
@@ -713,13 +732,6 @@ class ResumeBranch(StrictModel):
             raise ValueError("blank branch name")
         return value
 
-    @field_validator("created_at", "superseded_at")
-    @classmethod
-    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("datetime must carry an offset")
-        return value
-
     @field_validator("metadata")
     @classmethod
     def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
@@ -728,8 +740,8 @@ class ResumeBranch(StrictModel):
 
 class ResumeBullet(StrictModel):
     id: str
-    created_at: datetime
-    superseded_at: Optional[datetime] = None
+    created_at: BoundaryDatetime
+    superseded_at: Optional[BoundaryDatetime] = None
     branch_id: str
     text: str
     target_section: ResumeTargetSection
@@ -746,13 +758,6 @@ class ResumeBullet(StrictModel):
     @classmethod
     def structural_fields(cls, value: str) -> str:
         return validate_structural(value)
-
-    @field_validator("created_at", "superseded_at")
-    @classmethod
-    def timestamps_are_aware(cls, value: Optional[datetime]) -> Optional[datetime]:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("datetime must carry an offset")
-        return value
 
     @field_validator("text")
     @classmethod

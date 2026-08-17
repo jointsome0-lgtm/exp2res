@@ -268,6 +268,77 @@ def test_out_of_range_calendar_anchor_is_invalid_input_not_internal_error() -> N
         assert caught.value.exit_code == 2
 
 
+def _placement(**overrides: object) -> str:
+    body: dict[str, object] = {
+        "start": "2026-06-01T00:00:00+00:00",
+        "end": None,
+        "precision": "exact_day",
+        "confidence": "high",
+    }
+    body.update(overrides)
+    return json.dumps(body)
+
+
+def test_a_json_datetime_admits_only_an_iso_8601_spelling() -> None:
+    """§11 rules 3 and 6: the ISO string is the one string-to-datetime bridge.
+
+    Pydantic's JSON parser reads a bare numeric string as a Unix timestamp,
+    which is a second bridge; an LLM or importer emitting one would otherwise
+    land a silently different instant that no later stage can tell apart.
+    """
+    for spelling in ("1780272000", "1780272000.5", "-1780272000"):
+        with pytest.raises(ValidationError) as caught:
+            OccurredAt.model_validate_json(_placement(start=spelling))
+        assert "ISO 8601" in str(caught.value)
+
+    accepted = OccurredAt.model_validate_json(_placement())
+    assert accepted.start == datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+
+def test_a_calendar_edge_placement_is_refused_at_the_boundary() -> None:
+    """§11 rule 54: no accepted value defers its overflow to a consumer.
+
+    Each rejected spelling below reaches §16.7 rule 6 normalization somewhere
+    downstream, where `OverflowError` — not a `ValueError` — escapes Pydantic.
+    The west-shifted start is the one that only rule 3's UTC basis catches: it
+    carries its own width in local time and overflows only after the shift.
+    """
+    unrepresentable = (
+        "0001-01-01T00:00:00+14:00",
+        "9999-12-31T23:59:59+00:00",
+        "9999-12-30T20:00:00-05:00",
+    )
+    for spelling in unrepresentable:
+        with pytest.raises(ValidationError):
+            OccurredAt.model_validate_json(_placement(start=spelling))
+
+    # Neither the same instant under a range precision, which adds no width,
+    # nor a start whose offset shifts it away from the edge is over-rejected.
+    assert OccurredAt.model_validate_json(
+        _placement(start="9999-12-31T00:00:00+00:00", precision="date_range")
+    ).end is None
+    assert OccurredAt.model_validate_json(
+        _placement(start="9999-12-29T00:00:00+14:00")
+    ).precision == "exact_day"
+
+
+def test_a_calendar_edge_local_time_is_owner_input_not_an_internal_error() -> None:
+    """§11 rule 54 / §14.14: the same edge typed by the owner stays exit 2."""
+    for period, zone in (
+        ("9999-12-31T23:00:00", "America/New_York"),
+        ("0001-01-01T00:30:00", "Asia/Tokyo"),
+    ):
+        with pytest.raises(InvalidInputError) as caught:
+            parse_occurred(
+                period=period,
+                precision="exact_datetime",
+                confidence="high",
+                timezone_name=zone,
+            )
+        assert caught.value.diagnostic_class == "invalid_time"
+        assert caught.value.exit_code == 2
+
+
 def test_every_allocated_id_delegates_to_a_version_4_uuid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
