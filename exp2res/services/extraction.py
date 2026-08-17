@@ -19,7 +19,7 @@ from exp2res.storage.workspace import read_database, require_compatible
 
 
 def validate_extract_selection(workspace: Path, *, log_id: str | None) -> None:
-    """§14.14 rule 3: selector validity precedes adapter resolution/preflight.
+    """§14.14 rule 4: selector validity precedes adapter resolution/preflight.
 
     An unknown `--log-id` must fail as class-2 `selector_not_found` before
     any provider-side construction; the lineage planner re-checks under the

@@ -428,7 +428,7 @@ def test_the_selector_resolves_a_current_branch_by_its_folded_name(
 def test_an_unknown_branch_is_a_selector_miss_before_any_call(
     workspace: Path,
 ) -> None:
-    """§14.14 rule 3: selector resolution precedes the semantic pass."""
+    """§14.14 rule 4: selector resolution precedes the semantic pass."""
 
     ids, _facts, _snapshot, _branch_id, _bullet_ids = prepare_generated_branch(
         workspace

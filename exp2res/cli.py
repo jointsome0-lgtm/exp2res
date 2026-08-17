@@ -1387,7 +1387,7 @@ def extract_command(
     log_id: str | None = typer.Option(None, "--log-id"),
 ) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        # §14.14 rule 3: the selector must resolve before any adapter
+        # §14.14 rule 4: the selector must resolve before any adapter
         # construction. A mistyped selector therefore remains a class-2
         # refusal and cannot reach provider preflight.
         validate_extract_selection(workspace, log_id=log_id)
@@ -1458,7 +1458,7 @@ def _fact_human_block(fact: ExperienceFact) -> str:
 @detections_app.command("generate")
 def detections_generate(context: typer.Context) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        # §14.14 rule 3: compatibility precedes adapter construction; this
+        # §14.14 rule 4: compatibility precedes adapter construction; this
         # command has no selector.
         require_compatible(workspace)
         try:
@@ -1516,7 +1516,7 @@ def assess_verify(
     snapshot_id: str = typer.Option(..., "--snapshot"),
 ) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        # §14.14 rule 3: resolve the selector before adapter construction so a
+        # §14.14 rule 4: resolve the selector before adapter construction so a
         # missing or superseded snapshot cannot reach provider preflight.
         require_compatible(workspace)
         with read_database(workspace) as connection:
@@ -1600,7 +1600,7 @@ def export_assessment_command(
     snapshot_id: str = typer.Option(..., "--snapshot"),
 ) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        # §14.14 rule 3: resolve the selector read-only before the writer
+        # §14.14 rule 4: resolve the selector read-only before the writer
         # path, so a missing or superseded snapshot reports class 2 even when
         # a managed-output residual would stop publication with class 8. The
         # export service re-validates the stored row under the writer lock.
@@ -1952,7 +1952,7 @@ def jd_add(
     source_path: str = typer.Argument(..., metavar="PATH"),
 ) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        # §14.14 rule 3: compatibility precedes source acquisition and adapter
+        # §14.14 rule 4: compatibility precedes source acquisition and adapter
         # construction; the service re-checks under its own authority.
         require_compatible(workspace)
         parsed = run_jd_add_file(workspace, source_path=source_path)
@@ -2090,7 +2090,7 @@ def bullets_generate(
     branch_name: str = typer.Option(..., "--branch"),
 ) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        # §14.14 rule 3: compatibility precedes adapter construction; the
+        # §14.14 rule 4: compatibility precedes adapter construction; the
         # service re-checks under its own authority.
         require_compatible(workspace)
         try:
@@ -2122,7 +2122,7 @@ def bullets_verify(
     branch_name: str = typer.Option(..., "--branch"),
 ) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        # §14.14 rule 3: compatibility precedes adapter construction; the
+        # §14.14 rule 4: compatibility precedes adapter construction; the
         # service re-checks under its own authority.
         require_compatible(workspace)
         try:
@@ -2155,7 +2155,7 @@ def bullets_export(
     branch_name: str = typer.Option(..., "--branch"),
 ) -> None:
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        # §14.14 rule 3: resolve the selector read-only before the writer path,
+        # §14.14 rule 4: resolve the selector read-only before the writer path,
         # so an unknown branch reports class 2 even where a managed-output
         # residual would stop publication with class 8. The export service
         # re-resolves and re-validates the stored rows under the writer lock.

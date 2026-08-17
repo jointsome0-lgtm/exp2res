@@ -281,7 +281,7 @@ def test_post_commit_interrupt_keeps_the_committed_result_and_warning(
 def test_extract_unknown_selector_has_no_run_row(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§14.6/§14.14 rule 3: selector failure precedes adapter preflight."""
+    """§14.6/§14.14 rule 4: selector failure precedes adapter preflight."""
 
     def refuse_build(_workspace: Path):
         raise AssertionError("adapter preflight ran for an invalid selector")

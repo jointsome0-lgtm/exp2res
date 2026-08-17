@@ -289,6 +289,7 @@ This contract binds every command-specific form above and every later §14 addit
    - A handled user interrupt takes code 9 precedence over every simultaneously observed class, including incomplete cleanup after an already committed deletion; committed effects and every known `residual_path` remain reported in the cancelled envelope.
    - Code 8 applies when the command reaches a non-cancelled completion with required cleanup incomplete.
    - Exit codes are configuration-independent; a recognized class never collapses into code 1.
+   - Boundary validation of the input a command was given precedes resolution of anything the workspace configures, so an invalid or unresolvable selector reports class 2 rather than the class-6 or class-7 failure a missing or malformed `[llm]` block would raise. The ordering binds the refusal only: the stage re-checks the same selector under its own writer authority, and a row that vanishes in between still fails as class 2. A command taking no selector has no input error to report and fails on the configuration.
    - Existing codes never change meaning or number, and a new class appends a new code.
 5. **Machine-readable result envelope and output channels.** With `--json`, stdout contains the UTF-8 serialization of exactly one versioned result-envelope object, optionally followed by one final newline, and no banner, progress line, diagnostic, prompt, or other byte.
    - The outer object and every nested object apply §11's strict validation, string-hygiene, and `extra = forbid` policy.
