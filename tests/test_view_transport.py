@@ -426,14 +426,20 @@ def test_an_accept_failure_still_reports_the_request_that_completed(tmp_path):
     """
 
     emitted = threading.Event()
-    unwinding = threading.Event()
+    retiring = threading.Event()
+    reported = threading.Event()
+    queued: list[str] = []
     delivered: list[tuple[str, str | None]] = []
+
+    def report(outcome, route):
+        delivered.append((outcome, route))
+        reported.set()
 
     bind = free_bind()
     server = ViewServer(
         tmp_path,
         bind,
-        report=lambda outcome, route: delivered.append((outcome, route)),
+        report=report,
         _resolver=page_resolver(MARKER_PAGE),
         _timeouts=GENEROUS,
     )
@@ -441,23 +447,28 @@ def test_an_accept_failure_still_reports_the_request_that_completed(tmp_path):
     server._listener = AcceptFailsOnceServing(server._listener, emitted)
 
     real_enqueue = server._enqueue_report
-    real_force_close = server._force_close
+    real_stop_reporter = server._stop_reporter
+    real_put = server._report_queue.put_nowait
 
     def enqueue_once_unwinding(line):
         emitted.set()
-        assert unwinding.wait(10.0)
-        # Give the unwinding call every chance to queue its sentinel first:
-        # a reporter that retires here is one this line can never reach.
-        for thread in reporter_threads():
-            thread.join(0.5)
+        # Hold this line until retirement has begun, so it can only reach the
+        # queue from inside `_await_producers` — the wait that has to hold for
+        # the ordering below to come out this way.
+        assert retiring.wait(10.0)
         real_enqueue(line)
 
-    def force_close():
-        unwinding.set()
-        real_force_close()
+    def stop_reporter():
+        retiring.set()
+        real_stop_reporter()
+
+    def spy_put(item):
+        queued.append("sentinel" if item is None else "line")
+        real_put(item)
 
     server._enqueue_report = enqueue_once_unwinding
-    server._force_close = force_close
+    server._stop_reporter = stop_reporter
+    server._report_queue.put_nowait = spy_put
 
     rig = Rig(server, bind)
     failure: list[BaseException] = []
@@ -475,6 +486,11 @@ def test_an_accept_failure_still_reports_the_request_that_completed(tmp_path):
 
     assert not runner.is_alive()
     assert failure and isinstance(failure[0], OSError)
+    # The line reached the queue ahead of the sentinel, which is the whole
+    # claim; delivery follows on the reporter's own thread, and this path
+    # returns without waiting for it (§14.17 orders no line before it).
+    assert queued == ["line", "sentinel"]
+    assert reported.wait(10.0)
     assert delivered == [("served", "/mirror")]
 
 
