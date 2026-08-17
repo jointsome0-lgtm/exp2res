@@ -451,41 +451,48 @@ def import_payload(
     # Fail closed before acquiring the owner's payload (§12.14, §14.14).
     require_compatible(workspace)
     config = load_workspace_config(workspace)
-    with open_payload_file(payload_path, config=config) as (payload, root):
-        records = PayloadRecords(payload, contract=contract)
-        context = PlanContext(payload_root=root, config=config)
-        recorded_at = (clock or (lambda: datetime.now(timezone.utc)))()
 
-        classified: dict[str, list[ImportedRecord]] = {
-            "accepted": [],
-            "duplicate": [],
-            "rejected": [],
-        }
-        attempted: list[ImportedRecord] = []
+    records: PayloadRecords | None = None
+    classified: dict[str, list[ImportedRecord]] = {
+        "accepted": [],
+        "duplicate": [],
+        "rejected": [],
+    }
+    attempted: list[ImportedRecord] = []
 
-        def is_complete(outcome: ImportOutcome) -> bool:
-            """Do this outcome's three lists partition every parsed record?
+    def is_complete(outcome: ImportOutcome) -> bool:
+        """Do this outcome's three lists partition every parsed record?
 
-            §14.14 rule 5's complete primary result is a property of the outcome
-            being reported, so it is derived from that outcome rather than written
-            by a separate statement a signal could land in front of. A record the
-            loop never reached and a record whose commit the signal outran both
-            leave the same gap, and both mean `result = null` (§14.14 rule 4).
-            """
+        §14.14 rule 5's complete primary result is a property of the outcome
+        being reported, so it is derived from that outcome rather than written
+        by a separate statement a signal could land in front of. A record the
+        loop never reached and a record whose commit the signal outran both
+        leave the same gap, and both mean `result = null` (§14.14 rule 4). A
+        payload whose boundaries were never established has nothing to
+        partition and reports the same null.
+        """
 
-            return len(outcome.accepted) + len(outcome.duplicate) + len(
-                outcome.rejected
-            ) == records.total
+        if records is None:
+            return False
+        return len(outcome.accepted) + len(outcome.duplicate) + len(
+            outcome.rejected
+        ) == records.total
 
-        def report() -> ImportOutcome:
-            return ImportOutcome(
-                accepted=tuple(classified["accepted"]),
-                duplicate=tuple(classified["duplicate"]),
-                rejected=tuple(classified["rejected"]),
-            )
+    def report() -> ImportOutcome:
+        return ImportOutcome(
+            accepted=tuple(classified["accepted"]),
+            duplicate=tuple(classified["duplicate"]),
+            rejected=tuple(classified["rejected"]),
+        )
 
-        replay = iter(records)
-        try:
+    try:
+        with open_payload_file(payload_path, config=config) as (payload, root):
+            records = PayloadRecords(payload, contract=contract)
+            context = PlanContext(payload_root=root, config=config)
+            recorded_at = (clock or (lambda: datetime.now(timezone.utc)))()
+            # Before the §8.1 writer lock, so a payload already rewritten is
+            # refused with nothing committed rather than part-way through.
+            replay = iter(records)
             with writer_database(workspace, timeout_ms=timeout_ms) as connection:
                 try:
                     # One scan under the §8.1 writer lock: no other writer can add
@@ -513,6 +520,7 @@ def import_payload(
                     if "locked" in str(error).lower() or "busy" in str(error).lower():
                         busy = WorkspaceBusyError()
                         busy.import_outcome = progress
+                        busy.import_classified = is_complete(progress)
                         raise busy from error
                     # A non-busy operational failure — a full disk, a damaged
                     # file — is still §14.14 class 1, but §19.4 rule 4's committed
@@ -522,6 +530,7 @@ def import_payload(
                     # keeping the rows reportable.
                     internal = Exp2ResError()
                     internal.import_outcome = progress
+                    internal.import_classified = is_complete(progress)
                     raise internal from error
                 except KeyboardInterrupt:
                     # §14.14 rule 6: rule 4 commits each accepted record in its
@@ -539,40 +548,43 @@ def import_payload(
                 except Exp2ResError as error:
                     # §19.4 rule 4: a failure fails only its own record and never
                     # withdraws an accepted one, so a classified failure carries
-                    # the rows already committed behind it.
+                    # the rows already committed behind it. A payload rewritten
+                    # under the replay reaches here having classified every
+                    # boundary, so the completeness flag travels with the rows.
                     error.import_outcome = _cancelled_report(
                         connection, attempted=attempted, classified=classified
                     )
+                    error.import_classified = is_complete(error.import_outcome)
                     raise
-        except KeyboardInterrupt:
-            # The signal landed outside the record loop: either in
-            # `writer_database` entry — the §8.1 lock wait or the §13.14 preamble,
-            # before any record was read — or in its teardown, after every record
-            # was classified. Only the second reports a complete primary result;
-            # §14.14 rule 4 gives the first `result = null`. Either way the
-            # committed rows are durable and reported, and the closed connection
-            # is no longer available to re-read.
-            cancelled = OperationCancelledError()
-            cancelled.import_outcome = report()
-            cancelled.import_classified = is_complete(cancelled.import_outcome)
-            raise cancelled from None
-        except Exp2ResError as error:
-            # A typed failure raised by `writer_database` itself, past every
-            # handler that knows this import's progress.
-            if getattr(error, "import_outcome", None) is None:
-                error.import_outcome = report()
-                error.import_classified = is_complete(error.import_outcome)
-            raise
-        except Exception as error:
-            # Teardown — §8.1 lock release, connection close — can fail after
-            # every record has already committed. §14.14 rule 6 keeps those
-            # boundaries reported, and the base class carries the same class-1
-            # exit the raw exception would have produced.
-            internal = Exp2ResError()
-            internal.import_outcome = report()
-            internal.import_classified = is_complete(internal.import_outcome)
-            raise internal from error
-        return report()
+    except KeyboardInterrupt:
+        # The signal landed outside the record loop: in the payload open or
+        # `writer_database` entry — the §8.1 lock wait or the §13.14 preamble,
+        # before any record was read — or in either teardown, after every
+        # record was classified. Only the second reports a complete primary
+        # result; §14.14 rule 4 gives the first `result = null`. Either way the
+        # committed rows are durable and reported, and the closed connection is
+        # no longer available to re-read.
+        cancelled = OperationCancelledError()
+        cancelled.import_outcome = report()
+        cancelled.import_classified = is_complete(cancelled.import_outcome)
+        raise cancelled from None
+    except Exp2ResError as error:
+        # A typed failure raised by the payload gate or by `writer_database`
+        # itself, past every handler that knows this import's progress.
+        if getattr(error, "import_outcome", None) is None:
+            error.import_outcome = report()
+            error.import_classified = is_complete(error.import_outcome)
+        raise
+    except Exception as error:
+        # Teardown — §8.1 lock release, connection close, payload close — can
+        # fail after every record has already committed. §14.14 rule 6 keeps
+        # those boundaries reported, and the base class carries the same
+        # class-1 exit the raw exception would have produced.
+        internal = Exp2ResError()
+        internal.import_outcome = report()
+        internal.import_classified = is_complete(internal.import_outcome)
+        raise internal from error
+    return report()
 
 
 def import_record_line(record: ImportedRecord, outcome_name: str) -> str:

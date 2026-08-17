@@ -243,22 +243,24 @@ class PayloadRecords:
 
     Rule 4 partitions one payload, so every pass must see the same one. An
     open descriptor fixes the inode but not the bytes, and a payload rewritten
-    between the passes would otherwise be reported as a complete result over a
-    boundary set no pass ever saw whole. Each replay therefore reconfirms the
-    payload before it yields and again once it is exhausted, which brackets
-    the import in checks rather than leaving the rewrite silent.
+    under it would otherwise be reported as a complete result over a boundary
+    set no pass ever saw whole. Every pass is therefore bracketed: the
+    baseline is taken before the boundaries are established and rechecked once
+    they are, so a rewrite that lands mid-scan cannot become the baseline, and
+    each replay rechecks before it yields and again once it is exhausted.
     """
 
     def __init__(self, payload: PayloadSource, *, contract: SourceContract) -> None:
         self._payload = payload
         self._contract = contract
         self._held: tuple[ParsedRecord, ...] | None = None
+        self._identity = payload.identity()
         if contract.multi_record:
             self.total = sum(1 for _ in self._parse())
         else:
             self._held = tuple(self._parse())
             self.total = len(self._held)
-        self._identity = payload.identity()
+        self._reconfirm()
 
     def __iter__(self) -> Iterator[ParsedRecord]:
         """Replay the boundaries, reconfirming the payload before yielding.

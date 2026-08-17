@@ -18,11 +18,13 @@ from exp2res.errors import (
     ImportPayloadTooLargeError,
     IntegrityFailureError,
     InvalidInputError,
+    OperationCancelledError,
 )
 from exp2res.integrations import CONTRACTS
 from exp2res.integrations.records import PayloadRecords
+from exp2res.services.capture import new_id
 from exp2res.services.imports import ImportOutcome, import_payload
-from exp2res.services.source_files import open_payload_file
+from exp2res.services.source_files import PayloadFile, open_payload_file
 
 from conftest import FIXED_NOW
 
@@ -590,6 +592,65 @@ def test_a_payload_rewritten_between_passes_is_refused(
     assert raw_rows(workspace) == []
 
 
+def test_a_payload_rewritten_during_the_first_pass_is_refused() -> None:
+    """The baseline is taken before the boundaries, not after.
+
+    A rewrite that lands mid-scan and settles before it returns would
+    otherwise become the baseline every later check agrees with, leaving
+    `total` describing bytes no pass ever saw whole.
+    """
+
+    state = {"identity": (1, 2, 3)}
+
+    class Source:
+        def lines(self) -> Any:
+            for index in range(3):
+                if index == 1:
+                    state["identity"] = (9, 9, 9)
+                yield json.dumps(ephemeris_record(f"vera-ephemeris-{index:04d}"))
+
+        def text(self) -> str:
+            raise AssertionError("a multi-record payload is never read whole")
+
+        def identity(self) -> tuple[int, int, int]:
+            return state["identity"]
+
+    with pytest.raises(ImportPayloadChangedError):
+        PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
+
+
+def test_a_torn_payload_still_reports_its_complete_result(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§14.14 rule 5: every classified boundary carries the full typed result.
+
+    The rewrite lands after the only record has committed and leaves the file
+    the same length, so every boundary is classified and the refusal reports a
+    partition complete on its own terms rather than the null a record left
+    unreached would earn.
+    """
+
+    path = tmp_path / "torn.jsonl"
+    write_payload(tmp_path, "torn.jsonl", [ephemeris_record("vera-ephemeris-0001")])
+
+    def rewriting_factory(kind: str) -> str:
+        write_payload(tmp_path, "torn.jsonl", [ephemeris_record("vera-ephemeris-0002")])
+        return new_id(kind)
+
+    with pytest.raises(ImportPayloadChangedError) as failure:
+        import_payload(
+            workspace,
+            source_system="ephemeris",
+            payload_path=str(path),
+            clock=lambda: FIXED_NOW,
+            id_factory=rewriting_factory,
+        )
+
+    assert counts(failure.value.import_outcome) == (1, 0, 0)
+    assert failure.value.import_classified is True
+    assert len(raw_rows(workspace)) == 1
+
+
 def test_a_payload_rewritten_during_the_import_is_reported(
     workspace: Path, tmp_path: Path
 ) -> None:
@@ -614,6 +675,30 @@ def test_a_payload_rewritten_during_the_import_is_reported(
         with pytest.raises(ImportPayloadChangedError):
             for _ in replay:
                 pass
+
+
+def test_a_signal_during_payload_teardown_reports_the_committed_records(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the payload closes inside the progress-carrying handlers.
+
+    Teardown runs after the last record has committed, so a signal landing in
+    it must reach the same cancellation report as one landing in the writer
+    lock's teardown, not the CLI's generic envelope.
+    """
+
+    payload = write_payload(tmp_path, "teardown.jsonl", [ephemeris_record()])
+
+    def interrupt(self: PayloadFile) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(PayloadFile, "release", interrupt)
+    with pytest.raises(OperationCancelledError) as failure:
+        run_import(workspace, "ephemeris", payload)
+
+    assert counts(failure.value.import_outcome) == (1, 0, 0)
+    assert failure.value.import_classified is True
+    assert len(raw_rows(workspace)) == 1
 
 
 def test_a_payload_that_is_not_utf8_commits_nothing(
