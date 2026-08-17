@@ -1,8 +1,8 @@
 ## §6. System Boundaries
 
-## §6.1 Relation to Tick-like
+## §6.1 Relation to Ephemeris
 
-Tick-like is the operational surface of the day.
+Ephemeris is the operational surface of the day.
 
 The direct Exp2Res import boundary accepts only activity-domain evidence:
 
@@ -12,14 +12,14 @@ verbal work notes
 focus and time aggregates
 ```
 
-The selfos-side adapter maps Tick-like exports into the source-agnostic activity record accepted by §19.1; Exp2Res does not accept or encode Tick-like's wire schema. A learning event is not imported directly as knowledge state: its knowledge aspect arrives only through the Atlas snapshot in §6.2/§19.2, while its time or activity aspect may be mapped into §19.1 as ordinary activity evidence. Accepted records persist under §13.1 with no direct promotion.
+The selfos-side adapter maps Ephemeris exports into the source-agnostic activity record accepted by §19.1; Exp2Res does not accept or encode Ephemeris's wire schema. A learning event is not imported directly as knowledge state: its knowledge aspect arrives only through the Atlas snapshot in §6.2/§19.2, while its time or activity aspect may be mapped into §19.1 as ordinary activity evidence. Accepted records persist under §13.1 with no direct promotion.
 
-But Tick-like events do not automatically become strong experience facts.
+But Ephemeris events do not automatically become strong experience facts.
 
 Example:
 
 ```text
-Tick-like event:
+Ephemeris event:
   "Worked on Exp2Res verifier"
 
 Exp2Res interpretation:

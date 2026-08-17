@@ -17,9 +17,9 @@ And does not mutate the claim prose
 '''
 
 ["21.2"]
-title = "No Automatic Skill From Tick-like"
+title = "No Automatic Skill From Ephemeris"
 case = '''
-Given Tick-like event "worked on verifier"
+Given Ephemeris event "worked on verifier"
 When facts are extracted
 Then system may create weak activity fact
 But must not create "verification expert"
