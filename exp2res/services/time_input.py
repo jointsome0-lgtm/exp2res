@@ -39,11 +39,8 @@ def resolve_local(value: datetime, zone: ZoneInfo) -> datetime:
             round_trip = candidate.astimezone(timezone.utc).astimezone(zone)
         except OverflowError as error:
             # A local time within a day of either end of the calendar has no
-            # UTC instant in a zone offset the wrong way, so §11 rule 54 would
-            # refuse it downstream anyway. It is owner-typed input, so it
-            # leaves as §14.14 exit-class 2 rather than an escaping
-            # `OverflowError` — which, not being a `ValueError`, would
-            # otherwise reach the owner as exit 1.
+            # UTC instant in a zone offset the wrong way. §11 rule 54 refuses
+            # it, and owner-typed input leaves as §14.14 exit class 2.
             raise _time_error(
                 "invalid_time", "The time value is invalid."
             ) from error
@@ -81,10 +78,9 @@ def today_occurred(*, now: datetime, timezone_name: str) -> OccurredAt:
         local_today = now.astimezone(zone).date()
     except OverflowError as error:
         raise _time_error("invalid_time", "The time value is invalid.") from error
-    # §11 rule 54 refuses a day at the end of the calendar, and this
-    # construction is as much a §14.14 input path as an owner-typed one — the
-    # derived day is still a value, not a workspace defect — so it leaves
-    # through the same translation rather than as exit class 1.
+    # A clock-derived day is still a value, not a workspace defect, so §11
+    # rule 54's refusal leaves through the same §14.14 translation an
+    # owner-typed one does rather than as exit class 1.
     return _build_occurred(
         start=day_start(local_today, zone),
         end=None,

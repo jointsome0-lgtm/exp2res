@@ -15,9 +15,8 @@ TemporalPrecision = Literal[
 
 # §16.7 rule 5's maximum-uncertainty width per non-range precision; ranges use
 # their own `end - start` and `unknown` is unbounded, so neither appears. It
-# lives beside the alias it is keyed by, like CONFIDENCE_RANK below: §11's
-# boundary needs it to reject a placement whose interval is unrepresentable,
-# and §16.7's own arithmetic needs it, and one table serves both.
+# sits beside the alias it is keyed by, like CONFIDENCE_RANK, because §11's
+# boundary and §16.7's arithmetic both read it.
 MAX_UNCERTAINTY_WIDTH: dict[str, timedelta] = {
     "exact_datetime": timedelta(0),
     "exact_day": timedelta(days=1),

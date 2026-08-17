@@ -302,7 +302,12 @@ def test_a_json_datetime_admits_only_an_iso_8601_spelling() -> None:
             OccurredAt.model_validate_json(_placement(start=spelling))
         assert "ISO 8601" in str(caught.value)
 
-    # Every separator Pydantic itself accepts survives the gate, so the
+    # Pydantic also accepts `_` as a separator, which no standard defines.
+    with pytest.raises(ValidationError) as underscore:
+        OccurredAt.model_validate_json(_placement(start="2026-06-01_00:00:00+00:00"))
+    assert "ISO 8601" in str(underscore.value)
+
+    # Every separator a standard does define survives the gate, so the
     # allowlist narrows the bridge without narrowing rule 3's grant.
     for spelling in (
         "2026-06-01T00:00:00+00:00",
@@ -359,7 +364,7 @@ def test_a_calendar_edge_local_time_is_owner_input_not_an_internal_error() -> No
 
 
 def test_a_derived_daily_placement_at_the_edge_stays_in_exit_class_two() -> None:
-    """§11 rule 54 is never an integrity fault, including where it is derived.
+    """§11 rule 54: a refused supplied value is never an integrity fault.
 
     `log today` builds its placement from the service clock rather than from
     anything the owner typed, so it is the one construction that could report

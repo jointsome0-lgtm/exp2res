@@ -144,7 +144,7 @@ def validate_metadata(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
-_ISO_8601_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt_ ]")
+_ISO_8601_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt ]")
 
 
 def _iso_8601_only(value: str) -> str:
@@ -155,7 +155,9 @@ def _iso_8601_only(value: str) -> str:
     is a second string-to-`datetime` bridge rule 6 forbids. The test is the
     ISO date-and-separator prefix rather than any enumeration of numeric
     spellings, so the grant stays an allowlist and no future spelling opens a
-    third bridge; the parse itself still belongs to the schema below. It is
+    third bridge; the parse itself still belongs to the schema below. The
+    separators are ISO 8601's `T` plus the lower-case and space forms RFC 3339
+    sanctions for it, and not Pydantic's `_`, which no standard defines. It is
     closed here rather than downstream because by then the value is an
     instant indistinguishable from a spelled-out one.
     """
@@ -248,13 +250,9 @@ class OccurredAt(StrictModel):
         if self.precision in non_range:
             if self.start is None or self.end is not None:
                 raise ValueError("invalid non-range temporal shape")
-            # §11 rule 54: a non-range placement is normalized to §16.7 rule
-            # 6's interval before anything compares it, so a start too close
-            # to the end of the calendar to carry its own width is refused
-            # here rather than at whichever consumer reaches it first. The
-            # width is added to the UTC instant, as §16.7 rule 3 requires —
-            # a west-of-UTC offset shifts the anchor later, so a start that
-            # carries its width in its own spelling need not carry it there.
+            # §11 rule 54. The width goes on the UTC instant, as §16.7 rule 3
+            # requires: a west-of-UTC offset shifts the anchor later, so a
+            # start carrying its width in its own spelling can still overflow.
             try:
                 self.start.astimezone(timezone.utc) + MAX_UNCERTAINTY_WIDTH[
                     self.precision

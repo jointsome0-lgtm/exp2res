@@ -218,11 +218,9 @@ def _classify(
         )
     try:
         record = _validated_record(contract, raw)
-    # §11 rule 54 refuses the datetimes that used to overflow here, so this
-    # `OverflowError` arm covers no known input. It stays because Pydantic
-    # converts only `ValueError`, and §19.4 rule 5's per-record outcome must
-    # be a property of this classifier rather than of every present and future
-    # contract remembering to translate: one escape aborts the whole import.
+    # §11 rule 54 leaves the `OverflowError` arm covering no known input; it
+    # stays because §19.4 rule 5's per-record outcome must not rest on every
+    # future contract remembering to translate. One escape aborts the import.
     except (ValidationError, OverflowError):
         return bank(
             "rejected",
@@ -240,11 +238,9 @@ def _classify(
     try:
         digest = content_hash(record)
     except OverflowError:
-        # §19.4 rule 3 canonicalizes to UTC, which §11 rule 54 now guarantees
-        # every accepted field has. The arm is kept for the same reason as the
-        # one above: rule 4 keeps one record's defect from aborting the
-        # records already committed behind it, and that must not rest on a
-        # reachability argument about content the hash walks.
+        # §19.4 rule 3's UTC canonicalization, which §11 rule 54 now
+        # guarantees. Kept for the reason above, over any reachability
+        # argument about the content this hash walks.
         return bank(
             "rejected",
             ImportedRecord(number, identity, reason="record_invalid"),

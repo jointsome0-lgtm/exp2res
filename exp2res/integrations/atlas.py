@@ -130,11 +130,9 @@ class AtlasRecord(SourceRecord):
 
     @model_validator(mode="after")
     def temporal_constraints(self) -> "AtlasRecord":
-        # Every interval below is representable: §11 rule 54 refuses a
-        # placement whose width overflows the calendar, and `BoundaryDatetime`
-        # refuses a bound with no UTC instant, so nothing here can raise the
-        # `OverflowError` that — not being a `ValueError` — would escape
-        # validation and abort the whole import over one record (§19.4 rule 4).
+        # §11 rule 54 makes every interval below representable, so nothing
+        # here raises the `OverflowError` that — not being a `ValueError` —
+        # would escape validation and abort the import (§19.4 rule 4).
         snapshot = occurred_interval(self.occurred)
         if snapshot.unbounded:
             raise ValueError("snapshot occurred needs a finite upper bound")
