@@ -10,13 +10,18 @@ from typing import Any
 
 import pytest
 
+from exp2res.config import load_workspace_config
 from exp2res.errors import (
     ForbiddenPathError,
     ImportPayloadInvalidError,
     ImportPayloadTooLargeError,
     IntegrityFailureError,
+    InvalidInputError,
 )
+from exp2res.integrations import CONTRACTS
+from exp2res.integrations.records import PayloadRecords
 from exp2res.services.imports import ImportOutcome, import_payload
+from exp2res.services.source_files import open_payload_file
 
 from conftest import FIXED_NOW
 
@@ -128,6 +133,16 @@ def write_payload(directory: Path, name: str, records: Any) -> str:
         body = json.dumps(records)
     path.write_text(body, encoding="utf-8")
     return str(path)
+
+
+def payload_with_trailing_garbage() -> bytes:
+    """A valid JSONL prefix long enough to outrun one buffered read."""
+
+    valid = "\n".join(
+        json.dumps(ephemeris_record(f"vera-ephemeris-{index:04d}"))
+        for index in range(200)
+    )
+    return valid.encode("utf-8") + b"\n" + b"\xff" * 32 + b"\n"
 
 
 def run_import(workspace: Path, source_system: str, payload: str) -> ImportOutcome:
@@ -488,6 +503,77 @@ def test_a_rejected_record_still_counts_toward_the_object_limit(
     with pytest.raises(ImportPayloadTooLargeError):
         run_import(workspace, "ephemeris", payload)
 
+    assert raw_rows(workspace) == []
+
+
+def test_a_multi_record_payload_is_read_one_record_at_a_time() -> None:
+    """§19.4 rule 4: the object cap bounds objects, never resident bytes.
+
+    A conforming JSONL file can spend that cap on records whose text fields
+    alone exhaust memory, so neither the payload nor its decoded records may
+    be held whole.
+    """
+
+    produced: list[int] = []
+
+    class Source:
+        def lines(self) -> Any:
+            for index in range(4):
+                produced.append(index)
+                yield json.dumps(ephemeris_record(f"vera-ephemeris-{index:04d}"))
+
+        def text(self) -> str:
+            raise AssertionError("a multi-record payload is never read whole")
+
+    records = PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
+    assert records.total == 4
+
+    produced.clear()
+    seen = 0
+    for _ in records:
+        seen += 1
+        # The source has produced exactly the lines consumed so far. A parser
+        # returning a materialized tuple would have produced all four before
+        # the first record reached the loop.
+        assert produced == list(range(seen))
+    assert seen == 4
+
+
+def test_a_payload_is_decoded_as_it_is_read(workspace: Path, tmp_path: Path) -> None:
+    """§19.4 rule 4: one pass reads the file, so its decode is incremental."""
+
+    path = tmp_path / "late-garbage.jsonl"
+    path.write_bytes(payload_with_trailing_garbage())
+    with open_payload_file(str(path), config=load_workspace_config(workspace)) as (
+        payload,
+        root,
+    ):
+        assert root == tmp_path
+        lines = payload.lines()
+        # A whole-file decode would have raised before yielding anything.
+        assert json.loads(next(lines))["record_id"] == "vera-ephemeris-0000"
+        with pytest.raises(InvalidInputError) as failure:
+            for _ in lines:
+                pass
+    assert failure.value.diagnostic_class == "input_not_utf8"
+
+
+def test_a_payload_that_is_not_utf8_commits_nothing(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 4: incremental decoding keeps this a payload-level refusal.
+
+    The offending bytes sit past the first read, so a decode failure is found
+    only after many records have already been established. None of them may
+    reach the database on the way to it.
+    """
+
+    path = tmp_path / "late-garbage.jsonl"
+    path.write_bytes(payload_with_trailing_garbage())
+    with pytest.raises(InvalidInputError) as failure:
+        run_import(workspace, "ephemeris", str(path))
+
+    assert failure.value.diagnostic_class == "input_not_utf8"
     assert raw_rows(workspace) == []
 
 

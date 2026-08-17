@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Iterator, Mapping, Optional, Protocol
 
 from exp2res.config import WorkspaceConfig
 from exp2res.domain.canonical import canonical_model_hash
@@ -211,50 +211,80 @@ def scan_record(value: Any, *, counter: list[int]) -> Optional[str]:
     return reason
 
 
-def parse_payload(text: str, *, contract: SourceContract) -> tuple[ParsedRecord, ...]:
-    """Establish every §19.4 rule 5 input record boundary, in file order.
+class PayloadSource(Protocol):
+    """One selected payload, re-readable as lines or as one whole document."""
 
-    A payload failure too early to establish those boundaries raises instead,
-    leaving the command with `result = null`; once a boundary exists its
-    record is reported, however invalid its content.
+    def lines(self) -> Iterator[str]: ...
+
+    def text(self) -> str: ...
+
+
+class PayloadRecords:
+    """Every §19.4 rule 5 input record boundary in one payload, in file order.
+
+    Construction establishes all of them once and raises the failures that are
+    the payload's rather than a record's — a decode failure, a single-record
+    document that is not JSON, §11 rule 38's object cap. Those must land
+    before any record commits, so nothing here waits for the import loop to
+    reach them. Iteration then replays the boundaries; once a boundary exists
+    its record is reported, however invalid its content.
+
+    A multi-record payload is re-read per pass rather than retained, so no
+    more than one record's decoded value is ever resident: §19.4 rule 4 makes
+    the object cap the whole payload bound, and a conforming JSONL file can
+    spend it on records whose text fields alone exhaust memory. One record is
+    bounded by §11's own field limits, so a single-record payload is held.
     """
 
-    counter = [0]
-    if not contract.multi_record:
-        try:
-            value = decode_json(text)
-        except ValueError as error:
-            raise ImportPayloadInvalidError() from error
-        # The decoded value is kept even when the scan rejects it: §19.4 rule 5
-        # nulls `source_record_id` only for a missing or invalid identity, and
-        # a record can carry a valid identity beside the defect.
-        return (ParsedRecord(1, value=value, reason=scan_record(value, counter=counter)),)
+    def __init__(self, payload: PayloadSource, *, contract: SourceContract) -> None:
+        self._payload = payload
+        self._contract = contract
+        self._held: tuple[ParsedRecord, ...] | None = None
+        if contract.multi_record:
+            self.total = sum(1 for _ in self._parse())
+        else:
+            self._held = tuple(self._parse())
+            self.total = len(self._held)
 
-    records: list[ParsedRecord] = []
-    # JSONL delimits records by LF alone. `splitlines()` would also break on
-    # U+2028 and friends, splitting one record whose source voice legitimately
-    # contains them into two unparseable halves.
-    for line in text.split("\n"):
-        # A blank separator line establishes no record: JSONL writers append
-        # one freely, and counting it would renumber every later record.
-        if not line.strip():
-            continue
-        number = len(records) + 1
-        try:
-            value = decode_json(line)
-        except ValueError:
-            records.append(
-                ParsedRecord(
+    def __iter__(self) -> Iterator[ParsedRecord]:
+        if self._held is not None:
+            return iter(self._held)
+        return self._parse()
+
+    def _parse(self) -> Iterator[ParsedRecord]:
+        counter = [0]
+        if not self._contract.multi_record:
+            try:
+                value = decode_json(self._payload.text())
+            except ValueError as error:
+                raise ImportPayloadInvalidError() from error
+            # The decoded value is kept even when the scan rejects it: §19.4
+            # rule 5 nulls `source_record_id` only for a missing or invalid
+            # identity, and a record can carry a valid identity beside the
+            # defect.
+            yield ParsedRecord(1, value=value, reason=scan_record(value, counter=counter))
+            return
+
+        number = 0
+        for line in self._payload.lines():
+            # A blank separator line establishes no record: JSONL writers
+            # append one freely, and counting it would renumber every later
+            # record.
+            if not line.strip():
+                continue
+            number += 1
+            try:
+                value = decode_json(line)
+            except ValueError:
+                yield ParsedRecord(
                     number,
                     reason="record_not_json",
-                    identity=salvaged_identity(line, contract),
+                    identity=salvaged_identity(line, self._contract),
                 )
+                continue
+            yield ParsedRecord(
+                number, value=value, reason=scan_record(value, counter=counter)
             )
-            continue
-        records.append(
-            ParsedRecord(number, value=value, reason=scan_record(value, counter=counter))
-        )
-    return tuple(records)
 
 
 def content_hash(record: SourceRecord) -> str:
