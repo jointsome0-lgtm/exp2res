@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from datetime import timezone
-import re
 from typing import Any, Literal, Mapping, Optional
 
 from pydantic import field_validator, model_validator
 
 from exp2res.domain.models import (
+    SHA256_HEX,
     BoundaryDatetime,
     OccurredAt,
     StrictModel,
@@ -28,7 +28,6 @@ from exp2res.integrations.records import (
 )
 from exp2res.services.source_files import authorize_payload_locator
 
-CONTENT_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 MAX_LIST_ITEMS = 1_000
 
 
@@ -118,7 +117,7 @@ class AtlasRecord(SourceRecord):
     @field_validator("content_digest")
     @classmethod
     def digest_form(cls, value: Optional[str]) -> Optional[str]:
-        if value is not None and CONTENT_DIGEST.fullmatch(value) is None:
+        if value is not None and SHA256_HEX.fullmatch(value) is None:
             raise ValueError("content_digest must be 64 lowercase hex characters")
         return value
 

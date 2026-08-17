@@ -44,6 +44,10 @@ QUESTION_LIMIT = 1_024
 METADATA_LIMIT = 4_096
 METADATA_KEY = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+# §19.4 rule 3's content-hash form, which §11 rule 30 types the import digest
+# keys by. The importer, the model boundary, and the retained-identity scan
+# all compare against it, so it has one home here with rule 30.
+SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 def canonical_project_key(label: str) -> str:
@@ -142,6 +146,31 @@ def validate_metadata(value: dict[str, Any]) -> dict[str, Any]:
     if len(encoded) > METADATA_LIMIT:
         raise ValueError("metadata too large")
     return value
+
+
+def validate_import_identity(
+    metadata: dict[str, Any], keys: tuple[str, ...]
+) -> dict[str, Any]:
+    """§11 rules 30 and 55: type whichever named import keys are carried.
+
+    Rule 29 requires none of them — `import file` writes an imported `RawLog`
+    with no identity keys at all — so absence is legal and only a present
+    value is typed. Typing does not consume: the key stays inert under rules
+    31 and 33, and this is only rule 44's structural contract for it.
+    """
+
+    for key in keys:
+        if key not in metadata:
+            continue
+        value = metadata[key]
+        if not isinstance(value, str):
+            raise ValueError(f"{key} must be a string")
+        validate_structural(value)
+        if key in ("content_hash", "content_digest") and not SHA256_HEX.fullmatch(
+            value
+        ):
+            raise ValueError(f"{key} must be a lowercase SHA-256 hexadecimal digest")
+    return metadata
 
 
 _ISO_8601_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt ]")
@@ -306,6 +335,16 @@ class RawLog(StrictModel):
     def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
         return validate_metadata(value)
 
+    @model_validator(mode="after")
+    def typed_import_identity(self) -> "RawLog":
+        # §11 rule 55: `source_type` is what tells the record it is imported,
+        # so rule 33 holds without inspecting key names alone.
+        if self.source_type in ("imported_artifact", "imported_event"):
+            validate_import_identity(
+                self.metadata, ("source_system", "source_record_id", "content_hash")
+            )
+        return self
+
 
 class EvidenceItem(StrictModel):
     id: str
@@ -336,7 +375,9 @@ class EvidenceItem(StrictModel):
     @field_validator("metadata")
     @classmethod
     def metadata_policy(cls, value: dict[str, Any]) -> dict[str, Any]:
-        return validate_metadata(value)
+        # §11 rule 55: this entity carries no provenance field, so the digest
+        # is typed wherever it appears rather than for importers alone.
+        return validate_import_identity(validate_metadata(value), ("content_digest",))
 
 
 class ExperienceFact(StrictModel):

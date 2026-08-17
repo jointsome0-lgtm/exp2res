@@ -414,9 +414,12 @@ nodes = [
   "tests/test_llm_runner.py::test_invalid_output_retries_once_then_fails_without_business_effect[extra-key]",
   "tests/test_llm_runner.py::test_invalid_output_retries_once_then_fails_without_business_effect[service-owned-injection]",
   "tests/test_capture_phase0.py::test_a_json_datetime_admits_only_an_iso_8601_spelling",
+  "tests/test_capture_phase0.py::test_an_imported_record_types_the_identity_keys_it_carries",
+  "tests/test_capture_phase0.py::test_an_evidence_digest_is_typed_wherever_it_appears",
+  "tests/test_facts_storage.py::test_stored_import_identity_outside_rule_30_fails_at_hydration",
 ]
 phase = "5"
-note = "Strict temporal construction, bounded acquisition on both owner-supplied file surfaces — capture and the §14.5 `import file` document — closed runner outputs, JSON datetime parsing, and service-owned-field rejection are covered; the ISO 8601 string is now proven to be the only accepted string-to-datetime conversion, closing the Unix-timestamp reading against the case's no-other-conversion clause; every later §15 and §19 shape plus stored hydration remain"
+note = "Strict temporal construction, bounded acquisition on both owner-supplied file surfaces — capture and the §14.5 `import file` document — closed runner outputs, JSON datetime parsing, and service-owned-field rejection are covered; the ISO 8601 string is now proven to be the only accepted string-to-datetime conversion, closing the Unix-timestamp reading against the case's no-other-conversion clause, and §11 rules 30 and 55's named-key typing is proven at construction and at stored-row hydration with the rule 33 inert case held; every later §15 and §19 shape plus the remaining stored hydration paths remain"
 
 ["21.40"]
 status = "pending"

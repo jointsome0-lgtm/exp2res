@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-import re
 import sqlite3
 from typing import Iterable, Optional, Sequence
 
@@ -29,6 +28,7 @@ from exp2res.domain.models import (
     ResumeBranch,
     ResumeBullet,
     SelfClaim,
+    SHA256_HEX,
     VerificationFinding,
     canonical_branch_identity,
     canonical_project_key,
@@ -40,11 +40,6 @@ from exp2res.domain.temporal import (
     placement_supports,
 )
 from exp2res.errors import HydrationFailureError, IdCollisionError, IntegrityFailureError
-
-
-# §11 rule 30 types the imported `content_hash` metadata key as exactly
-# §19.4 rule 3's lowercase SHA-256 hexadecimal form.
-IMPORT_CONTENT_HASH = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -256,7 +251,7 @@ def retained_import_hashes(
         digest = row["content_hash"]
         if not isinstance(identity, str) or not isinstance(digest, str):
             raise IntegrityFailureError()
-        if IMPORT_CONTENT_HASH.fullmatch(digest) is None:
+        if SHA256_HEX.fullmatch(digest) is None:
             raise IntegrityFailureError()
         try:
             validate_structural(identity)
