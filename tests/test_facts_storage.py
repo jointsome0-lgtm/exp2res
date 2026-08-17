@@ -40,6 +40,7 @@ from exp2res.storage.repository import (
     mark_contradictions_superseded,
     mark_facts_superseded,
     mark_gap_questions_superseded,
+    utc_instant,
 )
 from exp2res.storage.telemetry import create_processing_run, finish_processing_run
 from exp2res.storage.workspace import read_database, writer_database
@@ -359,6 +360,19 @@ def test_fact_round_trip_derives_ordered_sources_and_preserves_production_identi
     assert sorted(tuple(row) for row in sources) == sorted(
         (item, "direct") for item in evidence_ids
     )
+
+
+def test_a_stored_instant_with_no_utc_form_is_an_integrity_failure() -> None:
+    """§11 rule 40: a row written before §11 rule 54 is not grandfathered.
+
+    The boundary refuses this spelling on input now, so it can only reach the
+    decoder from a row that predates the rule or was edited outside the CLI.
+    It fails closed rather than escaping as an `OverflowError`, which is not a
+    `ValueError` and would surface as an unhandled crash instead of exit 1.
+    """
+    with pytest.raises(IntegrityFailureError):
+        utc_instant("9999-12-31T23:00:00-05:00")
+    assert utc_instant("2026-07-15T15:30:00+03:00") == FIXED_NOW
 
 
 def test_fact_listing_orders_by_utc_instant_then_id_bytes(workspace: Path) -> None:

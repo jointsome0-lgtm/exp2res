@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import ConfigDict, field_validator, model_validator
@@ -21,6 +20,7 @@ from exp2res.domain.enums import (
     VerificationStatus,
 )
 from exp2res.domain.models import (
+    BoundaryDatetime,
     StrictModel,
     validate_free_text,
     validate_structural,
@@ -112,7 +112,7 @@ class ContradictionExport(ExportDocument):
 
 class SnapshotExport(ExportDocument):
     id: str
-    created_at: datetime
+    created_at: BoundaryDatetime
     scope: AssessmentScope
     title: str
     verification_status: VerificationStatus
@@ -126,13 +126,6 @@ class SnapshotExport(ExportDocument):
     @classmethod
     def normalized_title(cls, value: str) -> str:
         return _projected_text(value)
-
-    @field_validator("created_at")
-    @classmethod
-    def aware_datetime(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("datetime must carry an offset")
-        return value
 
 
 class SelfClaimExport(ExportDocument):

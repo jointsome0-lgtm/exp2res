@@ -22,7 +22,7 @@ from exp2res.services.capture import (
     new_id,
 )
 from exp2res.services.logs import list_logs, show_log
-from exp2res.services.time_input import parse_occurred
+from exp2res.services.time_input import parse_occurred, today_occurred
 
 from conftest import FIXED_NOW, VERA_CORPUS
 
@@ -266,6 +266,130 @@ def test_out_of_range_calendar_anchor_is_invalid_input_not_internal_error() -> N
             )
         assert caught.value.diagnostic_class == "invalid_time"
         assert caught.value.exit_code == 2
+
+
+def _placement(**overrides: object) -> str:
+    body: dict[str, object] = {
+        "start": "2026-06-01T00:00:00+00:00",
+        "end": None,
+        "precision": "exact_day",
+        "confidence": "high",
+    }
+    body.update(overrides)
+    return json.dumps(body)
+
+
+def test_a_json_datetime_admits_only_an_iso_8601_spelling() -> None:
+    """§11 rules 3 and 6: the ISO string is the one string-to-datetime bridge.
+
+    Pydantic's JSON parser reads a numeric string as a Unix timestamp, which
+    is a second bridge; an LLM or importer emitting one would otherwise land a
+    silently different instant that no later stage can tell apart. The
+    spellings it reads that way are not only whole seconds, so the gate is the
+    ISO prefix and every non-ISO form fails it.
+    """
+    timestamps = (
+        "1780272000",
+        "1780272000.5",
+        "-1780272000",
+        ".5",
+        "+.5",
+        "1.",
+        "20260601",
+    )
+    for spelling in timestamps:
+        with pytest.raises(ValidationError) as caught:
+            OccurredAt.model_validate_json(_placement(start=spelling))
+        assert "ISO 8601" in str(caught.value)
+
+    # Pydantic also accepts `_` as a separator, which no standard defines.
+    with pytest.raises(ValidationError) as underscore:
+        OccurredAt.model_validate_json(_placement(start="2026-06-01_00:00:00+00:00"))
+    assert "ISO 8601" in str(underscore.value)
+
+    # Every separator a standard does define survives the gate, so the
+    # allowlist narrows the bridge without narrowing rule 3's grant.
+    for spelling in (
+        "2026-06-01T00:00:00+00:00",
+        "2026-06-01t00:00:00+00:00",
+        "2026-06-01 00:00:00+00:00",
+        "2026-06-01T00:00:00Z",
+    ):
+        accepted = OccurredAt.model_validate_json(_placement(start=spelling))
+        assert accepted.start == datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+
+def test_a_calendar_edge_placement_is_refused_at_the_boundary() -> None:
+    """§11 rule 54: no accepted value defers its overflow to a consumer.
+
+    Each rejected spelling below reaches §16.7 rule 6 normalization somewhere
+    downstream, where `OverflowError` — not a `ValueError` — escapes Pydantic.
+    The west-shifted start is the one that only rule 3's UTC basis catches: it
+    carries its own width in local time and overflows only after the shift.
+    """
+    unrepresentable = (
+        "0001-01-01T00:00:00+14:00",
+        "9999-12-31T23:59:59+00:00",
+        "9999-12-30T20:00:00-05:00",
+    )
+    for spelling in unrepresentable:
+        with pytest.raises(ValidationError):
+            OccurredAt.model_validate_json(_placement(start=spelling))
+
+    # Neither the same instant under a range precision, which adds no width,
+    # nor a start whose offset shifts it away from the edge is over-rejected.
+    assert OccurredAt.model_validate_json(
+        _placement(start="9999-12-31T00:00:00+00:00", precision="date_range")
+    ).end is None
+    assert OccurredAt.model_validate_json(
+        _placement(start="9999-12-29T00:00:00+14:00")
+    ).precision == "exact_day"
+
+
+def test_a_calendar_edge_local_time_is_owner_input_not_an_internal_error() -> None:
+    """§11 rule 54 / §14.14: the same edge typed by the owner stays exit 2."""
+    for period, zone in (
+        ("9999-12-31T23:00:00", "America/New_York"),
+        ("0001-01-01T00:30:00", "Asia/Tokyo"),
+    ):
+        with pytest.raises(InvalidInputError) as caught:
+            parse_occurred(
+                period=period,
+                precision="exact_datetime",
+                confidence="high",
+                timezone_name=zone,
+            )
+        assert caught.value.diagnostic_class == "invalid_time"
+        assert caught.value.exit_code == 2
+
+
+def test_a_derived_daily_placement_at_the_edge_stays_in_exit_class_two() -> None:
+    """§11 rule 54: a refused supplied value is never an integrity fault.
+
+    `log today` builds its placement from the service clock rather than from
+    anything the owner typed, so it is the one construction that could report
+    the new refusal as exit class 1 instead.
+    """
+    edge = datetime(9999, 12, 31, 12, 0, tzinfo=timezone.utc)
+    for now, zone in (
+        # The derived day carries no width at or west of UTC …
+        (edge, "Etc/UTC"),
+        (edge, "America/New_York"),
+        # … and east of it the clock itself has no local date at all.
+        (datetime(9999, 12, 31, 23, 0, tzinfo=timezone.utc), "Asia/Tokyo"),
+    ):
+        with pytest.raises(InvalidInputError) as caught:
+            today_occurred(now=now, timezone_name=zone)
+        assert caught.value.exit_code == 2
+
+    # An east-shifted day at the same clock moves away from the edge and is
+    # not over-rejected, exactly as the placement boundary treats it.
+    assert today_occurred(now=edge, timezone_name="Asia/Tokyo").start.isoformat() == (
+        "9999-12-31T00:00:00+09:00"
+    )
+    assert today_occurred(now=FIXED_NOW, timezone_name="Etc/UTC").precision == (
+        "exact_day"
+    )
 
 
 def test_every_allocated_id_delegates_to_a_version_4_uuid(

@@ -16,7 +16,12 @@ from pydantic import ConfigDict, field_validator, model_validator
 
 from exp2res.domain.canonical import canonical_hash, canonical_json_bytes
 from exp2res.domain.enums import AssessmentScope
-from exp2res.domain.models import StrictModel, validate_free_text, validate_structural
+from exp2res.domain.models import (
+    BoundaryDatetime,
+    StrictModel,
+    validate_free_text,
+    validate_structural,
+)
 from exp2res.errors import IntegrityFailureError, ManagedOutputIncompleteError
 
 from .branch import (
@@ -116,7 +121,7 @@ class AssessmentManifest(_ManifestModel):
     entity_id: str
     generation_id: str
     produced_by_run_id: str
-    created_at: datetime
+    created_at: BoundaryDatetime
     identity: AssessmentIdentity
     source_ids: AssessmentSourceIds
     render_input_sha256: str
@@ -133,13 +138,6 @@ class AssessmentManifest(_ManifestModel):
     @classmethod
     def valid_production_ids(cls, value: str) -> str:
         return validate_structural(value)
-
-    @field_validator("created_at")
-    @classmethod
-    def aware_created_at(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("manifest datetime must carry an offset")
-        return value
 
     @field_validator("render_input_sha256")
     @classmethod
@@ -212,7 +210,7 @@ class ResumeManifest(_ManifestModel):
     entity_id: str
     generation_id: str
     produced_by_run_id: str
-    created_at: datetime
+    created_at: BoundaryDatetime
     identity: ResumeIdentity
     source_ids: ResumeSourceIds
     render_input_sha256: str
@@ -229,13 +227,6 @@ class ResumeManifest(_ManifestModel):
     @classmethod
     def valid_production_ids(cls, value: str) -> str:
         return validate_structural(value)
-
-    @field_validator("created_at")
-    @classmethod
-    def aware_created_at(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("manifest datetime must carry an offset")
-        return value
 
     @field_validator("render_input_sha256")
     @classmethod

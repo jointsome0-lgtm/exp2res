@@ -35,7 +35,15 @@ def resolve_local(value: datetime, zone: ZoneInfo) -> datetime:
     candidates: list[datetime] = []
     for fold in (0, 1):
         candidate = value.replace(tzinfo=zone, fold=fold)
-        round_trip = candidate.astimezone(timezone.utc).astimezone(zone)
+        try:
+            round_trip = candidate.astimezone(timezone.utc).astimezone(zone)
+        except OverflowError as error:
+            # A local time within a day of either end of the calendar has no
+            # UTC instant in a zone offset the wrong way. §11 rule 54 refuses
+            # it, and owner-typed input leaves as §14.14 exit class 2.
+            raise _time_error(
+                "invalid_time", "The time value is invalid."
+            ) from error
         if (
             round_trip.replace(tzinfo=None) == value
             and candidate.utcoffset() == round_trip.utcoffset()
@@ -66,8 +74,15 @@ def today_occurred(*, now: datetime, timezone_name: str) -> OccurredAt:
     if now.tzinfo is None or now.utcoffset() is None:
         raise _time_error("invalid_time", "The service clock must carry an offset.")
     zone = workspace_zone(timezone_name)
-    return OccurredAt(
-        start=day_start(now.astimezone(zone).date(), zone),
+    try:
+        local_today = now.astimezone(zone).date()
+    except OverflowError as error:
+        raise _time_error("invalid_time", "The time value is invalid.") from error
+    # A clock-derived day is still a value, not a workspace defect, so §11
+    # rule 54's refusal leaves through the same §14.14 translation an
+    # owner-typed one does rather than as exit class 1.
+    return _build_occurred(
+        start=day_start(local_today, zone),
         end=None,
         precision="exact_day",
         confidence="high",

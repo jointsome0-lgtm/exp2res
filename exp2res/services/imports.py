@@ -218,11 +218,9 @@ def _classify(
         )
     try:
         record = _validated_record(contract, raw)
-    # An `OverflowError` raised inside validation is this record's own value
-    # defect — §11 rule 4 admits offset-aware datetimes with no representable
-    # UTC instant (#271) — and Pydantic converts only `ValueError`. Catching
-    # it here keeps §19.4 rule 5's per-record outcome a property of the
-    # classifier rather than of each contract remembering to translate.
+    # §11 rule 54 leaves the `OverflowError` arm covering no known input; it
+    # stays because §19.4 rule 5's per-record outcome must not rest on every
+    # future contract remembering to translate. One escape aborts the import.
     except (ValidationError, OverflowError):
         return bank(
             "rejected",
@@ -240,10 +238,9 @@ def _classify(
     try:
         digest = content_hash(record)
     except OverflowError:
-        # §11 rule 4 accepts every offset-aware datetime, but §19.4 rule 3
-        # canonicalizes to UTC, where a value near the representable edge has
-        # no form at all. That is this one record's defect, and rule 4 keeps
-        # it from aborting the records already committed behind it.
+        # §19.4 rule 3's UTC canonicalization, which §11 rule 54 now
+        # guarantees. Kept for the reason above, over any reachability
+        # argument about the content this hash walks.
         return bank(
             "rejected",
             ImportedRecord(number, identity, reason="record_invalid"),

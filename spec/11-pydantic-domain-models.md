@@ -114,6 +114,7 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
 51. No other identifier, selector, label, duplicate comparison, or prose string receives implicit normalization or case folding; strings differing only by normalization form or case remain distinct wherever no owning rule names a fold.
 52. Locale-dependent casing, including Turkish-I special casing, is forbidden; "locale-independent case fold" means Unicode Default Case Folding.
 53. A non-null `path` field value must use POSIX path syntax under §29.4; a Windows drive-letter, UNC, or backslash-separated form fails the same structural validation as unsupported.
+54. Every accepted `datetime` must have a representable UTC instant under §16.7 rule 3, and a non-range `OccurredAt` must additionally have a representable §16.7 rule 6 interval — that UTC instant plus its rule 5 width. A value close enough to either end of the calendar to fail either test is refused here, not at whichever consumer normalizes it first. Refusing a supplied value is owner-visible input failure (§14.14); a stored row violating the rule is an integrity fault under rule 40 like any other.
 
 ## §11.1 OccurredAt
 

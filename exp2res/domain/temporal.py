@@ -5,19 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from .enums import CONFIDENCE_RANK
+from .enums import CONFIDENCE_RANK, MAX_UNCERTAINTY_WIDTH
 from .models import OccurredAt
-
-# §16.7 maximum-uncertainty widths for non-range precisions; ranges use
-# their own `end - start`, and `unknown` is unbounded (None).
-_MAX_UNCERTAINTY_WIDTH: dict[str, timedelta] = {
-    "exact_datetime": timedelta(0),
-    "exact_day": timedelta(days=1),
-    "week": timedelta(days=7),
-    "month": timedelta(days=31),
-    "quarter": timedelta(days=92),
-    "year": timedelta(days=366),
-}
 
 
 @dataclass(frozen=True)
@@ -61,7 +50,7 @@ def uncertainty_width(occurred: OccurredAt) -> timedelta | None:
         if occurred.end is None:
             return None
         return _utc(occurred.end) - _utc(occurred.start)
-    return _MAX_UNCERTAINTY_WIDTH[occurred.precision]
+    return MAX_UNCERTAINTY_WIDTH[occurred.precision]
 
 
 def occurred_interval(occurred: OccurredAt) -> UncertaintyInterval:
@@ -75,7 +64,7 @@ def occurred_interval(occurred: OccurredAt) -> UncertaintyInterval:
         return UncertaintyInterval(
             start, None if occurred.end is None else _utc(occurred.end)
         )
-    return UncertaintyInterval(start, start + _MAX_UNCERTAINTY_WIDTH[occurred.precision])
+    return UncertaintyInterval(start, start + MAX_UNCERTAINTY_WIDTH[occurred.precision])
 
 
 def interval_contains(outer: UncertaintyInterval, inner: UncertaintyInterval) -> bool:

@@ -10,6 +10,7 @@ from pydantic import field_validator, model_validator
 
 from exp2res.domain.enums import OwnerAttribution
 from exp2res.domain.models import (
+    BoundaryDatetime,
     OccurredAt,
     StrictModel,
     validate_free_text,
@@ -60,8 +61,8 @@ class GithubRecord(SourceRecord):
     url: str
     author: CommitIdentity
     committer: CommitIdentity
-    authored_at: datetime
-    committed_at: datetime
+    authored_at: BoundaryDatetime
+    committed_at: BoundaryDatetime
     # Omission materializes the conservative value before §19.4 canonical
     # serialization, so omission and an explicit `unknown` hash alike.
     owner_attribution: OwnerAttribution = "unknown"
@@ -100,13 +101,6 @@ class GithubRecord(SourceRecord):
             raise ValueError("files exceeds the §11 item limit")
         for member in value:
             validate_structural(member)
-        return value
-
-    @field_validator("authored_at", "committed_at")
-    @classmethod
-    def upstream_times_are_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("upstream times must carry an offset")
         return value
 
     @model_validator(mode="after")
