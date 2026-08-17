@@ -339,7 +339,7 @@ def _select_answerable_gap(connection, gap_id: str):
 
 
 def validate_gap_answer_selection(workspace: Path, *, gap_id: str) -> None:
-    """Resolve the selector before answer acquisition (§14.14 rule 3)."""
+    """Resolve the selector before answer acquisition (§14.14 rule 4)."""
 
     require_compatible(workspace)
     with read_database(workspace) as connection:

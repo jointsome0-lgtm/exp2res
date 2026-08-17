@@ -118,7 +118,7 @@ def test_export_assessment_selector_blocked_and_residual_classes(
 def test_export_selector_resolves_before_preamble_cleanup_or_class_8(
     workspace: Path,
 ) -> None:
-    # §14.14 rule 3: an unresolvable selector is class 2 even when an
+    # §14.14 rule 4: an unresolvable selector is class 2 even when an
     # unreconciliable residual would stop publication; the read-only resolve
     # runs before the writer preamble, which is neither run nor reported.
     assessment = workspace / "out" / "assessment"

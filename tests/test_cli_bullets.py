@@ -193,6 +193,36 @@ def test_an_invalid_branch_name_fails_in_the_input_class(
     assert envelope["diagnostic_class"] == "branch_name_invalid"
 
 
+def test_an_unresolvable_selector_precedes_adapter_construction_on_generate(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: a bad `--jd` is class 2, not the config's class 7 (#258)."""
+
+    _facts, snapshot_id = arrange(workspace, monkeypatch, one_bullet)
+
+    def refuse(_workspace):
+        raise AssertionError("the adapter was built for an unresolvable selector")
+
+    monkeypatch.setattr(bullets_service, "build_llm_execution", refuse)
+    result, envelope = invoke_json(
+        workspace,
+        [
+            "--yes",
+            "bullets",
+            "generate",
+            "--jd",
+            "no-such-jd",
+            "--snapshot",
+            snapshot_id,
+            "--branch",
+            BRANCH_NAME,
+        ],
+    )
+
+    assert result.exit_code == 2, (result.stderr, envelope)
+    assert envelope["diagnostic_class"] == "selector_not_found"
+
+
 def test_a_replacement_generation_reports_both_generations(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -407,7 +437,7 @@ def test_human_mode_presents_the_advisory_rewrite(
 def test_an_unknown_branch_is_a_selector_miss(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§14.14 rule 3: selector resolution precedes the semantic pass."""
+    """§14.14 rule 4: selector resolution precedes the semantic pass."""
 
     generated_branch(workspace, monkeypatch)
 
@@ -512,6 +542,25 @@ def test_branch_hygiene_precedes_adapter_construction_on_verify(
     assert envelope["diagnostic_class"] == "branch_name_invalid"
 
 
+def test_an_unknown_branch_precedes_adapter_construction_on_verify(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 4: resolution joins hygiene ahead of the adapter (#258)."""
+
+    generated_branch(workspace, monkeypatch)
+
+    def refuse(_workspace):
+        raise AssertionError("the adapter was built for an unresolvable selector")
+
+    monkeypatch.setattr(bullets_service, "build_llm_execution", refuse)
+    result, envelope = invoke_json(
+        workspace, ["bullets", "verify", "--branch", "no-such-branch"]
+    )
+
+    assert result.exit_code == 2, (result.stderr, envelope)
+    assert envelope["diagnostic_class"] == "selector_not_found"
+
+
 def verified_branch(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[str, str]:
@@ -596,7 +645,7 @@ def test_an_unverified_branch_is_a_blocked_class_10_export(
 def test_an_unknown_branch_is_a_selector_miss_on_export(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§14.14 rule 3: selector resolution precedes the managed-writer path."""
+    """§14.14 rule 4: selector resolution precedes the managed-writer path."""
 
     verified_branch(workspace, monkeypatch)
 
