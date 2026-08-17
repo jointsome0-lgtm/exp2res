@@ -115,6 +115,7 @@ An `AssessmentSnapshot`'s assessment payload and provenance are immutable after 
 52. Locale-dependent casing, including Turkish-I special casing, is forbidden; "locale-independent case fold" means Unicode Default Case Folding.
 53. A non-null `path` field value must use POSIX path syntax under §29.4; a Windows drive-letter, UNC, or backslash-separated form fails the same structural validation as unsupported.
 54. Every accepted `datetime` must have a representable UTC instant under §16.7 rule 3, and a non-range `OccurredAt` must additionally have a representable §16.7 rule 6 interval — that UTC instant plus its rule 5 width. A value close enough to either end of the calendar to fail either test is refused here, not at whichever consumer normalizes it first. Refusing a supplied value is owner-visible input failure (§14.14); a stored row violating the rule is an integrity fault under rule 40 like any other.
+55. Rule 30's typing is enforced on the entity carrying the keys, so rule 39 fails a stored row closed at hydration and not only at rule 29's consumer: an imported `RawLog` — §10 `source_type` `imported_artifact` or `imported_event` — types whichever of `source_system`, `source_record_id`, and `content_hash` it carries, and an `EvidenceItem` types a `content_digest` it carries. No key is required; `import file` writes an imported record carrying none. Typing never consumes: the key stays inert under rules 31 and 33, and an `EvidenceItem` declares no provenance field to narrow the digest by.
 
 ## §11.1 OccurredAt
 

@@ -13,7 +13,12 @@ from pydantic import ValidationError
 
 import exp2res.services.capture as capture_service
 
-from exp2res.domain.models import RAW_TEXT_LIMIT, OccurredAt
+from exp2res.domain.models import (
+    RAW_TEXT_LIMIT,
+    EvidenceItem,
+    OccurredAt,
+    RawLog,
+)
 from exp2res.errors import ForbiddenPathError, IdCollisionError, InvalidInputError
 from exp2res.services.capture import (
     capture_daily,
@@ -390,6 +395,75 @@ def test_a_derived_daily_placement_at_the_edge_stays_in_exit_class_two() -> None
     assert today_occurred(now=FIXED_NOW, timezone_name="Etc/UTC").precision == (
         "exact_day"
     )
+
+
+def _imported_log(**metadata: object) -> RawLog:
+    return RawLog(
+        id="raw_log_vera_example_import",
+        recorded_at=FIXED_NOW,
+        entry_type="ephemeris_event",
+        source_type="imported_event",
+        occurred=OccurredAt(
+            start=None, end=None, precision="unknown", confidence="unknown"
+        ),
+        raw_text="Vera Example imported activity record",
+        metadata=dict(metadata),
+    )
+
+
+def test_an_imported_record_types_the_identity_keys_it_carries() -> None:
+    """§11 rules 30 and 55: the import identity keys are typed on the entity."""
+    rejected = (
+        {"content_hash": "not a digest"},
+        {"content_hash": "A" * 64},
+        {"content_hash": "a" * 63},
+        {"content_hash": 12345},
+        {"source_record_id": ""},
+    )
+    for metadata in rejected:
+        with pytest.raises(ValidationError):
+            _imported_log(**metadata)
+
+    # No key is required — §14.5 `import file` writes an imported record with
+    # none — and the same names from manual capture stay inert (rule 33).
+    assert _imported_log().metadata == {}
+    assert _imported_log(
+        source_system="ephemeris",
+        source_record_id="vera-ephemeris-0001",
+        content_hash="a" * 64,
+    ).metadata["source_system"] == "ephemeris"
+
+    inert = RawLog(
+        id="raw_log_vera_example_manual",
+        recorded_at=FIXED_NOW,
+        entry_type="manual_daily",
+        source_type="manual_entry",
+        occurred=OccurredAt(
+            start=None, end=None, precision="unknown", confidence="unknown"
+        ),
+        raw_text="Vera Example manual record",
+        metadata={"content_hash": "not a digest"},
+    )
+    assert inert.metadata["content_hash"] == "not a digest"
+
+
+def test_an_evidence_digest_is_typed_wherever_it_appears() -> None:
+    """§11 rule 55: `EvidenceItem` declares no provenance field to narrow by."""
+
+    def item(**metadata: object) -> EvidenceItem:
+        return EvidenceItem(
+            id="evidence_item_vera_example",
+            created_at=FIXED_NOW,
+            raw_log_id="raw_log_vera_example_import",
+            summary="Vera Example artifact reference.",
+            strength="artifact_reference",
+            metadata=dict(metadata),
+        )
+
+    with pytest.raises(ValidationError):
+        item(content_digest="not a digest")
+    assert item().metadata == {}
+    assert item(content_digest="b" * 64).metadata["content_digest"] == "b" * 64
 
 
 def test_every_allocated_id_delegates_to_a_version_4_uuid(

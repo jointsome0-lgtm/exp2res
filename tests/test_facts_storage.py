@@ -485,6 +485,42 @@ def test_raw_log_hydration_fails_closed_on_stored_project_key_drift(
         show_log(workspace, log_id=bundle.raw_log.id)
 
 
+def test_stored_import_identity_outside_rule_30_fails_at_hydration(
+    workspace: Path,
+) -> None:
+    """§11 rules 39 and 55: the typing holds where the row is read back.
+
+    Before rule 55 this reached rule 29's retained-identity scan and nothing
+    else, so a corrupted digest on a row nobody was importing against was
+    invisible to every other reader.
+    """
+
+    bundle = capture_daily(
+        workspace,
+        raw_text="Vera Example imported-identity hydration source",
+        clock=lambda: FIXED_NOW,
+    )
+    for source_type, metadata, hydrates in (
+        ("imported_event", {"content_hash": "not a digest"}, False),
+        ("imported_event", {"source_record_id": ""}, False),
+        ("imported_event", {"content_hash": "a" * 64}, True),
+        # §11 rule 33: the same key name from manual capture stays inert.
+        ("manual_entry", {"content_hash": "not a digest"}, True),
+    ):
+        with writer_database(workspace, owner_delete=True) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "UPDATE raw_logs SET source_type = ?, metadata_json = ? WHERE id = ?",
+                (source_type, json.dumps(metadata), bundle.raw_log.id),
+            )
+            connection.commit()
+        if hydrates:
+            assert show_log(workspace, log_id=bundle.raw_log.id) is not None
+        else:
+            with pytest.raises(HydrationFailureError):
+                show_log(workspace, log_id=bundle.raw_log.id)
+
+
 def test_fact_lifecycle_guards_allow_only_one_supersession_and_owner_purge(
     workspace: Path,
 ) -> None:
