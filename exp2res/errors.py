@@ -106,6 +106,18 @@ class ImportPayloadTooLargeError(InvalidInputError):
     public_message = "The import payload exceeds the total-object limit."
 
 
+class ImportPayloadChangedError(InvalidInputError):
+    """The selected payload was rewritten while the import was reading it.
+
+    §19.4 rule 4 partitions one payload, so every pass must see the same one.
+    A change under the open descriptor is refused rather than imported: the
+    alternative is a torn payload reported as a complete result.
+    """
+
+    diagnostic_class = "import_payload_changed"
+    public_message = "The import payload changed while it was being read."
+
+
 class ImportDocumentInvalidError(InvalidInputError):
     """§14.5 `import file`: the document cannot become a §13.1 record.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -10,13 +11,21 @@ from typing import Any
 
 import pytest
 
+from exp2res.config import load_workspace_config
 from exp2res.errors import (
     ForbiddenPathError,
+    ImportPayloadChangedError,
     ImportPayloadInvalidError,
     ImportPayloadTooLargeError,
     IntegrityFailureError,
+    InvalidInputError,
+    OperationCancelledError,
 )
+from exp2res.integrations import CONTRACTS
+from exp2res.integrations.records import PayloadRecords
+from exp2res.services.capture import new_id
 from exp2res.services.imports import ImportOutcome, import_payload
+from exp2res.services.source_files import PayloadFile, open_payload_file
 
 from conftest import FIXED_NOW
 
@@ -128,6 +137,16 @@ def write_payload(directory: Path, name: str, records: Any) -> str:
         body = json.dumps(records)
     path.write_text(body, encoding="utf-8")
     return str(path)
+
+
+def payload_with_trailing_garbage() -> bytes:
+    """A valid JSONL prefix long enough to outrun one buffered read."""
+
+    valid = "\n".join(
+        json.dumps(ephemeris_record(f"vera-ephemeris-{index:04d}"))
+        for index in range(200)
+    )
+    return valid.encode("utf-8") + b"\n" + b"\xff" * 32 + b"\n"
 
 
 def run_import(workspace: Path, source_system: str, payload: str) -> ImportOutcome:
@@ -488,6 +507,325 @@ def test_a_rejected_record_still_counts_toward_the_object_limit(
     with pytest.raises(ImportPayloadTooLargeError):
         run_import(workspace, "ephemeris", payload)
 
+    assert raw_rows(workspace) == []
+
+
+def test_a_multi_record_payload_is_read_one_record_at_a_time() -> None:
+    """§19.4 rule 4: the object cap bounds objects, never resident bytes.
+
+    A conforming JSONL file can spend that cap on records whose text fields
+    alone exhaust memory, so neither the payload nor its decoded records may
+    be held whole.
+    """
+
+    produced: list[int] = []
+
+    class Source:
+        def lines(self) -> Any:
+            for index in range(4):
+                produced.append(index)
+                yield json.dumps(ephemeris_record(f"vera-ephemeris-{index:04d}"))
+
+        def text(self) -> str:
+            raise AssertionError("a multi-record payload is never read whole")
+
+        def identity(self) -> tuple[int, int]:
+            return (1, 2)
+
+        def digest(self) -> str:
+            return "vera-example-digest"
+
+    records = PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
+    assert records.total == 4
+
+    produced.clear()
+    seen = 0
+    for _ in records:
+        seen += 1
+        # The source has produced exactly the lines consumed so far. A parser
+        # returning a materialized tuple would have produced all four before
+        # the first record reached the loop.
+        assert produced == list(range(seen))
+    assert seen == 4
+
+
+def test_a_payload_is_decoded_as_it_is_read(workspace: Path, tmp_path: Path) -> None:
+    """§19.4 rule 4: one pass reads the file, so its decode is incremental."""
+
+    path = tmp_path / "late-garbage.jsonl"
+    path.write_bytes(payload_with_trailing_garbage())
+    with open_payload_file(str(path), config=load_workspace_config(workspace)) as (
+        payload,
+        root,
+    ):
+        assert root == tmp_path
+        lines = payload.lines()
+        # A whole-file decode would have raised before yielding anything.
+        assert json.loads(next(lines))["record_id"] == "vera-ephemeris-0000"
+        with pytest.raises(InvalidInputError) as failure:
+            for _ in lines:
+                pass
+    assert failure.value.diagnostic_class == "input_not_utf8"
+
+
+def test_a_payload_rewritten_between_passes_is_refused(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 4 partitions one payload, so every pass must see the same one.
+
+    The open descriptor fixes the inode, not the bytes, so a rewrite in place
+    would otherwise let one pass establish boundaries a later pass no longer
+    finds.
+    """
+
+    path = tmp_path / "rewritten.jsonl"
+    original = [ephemeris_record(f"vera-ephemeris-{index:04d}") for index in range(3)]
+    write_payload(tmp_path, "rewritten.jsonl", original)
+    with open_payload_file(str(path), config=load_workspace_config(workspace)) as (
+        payload,
+        _,
+    ):
+        records = PayloadRecords(payload, contract=CONTRACTS["ephemeris"])
+        assert records.total == 3
+        write_payload(tmp_path, "rewritten.jsonl", original[:1])
+        with pytest.raises(ImportPayloadChangedError) as failure:
+            iter(records)
+
+    assert failure.value.diagnostic_class == "import_payload_changed"
+    assert failure.value.exit_code == 2
+    assert raw_rows(workspace) == []
+
+
+def test_a_payload_rewritten_during_the_first_pass_is_refused() -> None:
+    """The baseline is taken before the boundaries, not after.
+
+    A rewrite that lands mid-scan and settles before it returns would
+    otherwise become the baseline every later check agrees with, leaving
+    `total` describing bytes no pass ever saw whole.
+    """
+
+    state = {"identity": (1, 2)}
+
+    class Source:
+        def lines(self) -> Any:
+            for index in range(3):
+                if index == 1:
+                    state["identity"] = (9, 9)
+                yield json.dumps(ephemeris_record(f"vera-ephemeris-{index:04d}"))
+
+        def text(self) -> str:
+            raise AssertionError("a multi-record payload is never read whole")
+
+        def identity(self) -> tuple[int, int]:
+            return state["identity"]
+
+        def digest(self) -> str:
+            return "vera-example-digest"
+
+    with pytest.raises(ImportPayloadChangedError):
+        PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
+
+
+def test_a_payload_rewritten_while_the_writer_lock_is_awaited_is_refused() -> None:
+    """The wait for the §8.1 writer lock sits between the two checks.
+
+    `__iter__` runs before the lock, so a rewrite landing during the wait
+    would otherwise be read, classified, and committed before the exhausted
+    replay noticed.
+    """
+
+    state = {"identity": (1, 2)}
+
+    class Source:
+        def lines(self) -> Any:
+            for index in range(3):
+                yield json.dumps(ephemeris_record(f"vera-ephemeris-{index:04d}"))
+
+        def text(self) -> str:
+            raise AssertionError("a multi-record payload is never read whole")
+
+        def identity(self) -> tuple[int, int]:
+            return state["identity"]
+
+        def digest(self) -> str:
+            return "vera-example-digest"
+
+    records = PayloadRecords(Source(), contract=CONTRACTS["ephemeris"])
+    replay = iter(records)
+    state["identity"] = (9, 9)
+    with pytest.raises(ImportPayloadChangedError):
+        next(replay)
+
+
+def test_a_metadata_only_change_is_not_a_payload_change(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """Changing a payload's mode or owner does not change the payload.
+
+    The refusal rests on size and modification time, neither of which a mode
+    change touches, and on the digest of what each pass read, which it
+    touches even less.
+    """
+
+    path = tmp_path / "chmod.jsonl"
+    write_payload(
+        tmp_path,
+        "chmod.jsonl",
+        [ephemeris_record(f"vera-ephemeris-{index:04d}") for index in range(2)],
+    )
+    with open_payload_file(str(path), config=load_workspace_config(workspace)) as (
+        payload,
+        _,
+    ):
+        records = PayloadRecords(payload, contract=CONTRACTS["ephemeris"])
+        os.chmod(path, 0o600)
+        assert [record.record_number for record in records] == [1, 2]
+
+
+def test_a_rewrite_leaving_no_metadata_trace_is_caught_by_content(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """The digest is what makes the answer exact rather than merely cheap.
+
+    Same length, modification time restored: nothing in the stat differs, so
+    only comparing what the two passes actually read finds the substitution.
+    """
+
+    path = tmp_path / "substituted.jsonl"
+    write_payload(
+        tmp_path,
+        "substituted.jsonl",
+        [ephemeris_record(f"vera-ephemeris-{index:04d}") for index in range(2)],
+    )
+    with open_payload_file(str(path), config=load_workspace_config(workspace)) as (
+        payload,
+        _,
+    ):
+        records = PayloadRecords(payload, contract=CONTRACTS["ephemeris"])
+        before = os.stat(path)
+        write_payload(
+            tmp_path,
+            "substituted.jsonl",
+            [ephemeris_record(f"vera-ephemeris-{index:04d}") for index in range(8, 10)],
+        )
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        assert payload.identity() == (before.st_size, before.st_mtime_ns)
+
+        replay = iter(records)
+        with pytest.raises(ImportPayloadChangedError):
+            for _ in replay:
+                pass
+
+
+def test_a_torn_payload_still_reports_its_complete_result(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§14.14 rule 5: every classified boundary carries the full typed result.
+
+    The substitution keeps every line's length, so the replay reads a mixture
+    of both versions, classifies every boundary it was told to expect, and
+    refuses on the digests. The result it carries is complete on its own
+    terms rather than the null a record left unreached would earn.
+    """
+
+    def payload_records(project: str) -> list[dict]:
+        return [
+            ephemeris_record(f"vera-ephemeris-{index:04d}", project=project)
+            for index in range(200)
+        ]
+
+    path = tmp_path / "torn.jsonl"
+    write_payload(tmp_path, "torn.jsonl", payload_records("Vera Example Playbook"))
+    rewritten = [False]
+
+    def rewriting_factory(kind: str) -> str:
+        if not rewritten[0]:
+            rewritten[0] = True
+            write_payload(
+                tmp_path, "torn.jsonl", payload_records("Vera Example Notebook")
+            )
+        return new_id(kind)
+
+    with pytest.raises(ImportPayloadChangedError) as failure:
+        import_payload(
+            workspace,
+            source_system="ephemeris",
+            payload_path=str(path),
+            clock=lambda: FIXED_NOW,
+            id_factory=rewriting_factory,
+        )
+
+    assert counts(failure.value.import_outcome) == (200, 0, 0)
+    assert failure.value.import_classified is True
+    assert len(raw_rows(workspace)) == 200
+
+
+def test_a_payload_rewritten_during_the_import_is_reported(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 4 keeps committed records reportable behind that refusal.
+
+    A rewrite that lands after the replay begins is past preventing, so the
+    exhausted replay reconfirms rather than passing a torn payload off as a
+    partition.
+    """
+
+    path = tmp_path / "rewritten.jsonl"
+    original = [ephemeris_record(f"vera-ephemeris-{index:04d}") for index in range(3)]
+    write_payload(tmp_path, "rewritten.jsonl", original)
+    with open_payload_file(str(path), config=load_workspace_config(workspace)) as (
+        payload,
+        _,
+    ):
+        records = PayloadRecords(payload, contract=CONTRACTS["ephemeris"])
+        replay = iter(records)
+        assert next(replay).record_number == 1
+        write_payload(tmp_path, "rewritten.jsonl", original + original)
+        with pytest.raises(ImportPayloadChangedError):
+            for _ in replay:
+                pass
+
+
+def test_a_signal_during_payload_teardown_reports_the_committed_records(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the payload closes inside the progress-carrying handlers.
+
+    Teardown runs after the last record has committed, so a signal landing in
+    it must reach the same cancellation report as one landing in the writer
+    lock's teardown, not the CLI's generic envelope.
+    """
+
+    payload = write_payload(tmp_path, "teardown.jsonl", [ephemeris_record()])
+
+    def interrupt(self: PayloadFile) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(PayloadFile, "release", interrupt)
+    with pytest.raises(OperationCancelledError) as failure:
+        run_import(workspace, "ephemeris", payload)
+
+    assert counts(failure.value.import_outcome) == (1, 0, 0)
+    assert failure.value.import_classified is True
+    assert len(raw_rows(workspace)) == 1
+
+
+def test_a_payload_that_is_not_utf8_commits_nothing(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.4 rule 4: incremental decoding keeps this a payload-level refusal.
+
+    The offending bytes sit past the first read, so a decode failure is found
+    only after many records have already been established. None of them may
+    reach the database on the way to it.
+    """
+
+    path = tmp_path / "late-garbage.jsonl"
+    path.write_bytes(payload_with_trailing_garbage())
+    with pytest.raises(InvalidInputError) as failure:
+        run_import(workspace, "ephemeris", str(path))
+
+    assert failure.value.diagnostic_class == "input_not_utf8"
     assert raw_rows(workspace) == []
 
 

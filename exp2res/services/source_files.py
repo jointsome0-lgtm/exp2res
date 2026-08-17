@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
+import hashlib
+import io
 import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
 import sys
-from typing import BinaryIO, Callable
+from typing import BinaryIO, Callable, Iterator
 from urllib.parse import unquote, urlsplit
 
 from exp2res.config import WorkspaceConfig
@@ -565,6 +568,13 @@ def reauthorize_prompt_locators(
                 visit(child)
 
     visit(payload)
+def _not_utf8() -> InvalidInputError:
+    failure = InvalidInputError()
+    failure.diagnostic_class = "input_not_utf8"
+    failure.public_message = "The selected source is not valid UTF-8."
+    return failure
+
+
 def _read_bounded_utf8(stream: BinaryIO) -> str:
     try:
         data = stream.read(RAW_TEXT_LIMIT + 1)
@@ -578,31 +588,104 @@ def _read_bounded_utf8(stream: BinaryIO) -> str:
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as error:
-        failure = InvalidInputError()
-        failure.diagnostic_class = "input_not_utf8"
-        failure.public_message = "The selected source is not valid UTF-8."
-        raise failure from error
+        raise _not_utf8() from error
 
 
-def _read_unbounded_utf8(stream: BinaryIO) -> str:
-    """Decode a selected payload without the `raw_text` field bound.
+class PayloadFile:
+    """One selected §14.5 payload, re-readable without holding it in memory.
 
-    §19.4 rule 4 makes §11's total-object-per-payload limit the whole
-    payload-size bound and forbids a second numeric cap, so a multi-record
-    file legitimately exceeds the 1 MiB one record's text may occupy.
+    §19.4 rule 4 makes §11 rule 38's object cap the whole payload-size bound
+    and forbids a second numeric cap, so a conforming multi-record file
+    legitimately runs far past the 1 MiB one record's text may occupy —
+    reading it whole is what exhausts memory. Each pass rewinds the one
+    descriptor §29.4 rules 4–14 authorized and proved, so no pass can read a
+    different filesystem object than the one that gate admitted.
+
+    Newline translation is off because JSONL delimits records by LF alone:
+    universal newlines would also break on CR, splitting one record whose
+    source voice legitimately carries it into two halves neither of which
+    parses. That is the same boundary the `splitlines()` note in
+    `PayloadRecords` guards, moved here with the decoding.
     """
 
-    try:
-        data = stream.read()
-    except OSError as error:
-        raise InvalidInputError() from error
-    try:
-        return data.decode("utf-8")
-    except UnicodeDecodeError as error:
-        failure = InvalidInputError()
-        failure.diagnostic_class = "input_not_utf8"
-        failure.public_message = "The selected source is not valid UTF-8."
-        raise failure from error
+    def __init__(self, stream: BinaryIO) -> None:
+        self._text = io.TextIOWrapper(stream, encoding="utf-8", newline="\n")
+        self._digest: str | None = None
+
+    def _rewind(self) -> None:
+        try:
+            self._text.seek(0)
+        except (OSError, ValueError) as error:
+            raise InvalidInputError() from error
+
+    def lines(self) -> Iterator[str]:
+        """Yield each LF-delimited line in file order, without its terminator.
+
+        Decoding is incremental, so a payload that is not UTF-8 fails on the
+        pass that reaches the offending bytes rather than before the first
+        line is seen. Every caller drains one whole pass before any record
+        commits, which keeps that refusal a payload-level one.
+
+        A pass that runs to exhaustion leaves `digest` describing what it
+        read; one abandoned part-way leaves it empty rather than describing a
+        prefix.
+        """
+
+        self._digest = None
+        self._rewind()
+        running = hashlib.sha256()
+        try:
+            for line in self._text:
+                running.update(line.encode("utf-8"))
+                yield line.rstrip("\n")
+        except UnicodeDecodeError as error:
+            raise _not_utf8() from error
+        except OSError as error:
+            raise InvalidInputError() from error
+        self._digest = running.hexdigest()
+
+    def text(self) -> str:
+        """Read the whole payload, for the contracts that are one document.
+
+        No digest is taken: that reader serves a payload held rather than
+        replayed, and encoding a second copy of it to hash would give back
+        the residency this class exists to avoid.
+        """
+
+        self._digest = None
+        self._rewind()
+        try:
+            return self._text.read()
+        except UnicodeDecodeError as error:
+            raise _not_utf8() from error
+        except OSError as error:
+            raise InvalidInputError() from error
+
+    def identity(self) -> tuple[int, int]:
+        """What a later pass over this descriptor should still find.
+
+        A cheap staleness pair, not a proof: it is what the refusals that
+        happen before anything commits rest on, where a false alarm costs a
+        rerun and nothing more. Metadata times are deliberately absent —
+        changing a payload's mode or owner does not change the payload — so
+        an exact answer comes from `digest` instead.
+        """
+
+        try:
+            status = os.fstat(self._text.fileno())
+        except OSError as error:
+            raise InvalidInputError() from error
+        return (status.st_size, status.st_mtime_ns)
+
+    def digest(self) -> str | None:
+        """The SHA-256 of the last exhausted `lines` pass, or None."""
+
+        return self._digest
+
+    def release(self) -> None:
+        """Drop the decoder without closing the descriptor its owner holds."""
+
+        self._text.detach()
 
 
 def _authorize_selected_file(
@@ -635,9 +718,15 @@ def _authorize_selected_file(
         raise ForbiddenPathError() from error
 
 
-def _read_selected_file(
-    resolved: Path, reader: Callable[[BinaryIO], str]
-) -> str:
+@contextmanager
+def _open_selected_file(resolved: Path) -> Iterator[BinaryIO]:
+    """Open the authorized path and prove the opened object is that file.
+
+    Only the open and the proof are guarded here: a failure raised while the
+    caller reads carries its own boundary, and rewriting it as an input error
+    would relabel the caller's failure as this gate's.
+    """
+
     descriptor: int | None = None
     try:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -646,15 +735,27 @@ def _read_selected_file(
         current = os.stat(resolved, follow_symlinks=False)
         if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(opened, current):
             raise ForbiddenPathError()
-        with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            return reader(stream)
+        stream = os.fdopen(descriptor, "rb", closefd=False)
     except ForbiddenPathError:
-        raise
-    except OSError as error:
-        raise InvalidInputError() from error
-    finally:
         if descriptor is not None:
             os.close(descriptor)
+        raise
+    except OSError as error:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise InvalidInputError() from error
+    try:
+        with stream:
+            yield stream
+    finally:
+        os.close(descriptor)
+
+
+def _read_selected_file(
+    resolved: Path, reader: Callable[[BinaryIO], str]
+) -> str:
+    with _open_selected_file(resolved) as stream:
+        return reader(stream)
 
 
 def read_capture_file(
@@ -685,18 +786,29 @@ def read_document_file(
     return _read_selected_file(resolved, _read_bounded_utf8), canonical
 
 
-def read_payload_file(
+@contextmanager
+def open_payload_file(
     supplied: str, *, config: WorkspaceConfig
-) -> tuple[str, Path]:
-    """Read one §14.5 payload and return it with its §29.4 rule 8 root.
+) -> Iterator[tuple[PayloadFile, Path]]:
+    """Open one §14.5 payload and yield it with its §29.4 rule 8 root.
 
     The payload root is the selected file's containing directory: it bounds
     which embedded relative locators are selectable and is never a
     pattern-matching base.
+
+    The payload stays open for the whole import because §19.4 rule 4 reads it
+    record by record; the §29.4 gate is unchanged by that, being a check on
+    the path before the open rather than on how long the proved descriptor is
+    then held.
     """
 
     resolved, _ = _authorize_selected_file(supplied, config=config)
-    return _read_selected_file(resolved, _read_unbounded_utf8), resolved.parent
+    with _open_selected_file(resolved) as stream:
+        payload = PayloadFile(stream)
+        try:
+            yield payload, resolved.parent
+        finally:
+            payload.release()
 
 
 def validate_remote_locator(value: str) -> str:

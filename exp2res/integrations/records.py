@@ -5,13 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Iterator, Mapping, Optional, Protocol
 
 from exp2res.config import WorkspaceConfig
 from exp2res.domain.canonical import canonical_model_hash
 from exp2res.domain.enums import EntryType, EvidenceStrength, SourceType
 from exp2res.domain.models import OccurredAt, StrictModel, validate_structural
-from exp2res.errors import ImportPayloadInvalidError, ImportPayloadTooLargeError
+from exp2res.errors import (
+    ImportPayloadChangedError,
+    ImportPayloadInvalidError,
+    ImportPayloadTooLargeError,
+)
 
 # §11 rule 38's payload bounds. §19.4 rule 4 makes the total-object limit the
 # whole payload-size bound and adds no second numeric cap, so nothing here
@@ -211,50 +215,131 @@ def scan_record(value: Any, *, counter: list[int]) -> Optional[str]:
     return reason
 
 
-def parse_payload(text: str, *, contract: SourceContract) -> tuple[ParsedRecord, ...]:
-    """Establish every §19.4 rule 5 input record boundary, in file order.
+class PayloadSource(Protocol):
+    """One selected payload, re-readable as lines or as one whole document."""
 
-    A payload failure too early to establish those boundaries raises instead,
-    leaving the command with `result = null`; once a boundary exists its
-    record is reported, however invalid its content.
+    def lines(self) -> Iterator[str]: ...
+
+    def text(self) -> str: ...
+
+    def identity(self) -> tuple[int, int]: ...
+
+    def digest(self) -> str | None: ...
+
+
+class PayloadRecords:
+    """Every §19.4 rule 5 input record boundary in one payload, in file order.
+
+    Construction establishes all of them once and raises the failures that are
+    the payload's rather than a record's — a decode failure, a single-record
+    document that is not JSON, §11 rule 38's object cap. Those must land
+    before any record commits, so nothing here waits for the import loop to
+    reach them. Iteration then replays the boundaries; once a boundary exists
+    its record is reported, however invalid its content.
+
+    A multi-record payload is re-read per pass rather than retained, so no
+    more than one record's decoded value is ever resident: §19.4 rule 4 makes
+    the object cap the whole payload bound, and a conforming JSONL file can
+    spend it on records whose text fields alone exhaust memory. One record is
+    bounded by §11's own field limits, so a single-record payload is held.
+
+    Rule 4 partitions one payload, so every pass must see the same one. An
+    open descriptor fixes the inode but not the bytes, and a payload rewritten
+    under it would otherwise be reported as a complete result over a boundary
+    set no pass ever saw whole. Two checks answer that, at the two points
+    where each is the right one. Size and modification time answer the
+    question cheaply wherever the answer can still prevent a commit — before
+    the boundaries are established, and again as a replay starts consuming —
+    so a false alarm there costs a rerun and nothing else. The content digest
+    of each exhausted pass answers it exactly once the replay is done, where
+    records have committed and a metadata change must not be mistaken for a
+    rewrite.
     """
 
-    counter = [0]
-    if not contract.multi_record:
-        try:
-            value = decode_json(text)
-        except ValueError as error:
-            raise ImportPayloadInvalidError() from error
-        # The decoded value is kept even when the scan rejects it: §19.4 rule 5
-        # nulls `source_record_id` only for a missing or invalid identity, and
-        # a record can carry a valid identity beside the defect.
-        return (ParsedRecord(1, value=value, reason=scan_record(value, counter=counter)),)
+    def __init__(self, payload: PayloadSource, *, contract: SourceContract) -> None:
+        self._payload = payload
+        self._contract = contract
+        self._held: tuple[ParsedRecord, ...] | None = None
+        self._identity = payload.identity()
+        if contract.multi_record:
+            self.total = sum(1 for _ in self._parse())
+        else:
+            self._held = tuple(self._parse())
+            self.total = len(self._held)
+        self._reconfirm()
+        self._digest = payload.digest()
 
-    records: list[ParsedRecord] = []
-    # JSONL delimits records by LF alone. `splitlines()` would also break on
-    # U+2028 and friends, splitting one record whose source voice legitimately
-    # contains them into two unparseable halves.
-    for line in text.split("\n"):
-        # A blank separator line establishes no record: JSONL writers append
-        # one freely, and counting it would renumber every later record.
-        if not line.strip():
-            continue
-        number = len(records) + 1
-        try:
-            value = decode_json(line)
-        except ValueError:
-            records.append(
-                ParsedRecord(
+    def __iter__(self) -> Iterator[ParsedRecord]:
+        """Replay the boundaries, reconfirming the payload before yielding.
+
+        The check is eager rather than deferred into the generator so that a
+        caller taking this iterator before the §8.1 writer lock refuses an
+        already-rewritten payload with nothing committed.
+        """
+
+        self._reconfirm()
+        if self._held is not None:
+            return iter(self._held)
+        return self._replay()
+
+    def _reconfirm(self) -> None:
+        if self._payload.identity() != self._identity:
+            raise ImportPayloadChangedError()
+
+    def _reconfirm_content(self) -> None:
+        if self._payload.digest() != self._digest:
+            raise ImportPayloadChangedError()
+
+    def _replay(self) -> Iterator[ParsedRecord]:
+        """Check, yield each boundary, then compare what this pass actually read.
+
+        The leading check is not the eager one repeated: `__iter__` runs before
+        the §8.1 writer lock, and the wait for that lock is time enough for a
+        rewrite to land, so consumption starts by asking again. A rewrite past
+        that point is past preventing, but §19.4 rule 4 keeps the records
+        already committed reportable, so the torn payload is reported rather
+        than passed off as a partition — and reported on the digests of the
+        two passes, which no change to the file's mode or owner disturbs.
+        """
+
+        self._reconfirm()
+        yield from self._parse()
+        self._reconfirm_content()
+
+    def _parse(self) -> Iterator[ParsedRecord]:
+        counter = [0]
+        if not self._contract.multi_record:
+            try:
+                value = decode_json(self._payload.text())
+            except ValueError as error:
+                raise ImportPayloadInvalidError() from error
+            # The decoded value is kept even when the scan rejects it: §19.4
+            # rule 5 nulls `source_record_id` only for a missing or invalid
+            # identity, and a record can carry a valid identity beside the
+            # defect.
+            yield ParsedRecord(1, value=value, reason=scan_record(value, counter=counter))
+            return
+
+        number = 0
+        for line in self._payload.lines():
+            # A blank separator line establishes no record: JSONL writers
+            # append one freely, and counting it would renumber every later
+            # record.
+            if not line.strip():
+                continue
+            number += 1
+            try:
+                value = decode_json(line)
+            except ValueError:
+                yield ParsedRecord(
                     number,
                     reason="record_not_json",
-                    identity=salvaged_identity(line, contract),
+                    identity=salvaged_identity(line, self._contract),
                 )
+                continue
+            yield ParsedRecord(
+                number, value=value, reason=scan_record(value, counter=counter)
             )
-            continue
-        records.append(
-            ParsedRecord(number, value=value, reason=scan_record(value, counter=counter))
-        )
-    return tuple(records)
 
 
 def content_hash(record: SourceRecord) -> str:
