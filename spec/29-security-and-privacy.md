@@ -116,7 +116,7 @@ The following seven contracts are the complete model-call surface. The selected 
 
 1. **POSIX-only path support.** V1 supports local paths under POSIX semantics on Linux and macOS only; Windows runtime and path semantics are outside the V1 support boundary.
    - At acquisition and at the pre-serialization re-check below, a Windows drive-letter path such as `C:\…` or `C:/…`, a UNC path such as `\\server\…`, or any backslash-separated path is unsupported and fails closed without reinterpretation.
-   - A local `file:` URI must resolve to a POSIX path.
+   - A local `file:` URI must resolve to a POSIX path, and a decoded drive-letter form such as the `/C:/…` produced by `file:///C:/…` is one of the unsupported Windows spellings above rather than an absolute POSIX path.
 2. **Prompt-composer inputs.** The prompt composer may serialize only the fixed instructions and typed input fields declared by the invoked §15 contract.
    - It has no access to environment dumps, shell or free command output, directory listings, filesystem sweeps, unrelated database rows, or non-selected file content.
    - Provider credentials and tokens are transport-only adapter values: they never enter a prompt, `processing_runs` or `llm_calls` telemetry, generated warnings, or diagnostic text.

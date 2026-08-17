@@ -9,6 +9,7 @@
 7. A change to a §10 value list requires updating all direct references and examples in the same commit, without creating another normative list.
 8. No generator, linter, generated documentation, separate machine-readable registry, or runtime schema tooling is required for MVP.
 9. Such tooling introduced after MVP must derive from §10 rather than creating a second enum source.
+10. Every `SourceType`, `EvidenceStrength`, and `AssessmentScope` member has at least one §14 producer; a member no V1 command can produce is not added unless the producing § names it in the same commit.
 
 - `TemporalConfidence` types only confidence in an `OccurredAt` placement. `Confidence` types general confidence in derived facts and claims. The aliases intentionally remain separate even while their member sets are identical.
 - For temporal-provenance comparison, `TemporalConfidence` has the normative weak-to-strong order `unknown < low < medium < high`. For calibration comparison under §9.4, `Confidence` has the same normative weak-to-strong order `unknown < low < medium < high`. These two explicit orders are normative for their aliases; the assignment order below is not itself a ranking.

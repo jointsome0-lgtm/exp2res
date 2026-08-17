@@ -22,7 +22,7 @@ V1 is acceptable when:
 18. Every typed JSON/polymorphic reference and Stage 6 claim-to-snapshot cardinality is validated transactionally at write time (§12 rule 10 and §12's Stage 6 transaction checks).
 19. `VerificationStatus` has one meaning and explicit allowlist result for Stage 10, verified-bullet-pack export, and assessment export (§16.11).
 20. Every resume branch requires the exact current Stage-10-eligible assessment snapshot selected explicitly by §14.10, and persistence/export rejects an absent, superseded, status-ineligible, or claim-inconsistent anchor (§18).
-21. V1 review is Stage 7/11 verifier gating of assessment and resume projections before their consumers (§5.10, §16.11).
+21. V1 review is Stage 7/11 verifier gating of assessment and resume projections before their consumers, over enumerations whose every declared member has a §14 producer (§5.10, §16.11, §10 rule 10).
 22. Contradictions are immutable Stage 4 detections (§13.4).
 23. Assessment verification performs one semantic pass per current claim, and bullet verification performs one whole-pack semantic pass per branch (§13.7, §13.11).
 24. Fact extraction inherits the governing source `OccurredAt` by default (§13.3 rule 2).
