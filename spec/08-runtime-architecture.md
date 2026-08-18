@@ -54,7 +54,6 @@ LLM use is allowed, but all LLM outputs must be structured, validated, and verif
 27. Read-only commands take no workspace writer lock and may run concurrently with a writer.
 28. For `view serve`, each served request — not the serving process — is one such read-only boundary: it performs its own compatibility read and all of its business reads inside one read transaction, and the process holds no lock, transaction, or cached read between requests (§30 rule 6). So a long-running server never presents a snapshot older than the request that serves it, and between requests it holds nothing a writer could contend with.
 29. A request in flight is an ordinary concurrent reader with no special standing: a destructive command checkpointing against it may still report `deletion_incomplete` under this subsection's rules, exactly as it may against any other read-only command.
-30. The writer lock establishes the identity of the database it covers, read beside the lock entry itself rather than through the workspace pathname a second time. §13.14 rule 9 binds every managed-output mutation to that identity for as long as the lock is held.
 30. If the workspace writer lock or SQLite remains contended beyond the bounded timeout, the command fails with the stable machine-readable diagnostic class `workspace_busy`, emitted on one line.
 31. For `view serve`, that command-failure rule applies to startup work before bind.
 32. After bind, `view serve` holds no writer lock, and a request whose SQLite wait reaches that same timeout receives §30's `workspace_busy`/503 outcome, releases its read transaction, and leaves the serving command running for later requests until owner interruption.
@@ -62,5 +61,6 @@ LLM use is allowed, but all LLM outputs must be structured, validated, and verif
 34. If a process dies while holding the writer lock, the OS releases the advisory lock and SQLite restores a consistent database by rolling back any in-flight transaction through WAL recovery.
 35. Managed outputs may remain stale or residual; the next writer applies the §13 preamble, reconciles §13.14's deterministically named candidate and rollback siblings, and applies §13.13 rules 4–6 rather than trusting any directory as current.
 36. No lock repair or `fsck` pass is required.
+37. The writer lock establishes the identity of the database it covers, read beside the lock entry itself rather than through the workspace pathname a second time. §13.14 rule 9 binds every managed-output mutation to that identity for as long as the lock is held.
 
 ---

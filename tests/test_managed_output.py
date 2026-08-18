@@ -858,8 +858,8 @@ def test_a_first_time_publication_is_bound_after_its_entry_gate(
     real_parents = managed._ensure_managed_parents
     moved: list[Path] = []
 
-    def parents_then_replace(target: Path):
-        roots = real_parents(target)
+    def parents_then_replace(target: Path, *, still_live=None):
+        roots = real_parents(target, still_live=still_live)
         moved.append(_replace_workspace(workspace, tmp_path, name="after-gate"))
         (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
         (workspace / "out" / "assessment").mkdir(mode=0o700, parents=True)
@@ -966,3 +966,39 @@ def test_a_mismatch_arriving_mid_pass_reports_through_the_unproven_channel(
     assert residuals
     assert set(unproven) == set(residuals)
     assert not (workspace / "out").exists()
+
+
+def test_the_preamble_creates_no_parents_in_a_replacement(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Creating a managed parent mutates the tree exactly as removing one does.
+
+    The gate runs before `_canonical_roots` resolves anything, so a
+    replacement landing in between would have both parents created and made
+    private in a workspace whose writer lock this command never took.
+    """
+
+    (workspace / "out").mkdir(mode=0o700, parents=True, exist_ok=True)
+    for parent in ("assessment", "branch"):
+        shutil.rmtree(workspace / "out" / parent, ignore_errors=True)
+    real_roots = managed._canonical_roots
+    moved: list[Path] = []
+
+    def roots_then_replace(target: Path):
+        roots = real_roots(target)
+        if not moved:
+            moved.append(_replace_workspace(workspace, tmp_path, name="before-mkdir"))
+            (workspace / "out").mkdir(mode=0o700, parents=True)
+        return roots
+
+    monkeypatch.setattr(managed, "_canonical_roots", roots_then_replace)
+
+    unproven: list[str] = []
+    with anchor_locked_database(workspace):
+        with privacy_service.collect_unproven_residuals(unproven):
+            residuals = managed.reconcile_managed_outputs(workspace)
+
+    assert residuals == (str((workspace / "out").absolute()),)
+    assert unproven == list(residuals)
+    assert list((workspace / "out").iterdir()) == []
+    assert not (moved[0] / "out" / "assessment").exists()

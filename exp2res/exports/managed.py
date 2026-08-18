@@ -732,12 +732,25 @@ def _inspect_set(
         return None
 
 
-def _ensure_managed_parents(workspace: Path) -> tuple[Path, Path, Path]:
+def _ensure_managed_parents(
+    workspace: Path, *, still_live: Callable[[], bool] | None = None
+) -> tuple[Path, Path, Path]:
+    """Create both reserved managed parents under §13.14 rule 9's binding.
+
+    Creating and chmod-ing a directory mutates the tree exactly as removing one
+    does, so the binding reaches here as well. A caller's gate runs before
+    `_canonical_roots` has resolved anything; a replacement landing in between
+    would otherwise have both parents created and made private in a workspace
+    whose writer lock this command never took.
+    """
+
     _root, out_root = _canonical_roots(workspace)
     assessment = out_root / "assessment"
     branch = out_root / "branch"
-    _mkdir_private(assessment, out_root)
-    _mkdir_private(branch, out_root)
+    for parent in (assessment, branch):
+        if still_live is not None and not still_live():
+            raise ManagedOutputIncompleteError((str(out_root),))
+        _mkdir_private(parent, out_root)
     return out_root, assessment, branch
 
 
@@ -756,16 +769,33 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
 
     still_live = _locked_database_predicate(workspace)
     residuals: set[str] = set()
-    if not still_live():
-        refused = (str((workspace / "out").absolute()),)
+
+    def refuse_if_replaced(reported: tuple[str, ...]) -> tuple[str, ...]:
+        """Route a report through the unwithdrawable channel after a mismatch.
+
+        Every exit from this pass runs it, because a mismatch can arrive at any
+        of them and §14.14 rule 4's existence re-check would drop a path that
+        names a workspace this command never wrote to.
+        """
+
+        if still_live():
+            return reported
+        refused = tuple(
+            sorted({*reported, str((workspace / "out").absolute())}, key=fs_id_key)
+        )
         report_unproven_residual(refused)
         return refused
+
+    if not still_live():
+        return refuse_if_replaced(())
     try:
-        out_root, assessment, branch = _ensure_managed_parents(workspace)
+        out_root, assessment, branch = _ensure_managed_parents(
+            workspace, still_live=still_live
+        )
     except ManagedOutputIncompleteError as error:
-        return error.residual_paths
+        return refuse_if_replaced(error.residual_paths)
     except OSError:
-        return (str((workspace / "out").absolute()),)
+        return refuse_if_replaced((str((workspace / "out").absolute()),))
 
     for parent in (assessment, branch):
         try:
@@ -825,18 +855,11 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
                     _fsync_directory(parent, out_root)
                 except OSError:
                     residuals.add(str(parent))
-    reported = tuple(sorted(residuals, key=fs_id_key))
-    if not still_live():
-        # A replacement landing inside the pass turned every operation after it
-        # into a refusal, and those refusals were reported by path — paths that
-        # now spell the replacement. Their absence there would withdraw the
-        # report under §14.14 rule 4's existence check, so the whole set travels
-        # the channel that check cannot reach, together with the managed root
-        # that names the part of the pass never reached at all.
-        refused = (*reported, str((workspace / "out").absolute()))
-        report_unproven_residual(refused)
-        return tuple(sorted(set(refused), key=fs_id_key))
-    return reported
+    # A replacement landing inside the pass turned every operation after it
+    # into a refusal, and those refusals were reported by path — paths that now
+    # spell the replacement. The managed root joins them, because it names the
+    # part of the pass never reached at all.
+    return refuse_if_replaced(tuple(sorted(residuals, key=fs_id_key)))
 
 
 def _locked_database_predicate(workspace: Path) -> Callable[[], bool]:
@@ -1615,7 +1638,7 @@ def publish_assessment(
 
     validate_entity_id(graph.snapshot.value.id)
     still_live = _bound_publication(workspace)
-    out_root, parent, _branch = _ensure_managed_parents(workspace)
+    out_root, parent, _branch = _ensure_managed_parents(workspace, still_live=still_live)
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     members = assessment_member_bytes(graph)
     candidate_manifest = build_assessment_manifest(graph, members, created_at=now)
@@ -1680,7 +1703,7 @@ def publish_branch(
 
     validate_entity_id(graph.branch.value.id)
     still_live = _bound_publication(workspace)
-    out_root, _assessment, parent = _ensure_managed_parents(workspace)
+    out_root, _assessment, parent = _ensure_managed_parents(workspace, still_live=still_live)
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     members = branch_member_bytes(graph)
     candidate_manifest = build_branch_manifest(graph, members, created_at=now)
