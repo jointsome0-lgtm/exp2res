@@ -79,6 +79,7 @@ from exp2res.services.capture import (
     capture_gap_answer,
     capture_gap_answer_file,
     capture_outcome,
+    report_capture,
     capture_retro,
     capture_retro_file,
     validate_gap_answer_selection,
@@ -420,6 +421,21 @@ def _interrupt_disposition_restored() -> Iterator[None]:
             signal.signal(signal.SIGINT, previous)
 
 
+def _cancelled_outcome(error: BaseException) -> Outcome:
+    """§14.14 rule 6: a cancellation reports what the command already committed.
+
+    The classification is the cancellation's, and everything else comes from
+    the projection the interrupted operation attached. A cancellation that
+    named nothing while rows were durable would read as effect-free, and the
+    owner would reasonably retry work that has no duplicate identity to
+    converge the second attempt on.
+    """
+
+    return replace(
+        committed_outcome(error), exit_code=9, diagnostic_class="cancelled"
+    )
+
+
 def _run_command(
     context: typer.Context,
     command: CommandPath,
@@ -510,18 +526,18 @@ def _run_operation(
             with collect_preamble_residuals(preamble_residuals):
                 with collect_unproven_residuals(unproven_residuals):
                     outcome = operation(workspace, controls)
-        except Exception:
+        except Exception as error:
             if interruption_observed is not None and interruption_observed():
-                outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
+                outcome = _cancelled_outcome(error)
             else:
                 raise
         finally:
             if startup_active is not None:
                 startup_active.clear()
-    except KeyboardInterrupt:
-        outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
-    except Abort:
-        outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
+    except KeyboardInterrupt as error:
+        outcome = _cancelled_outcome(error)
+    except Abort as error:
+        outcome = _cancelled_outcome(error)
     except MigrationFailedError as error:
         status = inspect_workspace(workspace) if workspace is not None else None
         outcome = Outcome(
@@ -895,28 +911,26 @@ def log_today(
         artifact_values = tuple(artifacts or ())
         validate_artifact_locator_count(artifact_values)
         if source_file is not None:
-            return capture_outcome(
-                capture_daily_file(
-                    workspace,
-                    source_path=source_file,
-                    project=project,
-                    artifacts=artifact_values,
-                )
+            bundle = capture_daily_file(
+                workspace,
+                source_path=source_file,
+                project=project,
+                artifacts=artifact_values,
             )
+            return report_capture(bundle, lambda: capture_outcome(bundle))
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
         require_compatible(workspace)
         # Fail closed on the local-time contract before collecting owner text.
         workspace_zone(require_timezone(load_workspace_config(workspace)))
         raw_text = typer.prompt("Describe what happened", err=True)
-        return capture_outcome(
-            capture_daily(
-                workspace,
-                raw_text=raw_text,
-                project=project,
-                artifacts=artifact_values,
-            )
+        bundle = capture_daily(
+            workspace,
+            raw_text=raw_text,
+            project=project,
+            artifacts=artifact_values,
         )
+        return report_capture(bundle, lambda: capture_outcome(bundle))
 
     _run_command(context, "log today", operation)
 
@@ -945,15 +959,14 @@ def log_retro(
                 confidence=cast(TemporalConfidence, confidence),
                 timezone_name=timezone_name,
             )
-            return capture_outcome(
-                capture_retro_file(
-                    workspace,
-                    source_path=source_file,
-                    occurred=occurred,
-                    project=project,
-                    artifacts=artifact_values,
-                )
+            bundle = capture_retro_file(
+                workspace,
+                source_path=source_file,
+                occurred=occurred,
+                project=project,
+                artifacts=artifact_values,
             )
+            return report_capture(bundle, lambda: capture_outcome(bundle))
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
         require_compatible(workspace)
@@ -994,15 +1007,14 @@ def log_retro(
             confidence=cast(TemporalConfidence, confidence_value),
             timezone_name=timezone_name,
         )
-        return capture_outcome(
-            capture_retro(
-                workspace,
-                occurred=occurred,
-                raw_text=raw_text,
-                project=project_value,
-                artifacts=artifact_values,
-            )
+        bundle = capture_retro(
+            workspace,
+            occurred=occurred,
+            raw_text=raw_text,
+            project=project_value,
+            artifacts=artifact_values,
         )
+        return report_capture(bundle, lambda: capture_outcome(bundle))
 
     _run_command(context, "log retro", operation)
 
@@ -1379,11 +1391,10 @@ def import_file(
     # reports `result = null` with its created IDs in `affected_ids`, exactly
     # as the §14.2 captures whose record shape it shares do.
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        return capture_outcome(
-            import_design_document(
-                workspace, source_path=source_path, project=project
-            )
+        bundle = import_design_document(
+            workspace, source_path=source_path, project=project
         )
+        return report_capture(bundle, lambda: capture_outcome(bundle))
 
     _run_command(context, "import file", operation)
 
@@ -1700,16 +1711,19 @@ def gaps_answer(
         # §13/§14.7: capture removed every current snapshot's assessment set
         # after commit. It supersedes no snapshot and reports no §13.13 rule 9
         # regeneration command — the view needs re-export, not regeneration.
-        return Outcome(
-            affected_ids=AffectedIds.of(
-                created=(
-                    ("evidence_item", evidence_ids),
-                    ("raw_log", [bundle.raw_log.id]),
+        return report_capture(
+            bundle,
+            lambda: Outcome(
+                affected_ids=AffectedIds.of(
+                    created=(
+                        ("evidence_item", evidence_ids),
+                        ("raw_log", [bundle.raw_log.id]),
+                    ),
                 ),
-            ),
-            residual_paths=list(bundle.residual_paths),
-            human_result=(
-                f"Answered gap {gap_id} with raw log {bundle.raw_log.id}."
+                residual_paths=list(bundle.residual_paths),
+                human_result=(
+                    f"Answered gap {gap_id} with raw log {bundle.raw_log.id}."
+                ),
             ),
         )
 

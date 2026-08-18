@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from exp2res.domain.results import (
     AffectedIds,
     Outcome,
+    carry_committed,
 )
 from exp2res.config import load_workspace_config, require_timezone
 from exp2res.domain.models import (
@@ -188,6 +189,8 @@ def capture_manual(
             )
         except (ValidationError, ValueError, TypeError) as error:
             raise _invalid_capture(error) from error
+        bundle = RawLogBundle(raw_log, evidence_items)
+        committed = False
         try:
             persist_manual_capture(
                 workspace,
@@ -195,11 +198,19 @@ def capture_manual(
                 evidence_items=evidence_items,
                 timeout_ms=timeout_ms,
                 after_raw_insert=after_raw_insert,
+                on_committed=lambda error: carry_committed(
+                    error, capture_outcome(bundle)
+                ),
             )
-            return RawLogBundle(raw_log, evidence_items)
+            committed = True
+            return bundle
         except IdCollisionError as error:
             last_collision = error
             continue
+        except BaseException as error:
+            if committed:
+                carry_committed(error, capture_outcome(bundle))
+            raise
     raise IdCollisionError() from last_collision
 
 
@@ -368,6 +379,10 @@ def capture_gap_answer(
     occurred = today_occurred(now=now, timezone_name=require_timezone(config))
     authorized_artifacts = authorize_artifact_locators(artifacts, config=config)
     last_collision: IdCollisionError | None = None
+    # §14.14 rule 6: set the moment the answer is durable, so every exit below
+    # — the managed cleanup, the lock release — reports the pair rather than
+    # cancelling as though nothing had happened.
+    answered: Outcome | None = None
 
     with writer_database(workspace, timeout_ms=timeout_ms) as connection:
         try:
@@ -432,7 +447,10 @@ def capture_gap_answer(
                 report_managed_residuals(pending)
                 try:
                     connection.commit()
-                except BaseException:
+                    answered = capture_outcome(
+                        RawLogBundle(raw_log, evidence_items)
+                    )
+                except BaseException as error:
                     # Withdraw only on a proven rollback: an interrupt can
                     # arrive after SQLite durably committed, and the stale
                     # sets must then stay reported. Indeterminate keeps the
@@ -449,6 +467,11 @@ def capture_gap_answer(
                         committed = True
                     if not committed:
                         withdraw_managed_residuals(pending)
+                    else:
+                        answered = capture_outcome(
+                            RawLogBundle(raw_log, evidence_items)
+                        )
+                        carry_committed(error, answered)
                     raise
                 residuals = remove_managed_sets_for_locked_database(
                     workspace,
@@ -461,8 +484,10 @@ def capture_gap_answer(
             if "locked" in str(error).lower() or "busy" in str(error).lower():
                 raise WorkspaceBusyError() from error
             raise
-        except BaseException:
+        except BaseException as error:
             connection.rollback()
+            if answered is not None:
+                carry_committed(error, answered)
             raise
 
 
@@ -492,6 +517,22 @@ def capture_gap_answer_file(
         id_factory=id_factory,
         timeout_ms=timeout_ms,
     )
+
+
+def report_capture(bundle: RawLogBundle, build: Callable[[], Outcome]) -> Outcome:
+    """Build one committed capture's envelope under §14.14 rule 6's duty.
+
+    The identities are durable before this runs, so an interrupt during the
+    assembly reports them rather than an empty cancellation. Without it the
+    owner sees an effect-free cancellation and reasonably retries, and a §13.1
+    capture carries no duplicate identity for the retry to converge on.
+    """
+
+    try:
+        return build()
+    except BaseException as error:
+        carry_committed(error, capture_outcome(bundle))
+        raise
 
 
 def capture_outcome(bundle) -> Outcome:

@@ -374,7 +374,7 @@ This contract binds every command-specific form above and every later §14 addit
 6. **Interruption and confirmation semantics.** On a user interrupt every command exits with code 9 and `status = cancelled`.
    - §15.10 owns in-flight LLM-call cancellation, §13.13 owns lifecycle atomicity, and §8.1 owns lock and transaction release.
    - The in-flight transaction rolls back and no partial current generation becomes visible.
-   - A correction, deletion, cleanup result, or other lifecycle boundary already committed under §13.13 remains committed and is reported rather than restored.
+   - Every effect already committed remains committed and is reported rather than restored — a correction, a deletion, a cleanup result, a §13.13 lifecycle boundary, and a §13.1 rule 5 capture pair alike — so a cancelled envelope never names nothing while rows are durable. The duty is owed to a commit and never to an attempt: the rolled-back transaction above reports no identity it intended to create.
    - The confirmation requirements are exactly those in rule 3; neither configuration nor an environment variable can imply consent.
 7. **Inspection-surface completeness.** The operable V1 lifecycle-inspection surface is:
    - `db status`;

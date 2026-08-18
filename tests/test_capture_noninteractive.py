@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import sqlite3
@@ -11,6 +12,8 @@ import typer
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
+import exp2res.pipeline.stage1 as stage1_module
+import exp2res.services.capture as capture_service
 import exp2res.services.detection as detection_service
 from exp2res.cli import app
 from exp2res.services.logs import list_logs, show_log
@@ -473,3 +476,149 @@ def test_interactive_retro_rejects_explicitly_empty_typed_options(
     # The supplied value is never replaced by a prompted one.
     assert unwanted_prompt not in prompts
     assert list_logs(workspace) == ()
+
+
+def _committed_pair(envelope: dict) -> dict[str, list[str]]:
+    return {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+
+
+def test_an_interrupt_between_the_commit_and_the_return_names_the_pair(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the rows are durable before the writer lock is released.
+
+    Releasing the lock and closing the connection is the longest part of the
+    post-commit window, and an interrupt landing there used to leave as an
+    empty cancellation naming nothing the owner could reconcile against.
+    """
+
+    real = stage1_module.writer_database
+
+    @contextmanager
+    def interrupt_on_release(*args, **kwargs):
+        with real(*args, **kwargs) as connection:
+            yield connection
+        raise KeyboardInterrupt()
+
+    source = tmp_path / "Vera Example daily.md"
+    source.write_bytes(b"Vera Example committed before the interrupt.\n")
+    monkeypatch.setattr(stage1_module, "writer_database", interrupt_on_release)
+    result, envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = _committed_pair(envelope)
+    assert len(created["raw_log"]) == 1
+    assert len(created["evidence_item"]) == 1
+    stored = list_logs(workspace)
+    assert [log.id for log in stored] == created["raw_log"]
+
+
+def test_an_interrupt_while_the_envelope_is_assembled_names_the_pair(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The narrowest window: committed, returned, not yet reported."""
+
+    source = tmp_path / "Vera Example retro.md"
+    source.write_bytes(b"Vera Example committed before assembly.\n")
+
+    def interrupt_before_reporting(bundle):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(cli_module, "capture_outcome", interrupt_before_reporting)
+    result, envelope = invoke_json(
+        workspace,
+        [
+            "log",
+            "retro",
+            "--file",
+            str(source),
+            "--precision",
+            "month",
+            "--period",
+            "2026-07",
+            "--confidence",
+            "medium",
+        ],
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = _committed_pair(envelope)
+    assert [log.id for log in list_logs(workspace)] == created["raw_log"]
+
+
+def test_an_interrupted_gap_answer_names_the_pair_it_committed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`gaps answer` builds its own envelope and owes the same report."""
+
+    gap_id = seed_gap(workspace, monkeypatch)
+    before = {log.id for log in list_logs(workspace)}
+    source = tmp_path / "Vera Example answer.md"
+    source.write_bytes(b"Vera Example answered the gap.\n")
+
+    def interrupt_during_the_managed_cleanup(*args, **kwargs):
+        # The answer and its gap transition are durable; §14.7's stale-set
+        # removal is the post-commit work this form does on its own.
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        capture_service,
+        "remove_managed_sets_for_locked_database",
+        interrupt_during_the_managed_cleanup,
+    )
+    result, envelope = invoke_json(
+        workspace,
+        ["gaps", "answer", "--gap-id", gap_id, "--file", str(source)],
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = _committed_pair(envelope)
+    assert {log.id for log in list_logs(workspace)} - before == set(created["raw_log"])
+
+
+def test_a_capture_interrupted_before_its_commit_names_nothing(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The report is owed to a commit, never to an attempt.
+
+    Rule 6 rolls the in-flight transaction back; naming its intended IDs would
+    invite the owner to reconcile against rows that never existed.
+    """
+
+    source = tmp_path / "Vera Example rolled back.md"
+    source.write_bytes(b"Vera Example never committed.\n")
+
+    def interrupt_inside_the_transaction() -> None:
+        raise KeyboardInterrupt()
+
+    result, envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    assert result.exit_code == 0
+    before = {log.id for log in list_logs(workspace)}
+
+    monkeypatch.setattr(
+        capture_service,
+        "persist_manual_capture",
+        lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    result, envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["affected_ids"]["created"] == []
+    assert {log.id for log in list_logs(workspace)} == before
