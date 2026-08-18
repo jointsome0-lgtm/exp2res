@@ -339,6 +339,12 @@ def purge_managed_backups(
     it still holds the backups this purge was required to remove, so it is
     reported residual rather than treated as nothing left to do.
 
+    A pass that loses the binding partway reports nothing removed, here and in
+    the ledger alike. The names are pathnames, and after the substitution they
+    reach whatever holds them now: reporting them as removed would tell the
+    owner that files still sitting untouched in the tree the command is now
+    looking at had been deleted.
+
     `removed_ledger` receives each name as it is unlinked. The return value is
     only produced once the pass finishes, so a caller that must report durable
     effects after a cancellation mid-pass has no other way to learn what this
@@ -483,6 +489,7 @@ def purge_managed_backups(
 
         removed: list[str] = []
         refused: list[str] = []
+        ledger_mark = 0 if removed_ledger is None else len(removed_ledger)
         with os.scandir(backup_fd) as iterator:
             entries = sorted(iterator, key=lambda entry: os.fsencode(entry.name))
         for entry in entries:
@@ -552,7 +559,9 @@ def purge_managed_backups(
         if not root_is_live():
             # The root moved during the pass, so the surviving-name scan
             # describes a directory that is no longer the workspace's backup
-            return tuple(removed), (str(backup_root.absolute()),)
+            if removed_ledger is not None:
+                del removed_ledger[ledger_mark:]
+            return (), (str(backup_root.absolute()),)
         residuals = sorted({*refused, *surviving}, key=os.fsencode)
         return (
             tuple(path for path in removed if path not in surviving),

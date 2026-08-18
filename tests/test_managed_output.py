@@ -1604,3 +1604,50 @@ def test_a_symlinked_marker_never_hands_back_a_lock(
     with pytest.raises(SchemaCompatibilityError):
         with workspace_module.writer_lock(workspace):
             pass
+
+
+def test_a_purge_that_loses_its_binding_reports_nothing_removed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Removed names are pathnames, and a substitution re-points them.
+
+    Reporting the ones already unlinked would tell the owner that files still
+    sitting untouched in the tree the command now looks at had been deleted.
+    """
+
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    names = (
+        "exp2res-v11-20260817T000000.000000Z.sqlite",
+        "exp2res-v11-20260818T000000.000000Z.sqlite",
+    )
+    for name in names:
+        (backup_root / name).write_bytes(b"Vera Example migration backup")
+    identity = privacy_service.locked_database_identity(workspace)
+    ledger = ["out/assessment/snapshot_vera_0001"]
+    real_fsync = os.fsync
+    swapped: list[Path] = []
+
+    def swap_after_the_first_flush(descriptor: int) -> None:
+        real_fsync(descriptor)
+        if swapped:
+            return
+        detached = tmp_path / "detached-backup"
+        shutil.move(str(backup_root), str(detached))
+        swapped.append(detached)
+        backup_root.mkdir(mode=0o700)
+        for name in names:
+            (backup_root / name).write_bytes(b"Vera Example replacement backup")
+
+    with anchor_locked_database(workspace):
+        monkeypatch.setattr(privacy_service.os, "fsync", swap_after_the_first_flush)
+        removed, residuals = privacy_service.purge_managed_backups(
+            workspace, expected_database=identity, removed_ledger=ledger
+        )
+
+    assert swapped
+    assert removed == ()
+    assert residuals == (str(backup_root.absolute()),)
+    assert ledger == ["out/assessment/snapshot_vera_0001"]
+    for name in names:
+        assert (backup_root / name).read_bytes() == b"Vera Example replacement backup"
