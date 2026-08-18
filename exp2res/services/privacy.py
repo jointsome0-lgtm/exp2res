@@ -423,8 +423,12 @@ def purge_managed_backups(
         if not root_is_live():
             # The root moved during the pass, so the surviving-name scan
             # describes a directory that is no longer the workspace's backup
-            # store: nothing here counts as proven removal.
-            return (), (str(backup_root.absolute()),)
+            # store and cannot filter anything. What it withdraws is that
+            # filter, not the removals themselves: every name in `removed` was
+            # unlinked and flushed while the store still was this one, so those
+            # effects are durable and are reported unfiltered, alongside the
+            # root the mismatch leaves unproven.
+            return tuple(removed), (str(backup_root.absolute()),)
         residuals = sorted({*refused, *surviving}, key=os.fsencode)
         return (
             tuple(path for path in removed if path not in surviving),

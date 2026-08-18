@@ -10,7 +10,7 @@ import shutil
 
 import pytest
 
-from exp2res.errors import ManagedOutputIncompleteError
+from exp2res.errors import IntegrityFailureError, ManagedOutputIncompleteError
 from exp2res.exports import managed
 import exp2res.services.privacy as privacy_service
 from exp2res.services.privacy import anchor_locked_database, remove_managed_backups
@@ -1037,3 +1037,86 @@ def test_a_candidate_half_written_when_the_workspace_changes_hands(
     assert list((workspace / "out" / "assessment").iterdir()) == []
     surviving = list((moved[0] / "out" / "assessment").glob(".exp2res-candidate-*"))
     assert [path.name for path in surviving] == [stranded.name]
+
+
+def test_a_refusal_after_the_rollback_move_names_both_stranded_entries(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The prior set is already aside, so a refusal here strands two entries.
+
+    Without the rollback in the report the original tree is left with no
+    current set and nothing naming what holds its contents.
+    """
+
+    graph = assessment_graph(all_sections=False)
+    _publish(workspace, graph)
+    changed = graph_with_gap_answered(graph, True)
+    real_rename = managed._rename
+    moved: list[Path] = []
+
+    def rename_then_replace(source: Path, destination: Path) -> None:
+        real_rename(source, destination)
+        if not moved and ".exp2res-rollback-" in destination.name:
+            moved.append(_replace_workspace(workspace, tmp_path, name="after-rollback"))
+            (workspace / "out" / "assessment").mkdir(mode=0o700, parents=True)
+            (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
+
+    monkeypatch.setattr(managed, "_rename", rename_then_replace)
+
+    with anchor_locked_database(workspace):
+        with pytest.raises(ManagedOutputIncompleteError) as caught:
+            managed.publish_assessment(workspace, changed, clock=lambda: NOW)
+
+    names = [Path(path).name for path in caught.value.residual_paths]
+    assert any(name.startswith(".exp2res-rollback-") for name in names)
+    assert any(name.startswith(".exp2res-candidate-") for name in names)
+    stranded = moved[0] / "out" / "assessment"
+    assert [path.name for path in sorted(stranded.iterdir())] == sorted(names)
+
+
+def test_an_idempotent_reexport_never_reports_success_from_a_replacement(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The closing flush reopens the parent by pathname.
+
+    A replacement landing between the candidate cleanup and that flush means
+    the flush succeeded against another tree: the cleanup was never made
+    durable, and the paths about to be returned name a set this command did
+    not put there.
+    """
+
+    graph = assessment_graph(all_sections=False)
+    _publish(workspace, graph)
+    real_fsync_directory = managed._fsync_directory
+    moved: list[Path] = []
+
+    def flush_after_replacement(path: Path, out_root: Path) -> None:
+        if not moved:
+            moved.append(_replace_workspace(workspace, tmp_path, name="before-flush"))
+            shutil.copytree(
+                moved[0] / "out", workspace / "out", symlinks=False
+            )
+        real_fsync_directory(path, out_root)
+
+    monkeypatch.setattr(managed, "_fsync_directory", flush_after_replacement)
+
+    with anchor_locked_database(workspace):
+        with pytest.raises(ManagedOutputIncompleteError):
+            managed.publish_assessment(workspace, graph, clock=lambda: NOW)
+
+
+def test_a_nonconforming_id_is_refused_even_on_the_mismatch_report(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§13.14 rule 1's revalidation holds on both arms, not only the live one.
+
+    Skipping the ID would let the mutation commit with nothing naming the set
+    it left stale — and the mismatch report is the only warning there is.
+    """
+
+    with anchor_locked_database(workspace):
+        _replace_workspace(workspace, tmp_path, name="invalid-id")
+        with pytest.raises(IntegrityFailureError):
+            managed.remove_managed_sets_for_locked_database(
+                workspace, snapshot_ids=["Snapshot/Vera/0001"]
+            )

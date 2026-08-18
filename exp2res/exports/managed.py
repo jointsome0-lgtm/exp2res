@@ -911,8 +911,13 @@ def _managed_set_paths(
     parent = out_root / parent_name
     paths = []
     for entity_id in selected:
+        # §13.14 rule 1's fail-closed revalidation, on the same terms as the
+        # removal this report stands in for. Skipping a nonconforming ID would
+        # let a mismatch commit its database mutation with nothing naming the
+        # set it left stale — the one case where this report is the only
+        # warning an owner gets.
         if ENTITY_ID.fullmatch(entity_id) is None:
-            continue
+            raise IntegrityFailureError("managed_output_entity_id_invalid")
         path = parent / entity_id
         if not existing_only:
             paths.append(str(path))
@@ -1553,6 +1558,18 @@ def _publish_set(
         if still_live is not None and not still_live():
             raise ManagedOutputIncompleteError((str(residual),))
 
+    def require_live_pair(residual: Path, rollback: Path | None) -> None:
+        """Refuse, naming the rollback too when the prior set is already aside."""
+
+        if still_live is not None and not still_live():
+            reported = (str(residual),) if rollback is None else (
+                str(residual),
+                str(rollback),
+            )
+            raise ManagedOutputIncompleteError(
+                tuple(sorted(set(reported), key=fs_id_key))
+            )
+
     candidate = _build_candidate(
         parent,
         out_root,
@@ -1581,6 +1598,12 @@ def _publish_set(
                     _fsync_directory(parent, out_root)
                 except OSError as error:
                     raise ManagedOutputIncompleteError((str(parent),)) from error
+                # The flush reopens the parent by pathname, so a replacement
+                # landing since the cleanup means it succeeded against another
+                # tree: the candidate removal here was never made durable, and
+                # the paths about to be returned as a finished export name a
+                # set this command did not put there.
+                require_live(candidate)
                 paths = tuple(
                     str(final_path / name) for name in sorted(all_names, key=fs_id_key)
                 )
@@ -1604,7 +1627,10 @@ def _publish_set(
                     except BaseException:
                         raise ManagedOutputIncompleteError((str(rollback),)) from None
                 raise
-        require_live(candidate)
+        # The prior set is already aside under the rollback name, so a refusal
+        # here strands two entries, not one: without the rollback the original
+        # tree is left with no current set and nothing naming what holds it.
+        require_live_pair(candidate, rollback)
         try:
             _rename(candidate, final_path)
             published = True
