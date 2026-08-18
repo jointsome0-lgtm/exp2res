@@ -923,6 +923,17 @@ def test_atlas_snapshot_round_trip_creates_one_pair_and_no_claim(
             {"evidence_references": [{"reference": "atlas:evidence:absent"}]},
         ),
         ("as-of-not-in-text", {"as_of": "2026-07-14T21:00:00+03:00"}),
+        (
+            "snapshot-bound-not-in-text",
+            {
+                "occurred": {
+                    "start": "2026-06-01T00:00:00+02:00",
+                    "end": ATLAS_END,
+                    "precision": "date_range",
+                    "confidence": "high",
+                }
+            },
+        ),
     ],
 )
 def test_atlas_text_fidelity_failures_are_invalid_acquisition(
@@ -934,6 +945,35 @@ def test_atlas_text_fidelity_failures_are_invalid_acquisition(
 
     assert counts(outcome) == (0, 0, 1)
     assert raw_rows(workspace) == []
+
+
+def test_a_snapshot_wider_than_its_trail_is_accepted_when_the_text_says_so(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.2's snapshot-wide bullet is satisfiable, not merely restrictive.
+
+    The snapshot may legitimately span more than any segment; what the rule
+    requires is that the source text render the wider bounds it claims.
+    """
+
+    earlier = "2026-06-01T00:00:00+02:00"
+    payload = write_payload(
+        tmp_path,
+        "wide-snapshot.json",
+        atlas_record(
+            occurred={
+                "start": earlier,
+                "end": ATLAS_END,
+                "precision": "date_range",
+                "confidence": "high",
+            },
+            text=f"{ATLAS_TEXT} Snapshot span: {earlier} to {ATLAS_END}.",
+        ),
+    )
+    outcome = run_import(workspace, "atlas", payload)
+
+    assert counts(outcome) == (1, 0, 0)
+    assert raw_rows(workspace)[0]["occurred_start"] == earlier
 
 
 @pytest.mark.parametrize(
@@ -1022,6 +1062,53 @@ def test_atlas_payload_locator_outside_selection_is_rejected(
     assert counts(outcome) == (0, 0, 1)
     assert outcome.rejected[0].reason.startswith("payload_locator_")
     assert raw_rows(workspace) == []
+
+
+@pytest.mark.parametrize(
+    ("locator", "selected"),
+    [
+        ("atlas-2026-07-14T20:00:00.txt", False),
+        ("./atlas-2026-07-14T20:00:00.txt", True),
+        ("2026:atlas.txt", True),
+        ("snapshots/atlas:2026.txt", True),
+        ("file:snapshots/atlas:2026.txt", False),
+    ],
+    ids=[
+        "scheme-first-segment",
+        "dot-prefixed",
+        "no-scheme-colon",
+        "later-segment",
+        "file-uri",
+    ],
+)
+def test_atlas_first_segment_colons_split_on_the_scheme(
+    workspace: Path, tmp_path: Path, locator: str, selected: bool
+) -> None:
+    """§19.2: a first segment carrying a URI scheme is read as that URI.
+
+    A colon no scheme precedes cannot be, so it needs no `./` — the boundary
+    the contract states is the one the acquisition gate applies.
+    """
+
+    payload_root = tmp_path / "payload"
+    (payload_root / "snapshots").mkdir(parents=True)
+    for name in ("atlas-2026-07-14T20:00:00.txt", "2026:atlas.txt"):
+        (payload_root / name).write_text("Vera Example snapshot.\n", encoding="utf-8")
+    (payload_root / "snapshots" / "atlas:2026.txt").write_text(
+        "Vera Example snapshot.\n", encoding="utf-8"
+    )
+
+    payload = write_payload(
+        payload_root, "atlas.json", atlas_record(path=locator, content_digest=None)
+    )
+    outcome = run_import(workspace, "atlas", payload)
+
+    if selected:
+        assert counts(outcome) == (1, 0, 0)
+        assert evidence_rows(workspace)[0]["path"] is not None
+    else:
+        assert counts(outcome) == (0, 0, 1)
+        assert outcome.rejected[0].reason.startswith("payload_locator_")
 
 
 def test_atlas_duplicate_and_conflicting_replays(

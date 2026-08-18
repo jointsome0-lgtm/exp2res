@@ -143,7 +143,8 @@ Source-text fidelity:
   - Every trail label, non-null bound's exact accepted ISO input string, precision literal, and confidence literal.
   - Every evidence `reference`.
   - The exact accepted `as_of` input string.
-- Thus the persisted source projection contains every accepted structured source value rather than retaining only its hash; a mismatch is invalid acquisition.
+  - The snapshot-wide `occurred`: each non-null bound's exact accepted ISO input string, its precision literal, and its confidence literal. The trail bullet above is trail-scoped, and this one carries the placement that governs the record.
+- The list is exhaustive, and what it names the persisted source projection carries in full rather than only as a hash. Every member it omits addresses or routes the record rather than describing the experience — `source`, `record_id`, `domain`, `path`, and `content_digest` — and the source text is never required to spell any of them. A mismatch is invalid acquisition.
 - `occurred` maps unchanged to `RawLog.occurred`.
 - `as_of` remains snapshot provenance and never substitutes for experience placement.
 - `RawLog.recorded_at` remains the independent service-assigned import time under §5.4.
@@ -154,6 +155,8 @@ Referenced snapshot document:
 - The path identifies the single source snapshot document represented by the linked `EvidenceItem`, not one member of `evidence_references`.
 - Those `evidence_references` are inert logical source IDs and never path or fetch authority.
 - The path/digest pair follows §19.4 rule 6 and maps only to `EvidenceItem.path` and its named digest metadata.
+- Of the two forms §19.4 rule 6 allows, a payload `path` carries only the first: a relative POSIX path beneath the payload root. The §19 preamble subjects it to §29.4's POSIX-only acquisition, so a scheme-prefixed value — `file:` included — is non-selected rather than dereferenced.
+- A value whose first segment carries a URI scheme — a letter, then letters, digits, `+`, `-`, or `.`, then a colon — is read as that URI, and so refused. A `./` prefix is what states the relative reading of a name a scheme would otherwise claim: `./atlas-2026-07-14T20:00:00.txt` rather than `atlas-2026-07-14T20:00:00.txt`. A first-segment colon no scheme precedes, as in `2026:atlas.txt`, cannot be read as a URI and needs no prefix. §29.4 owns the gate that applies the distinction.
 - Required nullable members give omission and explicit absence one record shape before §19.4 hashing.
 
 The `knowledge_state_snapshot` strength is high only within §9.4's stated knowledge-attribution scope.
