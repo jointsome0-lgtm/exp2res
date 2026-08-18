@@ -740,15 +740,15 @@ def test_a_service_called_outside_a_command_leaves_sigint_deliverable(
 @pytest.mark.skipif(
     not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
 )
-def test_the_envelope_is_emitted_with_the_interrupt_deliverable(
+def test_the_envelope_is_emitted_before_the_signal_is_released(
     workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The classification and the release are one act.
+    """§14.14 rule 6 owes the owner the report, not only its computation.
 
-    Freezing the status first and unblocking later would leave the residual
-    scan, the diagnostics and the write itself masked: a Ctrl-C against an
-    envelope going to a reader that stopped reading would be swallowed and
-    the command would hang uninterruptibly.
+    Releasing the signal once the status is classified but before the write
+    would let a `KeyboardInterrupt` escape through the emission, and the
+    command would exit with durable rows and no envelope naming them — the
+    defect the deferral exists to prevent.
     """
 
     source = tmp_path / "Vera Example emitted.md"
@@ -773,9 +773,9 @@ def test_the_envelope_is_emitted_with_the_interrupt_deliverable(
     invoke_json(workspace, ["log", "today", "--file", str(source)])
     monkeypatch.undo()
 
-    # Already classified when the write begins, and no longer masked.
+    # Already classified when the write begins, and still held until it ends.
     assert seen["exit_code"] == 9
-    assert seen["masked"] is False
+    assert seen["masked"] is True
 
 
 @pytest.mark.skipif(

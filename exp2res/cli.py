@@ -73,7 +73,7 @@ from exp2res.errors import (
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
-from exp2res.services.interrupts import interrupt_boundary, resume_interrupt
+from exp2res.services.interrupts import interrupt_boundary, interrupt_pending
 from exp2res.services.capture import (
     capture_daily,
     capture_daily_file,
@@ -585,19 +585,20 @@ def _run_operation(
         )
         typer.echo("The operation failed unexpectedly.", err=True)
 
-    if resume_interrupt():
+    if interrupt_pending():
         # §14.14 rule 6: the interrupt arrived while a committed effect was
         # being turned into this envelope. The report is complete, so the
         # cancellation is a classification rather than an unwind — there is
         # nothing left to undo. Rule 6 gives it precedence over every class
         # observed alongside it, so a teardown that also failed is reclassified
         # here and keeps the projection it carried.
+        #
+        # The signal stays held through the emission below. Rule 6 owes the
+        # owner a class-9 envelope naming the durable rows, and a command that
+        # took a `KeyboardInterrupt` through `_emit` would exit with those rows
+        # and no report — the very defect the deferral exists to prevent. The
+        # boundary consumes the signal once the report is out.
         outcome = replace(outcome, exit_code=9, diagnostic_class="cancelled")
-    # Everything below — the residual scan, the diagnostics, the emission —
-    # runs with SIGINT deliverable again. The classification is frozen and the
-    # deferral released in the one call above, so nothing further can be
-    # silently swallowed and a write to a reader that stopped reading stays
-    # interruptible.
 
     if outcome.exit_code and outcome.retry is not None and not controls.json_output:
         # §13.13 retry guidance is an operator diagnostic in human mode; the

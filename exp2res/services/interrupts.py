@@ -24,9 +24,11 @@ def interrupt_boundary() -> Iterator[None]:
     another tool — the call is inert and ordinary Ctrl-C semantics stand,
     because nothing there would ever unblock what it masked.
 
-    The release here is the safety net for the paths that never reach the
-    classification: whatever the command did, the mask the caller had is the
-    mask it gets back.
+    The release is this scope's own last act, after the envelope has been
+    written: a command that unblocked earlier could take a `KeyboardInterrupt`
+    through `_emit` and exit with durable rows and no report at all, which is
+    the defect §14.14 rule 6 names. Whatever the command did, the mask the
+    caller had is the mask it gets back.
     """
 
     global _owned
@@ -49,11 +51,12 @@ def defer_interrupt() -> None:
     a signal delivered in any of them leaves before anything has recorded what
     is now durable. Refusing delivery removes the window instead.
 
-    Cancellation is not lost, only sequenced: `resume_interrupt` reports the
+    Cancellation is not lost, only sequenced: `interrupt_pending` reports the
     signal once the outcome exists, and the command still ends cancelled. The
-    deferred span reaches from the commit to that classification — a lock
-    release, a managed-set removal, one dataclass — and only SIGINT is held,
-    so a process that stalls inside it is still signallable.
+    deferred span reaches from the commit to the emitted envelope — a lock
+    release, a managed-set removal, one dataclass, one write — because rule 6
+    owes the owner the report and not only its computation. Only SIGINT is
+    held, so a process that stalls inside that span is still signallable.
 
     A SIGINT the caller had already blocked and left pending is recorded as
     theirs, so this command neither reports it as its own cancellation nor
@@ -68,20 +71,30 @@ def defer_interrupt() -> None:
         _deferred = True
 
 
+def interrupt_pending() -> bool:
+    """Report whether a deferred SIGINT is waiting, without delivering it.
+
+    The §14.14 boundary asks this to classify an outcome that is already
+    built, and keeps the deferral armed until that envelope is out: delivering
+    the signal to decide the classification would lose the report it decided.
+    A signal the caller had already left pending is not this command's
+    cancellation and answers no here.
+    """
+
+    return (
+        _deferred
+        and not _pending_on_entry
+        and signal.SIGINT in signal.sigpending()
+    )
+
+
 def resume_interrupt() -> bool:
     """Release the deferral, reporting whether it held a SIGINT.
 
-    Reporting and releasing are one act because they cannot be two: a caller
-    that asked first and unblocked later would freeze a classification while
-    signals could still arrive behind it, and then discard them. The signal
-    this returns is the signal it consumed, and every signal after the
-    release is delivered normally — which is what keeps a command
-    interruptible while it writes its envelope to a reader that has stopped
-    reading.
-
-    The consumed signal is not delivered: it belongs to a command whose
-    committed work is already reported, and raising `KeyboardInterrupt` for it
-    would only discard that report on its way out.
+    The held signal is consumed rather than delivered. It belongs to a command
+    whose committed work is not only complete but already reported, so nothing
+    is left for a `KeyboardInterrupt` to unwind and raising one here would
+    only discard the envelope on its way out.
 
     The caller's mask is restored exactly, so an embedding that blocks SIGINT
     on its own account gets its policy back unchanged.
