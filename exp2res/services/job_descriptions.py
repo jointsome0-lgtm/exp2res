@@ -48,6 +48,7 @@ from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
     locked_database_anchor,
     purge_managed_backups as _purge_managed_backups,
+    report_unproven_residual,
 )
 from exp2res.storage.repository import (
     get_job_description,
@@ -487,7 +488,17 @@ def _delete_locked(
                         path for path in existing_branch_sets if path not in surviving
                     )
                 else:
-                    removed_paths.extend(unlinked_sets)
+                    # The names are pathnames. Once the binding is gone they
+                    # address the replacement, which may hold untouched sets
+                    # at the same paths, so nothing is reported removed and
+                    # every selected path goes out unproven (§13.13 rule 6).
+                    unlinked_sets.clear()
+                    report_unproven_residual(
+                        branch_set_paths(workspace, branch_ids, existing_only=False)
+                    )
+                    residual_paths.extend(
+                        branch_set_paths(workspace, branch_ids, existing_only=False)
+                    )
         except OSError:
             # §13.13 rule 6: cleanup never blocks the deletion. An unreadable
             # managed parent is reported residual and the purge continues, or

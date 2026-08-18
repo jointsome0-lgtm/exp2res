@@ -1630,3 +1630,67 @@ def test_a_replaced_branch_parent_is_never_purged_from(
         assert connection.execute(
             "SELECT COUNT(*) FROM job_descriptions"
         ).fetchone()[0] == 0
+
+
+def test_a_branch_purge_that_loses_its_binding_reports_nothing_removed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A durable unlink stops being reportable once the tree changes hands.
+
+    The removed names are pathnames: after the substitution they address the
+    replacement, which may hold untouched sets at the same paths, so `jd
+    delete` would report deleting exports it never touched.
+    """
+
+    _result, added = add_job_description(
+        workspace, tmp_path, monkeypatch, ids=BranchTestIds()
+    )
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    with read_database(workspace) as connection:
+        requirement_id = get_job_description(
+            connection, job_description_id
+        ).parsed.requirements[0].id
+
+    ids, facts = prepare_graph(workspace)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    branch_id, _bullet_id = plant_branch(
+        workspace,
+        snapshot_id=assessed.snapshot_id,
+        fact_ids=facts,
+        job_description_id=job_description_id,
+        requirement_ids=(requirement_id,),
+    )
+    branch_set = plant_branch_set(workspace, branch_id)
+    real_remove = jd_service.remove_branch_sets
+    detached: list[Path] = []
+
+    def remove_then_replace(*arguments, **keywords):
+        residuals = real_remove(*arguments, **keywords)
+        if not detached:
+            branch_parent = workspace / "out" / "branch"
+            aside = tmp_path / "detached-branch"
+            shutil.move(str(branch_parent), str(aside))
+            branch_parent.mkdir(mode=0o700)
+            (branch_parent / branch_id).mkdir(mode=0o700)
+            detached.append(aside)
+        return residuals
+
+    monkeypatch.setattr(jd_service, "remove_branch_sets", remove_then_replace)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert detached
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["result"]["removed_managed_paths"] == []
+    assert str(branch_set.absolute()) in envelope["residual_paths"]
+    # The unlink landed in the tree the lock covered; the replacement's
+    # identically named set is untouched and never reported deleted.
+    assert not (detached[0] / branch_id).exists()
+    assert (workspace / "out" / "branch" / branch_id).is_dir()
