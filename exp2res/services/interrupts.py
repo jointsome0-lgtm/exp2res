@@ -2,15 +2,39 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from typing import Iterator
 import signal
 
 
 _DEFERRABLE = hasattr(signal, "pthread_sigmask")
+_owned = False
 _deferred = False
 
 
+@contextmanager
+def interrupt_boundary() -> Iterator[None]:
+    """Own every deferral one command takes, and release it on the way out.
+
+    Blocking a signal is process-global, so the right to do it belongs to
+    whoever will report the cancellation. Inside this scope `defer_interrupt`
+    holds SIGINT; outside it — a service called from a test, a library,
+    another tool — the call is inert and ordinary Ctrl-C semantics stand,
+    because nothing there would ever unblock what it masked.
+    """
+
+    global _owned
+    outer = _owned
+    _owned = True
+    try:
+        yield
+    finally:
+        _owned = outer
+        resume_interrupt()
+
+
 def defer_interrupt() -> None:
-    """Stop delivering SIGINT until `resume_interrupt` runs.
+    """Stop delivering SIGINT until the enclosing boundary releases it.
 
     Rule 6 owes the envelope every effect the command committed, and each
     hand-off between the commit and that envelope is one bytecode wide: the
@@ -30,7 +54,7 @@ def defer_interrupt() -> None:
     """
 
     global _deferred
-    if _DEFERRABLE and not _deferred:
+    if _DEFERRABLE and _owned and not _deferred:
         signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
         _deferred = True
 

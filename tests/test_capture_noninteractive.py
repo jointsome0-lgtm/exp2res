@@ -18,6 +18,7 @@ import exp2res.pipeline.stage1 as stage1_module
 import exp2res.services.capture as capture_service
 import exp2res.services.detection as detection_service
 from exp2res.cli import app
+from exp2res.errors import WorkspaceBusyError
 from exp2res.services.logs import list_logs, show_log
 
 from fakes import FakeContractRunner
@@ -676,6 +677,64 @@ def test_a_gap_answer_whose_commit_never_ran_names_nothing(
     assert result.exit_code == 9
     assert envelope["affected_ids"]["created"] == []
     assert {log.id for log in list_logs(workspace)} == before
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_a_cancellation_outranks_a_teardown_that_also_failed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: class 9 outranks every class observed alongside it.
+
+    The owner interrupted and the writer teardown then failed on its own. The
+    envelope reports the cancellation and the committed pair, not the
+    teardown's class with the interrupt silently dropped.
+    """
+
+    real = stage1_module.writer_database
+
+    @contextmanager
+    def interrupt_then_fail(*args, **kwargs):
+        with real(*args, **kwargs) as connection:
+            yield connection
+        os.kill(os.getpid(), signal.SIGINT)
+        raise WorkspaceBusyError()
+
+    source = tmp_path / "Vera Example contended.md"
+    source.write_bytes(b"Vera Example committed before the contention.\n")
+    before = {log.id for log in list_logs(workspace)}
+    monkeypatch.setattr(stage1_module, "writer_database", interrupt_then_fail)
+    result, envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = _committed_pair(envelope)
+    assert {log.id for log in list_logs(workspace)} - before == set(created["raw_log"])
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_a_service_called_outside_a_command_leaves_sigint_deliverable(
+    workspace: Path,
+) -> None:
+    """Only a boundary that will release the signal may hold it.
+
+    Blocking SIGINT is process-global. A service called from a test, a library
+    or another tool has no envelope to protect and nothing that would unblock
+    what it masked, so the deferral there would make Ctrl-C ineffective for
+    the rest of the process.
+    """
+
+    capture_service.capture_daily(
+        workspace, raw_text="Vera Example called the service directly."
+    )
+
+    assert signal.SIGINT not in signal.pthread_sigmask(signal.SIG_BLOCK, set())
 
 
 def test_a_capture_interrupted_before_its_commit_names_nothing(
