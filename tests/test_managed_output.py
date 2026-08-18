@@ -33,8 +33,13 @@ def _reconcile(workspace: Path) -> tuple[str, ...]:
         return managed.reconcile_managed_outputs(workspace)
 
 
-def _publish(workspace: Path, graph):
-    return managed.publish_assessment(workspace, graph, clock=lambda: NOW)
+def _publish(workspace: Path, graph, *, clock=None):
+    """Publish under an anchor, as every §13.14 writer does behind the lock."""
+
+    with anchor_locked_database(workspace):
+        return managed.publish_assessment(
+            workspace, graph, clock=clock or (lambda: NOW)
+        )
 
 
 def _bytes(final: Path) -> dict[str, bytes]:
@@ -52,10 +57,8 @@ def test_private_modes_idempotent_reexport_and_same_view_stale_replacement(
         os.umask(prior_umask)
     final = workspace / "out" / "assessment" / graph.snapshot.value.id
     first_bytes = _bytes(final)
-    second_manifest, second_paths = managed.publish_assessment(
-        workspace,
-        graph,
-        clock=lambda: datetime(2026, 7, 20, 13, tzinfo=timezone.utc),
+    second_manifest, second_paths = _publish(
+        workspace, graph, clock=lambda: datetime(2026, 7, 20, 13, tzinfo=timezone.utc)
     )
     assert _bytes(final) == first_bytes
     assert first_manifest == second_manifest
@@ -149,10 +152,8 @@ def test_reexport_after_gap_answer_replaces_prior_set(workspace: Path) -> None:
     first_bytes = _bytes(final)
 
     answered = graph_with_gap_answered_after_export(graph)
-    manifest, _paths = managed.publish_assessment(
-        workspace,
-        answered,
-        clock=lambda: datetime(2026, 7, 20, 13, tzinfo=timezone.utc),
+    manifest, _paths = _publish(
+        workspace, answered, clock=lambda: datetime(2026, 7, 20, 13, tzinfo=timezone.utc)
     )
     answer_log_id = answered.supplemental_raw_logs[-1].id
     assert answer_log_id in manifest.source_ids.raw_log_ids
@@ -161,10 +162,8 @@ def test_reexport_after_gap_answer_replaces_prior_set(workspace: Path) -> None:
     assert final.is_dir()
 
     # Unchanged re-export of the answered graph still reuses the set.
-    reused, _reused_paths = managed.publish_assessment(
-        workspace,
-        answered,
-        clock=lambda: datetime(2026, 7, 20, 14, tzinfo=timezone.utc),
+    reused, _reused_paths = _publish(
+        workspace, answered, clock=lambda: datetime(2026, 7, 20, 14, tzinfo=timezone.utc)
     )
     assert reused == manifest
     assert _bytes(final) == second_bytes
@@ -503,9 +502,12 @@ def test_a_workspace_replaced_mid_pass_keeps_the_rest_of_the_sets(
     """Rule 9 is re-asked per entry, not once for the whole pass.
 
     The replacement lands after the first removal, so a single check at the
-    entry would authorize every later unlink against the foreign tree.
+    entry would authorize every later unlink against the foreign tree. The
+    parent joins the report because the closing flush would reopen it through
+    the replaced pathname, which banks nothing about the first removal.
     """
 
+    banked: list[str] = []
     first = _plant_assessment_set(workspace, "snapshot_vera_0001")
     _plant_assessment_set(workspace, "snapshot_vera_0002")
     real_remove_entry = managed._remove_entry
@@ -522,14 +524,18 @@ def test_a_workspace_replaced_mid_pass_keeps_the_rest_of_the_sets(
         managed._remove_entry = replace_after_first
         try:
             residuals = managed.remove_managed_sets_for_locked_database(
-                workspace, snapshot_ids=["snapshot_vera_0001", "snapshot_vera_0002"]
+                workspace,
+                snapshot_ids=["snapshot_vera_0001", "snapshot_vera_0002"],
+                removed_ledger=banked,
             )
         finally:
             managed._remove_entry = real_remove_entry
 
     assert residuals == (
+        str(workspace / "out" / "assessment"),
         str(workspace / "out" / "assessment" / "snapshot_vera_0002"),
     )
+    assert banked == []
     assert not (moved[0] / "out" / "assessment" / "snapshot_vera_0001").exists()
     assert first == workspace / "out" / "assessment" / "snapshot_vera_0001"
     assert (workspace / "out" / "assessment" / "snapshot_vera_0002").is_dir()
@@ -653,6 +659,78 @@ def test_the_backup_sweep_takes_its_anchor_from_the_lock(
     assert residuals == (str(foreign_store.absolute()),)
     assert foreign_backup.read_bytes() == b"Vera Example replacement backup"
     assert (moved / ".exp2res" / "backup" / "schema-10.sqlite").is_file()
+
+
+def test_publication_never_removes_a_stale_set_from_a_replacement(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """Rule 9 reaches publication, not only invalidation.
+
+    Rule 5 replaces every prior same-view set before publishing the new one and
+    removes its own rollback afterwards, all by pathname. Under a replacement
+    that would delete sets the other workspace still owns, while this export's
+    transaction stayed attached to the original database. The refusal precedes
+    the managed parents, so it leaves nothing behind in the foreign tree.
+    """
+
+    graph = assessment_graph(all_sections=False)
+    _publish(workspace, graph)
+    replacement_graph = assessment_graph(
+        all_sections=False, snapshot_id="snapshot_vera_export_0002"
+    )
+
+    with anchor_locked_database(workspace):
+        moved = _replace_workspace(workspace, tmp_path, name="before-publication")
+        # A complete replacement, so nothing but rule 9 can refuse: publication
+        # would otherwise sweep this valid same-view set and publish over it.
+        (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
+        foreign = workspace / "out" / "assessment" / graph.snapshot.value.id
+        foreign.parent.mkdir(mode=0o700, parents=True)
+        shutil.copytree(moved / "out" / "assessment" / graph.snapshot.value.id, foreign)
+        foreign_bytes = _bytes(foreign)
+        with pytest.raises(ManagedOutputIncompleteError) as caught:
+            managed.publish_assessment(
+                workspace, replacement_graph, clock=lambda: NOW
+            )
+
+    assert caught.value.residual_paths == (str((workspace / "out").absolute()),)
+    assert _bytes(foreign) == foreign_bytes
+    assert not (
+        workspace / "out" / "assessment" / replacement_graph.snapshot.value.id
+    ).exists()
+    assert (moved / "out" / "assessment" / graph.snapshot.value.id).is_dir()
+
+
+def test_an_empty_replacement_never_reads_as_a_finished_total_sweep(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """The sweep's own enumeration is bound, not just the removals it feeds.
+
+    A replacement with neither managed parent makes both read as absent, which
+    would report nothing left to clean while the tree the caller is deleting
+    from kept all of its managed output.
+    """
+
+    _plant_assessment_set(workspace, "snapshot_vera_0001")
+    real_canonical_roots = managed._canonical_roots
+    moved: list[Path] = []
+
+    def replace_after_roots(target: Path):
+        roots = real_canonical_roots(target)
+        if not moved:
+            moved.append(_replace_workspace(workspace, tmp_path, name="empty-sweep"))
+            (workspace / ".exp2res").mkdir(mode=0o700, exist_ok=True)
+        return roots
+
+    with anchor_locked_database(workspace):
+        managed._canonical_roots = replace_after_roots
+        try:
+            residuals = managed.remove_all_managed_output_entries(workspace)
+        finally:
+            managed._canonical_roots = real_canonical_roots
+
+    assert residuals == (str((workspace / "out").absolute()),)
+    assert (moved[0] / "out" / "assessment" / "snapshot_vera_0001").is_dir()
 
 
 def test_the_backup_sweep_without_an_anchor_removes_nothing(

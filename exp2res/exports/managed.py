@@ -754,11 +754,7 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
     refusal leaves no directories behind either.
     """
 
-    expected_database = locked_database_anchor()
-
-    def still_live() -> bool:
-        return workspace_database_is_live(workspace, expected_database)
-
+    still_live = _locked_database_predicate(workspace)
     residuals: set[str] = set()
     if not still_live():
         refused = (str((workspace / "out").absolute()),)
@@ -829,7 +825,36 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
                     _fsync_directory(parent, out_root)
                 except OSError:
                     residuals.add(str(parent))
-    return tuple(sorted(residuals, key=fs_id_key))
+    reported = tuple(sorted(residuals, key=fs_id_key))
+    if not still_live():
+        # A replacement landing inside the pass turned every operation after it
+        # into a refusal, and those refusals were reported by path — paths that
+        # now spell the replacement. Their absence there would withdraw the
+        # report under §14.14 rule 4's existence check, so the whole set travels
+        # the channel that check cannot reach, together with the managed root
+        # that names the part of the pass never reached at all.
+        refused = (*reported, str((workspace / "out").absolute()))
+        report_unproven_residual(refused)
+        return tuple(sorted(set(refused), key=fs_id_key))
+    return reported
+
+
+def _locked_database_predicate(workspace: Path) -> Callable[[], bool]:
+    """Build §13.14 rule 9's predicate for one workspace under the held lock.
+
+    Every entry point that touches managed output builds it the same way, so
+    the binding cannot drift between them, and the anchor is captured once per
+    operation rather than re-read at each question — a re-read would answer
+    about whatever the pathname reaches by then, which is the substitution the
+    rule exists to catch.
+    """
+
+    expected_database = locked_database_anchor()
+
+    def still_live() -> bool:
+        return workspace_database_is_live(workspace, expected_database)
+
+    return still_live
 
 
 def _managed_set_paths(
@@ -975,6 +1000,15 @@ def _remove_managed_sets(
             # ledger must not claim these removals either.
             residuals.add(str(parent))
             unlinked = []
+        else:
+            if not live():
+                # The flush reopened the parent through the workspace pathname,
+                # so a replacement landing since the last unlink means it
+                # succeeded against a directory in another tree and proves
+                # nothing about these entries. Unflushed is exactly the state
+                # above, and it is reported the same way.
+                residuals.add(str(parent))
+                unlinked = []
     # Only a flushed removal is banked: an interrupt inside the flush skips this
     # line for the same reason, and the caller keeps reporting those sets rather
     # than claiming a removal a crash could undo.
@@ -1072,11 +1106,7 @@ def remove_managed_sets_for_locked_database(
     report them.
     """
 
-    expected_database = locked_database_anchor()
-
-    def still_live() -> bool:
-        return workspace_database_is_live(workspace, expected_database)
-
+    still_live = _locked_database_predicate(workspace)
     if not still_live():
         stranded = (
             *assessment_set_paths(workspace, snapshot_ids, existing_only=False),
@@ -1111,13 +1141,10 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
     enumerate are the replacement's and say nothing about what was stranded.
     """
 
-    expected_database = locked_database_anchor()
-
-    def still_live() -> bool:
-        return workspace_database_is_live(workspace, expected_database)
-
+    still_live = _locked_database_predicate(workspace)
+    managed_root = str((workspace / "out").absolute())
     if not still_live():
-        return (str((workspace / "out").absolute()),)
+        return (managed_root,)
     # §13.13 rule 6: this enumeration serves privacy deletions that commit
     # whether or not cleanup succeeds, so every filesystem error becomes a
     # residual path rather than an exception that could abort the caller.
@@ -1126,11 +1153,17 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
     except ManagedOutputIncompleteError as error:
         return error.residual_paths
     except OSError:
-        return (str((workspace / "out").absolute()),)
+        return (managed_root,)
 
     residuals: set[str] = set()
     for parent_name in ("assessment", "branch"):
         parent = out_root / parent_name
+        # The enumeration itself is bound, not only the removals it feeds. An
+        # empty replacement makes both parents read as absent, which this pass
+        # would otherwise report as nothing left to clean while the tree its
+        # caller is deleting from kept all of its managed output.
+        if not still_live():
+            return (managed_root,)
         try:
             if _lstat(parent) is None:
                 continue
@@ -1154,6 +1187,8 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
                 _fsync_directory(parent, out_root)
             except OSError:
                 residuals.add(str(parent))
+    if not still_live():
+        return (managed_root,)
     return tuple(sorted(residuals, key=fs_id_key))
 
 
@@ -1277,8 +1312,10 @@ def read_current_assessment_members(
     return CurrentAssessmentRead("current", members)
 
 
-def _candidate_cleanup(path: Path, out_root: Path) -> None:
-    if _lstat(path) is not None and not _remove_tree(path, out_root):
+def _candidate_cleanup(
+    path: Path, out_root: Path, still_live: Callable[[], bool] | None = None
+) -> None:
+    if _lstat(path) is not None and not _remove_tree(path, out_root, still_live):
         raise ManagedOutputIncompleteError((str(path),))
 
 
@@ -1344,10 +1381,28 @@ def _manifest_matches_current(
     )
 
 
+def _bound_publication(workspace: Path) -> Callable[[], bool]:
+    """Refuse publication outright unless §13.14 rule 9's binding holds.
+
+    Publication writes a candidate, renames it into place, and removes both the
+    prior same-view sets and its own rollback — all by pathname. On a mismatch
+    none of that may touch the tree the pathname now reaches, and the refusal
+    comes before the managed parents are created so it leaves nothing behind
+    there either. The predicate is returned for the removals further in, which
+    re-ask it as the protocol proceeds.
+    """
+
+    still_live = _locked_database_predicate(workspace)
+    if not still_live():
+        raise ManagedOutputIncompleteError((str((workspace / "out").absolute()),))
+    return still_live
+
+
 def _remove_stale_same_view(
     parent: Path,
     out_root: Path,
     candidate_manifest: AssessmentManifest,
+    still_live: Callable[[], bool] | None = None,
 ) -> None:
     """Remove every prior assessment set §13.14 rule 5's identity replaces.
 
@@ -1373,7 +1428,7 @@ def _remove_stale_same_view(
             continue
         if _inspect_set(path, parent, out_root) is None:
             continue
-        if not _remove_tree(path, out_root):
+        if not _remove_tree(path, out_root, still_live):
             residuals.append(str(path))
     if residuals:
         raise ManagedOutputIncompleteError(residuals)
@@ -1410,6 +1465,7 @@ def _publish_set(
     matches_prior,
     matches_current,
     render_hash: str,
+    still_live: Callable[[], bool] | None = None,
 ):
     """Run §13.14 rules 4–8 for one already rendered and validated set.
 
@@ -1437,7 +1493,7 @@ def _publish_set(
                 == candidate_manifest.render_input_sha256
                 and _member_bytes_equal(final_path, out_root, members, member_names)
             ):
-                _candidate_cleanup(candidate, out_root)
+                _candidate_cleanup(candidate, out_root, still_live)
                 try:
                     _fsync_directory(parent, out_root)
                 except OSError as error:
@@ -1476,7 +1532,9 @@ def _publish_set(
                     rollback = None
                 except BaseException:
                     residuals = [str(rollback)]
-                    if _lstat(candidate) is not None and not _remove_tree(candidate, out_root):
+                    if _lstat(candidate) is not None and not _remove_tree(
+                        candidate, out_root, still_live
+                    ):
                         residuals.append(str(candidate))
                     raise ManagedOutputIncompleteError(residuals) from None
             raise
@@ -1484,7 +1542,7 @@ def _publish_set(
         try:
             _fsync_directory(parent, out_root)
             if rollback is not None:
-                if not _remove_tree(rollback, out_root):
+                if not _remove_tree(rollback, out_root, still_live):
                     raise ManagedOutputIncompleteError((str(rollback),))
                 rollback = None
             _fsync_directory(parent, out_root)
@@ -1507,7 +1565,7 @@ def _publish_set(
         return current, paths
     except BaseException:
         if not published and _lstat(candidate) is not None:
-            _candidate_cleanup(candidate, out_root)
+            _candidate_cleanup(candidate, out_root, still_live)
         raise
 
 
@@ -1520,12 +1578,13 @@ def publish_assessment(
     """Publish and revalidate one complete assessment set under §13.14."""
 
     validate_entity_id(graph.snapshot.value.id)
+    still_live = _bound_publication(workspace)
     out_root, parent, _branch = _ensure_managed_parents(workspace)
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     members = assessment_member_bytes(graph)
     candidate_manifest = build_assessment_manifest(graph, members, created_at=now)
 
-    _remove_stale_same_view(parent, out_root, candidate_manifest)
+    _remove_stale_same_view(parent, out_root, candidate_manifest, still_live)
     return _publish_set(
         out_root=out_root,
         parent=parent,
@@ -1539,6 +1598,7 @@ def publish_assessment(
         matches_current=lambda manifest: isinstance(manifest, AssessmentManifest)
         and _manifest_matches_current(manifest, graph),
         render_hash=render_input_sha256(graph),
+        still_live=still_live,
     )
 
 
@@ -1583,6 +1643,7 @@ def publish_branch(
     """
 
     validate_entity_id(graph.branch.value.id)
+    still_live = _bound_publication(workspace)
     out_root, _assessment, parent = _ensure_managed_parents(workspace)
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     members = branch_member_bytes(graph)
@@ -1612,4 +1673,5 @@ def publish_branch(
         matches_prior=matches_prior,
         matches_current=matches_current,
         render_hash=render_hash,
+        still_live=still_live,
     )

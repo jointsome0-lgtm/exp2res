@@ -333,6 +333,14 @@ def purge_managed_backups(
                 ) or pinned.st_nlink != 1:
                     refused.append(managed_path)
                     continue
+                # §13.14 rule 9 is re-asked here, not only around the loop: the
+                # closing `root_is_live` would notice a replacement only after
+                # this pass had already unlinked the rest of its backups, and a
+                # detection that arrives after the foreign data is gone is not
+                # a refusal.
+                if not root_is_live():
+                    refused.append(managed_path)
+                    break
                 os.unlink(entry.name, dir_fd=backup_fd)
                 removed.append(managed_path)
                 if removed_ledger is not None:

@@ -484,14 +484,23 @@ def _delete_locked(
                         still_live=database_is_live,
                     )
                 )
-                # A path counts as removed only when it is proven gone: a
-                # residual may name the parent rather than each child — `out/`
-                # failing canonical-root validation reports one root path — so
-                # the surviving set is re-read instead of inferred from it.
-                surviving = set(branch_set_paths(workspace, branch_ids))
-                removed_paths.extend(
-                    path for path in existing_branch_sets if path not in surviving
-                )
+                if database_is_live():
+                    # A path counts as removed only when it is proven gone: a
+                    # residual may name the parent rather than each child —
+                    # `out/` failing canonical-root validation reports one root
+                    # path — so the surviving set is re-read instead of inferred
+                    # from it.
+                    surviving = set(branch_set_paths(workspace, branch_ids))
+                    removed_paths.extend(
+                        path for path in existing_branch_sets if path not in surviving
+                    )
+                else:
+                    # The pathname changed hands mid-pass, so re-reading it
+                    # answers about the replacement: an empty one would report
+                    # every original path as removed while the removal pass was
+                    # simultaneously reporting it residual. The durable ledger
+                    # is the only record of what this pass actually unlinked.
+                    removed_paths.extend(unlinked_sets)
         except OSError:
             # §13.13 rule 6: cleanup never blocks the deletion. An unreadable
             # managed parent is reported residual and the purge continues, or
