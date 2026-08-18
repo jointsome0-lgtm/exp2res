@@ -463,8 +463,8 @@ def capture_gap_answer(
                         )
                     )
                     pending = assessment_set_paths(workspace, snapshot_ids)
-                    report_managed_residuals(pending)
                     try:
+                        report_managed_residuals(pending)
                         defer_interrupt()
                         connection.commit()
                     except BaseException:

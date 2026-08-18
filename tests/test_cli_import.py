@@ -5,7 +5,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 import functools
 import json
+import os
 from pathlib import Path
+import signal
 import sqlite3
 
 import pytest
@@ -498,6 +500,45 @@ def test_an_interrupt_in_result_assembly_keeps_the_complete_result(
         "duplicate": 0,
         "rejected": 0,
     }
+    assert len(envelope["affected_ids"]["created"]) == 2
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_the_hand_off_to_the_envelope_holds_the_signal(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the records are durable and unreported across the return.
+
+    §19.4 rule 4's loop stays interruptible per record, but the hand-off from
+    the finished outcome to the envelope is one bytecode, so delivery is held
+    from the return until the report is out.
+    """
+
+    payload = write_payload(
+        tmp_path,
+        "handoff.jsonl",
+        [ephemeris_record(f"vera-ephemeris-9{index:04d}") for index in range(2)],
+    )
+    real = cli_module.import_outcome
+    seen: dict[str, object] = {}
+
+    def held_projection(imported):
+        seen["masked"] = signal.SIGINT in signal.pthread_sigmask(
+            signal.SIG_BLOCK, set()
+        )
+        os.kill(os.getpid(), signal.SIGINT)
+        return real(imported)
+
+    monkeypatch.setattr(cli_module, "import_outcome", held_projection)
+    result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
+    monkeypatch.undo()
+
+    assert seen["masked"] is True
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["result"]["counts"]["accepted"] == 2
     assert len(envelope["affected_ids"]["created"]) == 2
 
 

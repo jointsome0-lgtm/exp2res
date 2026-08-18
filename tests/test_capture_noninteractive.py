@@ -852,6 +852,46 @@ def test_the_deferral_is_declined_where_another_thread_can_take_the_signal(
     assert seen["masked"] is False
 
 
+def test_a_gap_answer_that_never_commits_withdraws_its_pending_report(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rollback un-publishes what the pre-commit report published.
+
+    §14.7's stale sets are reported before COMMIT so a signal in the
+    commit-to-cleanup window still names them. When the answer never commits
+    they are not stale at all, and leaving them reported would send the owner
+    after live files as unresolved paths.
+    """
+
+    gap_id = seed_gap(workspace, monkeypatch)
+    source = tmp_path / "Vera Example withdrawn.md"
+    source.write_bytes(b"Vera Example answered nothing at all.\n")
+    live = tmp_path / "vera-example-assessment-set"
+    live.write_bytes(b"a current set, not a stale one\n")
+
+    real_report = capture_service.report_managed_residuals
+
+    def refuse_once_the_set_is_published(paths) -> None:
+        real_report(paths)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        capture_service, "assessment_set_paths", lambda *a, **k: (str(live),)
+    )
+    monkeypatch.setattr(
+        capture_service, "report_managed_residuals", refuse_once_the_set_is_published
+    )
+    result, envelope = invoke_json(
+        workspace,
+        ["gaps", "answer", "--gap-id", gap_id, "--file", str(source)],
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["residual_paths"] == []
+    assert live.exists()
+
+
 def test_a_capture_interrupted_before_its_commit_names_nothing(
     workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

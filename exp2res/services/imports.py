@@ -41,6 +41,7 @@ from exp2res.integrations.records import (
     content_hash,
 )
 from exp2res.pipeline.stage1 import persist_manual_capture
+from exp2res.services.interrupts import defer_interrupt
 from exp2res.services.capture import (
     Clock,
     IdFactory,
@@ -593,6 +594,11 @@ def import_payload(
         internal.import_outcome = report()
         internal.import_classified = is_complete(internal.import_outcome)
         raise internal from error
+    # §14.14 rule 6: the loop above stays interruptible per §19.4 rule 4's
+    # record boundaries, but from here the records are durable and unreported.
+    # The return itself and the caller's assembly are one bytecode apart, so
+    # delivery is held until the §14.14 boundary has the envelope out.
+    defer_interrupt()
     return report()
 
 
