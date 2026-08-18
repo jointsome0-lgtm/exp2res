@@ -1394,3 +1394,47 @@ def test_a_rollback_move_survives_a_flush_that_never_reaches_the_next_gate(
     assert {Path(path).name for path in unproven} == set(names)
     stranded = moved[0] / "out" / "assessment"
     assert set(names) <= {path.name for path in stranded.iterdir()}
+
+
+def test_an_interrupted_removal_still_names_the_sets_a_mismatch_stranded(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancelled pass reports through the unwithdrawable channel too.
+
+    The tail that marks a mid-pass mismatch unproven is never reached when the
+    pass is interrupted, and the CLI would then existence-filter the pending
+    report against the replacement and drop every stranded set.
+    """
+
+    _plant_assessment_set(workspace, "snapshot_vera_0001")
+    _plant_assessment_set(workspace, "snapshot_vera_0002")
+    real_remove = managed._remove_entry
+    moved: list[Path] = []
+
+    def replace_then_cancel(*arguments, **keywords):
+        if not moved:
+            moved.append(_replace_workspace(workspace, tmp_path, name="cancelled"))
+            (workspace / "out" / "assessment").mkdir(mode=0o700, parents=True)
+            (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
+            raise KeyboardInterrupt()
+        return real_remove(*arguments, **keywords)
+
+    unproven: list[str] = []
+    with anchor_locked_database(workspace):
+        with privacy_service.collect_unproven_residuals(unproven):
+            monkeypatch.setattr(managed, "_remove_entry", replace_then_cancel)
+            with pytest.raises(KeyboardInterrupt):
+                managed.remove_managed_sets_for_locked_database(
+                    workspace,
+                    snapshot_ids=["snapshot_vera_0001", "snapshot_vera_0002"],
+                )
+
+    assert unproven == [
+        str(workspace / "out" / "assessment" / "snapshot_vera_0001"),
+        str(workspace / "out" / "assessment" / "snapshot_vera_0002"),
+    ]
+    stranded = moved[0] / "out" / "assessment"
+    assert sorted(path.name for path in stranded.iterdir()) == [
+        "snapshot_vera_0001",
+        "snapshot_vera_0002",
+    ]

@@ -773,11 +773,6 @@ def _ensure_managed_parents(
             raise ManagedOutputIncompleteError((str(out_root),))
         created = _mkdir_private(parent, out_root)
         if created is not None:
-            # A parent the lock found absent becomes bound here, where this
-            # command made it, and not at whatever answers to the name later.
-            # The key is the pathname the lock recorded under; the identity is
-            # the entry `_mkdir_private` held open, so a replacement landing
-            # between its close and this line binds nothing.
             record_locked_tree_identity(key, created)
     return out_root, assessment, branch
 
@@ -883,10 +878,6 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
                     _fsync_directory(parent, out_root)
                 except OSError:
                     residuals.add(str(parent))
-    # A replacement landing inside the pass turned every operation after it
-    # into a refusal, and those refusals were reported by path — paths that now
-    # spell the replacement. The managed root joins them, because it names the
-    # part of the pass never reached at all.
     return refuse_if_replaced(tuple(sorted(residuals, key=fs_id_key)))
 
 
@@ -955,7 +946,9 @@ def _managed_set_paths(
     the pathname reaches a *different* workspace, so what exists under it says
     nothing about the sets left stale in the one the mutation committed to, and
     filtering by it would report complete invalidation of a tree this process
-    never touched.
+    never touched. §13.14 rule 1's ID revalidation applies on both arms: this
+    report stands in for a removal, and on the mismatch arm it is the only
+    warning an owner gets about the set left stale.
     """
 
     selected = tuple(sorted(set(entity_ids), key=fs_id_key))
@@ -966,11 +959,6 @@ def _managed_set_paths(
     parent = out_root / parent_name
     paths = []
     for entity_id in selected:
-        # §13.14 rule 1's fail-closed revalidation, on the same terms as the
-        # removal this report stands in for. Skipping a nonconforming ID would
-        # let a mismatch commit its database mutation with nothing naming the
-        # set it left stale — the one case where this report is the only
-        # warning an owner gets.
         if ENTITY_ID.fullmatch(entity_id) is None:
             raise IntegrityFailureError("managed_output_entity_id_invalid")
         path = parent / entity_id
@@ -1041,10 +1029,6 @@ def _remove_managed_sets(
         return tuple(str(parent / entity_id) for entity_id in selected)
     try:
         if _lstat(parent) is None:
-            # Absence is proof of a finished cleanup only in the tree this
-            # pass is bound to. An empty replacement makes the parent read as
-            # absent while every selected set survives in the tree the caller
-            # committed to, which this would otherwise report as complete.
             if not live():
                 return tuple(str(parent / entity_id) for entity_id in selected)
             return ()
@@ -1067,9 +1051,6 @@ def _remove_managed_sets(
             break
         try:
             if _lstat(path) is None:
-                # Same reading as the absent parent above: an entry missing
-                # from a replacement says nothing about the one this pass was
-                # bound to remove.
                 if not live():
                     residuals.add(str(path))
                 continue
@@ -1097,14 +1078,6 @@ def _remove_managed_sets(
             unlinked = []
         else:
             if not live():
-                # The flush reopened the parent through the workspace pathname,
-                # so a replacement landing since the last unlink means it
-                # succeeded against a directory in another tree and proves
-                # nothing about these entries. Unflushed is exactly the state
-                # above, and it is reported the same way: un-banked, and named
-                # individually — dropping them from the report as well would
-                # leave a set a crash may restore counted as neither removed
-                # nor residual.
                 residuals.update(unlinked)
                 residuals.add(str(parent))
                 unlinked = []
@@ -1206,34 +1179,37 @@ def remove_managed_sets_for_locked_database(
     """
 
     still_live = locked_workspace_predicate(workspace)
-    if not still_live():
-        stranded = (
+
+    def selected() -> tuple[str, ...]:
+        return (
             *assessment_set_paths(workspace, snapshot_ids, existing_only=False),
             *branch_set_paths(workspace, branch_ids, existing_only=False),
         )
+
+    if not still_live():
+        stranded = selected()
         report_unproven_residual(stranded)
         return stranded
-    residuals = (
-        *remove_assessment_sets(
-            workspace,
-            snapshot_ids,
-            removed_ledger=removed_ledger,
-            still_live=still_live,
-        ),
-        *remove_branch_sets(
-            workspace,
-            branch_ids,
-            removed_ledger=removed_ledger,
-            still_live=still_live,
-        ),
-    )
+    try:
+        residuals = (
+            *remove_assessment_sets(
+                workspace,
+                snapshot_ids,
+                removed_ledger=removed_ledger,
+                still_live=still_live,
+            ),
+            *remove_branch_sets(
+                workspace,
+                branch_ids,
+                removed_ledger=removed_ledger,
+                still_live=still_live,
+            ),
+        )
+    except BaseException:
+        if not still_live():
+            report_unproven_residual(selected())
+        raise
     if residuals and not still_live():
-        # The identity held at the entry and failed somewhere inside the pass,
-        # so these paths are the mismatch arm's reports arriving one frame
-        # later. They travel the same unwithdrawable channel: the pathname now
-        # reaches a workspace this command never wrote to, and §14.14 rule 4's
-        # existence re-check would otherwise drop every one of them for being
-        # absent there.
         report_unproven_residual(residuals)
     return residuals
 
@@ -1266,10 +1242,6 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
     residuals: set[str] = set()
     for parent_name in ("assessment", "branch"):
         parent = out_root / parent_name
-        # The enumeration itself is bound, not only the removals it feeds. An
-        # empty replacement makes both parents read as absent, which this pass
-        # would otherwise report as nothing left to clean while the tree its
-        # caller is deleting from kept all of its managed output.
         if not still_live():
             return (managed_root,)
         try:
@@ -1492,11 +1464,6 @@ def _build_candidate(
         require_live(out_root)
         _mkdir_private(candidate, out_root)
     except BaseException as error:
-        # `_mkdir_private` validates the pathname after creating the entry, so
-        # its own failure can leave a made candidate behind — and a binding
-        # that failed in between puts that candidate in the tree this pass
-        # built in while the name reaches the other one. Absence here is
-        # therefore no more a finished cleanup than it is further down.
         _clean_or_report_candidate(candidate, out_root, still_live, error)
         raise
     try:
@@ -1712,11 +1679,6 @@ def _publish_set(
                     _fsync_directory(parent, out_root)
                 except OSError as error:
                     raise ManagedOutputIncompleteError((str(parent),)) from error
-                # The flush reopens the parent by pathname, so a replacement
-                # landing since the cleanup means it succeeded against another
-                # tree: the candidate removal here was never made durable, and
-                # the paths about to be returned as a finished export name a
-                # set this command did not put there.
                 require_live(candidate)
                 paths = tuple(
                     str(final_path / name) for name in sorted(all_names, key=fs_id_key)
@@ -1736,12 +1698,6 @@ def _publish_set(
                 _fsync_directory(parent, out_root)
             except BaseException as error:
                 if moved_aside and still_live is not None and not still_live():
-                    # This is the last gate the flush failure reaches, and the
-                    # prior set is already aside under the rollback name. The
-                    # probes below would consult the tree the pathname reaches
-                    # now, find neither entry there, and let the failure escape
-                    # naming only the candidate — while the tree this pass moved
-                    # in keeps a set no current name points at.
                     strand_under_mismatch((str(candidate), str(rollback)), error)
                 if _lstat(rollback) is not None and _lstat(final_path) is None:
                     try:
@@ -1751,9 +1707,6 @@ def _publish_set(
                     except BaseException:
                         raise ManagedOutputIncompleteError((str(rollback),)) from None
                 raise
-        # The prior set is already aside under the rollback name, so a refusal
-        # here strands two entries, not one: without the rollback the original
-        # tree is left with no current set and nothing naming what holds it.
         require_live_pair(candidate, rollback)
         try:
             _rename(candidate, final_path)
@@ -1787,12 +1740,6 @@ def _publish_set(
             residual = str(rollback) if rollback is not None else str(final_path)
             raise ManagedOutputIncompleteError((residual,)) from error
 
-        # A first-time export has no rollback to remove, so nothing above this
-        # point asks again after the promotion. Both flushes reopened the
-        # parent by pathname, and the validation below reads the final set the
-        # same way: against a replacement holding a matching set they would all
-        # succeed, and the export would report a workspace whose lock it never
-        # held while its own published set stayed stranded.
         require_live_pair(final_path, rollback)
         current = _inspect_set(final_path, parent, out_root)
         if (

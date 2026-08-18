@@ -581,9 +581,6 @@ def _run_operation(
         # A reported path that a later successful destructive or invalidation
         # step removed is no longer residual; anything unreadable stays
         # reported (fail closed). `lstat` never follows a final symlink.
-        # §13.14 rule 9's mismatch reports are exempt: their pathname reaches
-        # a workspace this command never wrote to, so its emptiness withdraws
-        # nothing about the sets the command actually stranded.
         if path in unproven:
             observed_residuals.append(path)
             continue

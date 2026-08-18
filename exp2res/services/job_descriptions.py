@@ -401,8 +401,6 @@ def _delete_locked(
         selected = get_job_description(connection, job_description_id)
         if selected is None:
             raise SelectorNotFoundError()
-        # §13.14 rule 9's anchor, established where the §8.1 writer authority
-        # was acquired rather than read again here.
         database_identity = locked_database_anchor()
         # §13.13 rule 10 orders managed-path removal before the database
         # transaction, so the writer lock is never held across filesystem I/O
@@ -462,11 +460,6 @@ def _delete_locked(
         branch_parent = str((workspace / "out" / "branch").absolute())
         unlinked_sets: list[str] = []
         try:
-            # §13.14 rule 9's binding, built the way every managed entry
-            # point builds it: a database-only check here would let `out/branch`
-            # renamed and replaced beside an untouched database pass, and the
-            # removal below would then unlink from the replacement while this
-            # workspace's own sets survived detached.
             database_is_live = locked_workspace_predicate(workspace)
 
             existing_branch_sets = branch_set_paths(workspace, branch_ids)
@@ -475,10 +468,6 @@ def _delete_locked(
                 # holds open, so removing anything under it would purge a
                 # foreign tree while this workspace's own sets survive. Every
                 # set is reported residual instead (§13.13 rule 6), exactly as
-                # the backup purge above does on the same mismatch — and
-                # unfiltered by what the pathname holds, because that is
-                # another workspace's content and says nothing about the sets
-                # this deletion strands here.
                 residual_paths.extend(
                     branch_set_paths(workspace, branch_ids, existing_only=False)
                 )
@@ -493,20 +482,11 @@ def _delete_locked(
                 )
                 if database_is_live():
                     # A path counts as removed only when it is proven gone: a
-                    # residual may name the parent rather than each child —
-                    # `out/` failing canonical-root validation reports one root
-                    # path — so the surviving set is re-read instead of inferred
-                    # from it.
                     surviving = set(branch_set_paths(workspace, branch_ids))
                     removed_paths.extend(
                         path for path in existing_branch_sets if path not in surviving
                     )
                 else:
-                    # The pathname changed hands mid-pass, so re-reading it
-                    # answers about the replacement: an empty one would report
-                    # every original path as removed while the removal pass was
-                    # simultaneously reporting it residual. The durable ledger
-                    # is the only record of what this pass actually unlinked.
                     removed_paths.extend(unlinked_sets)
         except OSError:
             # §13.13 rule 6: cleanup never blocks the deletion. An unreadable

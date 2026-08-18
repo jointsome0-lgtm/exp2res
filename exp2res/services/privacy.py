@@ -475,23 +475,11 @@ def purge_managed_backups(
                 ) or pinned.st_nlink != 1:
                     refused.append(managed_path)
                     continue
-                # §13.14 rule 9 is re-asked here, not only around the loop: the
-                # closing `root_is_live` would notice a replacement only after
-                # this pass had already unlinked the rest of its backups, and a
-                # detection that arrives after the foreign data is gone is not
-                # a refusal.
                 if not root_is_live():
                     refused.append(managed_path)
                     break
                 os.unlink(entry.name, dir_fd=backup_fd)
                 # A removal is only durable once the directory entry itself is
-                # flushed: the database deletion commits right after this call,
-                # so a crash in between could otherwise leave a backup holding
-                # the purged vacancy while the envelope claims it was removed.
-                # The flush precedes the ledger rather than closing the loop,
-                # because the ledger is what a cancellation mid-pass reports as
-                # durable effect (§14.14 rule 6) and a cancellation arriving
-                # during a closing flush would publish unflushed unlinks. A
                 # failed flush is reported rather than assumed (§13.13 rule 6).
                 os.fsync(backup_fd)
                 removed.append(managed_path)
@@ -515,11 +503,6 @@ def purge_managed_backups(
         if not root_is_live():
             # The root moved during the pass, so the surviving-name scan
             # describes a directory that is no longer the workspace's backup
-            # store and cannot filter anything. What it withdraws is that
-            # filter, not the removals themselves: every name in `removed` was
-            # unlinked and flushed while the store still was this one, so those
-            # effects are durable and are reported unfiltered, alongside the
-            # root the mismatch leaves unproven.
             return tuple(removed), (str(backup_root.absolute()),)
         residuals = sorted({*refused, *surviving}, key=os.fsencode)
         return (

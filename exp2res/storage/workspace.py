@@ -818,6 +818,14 @@ def migrate_workspace(
 
 @contextmanager
 def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -> Iterator[None]:
+    """Hold §8.1's exclusive writer lock and establish what it covers.
+
+    §8.1 rule 37: the database identity is read beside the locked entry itself,
+    and the managed-output roots as the lock finds them. §13.14 rule 9 binds
+    every managed-output mutation below to those for as long as the lock is
+    held.
+    """
+
     lock_path = workspace / ".exp2res" / "lock"
     if not _is_real_file(lock_path):
         raise SchemaCompatibilityError()
@@ -843,22 +851,10 @@ def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -
                 if time.monotonic() >= deadline:
                     raise WorkspaceBusyError() from error
                 time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
-        # §13.14 rule 9: the anchor is established where the authority is, so
-        # that a cleanup running many frames below — after a whole LLM
-        # invocation, in the §13 stages — compares against the workspace this
-        # lock was taken on rather than against whatever the pathname reaches
-        # by then. It is read beside the lock file just acquired, not through
-        # the pathname again: a replacement landing between the two would
-        # otherwise be installed as the identity every later check trusts.
         identity = locked_database_identity_at(marker_fd)
         os.close(marker_fd)
         marker_fd = None
         with anchor_locked_database_identity(identity):
-            # The database identity covers the database alone. The managed
-            # roots every §13.14 path is built from answer to their own names,
-            # so one of them renamed and replaced beside an untouched database
-            # would look exactly like the tree this lock covers. Recording them
-            # here is the last moment before this command can act on them.
             with anchor_locked_tree_identities(managed_root_paths(workspace)):
                 yield
     finally:
