@@ -38,7 +38,10 @@ from exp2res.errors import (
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
-from exp2res.exports.managed import branch_set_paths, remove_branch_sets
+from exp2res.exports.managed import (
+    branch_set_paths,
+    remove_managed_sets_for_locked_database,
+)
 from exp2res.llm.contracts import (
     ContractValidationError,
     ContractWarning,
@@ -630,8 +633,10 @@ def run_bullet_generation(
                 branch, bullets = committed_pack()
                 # §13 stale-export trigger class 1: the swap is already committed,
                 # so cleanup failure or interruption never rolls it back.
-                residual_paths = remove_branch_sets(
-                    workspace, replaced.branch_ids, removed_ledger=cleaned_sets
+                residual_paths = remove_managed_sets_for_locked_database(
+                    workspace,
+                    branch_ids=replaced.branch_ids,
+                    removed_ledger=cleaned_sets,
                 )
                 # Built inside the guard so an interrupt during construction
                 # still leaves the guard a committed result to carry.

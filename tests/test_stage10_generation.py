@@ -26,6 +26,7 @@ from exp2res.errors import (
 )
 from exp2res.domain.models import AssessmentSnapshot, SelfClaim
 from exp2res.pipeline.orchestration import withdraw_pending_unless_superseded
+import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage10 as stage10_module
 from exp2res.pipeline.stage10 import run_bullet_generation
 from exp2res.storage.repository import (
@@ -738,7 +739,7 @@ def test_a_post_commit_interrupt_keeps_the_committed_pack(
     def interrupt_cleanup(*_arguments, **_keywords):
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(stage10_module, "remove_branch_sets", interrupt_cleanup)
+    monkeypatch.setattr(managed_module, "remove_branch_sets", interrupt_cleanup)
 
     fake = FakeContractRunner(
         [writer_response([bullet_candidate(fact_ids=list(facts))])]

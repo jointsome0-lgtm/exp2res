@@ -39,8 +39,7 @@ from exp2res.errors import (
 from exp2res.exports.managed import (
     assessment_set_paths,
     branch_set_paths,
-    remove_assessment_sets,
-    remove_branch_sets,
+    remove_managed_sets_for_locked_database,
 )
 from exp2res.llm.assessment_verifier import (
     ASSESSMENT_VERIFIER_CONTRACT,
@@ -560,15 +559,11 @@ def run_assessment_verification(
         # interruption never rolls it back.
         cleaned_sets: list[str] = []
         try:
-            residual_paths = (
-                *remove_assessment_sets(
-                    workspace, (snapshot_id,), removed_ledger=cleaned_sets
-                ),
-                *remove_branch_sets(
-                    workspace,
-                    branch_swap.branch_ids,
-                    removed_ledger=cleaned_sets,
-                ),
+            residual_paths = remove_managed_sets_for_locked_database(
+                workspace,
+                snapshot_ids=(snapshot_id,),
+                branch_ids=branch_swap.branch_ids,
+                removed_ledger=cleaned_sets,
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the class-9 error carries the complete committed

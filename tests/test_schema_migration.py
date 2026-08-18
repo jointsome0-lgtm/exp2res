@@ -30,6 +30,7 @@ from exp2res.storage.schema import (
     RESUME_BRANCHES_SQL,
     RESUME_BULLETS_SQL,
 )
+import exp2res.services.privacy as privacy_service
 from exp2res.storage.workspace import (
     inspect_workspace,
     initialize_workspace,
@@ -1866,3 +1867,31 @@ def test_v11_to_v12_adds_the_branch_substrate_and_keeps_prior_rows(
     # The only schema_meta change is the appended v12 row (§12.14).
     assert table_rows(database, "schema_meta")[:11] == retained_before["schema_meta"]
     assert table_rows(database, "schema_meta")[11][0] == 12
+
+
+def test_a_migration_over_a_replaced_workspace_leaves_the_foreign_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.14 rule 9 reaches §12.14's cleanup, which anchors nothing itself.
+
+    The identity belongs to the writer lock the migration holds, so an anchor
+    that could not be established refuses the strand-cleanup rather than
+    unlinking from whatever the pathname now resolves to — and the schema
+    mutation still commits, because managed cleanup never blocks it.
+    """
+
+    workspace = v8_workspace(tmp_path)
+    published = workspace / "out" / "assessment" / "snapshot_vera_v8"
+    published.mkdir(mode=0o700, parents=True)
+    (published / "manifest.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        privacy_service, "locked_database_identity", lambda _workspace: None
+    )
+
+    migrated = migrate_workspace(
+        workspace, clock=lambda: FIXED_NOW.replace(day=16)
+    )
+
+    assert migrated.stored_version == 12
+    assert published.is_dir()

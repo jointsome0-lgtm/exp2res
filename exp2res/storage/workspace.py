@@ -26,6 +26,12 @@ from exp2res.errors import (
     WorkspaceBusyError,
     WorkspaceError,
 )
+from exp2res.services.privacy import (
+    anchor_locked_database_identity,
+    anchor_locked_tree_identities,
+    locked_database_identity_at,
+    locked_tree_paths,
+)
 
 from .schema import (
     SCHEMA_V12_SQL,
@@ -110,8 +116,8 @@ MIGRATION_REGISTRY = (
         9,
         apply_migration_8_to_9,
         requires_foreign_keys_off=True,
-        managed_cleanup=lambda connection, workspace: _assessment_set_cleanup(
-            connection, workspace
+        managed_cleanup=lambda connection, workspace: (
+            _assessment_set_cleanup(connection, workspace)
         ),
     ),
     MigrationStep(
@@ -119,8 +125,8 @@ MIGRATION_REGISTRY = (
         10,
         apply_migration_9_to_10,
         requires_foreign_keys_off=True,
-        managed_cleanup=lambda connection, workspace: _assessment_set_cleanup(
-            connection, workspace
+        managed_cleanup=lambda connection, workspace: (
+            _assessment_set_cleanup(connection, workspace)
         ),
     ),
     MigrationStep(10, 11, apply_migration_10_to_11),
@@ -151,23 +157,28 @@ def _assessment_set_cleanup(
     at 8→9 and 9→10 — the table lookup is what makes that provable instead of
     assumed, and it is why the next step to strand derived rows inherits a
     cleanup that already covers both managed parents.
+
+    §13.14 rule 9's anchor reaches the removal from the enclosing
+    `writer_lock`, so this frame passes nothing: an identity read here would
+    compare the tree to itself and prove nothing.
     """
 
-    from exp2res.exports.managed import remove_assessment_sets, remove_branch_sets
+    from exp2res.exports.managed import remove_managed_sets_for_locked_database
 
     snapshot_ids = [
         row[0] for row in connection.execute("SELECT id FROM assessment_snapshots")
     ]
-    residuals = list(remove_assessment_sets(workspace, snapshot_ids))
-
     branch_table = connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'resume_branches'"
     ).fetchone()
-    if branch_table is not None:
-        branch_ids = [
-            row[0] for row in connection.execute("SELECT id FROM resume_branches")
-        ]
-        residuals.extend(remove_branch_sets(workspace, branch_ids))
+    branch_ids = (
+        [row[0] for row in connection.execute("SELECT id FROM resume_branches")]
+        if branch_table is not None
+        else []
+    )
+    residuals = remove_managed_sets_for_locked_database(
+        workspace, snapshot_ids=snapshot_ids, branch_ids=branch_ids
+    )
     return tuple(sorted(set(residuals), key=id_key))
 
 
@@ -807,15 +818,34 @@ def migrate_workspace(
 
 @contextmanager
 def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -> Iterator[None]:
+    """Hold §8.1's exclusive writer lock and establish what it covers.
+
+    §8.1 rule 37: the database identity is read beside the locked entry itself,
+    and the managed-output roots as the lock finds them. §13.14 rule 9 binds
+    every managed-output mutation below to those for as long as the lock is
+    held.
+
+    Every open on the way in refuses to follow a symlink, the marker directory
+    included. A `.exp2res` swapped for a link to another workspace would
+    otherwise hand back that workspace's lock and database while the managed
+    roots still came from the requested pathname: the binding would refuse the
+    cleanup, but the business mutation would already have landed in the wrong
+    tree.
+    """
+
     lock_path = workspace / ".exp2res" / "lock"
     if not _is_real_file(lock_path):
         raise SchemaCompatibilityError()
-    flags = os.O_RDWR
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDWR | no_follow
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    marker_fd: int | None = None
     try:
-        descriptor = os.open(lock_path, flags)
+        marker_fd = os.open(workspace / ".exp2res", directory_flags | no_follow)
+        descriptor = os.open("lock", flags, dir_fd=marker_fd)
     except OSError as error:
+        if marker_fd is not None:
+            os.close(marker_fd)
         raise SchemaCompatibilityError() from error
     deadline = time.monotonic() + max(timeout_ms, 0) / 1000
     try:
@@ -827,8 +857,15 @@ def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -
                 if time.monotonic() >= deadline:
                     raise WorkspaceBusyError() from error
                 time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
-        yield
+        identity = locked_database_identity_at(marker_fd)
+        os.close(marker_fd)
+        marker_fd = None
+        with anchor_locked_database_identity(identity):
+            with anchor_locked_tree_identities(locked_tree_paths(workspace)):
+                yield
     finally:
+        if marker_fd is not None:
+            os.close(marker_fd)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
         finally:

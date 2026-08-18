@@ -45,8 +45,7 @@ from exp2res.errors import (
 from exp2res.exports.managed import (
     assessment_set_paths,
     branch_set_paths,
-    remove_assessment_sets,
-    remove_branch_sets,
+    remove_managed_sets_for_locked_database,
 )
 from exp2res.llm.assessment_writer import (
     ASSESSMENT_WRITER_CONTRACT,
@@ -555,13 +554,11 @@ def run_assessment_generation(
         # cleanup failure or interruption never rolls it back.
         cleaned_sets: list[str] = []
         try:
-            residual_paths = (
-                *remove_assessment_sets(
-                    workspace, superseded_snapshot_ids, removed_ledger=cleaned_sets
-                ),
-                *remove_branch_sets(
-                    workspace, branch_swap.branch_ids, removed_ledger=cleaned_sets
-                ),
+            residual_paths = remove_managed_sets_for_locked_database(
+                workspace,
+                snapshot_ids=superseded_snapshot_ids,
+                branch_ids=branch_swap.branch_ids,
+                removed_ledger=cleaned_sets,
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the class-9 error carries the complete committed
@@ -966,17 +963,11 @@ def run_assessment_repair(
         # cleanup failure or interruption never rolls it back.
         repair_cleaned_sets: list[str] = []
         try:
-            residual_paths = (
-                *remove_assessment_sets(
-                    workspace,
-                    superseded_snapshot_ids,
-                    removed_ledger=repair_cleaned_sets,
-                ),
-                *remove_branch_sets(
-                    workspace,
-                    branch_swap.branch_ids,
-                    removed_ledger=repair_cleaned_sets,
-                ),
+            residual_paths = remove_managed_sets_for_locked_database(
+                workspace,
+                snapshot_ids=superseded_snapshot_ids,
+                branch_ids=branch_swap.branch_ids,
+                removed_ledger=repair_cleaned_sets,
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the class-9 error carries the complete

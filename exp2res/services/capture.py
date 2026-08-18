@@ -29,7 +29,10 @@ from exp2res.errors import (
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
-from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
+from exp2res.exports.managed import (
+    assessment_set_paths,
+    remove_managed_sets_for_locked_database,
+)
 from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
 from exp2res.services.source_files import (
     ArtifactLocator,
@@ -447,7 +450,10 @@ def capture_gap_answer(
                     if not committed:
                         withdraw_managed_residuals(pending)
                     raise
-                residuals = remove_assessment_sets(workspace, snapshot_ids)
+                residuals = remove_managed_sets_for_locked_database(
+                    workspace,
+                    snapshot_ids=snapshot_ids,
+                )
                 return RawLogBundle(raw_log, evidence_items, residuals)
             raise IdCollisionError() from last_collision
         except sqlite3.OperationalError as error:

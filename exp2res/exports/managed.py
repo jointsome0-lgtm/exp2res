@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -23,6 +24,15 @@ from exp2res.domain.models import (
     validate_structural,
 )
 from exp2res.errors import IntegrityFailureError, ManagedOutputIncompleteError
+from exp2res.services.privacy import (
+    locked_database_anchor,
+    locked_tree_identities_established,
+    locked_tree_identity,
+    managed_root_paths,
+    record_locked_tree_identity,
+    report_unproven_residual,
+    workspace_database_is_live,
+)
 
 from .branch import (
     BranchExportGraph,
@@ -424,25 +434,55 @@ def _validate_existing_path(path: Path, out_root: Path, *, directory: bool) -> N
         raise OSError("managed path resolves outside out root") from error
 
 
-def _mkdir_private(path: Path, out_root: Path) -> None:
+def _mkdir_private(
+    path: Path, out_root: Path, *, bound_to: Path | None = None
+) -> tuple[int, int] | None:
+    """Make one managed directory private, naming the entry if it made it.
+
+    §13.14 rule 9 binds a reserved parent absent at the lock to this command's
+    own creation, and to that entry rather than to the name it was given: the
+    identity comes off the open descriptor, because a pathname re-read after
+    the close would name whatever answers by then, which is the substitution
+    the binding exists to catch.
+
+    `bound_to` names the pathname whose lock-time record covers this entry, and
+    an entry this command did not create has to match that record before the
+    mode is changed. Leaving the question to the caller's next gate would put
+    the refusal after the mutation: a parent standing where the lock found none
+    would already have been chmod-ed by a command holding no authority over it.
+    """
+
+    created = False
+    identity: tuple[int, int] | None = None
     parent_descriptor = _open_directory_fd(path.parent, out_root)
     try:
         if _lstat(path) is None:
             os.mkdir(path.name, 0o700, dir_fd=parent_descriptor)
+            created = True
         descriptor = os.open(
             path.name,
             _open_flags(os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)),
             dir_fd=parent_descriptor,
         )
         try:
+            if not created and bound_to is not None:
+                found = os.fstat(descriptor)
+                if locked_tree_identities_established() and locked_tree_identity(
+                    bound_to
+                ) != (found.st_dev, found.st_ino):
+                    raise ManagedOutputIncompleteError((str(out_root),))
             os.fchmod(descriptor, 0o700)
-            if stat.S_IMODE(os.fstat(descriptor).st_mode) != 0o700:
+            opened = os.fstat(descriptor)
+            if stat.S_IMODE(opened.st_mode) != 0o700:
                 raise OSError("private directory mode unavailable")
+            if created:
+                identity = (opened.st_dev, opened.st_ino)
         finally:
             os.close(descriptor)
     finally:
         os.close(parent_descriptor)
     _validate_existing_path(path, out_root, directory=True)
+    return identity
 
 
 def _open_flags(base: int) -> int:
@@ -579,7 +619,19 @@ def _tree_is_safe(path: Path, out_root: Path) -> bool:
         return False
 
 
-def _remove_tree(path: Path, out_root: Path) -> bool:
+def _remove_tree(
+    path: Path, out_root: Path, still_live: Callable[[], bool] | None = None
+) -> bool:
+    """Remove one contained real tree, member by member.
+
+    `still_live` is §13.14 rule 9's binding, re-asked before every unlink and
+    the closing rmdir. One set is many pathname-resolved operations, so a
+    workspace replaced after an early member is gone would otherwise have the
+    rest of the tree removed from the replacement.
+    """
+
+    if still_live is not None and not still_live():
+        return False
     if not _tree_is_safe(path, out_root):
         return False
     try:
@@ -589,9 +641,11 @@ def _remove_tree(path: Path, out_root: Path) -> bool:
             child = path / name
             info = child.lstat()
             if stat.S_ISDIR(info.st_mode):
-                if not _remove_tree(child, out_root):
+                if not _remove_tree(child, out_root, still_live):
                     return False
             else:
+                if still_live is not None and not still_live():
+                    return False
                 _validate_existing_path(child, out_root, directory=False)
                 parent_descriptor = _open_directory_fd(path, out_root)
                 try:
@@ -603,6 +657,8 @@ def _remove_tree(path: Path, out_root: Path) -> bool:
                     os.unlink(name, dir_fd=parent_descriptor)
                 finally:
                     os.close(parent_descriptor)
+        if still_live is not None and not still_live():
+            return False
         _validate_existing_path(path, out_root, directory=True)
         parent_descriptor = _open_directory_fd(path.parent, out_root)
         try:
@@ -619,7 +675,9 @@ def _remove_tree(path: Path, out_root: Path) -> bool:
         return False
 
 
-def _remove_entry(path: Path, out_root: Path) -> bool:
+def _remove_entry(
+    path: Path, out_root: Path, still_live: Callable[[], bool] | None = None
+) -> bool:
     """Remove one contained real file/tree without following any link."""
 
     info = _lstat(path)
@@ -628,8 +686,10 @@ def _remove_entry(path: Path, out_root: Path) -> bool:
     if stat.S_ISLNK(info.st_mode):
         return False
     if stat.S_ISDIR(info.st_mode):
-        return _remove_tree(path, out_root)
+        return _remove_tree(path, out_root, still_live)
     if not stat.S_ISREG(info.st_mode):
+        return False
+    if still_live is not None and not still_live():
         return False
     try:
         _validate_existing_path(path, out_root, directory=False)
@@ -706,25 +766,73 @@ def _inspect_set(
         return None
 
 
-def _ensure_managed_parents(workspace: Path) -> tuple[Path, Path, Path]:
+def _ensure_managed_parents(
+    workspace: Path, *, still_live: Callable[[], bool] | None = None
+) -> tuple[Path, Path, Path]:
+    """Create both reserved managed parents under §13.14 rule 9's binding.
+
+    Creating and chmod-ing a directory mutates the tree exactly as removing one
+    does, so the binding reaches here as well. A caller's gate runs before
+    `_canonical_roots` has resolved anything; a replacement landing in between
+    would otherwise have both parents created and made private in a workspace
+    whose writer lock this command never took.
+    """
+
     _root, out_root = _canonical_roots(workspace)
+    _out_key, assessment_key, branch_key = managed_root_paths(workspace)
     assessment = out_root / "assessment"
     branch = out_root / "branch"
-    _mkdir_private(assessment, out_root)
-    _mkdir_private(branch, out_root)
+    for parent, key in ((assessment, assessment_key), (branch, branch_key)):
+        if still_live is not None and not still_live():
+            raise ManagedOutputIncompleteError((str(out_root),))
+        created = _mkdir_private(parent, out_root, bound_to=key)
+        if created is not None:
+            record_locked_tree_identity(key, created)
     return out_root, assessment, branch
 
 
 def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
-    """Apply §13.14 rule 5's preamble while the caller holds the writer lock."""
+    """Apply §13.14 rule 5's preamble while the caller holds the writer lock.
 
+    Rule 9 binds this pass too: it removes abandoned candidates and rollbacks
+    and promotes a surviving rollback into place, all by pathname, so a
+    workspace replaced between the lock acquisition and this preamble would
+    have another workspace's half-published sets reconciled while this one's
+    stayed abandoned. The mismatch refuses the whole pass rather than its
+    removals alone, because the promotion mutates a foreign tree exactly as a
+    removal does, and it refuses before creating the managed parents so the
+    refusal leaves no directories behind either.
+    """
+
+    still_live = locked_workspace_predicate(workspace)
     residuals: set[str] = set()
+
+    def refuse_if_replaced(reported: tuple[str, ...]) -> tuple[str, ...]:
+        """Route a report through the unwithdrawable channel after a mismatch.
+
+        Every exit from this pass runs it, because a mismatch can arrive at any
+        of them and §14.14 rule 4's existence re-check would drop a path that
+        names a workspace this command never wrote to.
+        """
+
+        if still_live():
+            return reported
+        refused = tuple(
+            sorted({*reported, str((workspace / "out").absolute())}, key=fs_id_key)
+        )
+        report_unproven_residual(refused)
+        return refused
+
+    if not still_live():
+        return refuse_if_replaced(())
     try:
-        out_root, assessment, branch = _ensure_managed_parents(workspace)
+        out_root, assessment, branch = _ensure_managed_parents(
+            workspace, still_live=still_live
+        )
     except ManagedOutputIncompleteError as error:
-        return error.residual_paths
+        return refuse_if_replaced(error.residual_paths)
     except OSError:
-        return (str((workspace / "out").absolute()),)
+        return refuse_if_replaced((str((workspace / "out").absolute()),))
 
     for parent in (assessment, branch):
         try:
@@ -738,7 +846,7 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
             path = parent / name
             candidate_match = _CANDIDATE.fullmatch(name)
             if candidate_match is not None:
-                if not _remove_tree(path, out_root):
+                if not _remove_tree(path, out_root, still_live):
                     residuals.add(str(path))
                 continue
             rollback_match = _ROLLBACK.fullmatch(name)
@@ -754,6 +862,9 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
                 rollback = siblings[0]
                 rollback_manifest = _inspect_set(rollback, parent, out_root)
                 if rollback_manifest is None or rollback_manifest.entity_id != entity_id:
+                    residuals.add(str(rollback))
+                    continue
+                if not still_live():
                     residuals.add(str(rollback))
                     continue
                 try:
@@ -772,7 +883,7 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
                 rollback_manifest = _inspect_set(rollback, parent, out_root)
                 if rollback_manifest is None or rollback_manifest.entity_id != entity_id:
                     residuals.add(str(rollback))
-                elif not _remove_tree(rollback, out_root):
+                elif not _remove_tree(rollback, out_root, still_live):
                     residuals.add(str(rollback))
                 else:
                     removed_any = True
@@ -781,11 +892,68 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
                     _fsync_directory(parent, out_root)
                 except OSError:
                     residuals.add(str(parent))
-    return tuple(sorted(residuals, key=fs_id_key))
+    return refuse_if_replaced(tuple(sorted(residuals, key=fs_id_key)))
+
+
+def locked_workspace_predicate(workspace: Path) -> Callable[[], bool]:
+    """Build §13.14 rule 9's predicate for one workspace under the held lock.
+
+    Every entry point that touches managed output builds it the same way, so
+    the binding cannot drift between them. What each question re-reads is the
+    record the lock established, never the filesystem's own account of what the
+    pathname ought to be — that account is written by whoever holds the
+    pathname, which is the substitution the rule exists to catch.
+    """
+
+    expected_database = locked_database_anchor()
+    managed_roots = managed_root_paths(workspace)
+
+    def still_live() -> bool:
+        """Answer whether both the database and the managed tree are the ones.
+
+        The database identity alone leaves one substitution uncovered: `out/`
+        or either reserved parent renamed and replaced while the database stays
+        put. Every helper below reopens those by pathname, so the pass would
+        remove from and publish into the replacement while the sets it
+        committed to stayed detached — and unlike a whole-workspace
+        replacement, no later check would notice.
+
+        A root that cannot be read at all answers the same way. This runs
+        inside exception handlers that owe a residual report, so letting an
+        unreadable ancestor raise from here would replace that report — or a
+        cancellation — with an internal error over a committed transaction.
+
+        The comparison is against what the lock established and nothing else,
+        which makes both directions a mismatch: a root that changed hands, and
+        equally a root standing where the lock found none and this command
+        created none. Absence on both sides is the ordinary state before a
+        first publication, and the creation step records what it made, so the
+        only entry that answers here is one this command is entitled to.
+        """
+
+        if not workspace_database_is_live(workspace, expected_database):
+            return False
+        if not locked_tree_identities_established():
+            return False
+        for root in managed_roots:
+            try:
+                info = _lstat(root)
+            except OSError:
+                return False
+            identity = None if info is None else (info.st_dev, info.st_ino)
+            if identity != locked_tree_identity(root):
+                return False
+        return True
+
+    return still_live
 
 
 def _managed_set_paths(
-    workspace: Path, entity_ids: tuple[str, ...] | list[str], *, parent_name: str
+    workspace: Path,
+    entity_ids: tuple[str, ...] | list[str],
+    *,
+    parent_name: str,
+    existing_only: bool = True,
 ) -> tuple[str, ...]:
     """Report-only paths of existing ID-keyed sets an invalidation affects.
 
@@ -794,6 +962,15 @@ def _managed_set_paths(
     commit and the removal still reports the retained stale set (§13
     stale-export invalidation rule). Envelope assembly drops any reported path
     that no longer exists, so a completed removal clears its own pending report.
+
+    `existing_only=False` reports every selected set whether or not the
+    pathname currently holds it. §13.14 rule 9's mismatch arm needs that: there
+    the pathname reaches a *different* workspace, so what exists under it says
+    nothing about the sets left stale in the one the mutation committed to, and
+    filtering by it would report complete invalidation of a tree this process
+    never touched. §13.14 rule 1's ID revalidation applies on both arms: this
+    report stands in for a removal, and on the mismatch arm it is the only
+    warning an owner gets about the set left stale.
     """
 
     selected = tuple(sorted(set(entity_ids), key=fs_id_key))
@@ -805,8 +982,11 @@ def _managed_set_paths(
     paths = []
     for entity_id in selected:
         if ENTITY_ID.fullmatch(entity_id) is None:
-            continue
+            raise IntegrityFailureError("managed_output_entity_id_invalid")
         path = parent / entity_id
+        if not existing_only:
+            paths.append(str(path))
+            continue
         try:
             exists = _lstat(path) is not None
         except OSError:
@@ -828,6 +1008,7 @@ def _remove_managed_sets(
     *,
     parent_name: str,
     removed_ledger: list[str] | None = None,
+    still_live: Callable[[], bool] | None = None,
 ) -> tuple[str, ...]:
     """Remove exactly the selected ID-keyed sets after commit.
 
@@ -836,6 +1017,19 @@ def _remove_managed_sets(
     finishes, so a caller that must report durable effects after a cancellation
     mid-pass has no other way to learn what this function already removed
     (§14.14 rule 6).
+
+    `still_live` is §13.14 rule 9's binding, re-asked at every point this pass
+    is about to commit to the pathname: once after the roots resolve, and again
+    before each entry is unlinked. One check at the entry would authorize the
+    whole pass, and the pass is long — every selected assessment ID, then every
+    branch ID — so a workspace replaced anywhere inside it would have the
+    remainder removed from the foreign tree. Whatever the pass has not reached
+    when the answer turns false is reported residual instead.
+
+    POSIX unlinks by name, so this narrows the window rather than closing it:
+    no filesystem offers removal bound to the inode an open connection holds.
+    §8.1's single business writer and §29's local boundary — anything able to
+    rename the workspace root is already inside it — bound what remains.
     """
 
     selected = tuple(sorted(set(entity_ids), key=fs_id_key))
@@ -845,13 +1039,20 @@ def _remove_managed_sets(
     if not selected:
         return ()
 
+    def live() -> bool:
+        return still_live is None or still_live()
+
     try:
         _root, out_root = _canonical_roots(workspace)
     except ManagedOutputIncompleteError as error:
         return error.residual_paths
     parent = out_root / parent_name
+    if not live():
+        return tuple(str(parent / entity_id) for entity_id in selected)
     try:
         if _lstat(parent) is None:
+            if not live():
+                return tuple(str(parent / entity_id) for entity_id in selected)
             return ()
         _validate_existing_path(parent, out_root, directory=True)
     except OSError:
@@ -863,12 +1064,19 @@ def _remove_managed_sets(
 
     residuals: set[str] = set()
     unlinked: list[str] = []
-    for entity_id in selected:
+    for position, entity_id in enumerate(selected):
         path = parent / entity_id
+        if not live():
+            residuals.update(
+                str(parent / remaining) for remaining in selected[position:]
+            )
+            break
         try:
             if _lstat(path) is None:
+                if not live():
+                    residuals.add(str(path))
                 continue
-            removed = _remove_entry(path, out_root)
+            removed = _remove_entry(path, out_root, still_live)
         except OSError:
             # Fail closed: this pass runs after the business commit, so an
             # entry that turns unreadable mid-pass is a §13.13 rule 6 residual,
@@ -887,8 +1095,14 @@ def _remove_managed_sets(
             # The unlinks are visible but not durable. The returned residual is
             # lost whenever a later half of the same pass is cancelled, so the
             # ledger must not claim these removals either.
+            residuals.update(unlinked)
             residuals.add(str(parent))
             unlinked = []
+        else:
+            if not live():
+                residuals.update(unlinked)
+                residuals.add(str(parent))
+                unlinked = []
     # Only a flushed removal is banked: an interrupt inside the flush skips this
     # line for the same reason, and the caller keeps reporting those sets rather
     # than claiming a removal a crash could undo.
@@ -898,9 +1112,17 @@ def _remove_managed_sets(
 
 
 def assessment_set_paths(
-    workspace: Path, snapshot_ids: tuple[str, ...] | list[str]
+    workspace: Path,
+    snapshot_ids: tuple[str, ...] | list[str],
+    *,
+    existing_only: bool = True,
 ) -> tuple[str, ...]:
-    return _managed_set_paths(workspace, snapshot_ids, parent_name="assessment")
+    return _managed_set_paths(
+        workspace,
+        snapshot_ids,
+        parent_name="assessment",
+        existing_only=existing_only,
+    )
 
 
 def remove_assessment_sets(
@@ -908,21 +1130,28 @@ def remove_assessment_sets(
     snapshot_ids: tuple[str, ...] | list[str],
     *,
     removed_ledger: list[str] | None = None,
+    still_live: Callable[[], bool] | None = None,
 ) -> tuple[str, ...]:
     return _remove_managed_sets(
         workspace,
         snapshot_ids,
         parent_name="assessment",
         removed_ledger=removed_ledger,
+        still_live=still_live,
     )
 
 
 def branch_set_paths(
-    workspace: Path, branch_ids: tuple[str, ...] | list[str]
+    workspace: Path,
+    branch_ids: tuple[str, ...] | list[str],
+    *,
+    existing_only: bool = True,
 ) -> tuple[str, ...]:
     """§13.14 rule 1: a resume set lives only at `out/branch/<branch-id>/`."""
 
-    return _managed_set_paths(workspace, branch_ids, parent_name="branch")
+    return _managed_set_paths(
+        workspace, branch_ids, parent_name="branch", existing_only=existing_only
+    )
 
 
 def remove_branch_sets(
@@ -930,18 +1159,98 @@ def remove_branch_sets(
     branch_ids: tuple[str, ...] | list[str],
     *,
     removed_ledger: list[str] | None = None,
+    still_live: Callable[[], bool] | None = None,
 ) -> tuple[str, ...]:
     return _remove_managed_sets(
         workspace,
         branch_ids,
         parent_name="branch",
         removed_ledger=removed_ledger,
+        still_live=still_live,
     )
 
 
-def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
-    """Remove every contained entry below both reserved managed parents."""
+def remove_managed_sets_for_locked_database(
+    workspace: Path,
+    *,
+    snapshot_ids: tuple[str, ...] | list[str] = (),
+    branch_ids: tuple[str, ...] | list[str] = (),
+    removed_ledger: list[str] | None = None,
+) -> tuple[str, ...]:
+    """Remove the selected ID-keyed sets, or report them all residual.
 
+    §13.14 rule 9: every removal below re-resolves the workspace pathname,
+    while the §8.1 writer lock pins the inode it was opened through rather
+    than the name. A workspace renamed and replaced in between therefore
+    leaves the caller committing to one tree and unlinking from another. The
+    identity anchored when the lock was acquired is what separates the two,
+    and a mismatch — including an anchor that could never be established —
+    reports every in-scope set as an unsuccessful invalidation instead of
+    removing anything.
+
+    The anchor arrives from `writer_lock` rather than from a parameter, so a
+    call site cannot supply one read too late to mean anything; the removal
+    pass re-asks the same question at every point it is about to commit to the
+    pathname.
+
+    Both arms report every selected set, unfiltered by what the pathname holds:
+    on a mismatch the pathname reaches another workspace entirely, so its
+    contents are no evidence about the sets this mutation left stale. Assessment
+    sets precede branch sets on both arms, in the order the call sites already
+    report them.
+    """
+
+    still_live = locked_workspace_predicate(workspace)
+
+    def selected() -> tuple[str, ...]:
+        return (
+            *assessment_set_paths(workspace, snapshot_ids, existing_only=False),
+            *branch_set_paths(workspace, branch_ids, existing_only=False),
+        )
+
+    if not still_live():
+        stranded = selected()
+        report_unproven_residual(stranded)
+        return stranded
+    try:
+        residuals = (
+            *remove_assessment_sets(
+                workspace,
+                snapshot_ids,
+                removed_ledger=removed_ledger,
+                still_live=still_live,
+            ),
+            *remove_branch_sets(
+                workspace,
+                branch_ids,
+                removed_ledger=removed_ledger,
+                still_live=still_live,
+            ),
+        )
+    except BaseException:
+        if not still_live():
+            report_unproven_residual(selected())
+        raise
+    if residuals and not still_live():
+        report_unproven_residual(residuals)
+    return residuals
+
+
+def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
+    """Remove every contained entry below both reserved managed parents.
+
+    §13.14 rule 9 binds this sweep like every other removal. It is the widest
+    of them — it takes whatever it finds rather than a selected ID list — so on
+    a replacement it would empty another workspace's managed output entirely
+    while the tree its caller is deleting from kept all of it. A mismatch
+    reports the managed root, because the names this pass would otherwise
+    enumerate are the replacement's and say nothing about what was stranded.
+    """
+
+    still_live = locked_workspace_predicate(workspace)
+    managed_root = str((workspace / "out").absolute())
+    if not still_live():
+        return (managed_root,)
     # §13.13 rule 6: this enumeration serves privacy deletions that commit
     # whether or not cleanup succeeds, so every filesystem error becomes a
     # residual path rather than an exception that could abort the caller.
@@ -950,11 +1259,13 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
     except ManagedOutputIncompleteError as error:
         return error.residual_paths
     except OSError:
-        return (str((workspace / "out").absolute()),)
+        return (managed_root,)
 
     residuals: set[str] = set()
     for parent_name in ("assessment", "branch"):
         parent = out_root / parent_name
+        if not still_live():
+            return (managed_root,)
         try:
             if _lstat(parent) is None:
                 continue
@@ -966,7 +1277,7 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
         for name in names:
             path = parent / name
             try:
-                entry_removed = _remove_entry(path, out_root)
+                entry_removed = _remove_entry(path, out_root, still_live)
             except OSError:
                 entry_removed = False
             if entry_removed:
@@ -978,6 +1289,8 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
                 _fsync_directory(parent, out_root)
             except OSError:
                 residuals.add(str(parent))
+    if not still_live():
+        return (managed_root,)
     return tuple(sorted(residuals, key=fs_id_key))
 
 
@@ -1101,9 +1414,48 @@ def read_current_assessment_members(
     return CurrentAssessmentRead("current", members)
 
 
-def _candidate_cleanup(path: Path, out_root: Path) -> None:
-    if _lstat(path) is not None and not _remove_tree(path, out_root):
+def _candidate_cleanup(
+    path: Path, out_root: Path, still_live: Callable[[], bool] | None = None
+) -> None:
+    """Remove one candidate, or report it when the binding will not allow it.
+
+    An absent entry is ordinarily a finished cleanup. Under a failed binding it
+    is the opposite: the pathname reaches a tree that never held this
+    candidate, while the one the pass built it in keeps it — so the fast path
+    would let the original exception escape with nothing naming what was left.
+    """
+
+    if _lstat(path) is None:
+        if still_live is not None and not still_live():
+            raise ManagedOutputIncompleteError((str(path),))
+        return
+    if not _remove_tree(path, out_root, still_live):
         raise ManagedOutputIncompleteError((str(path),))
+
+
+def _clean_or_report_candidate(
+    path: Path,
+    out_root: Path,
+    still_live: Callable[[], bool] | None,
+    error: BaseException,
+) -> None:
+    """Clean the candidate without letting the report displace what is louder.
+
+    Two in-flight errors outrank this refusal. §14.14 rule 6: a cancelled
+    command reports as cancelled, not as an integrity failure that hides the
+    interrupt. And an incomplete-output error already carries its own residual
+    set, usually a wider one than this single path — a refusal raised over it
+    would narrow the report to the candidate alone. Either way the refusal is
+    still heard: it travels the channel the envelope assembles however the
+    command ended.
+    """
+
+    try:
+        _candidate_cleanup(path, out_root, still_live)
+    except ManagedOutputIncompleteError as refused:
+        if not isinstance(error, (KeyboardInterrupt, ManagedOutputIncompleteError)):
+            raise
+        report_unproven_residual(refused.residual_paths)
 
 
 def _build_candidate(
@@ -1113,25 +1465,43 @@ def _build_candidate(
     members: dict[str, bytes],
     manifest: AssessmentManifest | ResumeManifest,
     member_names: tuple[str, ...],
+    still_live: Callable[[], bool] | None = None,
 ) -> Path:
+    """Write one complete candidate set, bound to the locked database.
+
+    Every member write reopens the candidate through its absolute path, so a
+    single check before the first one authorizes the rest of a pass that spans
+    the whole set: the later writes would land in a replacement holding the
+    same candidate name, and the cleanup below would then recursively remove a
+    directory in that foreign tree. Its own removal is bound for the same
+    reason, and refuses rather than reaching there.
+    """
+
+    def require_live(residual: Path) -> None:
+        if still_live is not None and not still_live():
+            raise ManagedOutputIncompleteError((str(residual),))
+
     candidate = parent / f".exp2res-candidate-{entity_id}-{secrets.token_hex(16)}"
     try:
+        require_live(out_root)
         _mkdir_private(candidate, out_root)
-    except BaseException:
-        if _lstat(candidate) is not None and not _remove_tree(candidate, out_root):
-            raise ManagedOutputIncompleteError((str(candidate),)) from None
+    except BaseException as error:
+        _clean_or_report_candidate(candidate, out_root, still_live, error)
         raise
     try:
         for name in sorted(member_names, key=fs_id_key):
+            require_live(candidate)
             _write_private_file(candidate / name, members[name], out_root)
+        require_live(candidate)
         _write_private_file(candidate / "manifest.json", manifest_bytes(manifest), out_root)
         if _inspect_set(candidate, parent, out_root) != manifest:
             raise IntegrityFailureError("candidate_manifest_validation_failed")
         _fsync_directory(candidate, out_root)
         _fsync_directory(parent, out_root)
+        require_live(candidate)
         return candidate
-    except BaseException:
-        _candidate_cleanup(candidate, out_root)
+    except BaseException as error:
+        _clean_or_report_candidate(candidate, out_root, still_live, error)
         raise
 
 
@@ -1168,10 +1538,28 @@ def _manifest_matches_current(
     )
 
 
+def _bound_publication(workspace: Path) -> Callable[[], bool]:
+    """Refuse publication outright unless §13.14 rule 9's binding holds.
+
+    Publication writes a candidate, renames it into place, and removes both the
+    prior same-view sets and its own rollback — all by pathname. On a mismatch
+    none of that may touch the tree the pathname now reaches, and the refusal
+    comes before the managed parents are created so it leaves nothing behind
+    there either. The predicate is returned for the removals further in, which
+    re-ask it as the protocol proceeds.
+    """
+
+    still_live = locked_workspace_predicate(workspace)
+    if not still_live():
+        raise ManagedOutputIncompleteError((str((workspace / "out").absolute()),))
+    return still_live
+
+
 def _remove_stale_same_view(
     parent: Path,
     out_root: Path,
     candidate_manifest: AssessmentManifest,
+    still_live: Callable[[], bool] | None = None,
 ) -> None:
     """Remove every prior assessment set §13.14 rule 5's identity replaces.
 
@@ -1197,7 +1585,7 @@ def _remove_stale_same_view(
             continue
         if _inspect_set(path, parent, out_root) is None:
             continue
-        if not _remove_tree(path, out_root):
+        if not _remove_tree(path, out_root, still_live):
             residuals.append(str(path))
     if residuals:
         raise ManagedOutputIncompleteError(residuals)
@@ -1234,6 +1622,7 @@ def _publish_set(
     matches_prior,
     matches_current,
     render_hash: str,
+    still_live: Callable[[], bool] | None = None,
 ):
     """Run §13.14 rules 4–8 for one already rendered and validated set.
 
@@ -1244,8 +1633,54 @@ def _publish_set(
     assessment set and a bullet pack.
     """
 
+    def require_live(residual: Path) -> None:
+        """Refuse the next mutation unless §13.14 rule 9's binding still holds.
+
+        The gate at the entry point cannot carry the whole protocol: a
+        first-time export has no prior set and no rollback, so every removal
+        that consults the predicate is skipped and the candidate would be
+        written and made visible in a replacement without a second question.
+        Each step that writes to the pathname therefore asks again.
+        """
+
+        if still_live is not None and not still_live():
+            raise ManagedOutputIncompleteError((str(residual),))
+
+    def strand_under_mismatch(paths: tuple[str, ...], error: BaseException) -> None:
+        """Name what a move already made left behind in the tree it was made in.
+
+        A rename that succeeded is a fact; probing the pathname afterwards is
+        not, because under a failed binding the probe answers about a tree this
+        pass never wrote to. The report therefore travels the unwithdrawable
+        channel on its own, and only an ordinary failure is escalated into a
+        raise — §14.14 rule 6 keeps a cancelled command reporting as cancelled.
+        """
+
+        reported = tuple(sorted(set(paths), key=fs_id_key))
+        report_unproven_residual(reported)
+        if not isinstance(error, KeyboardInterrupt):
+            raise ManagedOutputIncompleteError(reported)
+
+    def require_live_pair(residual: Path, rollback: Path | None) -> None:
+        """Refuse, naming the rollback too when the prior set is already aside."""
+
+        if still_live is not None and not still_live():
+            reported = (str(residual),) if rollback is None else (
+                str(residual),
+                str(rollback),
+            )
+            raise ManagedOutputIncompleteError(
+                tuple(sorted(set(reported), key=fs_id_key))
+            )
+
     candidate = _build_candidate(
-        parent, out_root, entity_id, members, candidate_manifest, member_names
+        parent,
+        out_root,
+        entity_id,
+        members,
+        candidate_manifest,
+        member_names,
+        still_live=still_live,
     )
     final_path = parent / entity_id
     rollback: Path | None = None
@@ -1261,11 +1696,12 @@ def _publish_set(
                 == candidate_manifest.render_input_sha256
                 and _member_bytes_equal(final_path, out_root, members, member_names)
             ):
-                _candidate_cleanup(candidate, out_root)
+                _candidate_cleanup(candidate, out_root, still_live)
                 try:
                     _fsync_directory(parent, out_root)
                 except OSError as error:
                     raise ManagedOutputIncompleteError((str(parent),)) from error
+                require_live(candidate)
                 paths = tuple(
                     str(final_path / name) for name in sorted(all_names, key=fs_id_key)
                 )
@@ -1276,10 +1712,15 @@ def _publish_set(
             rollback = parent / (
                 f".exp2res-rollback-{entity_id}-{secrets.token_hex(16)}"
             )
+            require_live(candidate)
+            moved_aside = False
             try:
                 _rename(final_path, rollback)
+                moved_aside = True
                 _fsync_directory(parent, out_root)
-            except BaseException:
+            except BaseException as error:
+                if moved_aside and still_live is not None and not still_live():
+                    strand_under_mismatch((str(candidate), str(rollback)), error)
                 if _lstat(rollback) is not None and _lstat(final_path) is None:
                     try:
                         _rename(rollback, final_path)
@@ -1288,6 +1729,7 @@ def _publish_set(
                     except BaseException:
                         raise ManagedOutputIncompleteError((str(rollback),)) from None
                 raise
+        require_live_pair(candidate, rollback)
         try:
             _rename(candidate, final_path)
             published = True
@@ -1300,7 +1742,9 @@ def _publish_set(
                     rollback = None
                 except BaseException:
                     residuals = [str(rollback)]
-                    if _lstat(candidate) is not None and not _remove_tree(candidate, out_root):
+                    if _lstat(candidate) is not None and not _remove_tree(
+                        candidate, out_root, still_live
+                    ):
                         residuals.append(str(candidate))
                     raise ManagedOutputIncompleteError(residuals) from None
             raise
@@ -1308,7 +1752,7 @@ def _publish_set(
         try:
             _fsync_directory(parent, out_root)
             if rollback is not None:
-                if not _remove_tree(rollback, out_root):
+                if not _remove_tree(rollback, out_root, still_live):
                     raise ManagedOutputIncompleteError((str(rollback),))
                 rollback = None
             _fsync_directory(parent, out_root)
@@ -1318,6 +1762,7 @@ def _publish_set(
             residual = str(rollback) if rollback is not None else str(final_path)
             raise ManagedOutputIncompleteError((residual,)) from error
 
+        require_live_pair(final_path, rollback)
         current = _inspect_set(final_path, parent, out_root)
         if (
             current is None
@@ -1329,9 +1774,9 @@ def _publish_set(
             str(final_path / name) for name in sorted(all_names, key=fs_id_key)
         )
         return current, paths
-    except BaseException:
-        if not published and _lstat(candidate) is not None:
-            _candidate_cleanup(candidate, out_root)
+    except BaseException as error:
+        if not published:
+            _clean_or_report_candidate(candidate, out_root, still_live, error)
         raise
 
 
@@ -1344,12 +1789,13 @@ def publish_assessment(
     """Publish and revalidate one complete assessment set under §13.14."""
 
     validate_entity_id(graph.snapshot.value.id)
-    out_root, parent, _branch = _ensure_managed_parents(workspace)
+    still_live = _bound_publication(workspace)
+    out_root, parent, _branch = _ensure_managed_parents(workspace, still_live=still_live)
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     members = assessment_member_bytes(graph)
     candidate_manifest = build_assessment_manifest(graph, members, created_at=now)
 
-    _remove_stale_same_view(parent, out_root, candidate_manifest)
+    _remove_stale_same_view(parent, out_root, candidate_manifest, still_live)
     return _publish_set(
         out_root=out_root,
         parent=parent,
@@ -1363,6 +1809,7 @@ def publish_assessment(
         matches_current=lambda manifest: isinstance(manifest, AssessmentManifest)
         and _manifest_matches_current(manifest, graph),
         render_hash=render_input_sha256(graph),
+        still_live=still_live,
     )
 
 
@@ -1407,7 +1854,8 @@ def publish_branch(
     """
 
     validate_entity_id(graph.branch.value.id)
-    out_root, _assessment, parent = _ensure_managed_parents(workspace)
+    still_live = _bound_publication(workspace)
+    out_root, _assessment, parent = _ensure_managed_parents(workspace, still_live=still_live)
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     members = branch_member_bytes(graph)
     candidate_manifest = build_branch_manifest(graph, members, created_at=now)
@@ -1436,4 +1884,5 @@ def publish_branch(
         matches_prior=matches_prior,
         matches_current=matches_current,
         render_hash=render_hash,
+        still_live=still_live,
     )

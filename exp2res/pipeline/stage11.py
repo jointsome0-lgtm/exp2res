@@ -42,7 +42,10 @@ from exp2res.exports.branch import (
     require_direct_retained_chain,
     require_one_generation,
 )
-from exp2res.exports.managed import branch_set_paths, remove_branch_sets
+from exp2res.exports.managed import (
+    branch_set_paths,
+    remove_managed_sets_for_locked_database,
+)
 from exp2res.llm.contracts import (
     ContractValidationError,
     validation_diagnostics,
@@ -566,8 +569,10 @@ def run_bullet_verification(
                     )
                     return completed
                 # Cleanup failure never rolls the committed pass back.
-                residual_paths = remove_branch_sets(
-                    workspace, (branch.id,), removed_ledger=cleaned_sets
+                residual_paths = remove_managed_sets_for_locked_database(
+                    workspace,
+                    branch_ids=(branch.id,),
+                    removed_ledger=cleaned_sets,
                 )
             except KeyboardInterrupt:
                 # Only the set this pass never removed stays reported; a read that

@@ -17,6 +17,7 @@ from exp2res.cli import app
 import exp2res.exports.managed as managed_outputs
 import exp2res.services.workspace as workspace_service
 from exp2res.services.capture import capture_daily
+from exp2res.services.privacy import anchor_locked_database
 from exp2res.storage.schema import PURGE_ENTITY_TABLES, PURGE_TABLE_ORDER
 from exp2res.storage.workspace import CURRENT_SCHEMA_VERSION
 
@@ -570,7 +571,10 @@ def test_managed_enumeration_is_total_when_an_entry_cannot_be_inspected(
 
     monkeypatch.setattr(managed_outputs, "_remove_entry", denied)
 
-    residuals = managed_outputs.remove_all_managed_output_entries(workspace)
+    # §13.14 rule 9 binds the sweep, so it runs under an anchor exactly as its
+    # writer-locked callers do.
+    with anchor_locked_database(workspace):
+        residuals = managed_outputs.remove_all_managed_output_entries(workspace)
 
     assert residuals == (str(assessment / "snapshot_vera_unreadable"),)
 

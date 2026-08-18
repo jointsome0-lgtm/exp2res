@@ -193,6 +193,7 @@ from exp2res.storage.workspace import (
     collect_preamble_residuals,
     writer_database,
 )
+from exp2res.services.privacy import collect_unproven_residuals
 
 
 app = typer.Typer(
@@ -481,6 +482,7 @@ def _run_operation(
     controls = cast(Controls, context.obj)
     workspace: Path | None = None
     preamble_residuals: list[str] = []
+    unproven_residuals: list[str] = []
     if startup_active is not None:
         startup_active.set()
     try:
@@ -506,7 +508,8 @@ def _run_operation(
                     cwd=Path.cwd(), override=controls.workspace_override
                 )
             with collect_preamble_residuals(preamble_residuals):
-                outcome = operation(workspace, controls)
+                with collect_unproven_residuals(unproven_residuals):
+                    outcome = operation(workspace, controls)
         except Exception:
             if interruption_observed is not None and interruption_observed():
                 outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
@@ -573,10 +576,14 @@ def _run_operation(
         )
 
     observed_residuals: list[str] = []
+    unproven = set(unproven_residuals)
     for path in preamble_residuals:
         # A reported path that a later successful destructive or invalidation
         # step removed is no longer residual; anything unreadable stays
         # reported (fail closed). `lstat` never follows a final symlink.
+        if path in unproven:
+            observed_residuals.append(path)
+            continue
         try:
             os.lstat(path)
         except FileNotFoundError:
@@ -587,7 +594,7 @@ def _run_operation(
     residual_paths = sorted(
         {
             render_path(path)
-            for path in {*outcome.residual_paths, *observed_residuals}
+            for path in {*outcome.residual_paths, *unproven, *observed_residuals}
         },
         key=os.fsencode,
     )

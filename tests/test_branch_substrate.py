@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -22,7 +23,7 @@ from exp2res.domain.models import (
     ResumeBullet,
     canonical_branch_identity,
 )
-import exp2res.pipeline.stage6 as stage6_module
+import exp2res.exports.managed as managed_module
 from exp2res.errors import IntegrityFailureError, OperationCancelledError
 from exp2res.services.correction import capture_correction
 from exp2res.services.logs import delete_log
@@ -699,7 +700,7 @@ def test_an_interrupted_cleanup_reports_only_what_it_never_reached(
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(
-        stage6_module, "remove_branch_sets", interrupt_branch_cleanup
+        managed_module, "remove_branch_sets", interrupt_branch_cleanup
     )
 
     with pytest.raises(OperationCancelledError) as caught:
@@ -715,3 +716,54 @@ def test_an_interrupted_cleanup_reports_only_what_it_never_reached(
     assert str(branch_set) in carried.residual_paths
     assert not assessment_set.exists()
     assert branch_set.exists()
+
+
+def test_a_workspace_replaced_mid_stage_is_reported_and_never_cleaned(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§13.14 rule 9: the anchor is the pre-work identity, not the tree itself.
+
+    The stage takes its anchor when it opens the database, so a workspace
+    directory renamed and replaced while the writer call is in flight leaves
+    the pathname resolving to a tree the swap never committed to. Every set is
+    reported as an unsuccessful invalidation and the foreign tree keeps its
+    own.
+    """
+
+    ids, facts, snapshot_id, branch_id = prepare_branch(workspace)
+    assessment_set = workspace / "out" / "assessment" / snapshot_id
+    assessment_set.mkdir(mode=0o700, parents=True)
+    plant_branch_set(workspace, branch_id)
+
+    class ReplacingRunner:
+        """Swap the whole workspace directory between the anchor and cleanup."""
+
+        def __init__(self, inner: FakeContractRunner) -> None:
+            self._inner = inner
+
+        def run_contract(self, call):
+            result = self._inner.run_contract(call)
+            shutil.move(str(workspace), str(tmp_path / "renamed"))
+            (workspace / ".exp2res").mkdir(mode=0o700, parents=True)
+            (workspace / ".exp2res" / "exp2res.sqlite").write_bytes(b"")
+            (workspace / "out" / "assessment" / snapshot_id).mkdir(
+                mode=0o700, parents=True
+            )
+            plant_branch_set(workspace, branch_id)
+            return result
+
+    result = run_stage6(
+        workspace,
+        ReplacingRunner(
+            FakeContractRunner([assessment_response(fact_ids=list(facts))])
+        ),
+        ids,
+    )
+
+    foreign_assessment = workspace / "out" / "assessment" / snapshot_id
+    foreign_branch = workspace / "out" / "branch" / branch_id
+    assert result.residual_paths == (str(foreign_assessment), str(foreign_branch))
+    assert foreign_assessment.is_dir() and foreign_branch.is_dir()
+    renamed = tmp_path / "renamed"
+    assert (renamed / "out" / "assessment" / snapshot_id).is_dir()
+    assert (renamed / "out" / "branch" / branch_id).is_dir()

@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
+import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage6 as stage6_module
 import exp2res.pipeline.stage7 as stage7_module
 import exp2res.services.assessment as assessment_service
@@ -263,7 +264,7 @@ def test_interrupted_invalidation_reports_the_stale_set_in_the_cancelled_envelop
     def interrupt_removal(_workspace: Path, snapshot_ids, **_keywords):
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(stage7_module, "remove_assessment_sets", interrupt_removal)
+    monkeypatch.setattr(managed_module, "remove_assessment_sets", interrupt_removal)
     result, envelope = invoke_json(
         workspace,
         ["--yes", "assess", "verify", "--snapshot", generated.snapshot_id],
@@ -329,7 +330,7 @@ def test_interrupted_gap_answer_cleanup_reports_the_stale_set(
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(
-        capture_service, "remove_assessment_sets", interrupt_removal
+        managed_module, "remove_assessment_sets", interrupt_removal
     )
     source = VERA_CORPUS / "logs" / "daily-2026-06-20.md"
     result, envelope = invoke_json(
@@ -495,7 +496,7 @@ def test_reverification_cleanup_residual_takes_class_8_over_blocked_findings(
         assert tuple(snapshot_ids) == (generated.snapshot_id,)
         return (residual,)
 
-    monkeypatch.setattr(stage7_module, "remove_assessment_sets", fail_removal)
+    monkeypatch.setattr(managed_module, "remove_assessment_sets", fail_removal)
     result, envelope = invoke_json(
         workspace,
         ["--yes", "assess", "verify", "--snapshot", generated.snapshot_id],

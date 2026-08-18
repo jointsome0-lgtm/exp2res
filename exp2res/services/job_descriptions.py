@@ -35,15 +35,20 @@ from exp2res.errors import (
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
-from exp2res.exports.managed import branch_set_paths, remove_branch_sets
+from exp2res.exports.managed import (
+    branch_set_paths,
+    locked_workspace_predicate,
+    remove_branch_sets,
+)
 from exp2res.pipeline.stage8 import Stage8Result, run_job_description_parse
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import RunTracking, build_llm_execution
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
-    workspace_database_is_live,
+    locked_database_anchor,
     purge_managed_backups as _purge_managed_backups,
+    report_unproven_residual,
 )
 from exp2res.storage.repository import (
     get_job_description,
@@ -397,16 +402,7 @@ def _delete_locked(
         selected = get_job_description(connection, job_description_id)
         if selected is None:
             raise SelectorNotFoundError()
-        # Identity of the database this command is about to delete from,
-        # taken under the §8.1 writer authority. Managed cleanup is bound to
-        # it, so a workspace renamed and replaced after the lock cannot make
-        # this command purge one tree while deleting from another.
-        # An unreadable database file means that anchor cannot be established,
-        # which is never treated as permission to purge (§13.13 rule 6).
-        try:
-            database_identity: os.stat_result | None = os.stat(database)
-        except OSError:
-            database_identity = None
+        database_identity = locked_database_anchor()
         # §13.13 rule 10 orders managed-path removal before the database
         # transaction, so the writer lock is never held across filesystem I/O
         # and an interrupt between the two leaves no half-open transaction.
@@ -465,28 +461,44 @@ def _delete_locked(
         branch_parent = str((workspace / "out" / "branch").absolute())
         unlinked_sets: list[str] = []
         try:
+            database_is_live = locked_workspace_predicate(workspace)
+
             existing_branch_sets = branch_set_paths(workspace, branch_ids)
-            if not workspace_database_is_live(workspace, database_identity):
+            if not database_is_live():
                 # The pathname no longer resolves to the database this command
                 # holds open, so removing anything under it would purge a
                 # foreign tree while this workspace's own sets survive. Every
                 # set is reported residual instead (§13.13 rule 6), exactly as
-                # the backup purge above does on the same mismatch.
-                residual_paths.extend(existing_branch_sets)
+                residual_paths.extend(
+                    branch_set_paths(workspace, branch_ids, existing_only=False)
+                )
             else:
                 residual_paths.extend(
                     remove_branch_sets(
-                        workspace, branch_ids, removed_ledger=unlinked_sets
+                        workspace,
+                        branch_ids,
+                        removed_ledger=unlinked_sets,
+                        still_live=database_is_live,
                     )
                 )
-                # A path counts as removed only when it is proven gone: a
-                # residual may name the parent rather than each child — `out/`
-                # failing canonical-root validation reports one root path — so
-                # the surviving set is re-read instead of inferred from it.
-                surviving = set(branch_set_paths(workspace, branch_ids))
-                removed_paths.extend(
-                    path for path in existing_branch_sets if path not in surviving
-                )
+                if database_is_live():
+                    # A path counts as removed only when it is proven gone: a
+                    surviving = set(branch_set_paths(workspace, branch_ids))
+                    removed_paths.extend(
+                        path for path in existing_branch_sets if path not in surviving
+                    )
+                else:
+                    # The names are pathnames. Once the binding is gone they
+                    # address the replacement, which may hold untouched sets
+                    # at the same paths, so nothing is reported removed and
+                    # every selected path goes out unproven (§13.13 rule 6).
+                    unlinked_sets.clear()
+                    report_unproven_residual(
+                        branch_set_paths(workspace, branch_ids, existing_only=False)
+                    )
+                    residual_paths.extend(
+                        branch_set_paths(workspace, branch_ids, existing_only=False)
+                    )
         except OSError:
             # §13.13 rule 6: cleanup never blocks the deletion. An unreadable
             # managed parent is reported residual and the purge continues, or

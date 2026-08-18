@@ -11,6 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
+import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage3 as stage3_module
 import exp2res.services.extraction as extraction_service
 import exp2res.services.facts as facts_service
@@ -258,7 +259,7 @@ def test_post_commit_interrupt_keeps_the_committed_result_and_warning(
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(
-        stage3_module, "remove_assessment_sets", interrupt_cleanup
+        managed_module, "remove_assessment_sets", interrupt_cleanup
     )
     result, envelope = invoke_json(
         workspace, ["--yes", "extract", "--log-id", root.id]

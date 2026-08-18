@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import shutil
 
 import pytest
 from typer.testing import CliRunner
@@ -912,7 +913,11 @@ def test_human_listing_keeps_one_job_description_on_one_line(
 def test_a_backup_directory_flush_failure_is_reported_as_residual(
     workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§13.13 rule 6: an unproven durable removal is residual, not success."""
+    """§13.13 rule 6: an unproven durable removal is residual, not success.
+
+    The flush precedes the ledger, so the backup whose removal it could not
+    prove is named individually rather than the whole store standing in for it.
+    """
 
     _result, added = add_job_description(workspace, tmp_path, monkeypatch)
     job_description_id = added["affected_ids"]["created"][0]["ids"][0]
@@ -931,7 +936,10 @@ def test_a_backup_directory_flush_failure_is_reported_as_residual(
 
     assert result.exit_code == 8
     assert envelope["diagnostic_class"] == "deletion_incomplete"
-    assert envelope["residual_paths"] == [str(backup_root.absolute())]
+    assert envelope["residual_paths"] == [
+        str((backup_root / "pre-migration.sqlite").absolute())
+    ]
+    assert envelope["result"]["removed_managed_paths"] == []
 
 
 def test_a_backup_replaced_by_a_fifo_is_skipped_without_blocking(
@@ -1163,13 +1171,17 @@ def test_a_workspace_swapped_under_the_lock_is_never_purged(
     real_stat = privacy_service.os.stat
     decoy = tmp_path / "decoy.sqlite"
     decoy.write_bytes(b"")
+    anchored = [False]
 
     def swapped_stat(path, **keywords):
-        if path == privacy_service.DATABASE_NAME:
-            # The marker directory now belongs to a replacement workspace.
-            return real_stat(decoy)
-
-        return real_stat(path, **keywords)
+        if path != privacy_service.DATABASE_NAME:
+            return real_stat(path, **keywords)
+        if not anchored[0]:
+            # The anchor still sees this workspace's own database.
+            anchored[0] = True
+            return real_stat(path, **keywords)
+        # Every later read finds a replacement workspace at the pathname.
+        return real_stat(decoy)
 
     monkeypatch.setattr(privacy_service.os, "stat", swapped_stat)
 
@@ -1179,7 +1191,12 @@ def test_a_workspace_swapped_under_the_lock_is_never_purged(
 
     assert result.exit_code == 8
     assert envelope["diagnostic_class"] == "deletion_incomplete"
-    assert envelope["residual_paths"] == [str(backup_root.absolute())]
+    # The rule 5 preamble refuses on the same mismatch, so its managed root is
+    # reported beside the backup store the deletion could not purge.
+    assert envelope["residual_paths"] == [
+        str(backup_root.absolute()),
+        str((workspace / "out").absolute()),
+    ]
     assert envelope["result"]["removed_managed_paths"] == []
     assert backup.read_bytes() == b"Vera Example migration backup"
 
@@ -1195,34 +1212,25 @@ def test_an_unreadable_database_anchor_refuses_the_purge(
     backup_root.mkdir(mode=0o700, exist_ok=True)
     backup = backup_root / "schema-10.sqlite"
     backup.write_bytes(b"Vera Example migration backup")
-    anchor = str(workspace / ".exp2res" / "exp2res.sqlite")
+    real_stat = privacy_service.os.stat
 
-    class RefusingOs:
-        """Stand in for one module's `os`, not the process-global module.
+    def refuse_the_anchor(path, **keywords):
+        if path == privacy_service.DATABASE_NAME:
+            raise PermissionError(13, "Permission denied")
 
-        Rebinding `jd_service.os` keeps the substitution inside the service
-        under test: the CLI and the storage layer keep the real `os.stat`,
-        which a `setattr` on the shared module would have taken away from
-        them as well.
-        """
+        return real_stat(path, **keywords)
 
-        def __getattr__(self, name: str):
-            return getattr(os, name)
-
-        def stat(self, path, **keywords):
-            if str(path) == anchor:
-                raise PermissionError(13, "Permission denied")
-
-            return os.stat(path, **keywords)
-
-    monkeypatch.setattr(jd_service, "os", RefusingOs())
+    monkeypatch.setattr(privacy_service.os, "stat", refuse_the_anchor)
 
     result, envelope = invoke_json(
         workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
     )
 
     assert result.exit_code == 8
-    assert envelope["residual_paths"] == [str(backup_root.absolute())]
+    assert envelope["residual_paths"] == [
+        str(backup_root.absolute()),
+        str((workspace / "out").absolute()),
+    ]
     assert backup.read_bytes() == b"Vera Example migration backup"
 
 
@@ -1537,7 +1545,7 @@ def test_an_interrupt_mid_cleanup_still_reports_what_it_unlinked(
     unlinked.mkdir(mode=0o700, parents=True)
 
     def interrupt_after_one(
-        _workspace: Path, _branch_ids, *, removed_ledger=None
+        _workspace: Path, _branch_ids, *, removed_ledger=None, still_live=None
     ):
         if removed_ledger is not None:
             removed_ledger.append(str(unlinked))
@@ -1556,3 +1564,133 @@ def test_an_interrupt_mid_cleanup_still_reports_what_it_unlinked(
         assert connection.execute(
             "SELECT COUNT(*) FROM job_descriptions"
         ).fetchone()[0] == 1
+
+
+def test_a_replaced_branch_parent_is_never_purged_from(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.14 rule 9: the binding covers the managed roots, not the database alone.
+
+    `out/branch` renamed and replaced beside an untouched database answers to
+    the same name, so a database-only check would have the purge unlink from
+    the replacement while this workspace's own sets survived detached.
+    """
+
+    _result, added = add_job_description(
+        workspace, tmp_path, monkeypatch, ids=BranchTestIds()
+    )
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    with read_database(workspace) as connection:
+        requirement_id = get_job_description(
+            connection, job_description_id
+        ).parsed.requirements[0].id
+
+    ids, facts = prepare_graph(workspace)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    branch_id, _bullet_id = plant_branch(
+        workspace,
+        snapshot_id=assessed.snapshot_id,
+        fact_ids=facts,
+        job_description_id=job_description_id,
+        requirement_ids=(requirement_id,),
+    )
+    branch_set = plant_branch_set(workspace, branch_id)
+    real_paths = jd_service.branch_set_paths
+    detached: list[Path] = []
+
+    def replace_the_parent_then_report(*arguments, **keywords):
+        if not detached:
+            branch_parent = workspace / "out" / "branch"
+            aside = tmp_path / "detached-branch"
+            shutil.move(str(branch_parent), str(aside))
+            branch_parent.mkdir(mode=0o700)
+            (branch_parent / branch_id).mkdir(mode=0o700)
+            detached.append(aside)
+        return real_paths(*arguments, **keywords)
+
+    monkeypatch.setattr(jd_service, "branch_set_paths", replace_the_parent_then_report)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert str(branch_set.absolute()) in envelope["residual_paths"]
+    assert envelope["result"]["removed_managed_paths"] == []
+    # The set this workspace committed against is untouched in the tree the
+    # lock covered, and the replacement's identically named set is left alone.
+    assert (detached[0] / branch_id).is_dir()
+    assert (workspace / "out" / "branch" / branch_id).is_dir()
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0
+
+
+def test_a_branch_purge_that_loses_its_binding_reports_nothing_removed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A durable unlink stops being reportable once the tree changes hands.
+
+    The removed names are pathnames: after the substitution they address the
+    replacement, which may hold untouched sets at the same paths, so `jd
+    delete` would report deleting exports it never touched.
+    """
+
+    _result, added = add_job_description(
+        workspace, tmp_path, monkeypatch, ids=BranchTestIds()
+    )
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    with read_database(workspace) as connection:
+        requirement_id = get_job_description(
+            connection, job_description_id
+        ).parsed.requirements[0].id
+
+    ids, facts = prepare_graph(workspace)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    branch_id, _bullet_id = plant_branch(
+        workspace,
+        snapshot_id=assessed.snapshot_id,
+        fact_ids=facts,
+        job_description_id=job_description_id,
+        requirement_ids=(requirement_id,),
+    )
+    branch_set = plant_branch_set(workspace, branch_id)
+    real_remove = jd_service.remove_branch_sets
+    detached: list[Path] = []
+
+    def remove_then_replace(*arguments, **keywords):
+        residuals = real_remove(*arguments, **keywords)
+        if not detached:
+            branch_parent = workspace / "out" / "branch"
+            aside = tmp_path / "detached-branch"
+            shutil.move(str(branch_parent), str(aside))
+            branch_parent.mkdir(mode=0o700)
+            (branch_parent / branch_id).mkdir(mode=0o700)
+            detached.append(aside)
+        return residuals
+
+    monkeypatch.setattr(jd_service, "remove_branch_sets", remove_then_replace)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert detached
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert envelope["result"]["removed_managed_paths"] == []
+    assert str(branch_set.absolute()) in envelope["residual_paths"]
+    # The unlink landed in the tree the lock covered; the replacement's
+    # identically named set is untouched and never reported deleted.
+    assert not (detached[0] / branch_id).exists()
+    assert (workspace / "out" / "branch" / branch_id).is_dir()
