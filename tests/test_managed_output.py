@@ -12,6 +12,7 @@ import pytest
 
 from exp2res.errors import ManagedOutputIncompleteError
 from exp2res.exports import managed
+from exp2res.services.privacy import locked_database_identity
 
 from export_helpers import (
     assessment_graph,
@@ -403,3 +404,87 @@ def test_an_unflushed_removal_is_never_banked(
     assert banked == []
     assert not failed.exists()
 
+
+
+def _plant_assessment_set(workspace: Path, entity_id: str) -> Path:
+    (workspace / "out" / "branch").mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = workspace / "out" / "assessment" / entity_id
+    path.mkdir(mode=0o700, parents=True)
+    (path / "manifest.json").write_text("{}\n", encoding="utf-8")
+    return path
+
+
+def test_a_replaced_workspace_reports_every_set_instead_of_removing_it(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§13.14 rule 9: a foreign tree is reported, never cleaned.
+
+    The anchor is read while the pathname still holds this workspace's own
+    database, exactly as a caller does under its writer lock, and the tree is
+    then replaced beneath it.
+    """
+
+    snapshot_set = _plant_assessment_set(workspace, "snapshot_vera_0001")
+    branch_set = _plant_branch_set(workspace, "branch_vera_0001")
+    identity = locked_database_identity(workspace)
+    assert identity is not None
+
+    replacement = tmp_path / "replacement"
+    shutil.move(str(workspace), str(replacement))
+    (workspace / ".exp2res").mkdir(mode=0o700, parents=True)
+    (workspace / ".exp2res" / "exp2res.sqlite").write_bytes(b"")
+    foreign_snapshot = _plant_assessment_set(workspace, "snapshot_vera_0001")
+    foreign_branch = _plant_branch_set(workspace, "branch_vera_0001")
+
+    banked: list[str] = []
+    residuals = managed.remove_managed_sets_for_locked_database(
+        workspace,
+        expected_database=identity,
+        snapshot_ids=["snapshot_vera_0001"],
+        branch_ids=["branch_vera_0001"],
+        removed_ledger=banked,
+    )
+
+    assert residuals == (str(foreign_snapshot), str(foreign_branch))
+    assert banked == []
+    assert foreign_snapshot.is_dir() and foreign_branch.is_dir()
+    assert (replacement / "out" / "assessment" / "snapshot_vera_0001").is_dir()
+    assert snapshot_set == workspace / "out" / "assessment" / "snapshot_vera_0001"
+    assert branch_set == workspace / "out" / "branch" / "branch_vera_0001"
+
+
+def test_an_anchor_that_was_never_established_removes_nothing(
+    workspace: Path,
+) -> None:
+    """Rule 9: an unreadable anchor is refusal, not permission."""
+
+    planted = _plant_assessment_set(workspace, "snapshot_vera_0001")
+
+    residuals = managed.remove_managed_sets_for_locked_database(
+        workspace,
+        expected_database=None,
+        snapshot_ids=["snapshot_vera_0001"],
+    )
+
+    assert residuals == (str(planted),)
+    assert planted.is_dir()
+
+
+def test_the_live_workspace_still_has_its_sets_removed(workspace: Path) -> None:
+    """The guard must not become a blanket refusal to clean up."""
+
+    snapshot_set = _plant_assessment_set(workspace, "snapshot_vera_0001")
+    branch_set = _plant_branch_set(workspace, "branch_vera_0001")
+
+    banked: list[str] = []
+    residuals = managed.remove_managed_sets_for_locked_database(
+        workspace,
+        expected_database=locked_database_identity(workspace),
+        snapshot_ids=["snapshot_vera_0001"],
+        branch_ids=["branch_vera_0001"],
+        removed_ledger=banked,
+    )
+
+    assert residuals == ()
+    assert banked == [str(snapshot_set), str(branch_set)]
+    assert not snapshot_set.exists() and not branch_set.exists()

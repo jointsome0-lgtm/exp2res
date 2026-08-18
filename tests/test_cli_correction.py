@@ -11,6 +11,7 @@ import typer
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
+import exp2res.exports.managed as managed_module
 import exp2res.services.lifecycle as lifecycle_service
 from exp2res.cli import app
 from exp2res.domain.models import OccurredAt
@@ -1113,8 +1114,6 @@ def test_interrupted_correction_cleanup_reports_committed_capture(
 ) -> None:
     # §14.14 rule 6: Ctrl-C during post-commit managed cleanup still reports
     # the durable correction, its invalidations, and the §14.12 retry.
-    import exp2res.services.correction as correction_service
-
     target, _items = add_log(
         workspace,
         log_id="log_vera_cleanup_interrupt",
@@ -1129,7 +1128,7 @@ def test_interrupted_correction_cleanup_reports_committed_capture(
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(
-        correction_service, "remove_assessment_sets", interrupt_cleanup
+        managed_module, "remove_assessment_sets", interrupt_cleanup
     )
     result, envelope = _invoke_json(
         workspace,
@@ -1163,8 +1162,6 @@ def test_interrupted_stage_cleanup_keeps_committed_swap_in_envelope(
 ) -> None:
     # §14.14 rule 6: Ctrl-C during Stage 3's post-commit cleanup still
     # reports the committed fact generation through the carried result.
-    import exp2res.pipeline.stage3 as stage3_module
-
     add_log(
         workspace,
         log_id="log_vera_stage_cleanup",
@@ -1179,7 +1176,7 @@ def test_interrupted_stage_cleanup_keeps_committed_swap_in_envelope(
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(
-        stage3_module, "remove_assessment_sets", interrupt_cleanup
+        managed_module, "remove_assessment_sets", interrupt_cleanup
     )
     result, envelope = _invoke_json(workspace, ["--yes", "recompute"])
     assert result.exit_code == 9

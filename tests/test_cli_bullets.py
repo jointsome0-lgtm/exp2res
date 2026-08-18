@@ -9,6 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
+import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage10 as stage10_module
 import exp2res.pipeline.stage11 as stage11_module
 import exp2res.services.bullets as bullets_service
@@ -283,7 +284,7 @@ def test_an_interrupted_cleanup_reports_the_committed_pack(
     def interrupt_cleanup(*_arguments, **_keywords):
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(stage10_module, "remove_branch_sets", interrupt_cleanup)
+    monkeypatch.setattr(managed_module, "remove_branch_sets", interrupt_cleanup)
     monkeypatch.setattr(
         bullets_service,
         "build_llm_execution",
@@ -472,7 +473,7 @@ def test_an_interrupted_invalidation_reports_the_committed_pass(
     def interrupt_cleanup(*_arguments, **_keywords):
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(stage11_module, "remove_branch_sets", interrupt_cleanup)
+    monkeypatch.setattr(managed_module, "remove_branch_sets", interrupt_cleanup)
 
     result, envelope = verify(
         workspace, monkeypatch, [verifier_response([finding(bullet_id)])]

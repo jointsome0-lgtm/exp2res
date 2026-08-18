@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
+import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage6 as stage6_module
 import exp2res.services.assessment as assessment_service
 import exp2res.services.detection as detection_service
@@ -684,7 +685,7 @@ def test_repair_post_commit_interrupt_reports_the_committed_swap(
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(
-        stage6_module, "remove_assessment_sets", interrupt_cleanup
+        managed_module, "remove_assessment_sets", interrupt_cleanup
     )
     result, envelope = invoke_json(
         workspace, ["assess", "repair", "--snapshot", snapshot_id]

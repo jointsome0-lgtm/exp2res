@@ -29,8 +29,7 @@ from exp2res.errors import (
 from exp2res.exports.managed import (
     assessment_set_paths,
     branch_set_paths,
-    remove_assessment_sets,
-    remove_branch_sets,
+    remove_managed_sets_for_locked_database,
 )
 from exp2res.pipeline.branch_lifecycle import supersede_current_branches
 from exp2res.pipeline.lineage import plan_lineages
@@ -43,6 +42,7 @@ from exp2res.services.capture import (
     new_id,
     validate_project_label,
 )
+from exp2res.services.privacy import locked_database_identity
 from exp2res.services.source_files import (
     authorize_artifact_locators,
     read_capture_file,
@@ -197,6 +197,7 @@ def capture_correction(
         else writer_database(workspace, timeout_ms=timeout_ms)
     )
     with held as connection:
+        database_identity = locked_database_identity(workspace)
         try:
             connection.execute("BEGIN IMMEDIATE")
             target = get_raw_log(connection, log_id)
@@ -350,15 +351,12 @@ def capture_correction(
 
         cleaned_sets: list[str] = []
         try:
-            residual_paths = (
-                *remove_assessment_sets(
-                    workspace, superseded_snapshot_ids, removed_ledger=cleaned_sets
-                ),
-                *remove_branch_sets(
-                    workspace,
-                    branch_swap.branch_ids,
-                    removed_ledger=cleaned_sets,
-                ),
+            residual_paths = remove_managed_sets_for_locked_database(
+                workspace,
+                expected_database=database_identity,
+                snapshot_ids=superseded_snapshot_ids,
+                branch_ids=branch_swap.branch_ids,
+                removed_ledger=cleaned_sets,
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the correction transaction committed before this

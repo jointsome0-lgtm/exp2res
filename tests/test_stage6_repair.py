@@ -18,7 +18,7 @@ from exp2res.errors import (
     SnapshotNotCurrentError,
     SnapshotNotVerifiedError,
 )
-import exp2res.pipeline.stage6 as stage6_module
+import exp2res.exports.managed as managed_module
 from exp2res.pipeline.stage6 import Stage6Result, run_assessment_repair
 from exp2res.storage.repository import (
     list_assessment_snapshots,
@@ -626,7 +626,7 @@ def test_post_commit_interrupt_carries_the_committed_result(
         raise KeyboardInterrupt()
 
     monkeypatch.setattr(
-        stage6_module, "remove_assessment_sets", interrupt_cleanup
+        managed_module, "remove_assessment_sets", interrupt_cleanup
     )
     with pytest.raises(OperationCancelledError) as caught:
         repair(workspace, ids, generated.snapshot_id)

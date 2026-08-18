@@ -45,8 +45,7 @@ from exp2res.errors import (
 from exp2res.exports.managed import (
     assessment_set_paths,
     branch_set_paths,
-    remove_assessment_sets,
-    remove_branch_sets,
+    remove_managed_sets_for_locked_database,
 )
 from exp2res.llm.assessment_writer import (
     ASSESSMENT_WRITER_CONTRACT,
@@ -63,6 +62,7 @@ from exp2res.llm.contracts import (
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
+from exp2res.services.privacy import locked_database_identity
 from exp2res.storage.repository import (
     get_assessment_snapshot,
     insert_assessment_snapshot,
@@ -319,6 +319,7 @@ def run_assessment_generation(
 
     now = clock or (lambda: datetime.now(timezone.utc))
     with writer_database(workspace, timeout_ms=timeout_ms, reconcile=True) as connection:
+        database_identity = locked_database_identity(workspace)
         facts = select_assessment_view(connection)
 
         gaps = tuple(
@@ -555,13 +556,12 @@ def run_assessment_generation(
         # cleanup failure or interruption never rolls it back.
         cleaned_sets: list[str] = []
         try:
-            residual_paths = (
-                *remove_assessment_sets(
-                    workspace, superseded_snapshot_ids, removed_ledger=cleaned_sets
-                ),
-                *remove_branch_sets(
-                    workspace, branch_swap.branch_ids, removed_ledger=cleaned_sets
-                ),
+            residual_paths = remove_managed_sets_for_locked_database(
+                workspace,
+                expected_database=database_identity,
+                snapshot_ids=superseded_snapshot_ids,
+                branch_ids=branch_swap.branch_ids,
+                removed_ledger=cleaned_sets,
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the class-9 error carries the complete committed
@@ -593,6 +593,7 @@ def run_assessment_repair(
 
     now = clock or (lambda: datetime.now(timezone.utc))
     with writer_database(workspace, timeout_ms=timeout_ms, reconcile=True) as connection:
+        database_identity = locked_database_identity(workspace)
         snapshot = get_assessment_snapshot(connection, snapshot_id, current_only=False)
         if snapshot is None:
             raise SelectorNotFoundError()
@@ -966,17 +967,12 @@ def run_assessment_repair(
         # cleanup failure or interruption never rolls it back.
         repair_cleaned_sets: list[str] = []
         try:
-            residual_paths = (
-                *remove_assessment_sets(
-                    workspace,
-                    superseded_snapshot_ids,
-                    removed_ledger=repair_cleaned_sets,
-                ),
-                *remove_branch_sets(
-                    workspace,
-                    branch_swap.branch_ids,
-                    removed_ledger=repair_cleaned_sets,
-                ),
+            residual_paths = remove_managed_sets_for_locked_database(
+                workspace,
+                expected_database=database_identity,
+                snapshot_ids=superseded_snapshot_ids,
+                branch_ids=branch_swap.branch_ids,
+                removed_ledger=repair_cleaned_sets,
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the class-9 error carries the complete

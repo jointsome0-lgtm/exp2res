@@ -1163,13 +1163,17 @@ def test_a_workspace_swapped_under_the_lock_is_never_purged(
     real_stat = privacy_service.os.stat
     decoy = tmp_path / "decoy.sqlite"
     decoy.write_bytes(b"")
+    anchored = [False]
 
     def swapped_stat(path, **keywords):
-        if path == privacy_service.DATABASE_NAME:
-            # The marker directory now belongs to a replacement workspace.
-            return real_stat(decoy)
-
-        return real_stat(path, **keywords)
+        if path != privacy_service.DATABASE_NAME:
+            return real_stat(path, **keywords)
+        if not anchored[0]:
+            # The anchor still sees this workspace's own database.
+            anchored[0] = True
+            return real_stat(path, **keywords)
+        # Every later read finds a replacement workspace at the pathname.
+        return real_stat(decoy)
 
     monkeypatch.setattr(privacy_service.os, "stat", swapped_stat)
 
@@ -1195,27 +1199,15 @@ def test_an_unreadable_database_anchor_refuses_the_purge(
     backup_root.mkdir(mode=0o700, exist_ok=True)
     backup = backup_root / "schema-10.sqlite"
     backup.write_bytes(b"Vera Example migration backup")
-    anchor = str(workspace / ".exp2res" / "exp2res.sqlite")
+    real_stat = privacy_service.os.stat
 
-    class RefusingOs:
-        """Stand in for one module's `os`, not the process-global module.
+    def refuse_the_anchor(path, **keywords):
+        if path == privacy_service.DATABASE_NAME:
+            raise PermissionError(13, "Permission denied")
 
-        Rebinding `jd_service.os` keeps the substitution inside the service
-        under test: the CLI and the storage layer keep the real `os.stat`,
-        which a `setattr` on the shared module would have taken away from
-        them as well.
-        """
+        return real_stat(path, **keywords)
 
-        def __getattr__(self, name: str):
-            return getattr(os, name)
-
-        def stat(self, path, **keywords):
-            if str(path) == anchor:
-                raise PermissionError(13, "Permission denied")
-
-            return os.stat(path, **keywords)
-
-    monkeypatch.setattr(jd_service, "os", RefusingOs())
+    monkeypatch.setattr(privacy_service.os, "stat", refuse_the_anchor)
 
     result, envelope = invoke_json(
         workspace, ["--yes", "jd", "delete", "--jd", job_description_id]

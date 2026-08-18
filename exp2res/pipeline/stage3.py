@@ -31,8 +31,7 @@ from exp2res.domain.temporal import (
 from exp2res.exports.managed import (
     assessment_set_paths,
     branch_set_paths,
-    remove_assessment_sets,
-    remove_branch_sets,
+    remove_managed_sets_for_locked_database,
 )
 from exp2res.llm.contracts import (
     ContractValidationError,
@@ -47,6 +46,7 @@ from exp2res.llm.fact_extractor import (
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
+from exp2res.services.privacy import locked_database_identity
 from exp2res.storage.repository import (
     insert_experience_fact,
     list_assessment_snapshots,
@@ -397,6 +397,7 @@ def run_fact_extraction(
         else writer_database(workspace, timeout_ms=timeout_ms, reconcile=reconcile)
     )
     with held as connection:
+        database_identity = locked_database_identity(workspace)
         contexts = plan_lineages(connection, log_id=log_id)
         run_id = id_factory("run")
         generation_ids = tuple(id_factory("gen") for _ in contexts)
@@ -613,15 +614,12 @@ def run_fact_extraction(
         # committed; cleanup failure is returned and never rolls it back.
         cleaned_sets: list[str] = []
         try:
-            residual_paths = (
-                *remove_assessment_sets(
-                    workspace, superseded_snapshot_ids, removed_ledger=cleaned_sets
-                ),
-                *remove_branch_sets(
-                    workspace,
-                    branch_swap.branch_ids,
-                    removed_ledger=cleaned_sets,
-                ),
+            residual_paths = remove_managed_sets_for_locked_database(
+                workspace,
+                expected_database=database_identity,
+                snapshot_ids=superseded_snapshot_ids,
+                branch_ids=branch_swap.branch_ids,
+                removed_ledger=cleaned_sets,
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: the swap committed before cleanup, so the

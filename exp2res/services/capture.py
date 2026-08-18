@@ -29,8 +29,12 @@ from exp2res.errors import (
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
-from exp2res.exports.managed import assessment_set_paths, remove_assessment_sets
+from exp2res.exports.managed import (
+    assessment_set_paths,
+    remove_managed_sets_for_locked_database,
+)
 from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
+from exp2res.services.privacy import locked_database_identity
 from exp2res.services.source_files import (
     ArtifactLocator,
     authorize_artifact_locators,
@@ -367,6 +371,7 @@ def capture_gap_answer(
     last_collision: IdCollisionError | None = None
 
     with writer_database(workspace, timeout_ms=timeout_ms) as connection:
+        database_identity = locked_database_identity(workspace)
         try:
             connection.execute("BEGIN IMMEDIATE")
             gap = _select_answerable_gap(connection, gap_id)
@@ -447,7 +452,11 @@ def capture_gap_answer(
                     if not committed:
                         withdraw_managed_residuals(pending)
                     raise
-                residuals = remove_assessment_sets(workspace, snapshot_ids)
+                residuals = remove_managed_sets_for_locked_database(
+                    workspace,
+                    expected_database=database_identity,
+                    snapshot_ids=snapshot_ids,
+                )
                 return RawLogBundle(raw_log, evidence_items, residuals)
             raise IdCollisionError() from last_collision
         except sqlite3.OperationalError as error:

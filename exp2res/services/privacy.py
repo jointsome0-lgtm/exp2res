@@ -36,23 +36,22 @@ def vacuum_residuals(
 DATABASE_NAME = "exp2res.sqlite"
 
 
-def workspace_database_is_live(
-    workspace: Path, expected_database: os.stat_result | None
-) -> bool:
-    """Answer whether this pathname still holds the caller's locked database.
+def locked_database_identity(workspace: Path) -> os.stat_result | None:
+    """Read the identity of the database this pathname currently holds.
 
-    The same anchor `purge_managed_backups` applies to its own tree, for the
-    callers that clean managed output rather than backups: the caller stats
-    its database under the §8.1 writer lock and passes that identity here, so
-    a workspace renamed and replaced in between is refused instead of having a
-    foreign tree cleaned while this workspace's own sets survive. `None` — the
-    caller could not establish the anchor at all — is never treated as a
-    match. The residual window in `purge_managed_backups`'s docstring applies
-    here unchanged.
+    §13.14 rule 9's anchor: a caller takes this while it holds the §8.1 writer
+    lock, then passes it to `workspace_database_is_live` before removing
+    anything, so a workspace renamed and replaced in between is refused rather
+    than having a foreign tree cleaned while this workspace's own sets survive.
+
+    Anchor and comparison share one no-follow walk so that the two can only
+    ever disagree about the bytes. Following a symlink here would let a
+    `.exp2res` pointed back at the renamed tree answer for a database the
+    surrounding `out/` no longer belongs to, which is the substitution the
+    check exists to catch. An unreadable or non-conforming path yields `None`,
+    which rule 9 never treats as permission to remove.
     """
 
-    if expected_database is None:
-        return False
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     workspace_fd: int | None = None
@@ -60,9 +59,9 @@ def workspace_database_is_live(
     try:
         workspace_fd = os.open(workspace, directory_flags | no_follow)
         marker_fd = os.open(".exp2res", directory_flags | no_follow, dir_fd=workspace_fd)
-        current = os.stat(DATABASE_NAME, dir_fd=marker_fd, follow_symlinks=False)
+        return os.stat(DATABASE_NAME, dir_fd=marker_fd, follow_symlinks=False)
     except OSError:
-        return False
+        return None
     finally:
         for descriptor in (marker_fd, workspace_fd):
             if descriptor is not None:
@@ -70,6 +69,25 @@ def workspace_database_is_live(
                     os.close(descriptor)
                 except OSError:
                     pass
+
+
+def workspace_database_is_live(
+    workspace: Path, expected_database: os.stat_result | None
+) -> bool:
+    """Answer whether this pathname still holds the caller's locked database.
+
+    The same anchor `purge_managed_backups` applies to its own tree, for the
+    callers that clean managed output rather than backups. `None` — the caller
+    could not establish the anchor at all — is never treated as a match. The
+    residual window in `purge_managed_backups`'s docstring applies here
+    unchanged.
+    """
+
+    if expected_database is None:
+        return False
+    current = locked_database_identity(workspace)
+    if current is None:
+        return False
     return (current.st_dev, current.st_ino) == (
         expected_database.st_dev,
         expected_database.st_ino,

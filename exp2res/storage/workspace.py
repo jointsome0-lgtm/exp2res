@@ -26,6 +26,7 @@ from exp2res.errors import (
     WorkspaceBusyError,
     WorkspaceError,
 )
+from exp2res.services.privacy import locked_database_identity
 
 from .schema import (
     SCHEMA_V12_SQL,
@@ -93,7 +94,8 @@ class MigrationStep:
     # names its cleanup here; `migrate_workspace` runs it inside the
     # migration transaction, before the commit, and reports its residuals.
     managed_cleanup: (
-        Callable[[sqlite3.Connection, Path], tuple[str, ...]] | None
+        Callable[[sqlite3.Connection, Path, os.stat_result | None], tuple[str, ...]]
+        | None
     ) = None
 
 
@@ -110,8 +112,8 @@ MIGRATION_REGISTRY = (
         9,
         apply_migration_8_to_9,
         requires_foreign_keys_off=True,
-        managed_cleanup=lambda connection, workspace: _assessment_set_cleanup(
-            connection, workspace
+        managed_cleanup=lambda connection, workspace, identity: (
+            _assessment_set_cleanup(connection, workspace, identity)
         ),
     ),
     MigrationStep(
@@ -119,8 +121,8 @@ MIGRATION_REGISTRY = (
         10,
         apply_migration_9_to_10,
         requires_foreign_keys_off=True,
-        managed_cleanup=lambda connection, workspace: _assessment_set_cleanup(
-            connection, workspace
+        managed_cleanup=lambda connection, workspace, identity: (
+            _assessment_set_cleanup(connection, workspace, identity)
         ),
     ),
     MigrationStep(10, 11, apply_migration_10_to_11),
@@ -129,7 +131,9 @@ MIGRATION_REGISTRY = (
 
 
 def _assessment_set_cleanup(
-    connection: sqlite3.Connection, workspace: Path
+    connection: sqlite3.Connection,
+    workspace: Path,
+    database_identity: os.stat_result | None,
 ) -> tuple[str, ...]:
     """Remove every managed assessment set §12.14's transforms strand.
 
@@ -151,23 +155,31 @@ def _assessment_set_cleanup(
     at 8→9 and 9→10 — the table lookup is what makes that provable instead of
     assumed, and it is why the next step to strand derived rows inherits a
     cleanup that already covers both managed parents.
+
+    `database_identity` is §13.14 rule 9's anchor, taken by `migrate_workspace`
+    when it opened the database rather than here: an identity read inside this
+    frame would compare the tree to itself and prove nothing.
     """
 
-    from exp2res.exports.managed import remove_assessment_sets, remove_branch_sets
+    from exp2res.exports.managed import remove_managed_sets_for_locked_database
 
     snapshot_ids = [
         row[0] for row in connection.execute("SELECT id FROM assessment_snapshots")
     ]
-    residuals = list(remove_assessment_sets(workspace, snapshot_ids))
-
     branch_table = connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'resume_branches'"
     ).fetchone()
-    if branch_table is not None:
-        branch_ids = [
-            row[0] for row in connection.execute("SELECT id FROM resume_branches")
-        ]
-        residuals.extend(remove_branch_sets(workspace, branch_ids))
+    branch_ids = (
+        [row[0] for row in connection.execute("SELECT id FROM resume_branches")]
+        if branch_table is not None
+        else []
+    )
+    residuals = remove_managed_sets_for_locked_database(
+        workspace,
+        expected_database=database_identity,
+        snapshot_ids=snapshot_ids,
+        branch_ids=branch_ids,
+    )
     return tuple(sorted(set(residuals), key=id_key))
 
 
@@ -665,6 +677,7 @@ def migrate_workspace(
                 readonly=False,
                 busy_timeout_ms=timeout_ms,
             )
+            database_identity = locked_database_identity(workspace)
             try:
                 locked_status = inspect_schema(connection)
                 if (
@@ -715,7 +728,9 @@ def migrate_workspace(
                             # §12.14: the cleanup reads the pre-transform rows
                             # it is keyed on, so it runs before the step's DDL
                             # and inside the same transaction.
-                            residuals = step.managed_cleanup(connection, workspace)
+                            residuals = step.managed_cleanup(
+                                connection, workspace, database_identity
+                            )
                             sink = _CLI_PREAMBLE_RESIDUALS.get()
                             if sink is not None:
                                 sink.extend(residuals)

@@ -23,6 +23,7 @@ from exp2res.domain.models import (
     validate_structural,
 )
 from exp2res.errors import IntegrityFailureError, ManagedOutputIncompleteError
+from exp2res.services.privacy import workspace_database_is_live
 
 from .branch import (
     BranchExportGraph,
@@ -936,6 +937,43 @@ def remove_branch_sets(
         branch_ids,
         parent_name="branch",
         removed_ledger=removed_ledger,
+    )
+
+
+def remove_managed_sets_for_locked_database(
+    workspace: Path,
+    *,
+    expected_database: os.stat_result | None,
+    snapshot_ids: tuple[str, ...] | list[str] = (),
+    branch_ids: tuple[str, ...] | list[str] = (),
+    removed_ledger: list[str] | None = None,
+) -> tuple[str, ...]:
+    """Remove the selected ID-keyed sets, or report them all residual.
+
+    §13.14 rule 9: every removal below re-resolves the workspace pathname,
+    while the §8.1 writer lock pins the inode it was opened through rather
+    than the name. A workspace renamed and replaced in between therefore
+    leaves the caller committing to one tree and unlinking from another. The
+    identity the caller anchored under its lock is what separates the two, and
+    a mismatch — including an anchor that could never be established — reports
+    every in-scope set as an unsuccessful invalidation instead of removing
+    anything.
+
+    Assessment sets precede branch sets on both arms, so the mismatch reports
+    exactly the paths the removal would otherwise have reported, in the order
+    the call sites already report them.
+    """
+
+    if not workspace_database_is_live(workspace, expected_database):
+        return (
+            *assessment_set_paths(workspace, snapshot_ids),
+            *branch_set_paths(workspace, branch_ids),
+        )
+    return (
+        *remove_assessment_sets(
+            workspace, snapshot_ids, removed_ledger=removed_ledger
+        ),
+        *remove_branch_sets(workspace, branch_ids, removed_ledger=removed_ledger),
     )
 
 

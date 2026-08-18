@@ -42,6 +42,7 @@ from exp2res.services.extraction import RunTracking, build_llm_execution
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
+    locked_database_identity,
     workspace_database_is_live,
     purge_managed_backups as _purge_managed_backups,
 )
@@ -397,16 +398,8 @@ def _delete_locked(
         selected = get_job_description(connection, job_description_id)
         if selected is None:
             raise SelectorNotFoundError()
-        # Identity of the database this command is about to delete from,
-        # taken under the §8.1 writer authority. Managed cleanup is bound to
-        # it, so a workspace renamed and replaced after the lock cannot make
-        # this command purge one tree while deleting from another.
-        # An unreadable database file means that anchor cannot be established,
-        # which is never treated as permission to purge (§13.13 rule 6).
-        try:
-            database_identity: os.stat_result | None = os.stat(database)
-        except OSError:
-            database_identity = None
+        # §13.14 rule 9's anchor, taken under the §8.1 writer authority.
+        database_identity = locked_database_identity(workspace)
         # §13.13 rule 10 orders managed-path removal before the database
         # transaction, so the writer lock is never held across filesystem I/O
         # and an interrupt between the two leaves no half-open transaction.
