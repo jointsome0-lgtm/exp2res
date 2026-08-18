@@ -737,6 +737,78 @@ def test_a_service_called_outside_a_command_leaves_sigint_deliverable(
     assert signal.SIGINT not in signal.pthread_sigmask(signal.SIG_BLOCK, set())
 
 
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_the_envelope_is_emitted_with_the_interrupt_deliverable(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The classification and the release are one act.
+
+    Freezing the status first and unblocking later would leave the residual
+    scan, the diagnostics and the write itself masked: a Ctrl-C against an
+    envelope going to a reader that stopped reading would be swallowed and
+    the command would hang uninterruptibly.
+    """
+
+    source = tmp_path / "Vera Example emitted.md"
+    source.write_bytes(b"Vera Example committed before assembly.\n")
+    real_outcome = cli_module.capture_outcome
+    real_emit = cli_module._emit
+    seen: dict[str, object] = {}
+
+    def interrupt_before_reporting(bundle):
+        os.kill(os.getpid(), signal.SIGINT)
+        return real_outcome(bundle)
+
+    def recording_emit(envelope, controls, human_result):
+        seen["masked"] = signal.SIGINT in signal.pthread_sigmask(
+            signal.SIG_BLOCK, set()
+        )
+        seen["exit_code"] = envelope.exit_code
+        return real_emit(envelope, controls, human_result)
+
+    monkeypatch.setattr(cli_module, "capture_outcome", interrupt_before_reporting)
+    monkeypatch.setattr(cli_module, "_emit", recording_emit)
+    invoke_json(workspace, ["log", "today", "--file", str(source)])
+    monkeypatch.undo()
+
+    # Already classified when the write begins, and no longer masked.
+    assert seen["exit_code"] == 9
+    assert seen["masked"] is False
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_a_caller_that_blocks_sigint_keeps_its_policy_and_its_signal(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """An embedding's signal policy is the embedding's, not the command's.
+
+    A SIGINT it had already blocked and left pending predates the command, so
+    the envelope must not claim it as its own cancellation nor consume it.
+    """
+
+    source = tmp_path / "Vera Example embedded.md"
+    source.write_bytes(b"Vera Example ran under a supervisor.\n")
+    outer = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+    try:
+        os.kill(os.getpid(), signal.SIGINT)
+        result, envelope = invoke_json(
+            workspace, ["log", "today", "--file", str(source)]
+        )
+
+        assert result.exit_code == 0
+        assert envelope["status"] == "ok"
+        assert signal.SIGINT in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+        assert signal.SIGINT in signal.sigpending()
+    finally:
+        if signal.SIGINT in signal.sigpending():
+            signal.sigwait({signal.SIGINT})
+        signal.pthread_sigmask(signal.SIG_SETMASK, outer)
+
+
 def test_a_capture_interrupted_before_its_commit_names_nothing(
     workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
