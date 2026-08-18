@@ -335,6 +335,10 @@ def purge_managed_backups(
     disagree, and the store is reported residual instead of a foreign tree
     being purged while the original's backups survive.
 
+    A store the lock recorded never reads as absence here: it was moved, and
+    it still holds the backups this purge was required to remove, so it is
+    reported residual rather than treated as nothing left to do.
+
     `removed_ledger` receives each name as it is unlinked. The return value is
     only produced once the pass finishes, so a caller that must report durable
     effects after a cancellation mid-pass has no other way to learn what this
@@ -390,10 +394,15 @@ def purge_managed_backups(
             # a backup while this lock is out.
             # Only a second ENOENT confirms absence: any other error means the
             # entry could not be read, which is not evidence that it is gone.
+            recorded_absent = (
+                expected_database is None or locked_tree_identity(backup_root) is None
+            )
             try:
                 os.stat("backup", dir_fd=marker_fd, follow_symlinks=False)
             except FileNotFoundError:
-                return (), ()
+                if recorded_absent:
+                    return (), ()
+                return (), (str(backup_root.absolute()),)
             except OSError:
                 return (), (str(backup_root.absolute()),)
             return (), (str(backup_root.absolute()),)

@@ -1497,3 +1497,50 @@ def test_a_backup_store_replaced_under_the_lock_is_never_purged(
     survivor = detached / original.name
     assert survivor.read_bytes() == b"Vera Example migration backup"
     assert planted.read_bytes() == b"Vera Example replacement backup"
+
+
+def test_a_backup_store_moved_away_under_the_lock_is_reported_residual(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """A store the lock recorded never reads as absence.
+
+    Renamed aside with nothing put back, the pathname answers `ENOENT`; taking
+    that as nothing left to do would commit the deletion and report success
+    while the detached store still holds the backups it had to remove.
+    """
+
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    original = backup_root / "exp2res-v11-20260817T000000.000000Z.sqlite"
+    original.write_bytes(b"Vera Example migration backup")
+    identity = privacy_service.locked_database_identity(workspace)
+
+    with anchor_locked_database(workspace):
+        detached = tmp_path / "detached-backup"
+        shutil.move(str(backup_root), str(detached))
+        removed, residuals = privacy_service.purge_managed_backups(
+            workspace, expected_database=identity
+        )
+
+    assert removed == ()
+    assert residuals == (str(backup_root.absolute()),)
+    survivor = detached / original.name
+    assert survivor.read_bytes() == b"Vera Example migration backup"
+
+
+def test_a_backup_store_absent_at_the_lock_is_still_nothing_to_purge(
+    workspace: Path,
+) -> None:
+    """The reverse case stays quiet: no store recorded, none to report."""
+
+    identity = privacy_service.locked_database_identity(workspace)
+    backup_root = workspace / ".exp2res" / "backup"
+    assert not backup_root.exists()
+
+    with anchor_locked_database(workspace):
+        removed, residuals = privacy_service.purge_managed_backups(
+            workspace, expected_database=identity
+        )
+
+    assert removed == ()
+    assert residuals == ()
