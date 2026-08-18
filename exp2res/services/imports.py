@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from exp2res.domain.results import (
     AffectedIds,
+    carry_committed,
     ImportCounts,
     ImportRecordGroups,
     ImportRecordResult,
@@ -40,9 +41,11 @@ from exp2res.integrations.records import (
     content_hash,
 )
 from exp2res.pipeline.stage1 import persist_manual_capture
+from exp2res.services.interrupts import defer_interrupt
 from exp2res.services.capture import (
     Clock,
     IdFactory,
+    capture_outcome,
     new_id,
     validate_project_label,
 )
@@ -422,14 +425,21 @@ def import_design_document(
             )
         except (ValidationError, ValueError, TypeError) as error:
             raise ImportDocumentInvalidError() from error
+        bundle = RawLogBundle(raw_log, evidence_items)
         try:
             persist_manual_capture(
                 workspace,
                 raw_log=raw_log,
                 evidence_items=evidence_items,
                 timeout_ms=timeout_ms,
+                # §14.5 shares §14.2's record shape, so it owes §14.14 rule 6
+                # the same report: the pair is durable and the retry the owner
+                # would make against an empty cancellation would duplicate it.
+                on_committed=lambda error: carry_committed(
+                    error, capture_outcome(bundle)
+                ),
             )
-            return RawLogBundle(raw_log, evidence_items)
+            return bundle
         except IdCollisionError as error:
             last_collision = error
             continue
@@ -584,6 +594,11 @@ def import_payload(
         internal.import_outcome = report()
         internal.import_classified = is_complete(internal.import_outcome)
         raise internal from error
+    # §14.14 rule 6: the loop above stays interruptible per §19.4 rule 4's
+    # record boundaries, but from here the records are durable and unreported.
+    # The return itself and the caller's assembly are one bytecode apart, so
+    # delivery is held until the §14.14 boundary has the envelope out.
+    defer_interrupt()
     return report()
 
 

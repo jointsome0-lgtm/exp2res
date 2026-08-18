@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
+import signal
 import sqlite3
+import threading
 
 import pytest
 import typer
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
+import exp2res.pipeline.stage1 as stage1_module
+import exp2res.services.capture as capture_service
 import exp2res.services.detection as detection_service
 from exp2res.cli import app
+from exp2res.errors import WorkspaceBusyError
 from exp2res.services.logs import list_logs, show_log
 
 from fakes import FakeContractRunner
@@ -473,3 +480,447 @@ def test_interactive_retro_rejects_explicitly_empty_typed_options(
     # The supplied value is never replaced by a prompted one.
     assert unwanted_prompt not in prompts
     assert list_logs(workspace) == ()
+
+
+def _committed_pair(envelope: dict) -> dict[str, list[str]]:
+    return {
+        group["entity_type"]: group["ids"]
+        for group in envelope["affected_ids"]["created"]
+    }
+
+
+def test_an_interrupt_between_the_commit_and_the_return_names_the_pair(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: the rows are durable before the writer lock is released.
+
+    Releasing the lock and closing the connection is the longest part of the
+    post-commit window, and an interrupt landing there used to leave as an
+    empty cancellation naming nothing the owner could reconcile against.
+    """
+
+    real = stage1_module.writer_database
+
+    @contextmanager
+    def interrupt_on_release(*args, **kwargs):
+        with real(*args, **kwargs) as connection:
+            yield connection
+        raise KeyboardInterrupt()
+
+    source = tmp_path / "Vera Example daily.md"
+    source.write_bytes(b"Vera Example committed before the interrupt.\n")
+    monkeypatch.setattr(stage1_module, "writer_database", interrupt_on_release)
+    result, envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = _committed_pair(envelope)
+    assert len(created["raw_log"]) == 1
+    assert len(created["evidence_item"]) == 1
+    stored = list_logs(workspace)
+    assert [log.id for log in stored] == created["raw_log"]
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_an_interrupt_while_the_envelope_is_assembled_names_the_pair(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The narrowest window: committed, returned, not yet reported.
+
+    A real SIGINT, not a raised object: the hand-off from the returned bundle
+    to the outcome is one bytecode, so only refusing delivery closes it. The
+    signal is held, the envelope is built, and the command still ends
+    cancelled.
+    """
+
+    source = tmp_path / "Vera Example retro.md"
+    source.write_bytes(b"Vera Example committed before assembly.\n")
+    real_outcome = cli_module.capture_outcome
+
+    def interrupt_before_reporting(bundle):
+        os.kill(os.getpid(), signal.SIGINT)
+        return real_outcome(bundle)
+
+    monkeypatch.setattr(cli_module, "capture_outcome", interrupt_before_reporting)
+    result, envelope = invoke_json(
+        workspace,
+        [
+            "log",
+            "retro",
+            "--file",
+            str(source),
+            "--precision",
+            "month",
+            "--period",
+            "2026-07",
+            "--confidence",
+            "medium",
+        ],
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = _committed_pair(envelope)
+    assert [log.id for log in list_logs(workspace)] == created["raw_log"]
+
+
+def test_an_interrupted_gap_answer_names_the_pair_it_committed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`gaps answer` builds its own envelope and owes the same report."""
+
+    gap_id = seed_gap(workspace, monkeypatch)
+    before = {log.id for log in list_logs(workspace)}
+    source = tmp_path / "Vera Example answer.md"
+    source.write_bytes(b"Vera Example answered the gap.\n")
+
+    def interrupt_during_the_managed_cleanup(*args, **kwargs):
+        # The answer and its gap transition are durable; §14.7's stale-set
+        # removal is the post-commit work this form does on its own.
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        capture_service,
+        "remove_managed_sets_for_locked_database",
+        interrupt_during_the_managed_cleanup,
+    )
+    result, envelope = invoke_json(
+        workspace,
+        ["gaps", "answer", "--gap-id", gap_id, "--file", str(source)],
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = _committed_pair(envelope)
+    assert {log.id for log in list_logs(workspace)} - before == set(created["raw_log"])
+
+
+class _CommitThenInterrupt:
+    """A connection whose `commit()` succeeds and then does not return."""
+
+    def __init__(self, connection, *, durable: bool) -> None:
+        self._connection = connection
+        self._durable = durable
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def commit(self) -> None:
+        if self._durable:
+            self._connection.commit()
+        raise KeyboardInterrupt()
+
+
+@contextmanager
+def _interrupting_writer(real, *, durable: bool):
+    @contextmanager
+    def opened(*args, **kwargs):
+        with real(*args, **kwargs) as connection:
+            yield _CommitThenInterrupt(connection, durable=durable)
+
+    yield opened
+
+
+def test_a_commit_that_does_not_return_reports_the_row_it_stored(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6 asks the database, not the assignment after `commit()`.
+
+    SQLite can make a transaction durable and then fail to return, so a flag
+    set on the next line answers the wrong question: the capture would roll
+    back nothing and report nothing while the pair stands.
+    """
+
+    source = tmp_path / "Vera Example durable.md"
+    source.write_bytes(b"Vera Example committed without returning.\n")
+    before = {log.id for log in list_logs(workspace)}
+    with _interrupting_writer(stage1_module.writer_database, durable=True) as opened:
+        monkeypatch.setattr(stage1_module, "writer_database", opened)
+        result, envelope = invoke_json(
+            workspace, ["log", "today", "--file", str(source)]
+        )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    created = _committed_pair(envelope)
+    assert {log.id for log in list_logs(workspace)} - before == set(created["raw_log"])
+
+
+def test_a_gap_answer_whose_commit_never_ran_names_nothing(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The converse for the form that commits its own transaction.
+
+    The transaction is still open, so the handler below rolls it back. Naming
+    its intended IDs would send the owner reconciling against rows that never
+    existed.
+    """
+
+    gap_id = seed_gap(workspace, monkeypatch)
+    before = {log.id for log in list_logs(workspace)}
+    source = tmp_path / "Vera Example uncommitted answer.md"
+    source.write_bytes(b"Vera Example answered nothing.\n")
+    with _interrupting_writer(capture_service.writer_database, durable=False) as opened:
+        monkeypatch.setattr(capture_service, "writer_database", opened)
+        result, envelope = invoke_json(
+            workspace,
+            ["gaps", "answer", "--gap-id", gap_id, "--file", str(source)],
+        )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["affected_ids"]["created"] == []
+    assert {log.id for log in list_logs(workspace)} == before
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_a_cancellation_outranks_a_teardown_that_also_failed(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6: class 9 outranks every class observed alongside it.
+
+    The owner interrupted and the writer teardown then failed on its own. The
+    envelope reports the cancellation and the committed pair, not the
+    teardown's class with the interrupt silently dropped.
+    """
+
+    real = stage1_module.writer_database
+
+    @contextmanager
+    def interrupt_then_fail(*args, **kwargs):
+        with real(*args, **kwargs) as connection:
+            yield connection
+        os.kill(os.getpid(), signal.SIGINT)
+        raise WorkspaceBusyError()
+
+    source = tmp_path / "Vera Example contended.md"
+    source.write_bytes(b"Vera Example committed before the contention.\n")
+    before = {log.id for log in list_logs(workspace)}
+    monkeypatch.setattr(stage1_module, "writer_database", interrupt_then_fail)
+    result, envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    created = _committed_pair(envelope)
+    assert {log.id for log in list_logs(workspace)} - before == set(created["raw_log"])
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_a_service_called_outside_a_command_leaves_sigint_deliverable(
+    workspace: Path,
+) -> None:
+    """Only a boundary that will release the signal may hold it.
+
+    Blocking SIGINT is process-global. A service called from a test, a library
+    or another tool has no envelope to protect and nothing that would unblock
+    what it masked, so the deferral there would make Ctrl-C ineffective for
+    the rest of the process.
+    """
+
+    capture_service.capture_daily(
+        workspace, raw_text="Vera Example called the service directly."
+    )
+
+    assert signal.SIGINT not in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_the_envelope_is_emitted_before_the_signal_is_released(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6 owes the owner the report, not only its computation.
+
+    Releasing the signal once the status is classified but before the write
+    would let a `KeyboardInterrupt` escape through the emission, and the
+    command would exit with durable rows and no envelope naming them — the
+    defect the deferral exists to prevent.
+    """
+
+    source = tmp_path / "Vera Example emitted.md"
+    source.write_bytes(b"Vera Example committed before assembly.\n")
+    real_outcome = cli_module.capture_outcome
+    real_emit = cli_module._emit
+    seen: dict[str, object] = {}
+
+    def interrupt_before_reporting(bundle):
+        os.kill(os.getpid(), signal.SIGINT)
+        return real_outcome(bundle)
+
+    def recording_emit(envelope, controls, human_result):
+        seen["masked"] = signal.SIGINT in signal.pthread_sigmask(
+            signal.SIG_BLOCK, set()
+        )
+        seen["exit_code"] = envelope.exit_code
+        return real_emit(envelope, controls, human_result)
+
+    monkeypatch.setattr(cli_module, "capture_outcome", interrupt_before_reporting)
+    monkeypatch.setattr(cli_module, "_emit", recording_emit)
+    invoke_json(workspace, ["log", "today", "--file", str(source)])
+    monkeypatch.undo()
+
+    # Already classified when the write begins, and still held until it ends.
+    assert seen["exit_code"] == 9
+    assert seen["masked"] is True
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_a_caller_that_blocks_sigint_keeps_its_policy_and_its_signal(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """An embedding's signal policy is the embedding's, not the command's.
+
+    A SIGINT it had already blocked and left pending predates the command, so
+    the envelope must not claim it as its own cancellation nor consume it.
+    """
+
+    source = tmp_path / "Vera Example embedded.md"
+    source.write_bytes(b"Vera Example ran under a supervisor.\n")
+    outer = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+    try:
+        os.kill(os.getpid(), signal.SIGINT)
+        result, envelope = invoke_json(
+            workspace, ["log", "today", "--file", str(source)]
+        )
+
+        assert result.exit_code == 0
+        assert envelope["status"] == "ok"
+        assert signal.SIGINT in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+        assert signal.SIGINT in signal.sigpending()
+    finally:
+        if signal.SIGINT in signal.sigpending():
+            signal.sigwait({signal.SIGINT})
+        signal.pthread_sigmask(signal.SIG_SETMASK, outer)
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_the_deferral_is_declined_where_another_thread_can_take_the_signal(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A guarantee that cannot be kept is not made.
+
+    A signal mask is per-thread. With another unmasked thread alive a
+    process-directed SIGINT is delivered there and still reaches this one as a
+    `KeyboardInterrupt` inside the window, so arming would only claim a
+    protection the process cannot provide.
+    """
+
+    source = tmp_path / "Vera Example threaded.md"
+    source.write_bytes(b"Vera Example ran beside another thread.\n")
+    real_outcome = cli_module.capture_outcome
+    seen: dict[str, object] = {}
+
+    def recording_outcome(bundle):
+        seen["masked"] = signal.SIGINT in signal.pthread_sigmask(
+            signal.SIG_BLOCK, set()
+        )
+        return real_outcome(bundle)
+
+    release = threading.Event()
+    other = threading.Thread(target=release.wait, daemon=True)
+    other.start()
+    try:
+        monkeypatch.setattr(cli_module, "capture_outcome", recording_outcome)
+        result, _envelope = invoke_json(
+            workspace, ["log", "today", "--file", str(source)]
+        )
+        monkeypatch.undo()
+    finally:
+        release.set()
+        other.join(timeout=5)
+
+    assert result.exit_code == 0
+    assert seen["masked"] is False
+
+
+def test_a_gap_answer_that_never_commits_withdraws_its_pending_report(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rollback un-publishes what the pre-commit report published.
+
+    §14.7's stale sets are reported before COMMIT so a signal in the
+    commit-to-cleanup window still names them. When the answer never commits
+    they are not stale at all, and leaving them reported would send the owner
+    after live files as unresolved paths.
+    """
+
+    gap_id = seed_gap(workspace, monkeypatch)
+    source = tmp_path / "Vera Example withdrawn.md"
+    source.write_bytes(b"Vera Example answered nothing at all.\n")
+    live = tmp_path / "vera-example-assessment-set"
+    live.write_bytes(b"a current set, not a stale one\n")
+
+    real_report = capture_service.report_managed_residuals
+
+    def refuse_once_the_set_is_published(paths) -> None:
+        real_report(paths)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(
+        capture_service, "assessment_set_paths", lambda *a, **k: (str(live),)
+    )
+    monkeypatch.setattr(
+        capture_service, "report_managed_residuals", refuse_once_the_set_is_published
+    )
+    result, envelope = invoke_json(
+        workspace,
+        ["gaps", "answer", "--gap-id", gap_id, "--file", str(source)],
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["residual_paths"] == []
+    assert live.exists()
+
+
+def test_a_capture_interrupted_before_its_commit_names_nothing(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The report is owed to a commit, never to an attempt.
+
+    Rule 6 rolls the in-flight transaction back; naming its intended IDs would
+    invite the owner to reconcile against rows that never existed.
+    """
+
+    source = tmp_path / "Vera Example rolled back.md"
+    source.write_bytes(b"Vera Example never committed.\n")
+
+    result, envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    assert result.exit_code == 0
+    before = {log.id for log in list_logs(workspace)}
+
+    monkeypatch.setattr(
+        capture_service,
+        "persist_manual_capture",
+        lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    result, envelope = invoke_json(
+        workspace, ["log", "today", "--file", str(source)]
+    )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["status"] == "cancelled"
+    assert envelope["affected_ids"]["created"] == []
+    assert {log.id for log in list_logs(workspace)} == before

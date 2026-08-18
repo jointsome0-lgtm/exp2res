@@ -73,6 +73,7 @@ from exp2res.errors import (
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
+from exp2res.services.interrupts import interrupt_boundary, interrupt_pending
 from exp2res.services.capture import (
     capture_daily,
     capture_daily_file,
@@ -420,6 +421,21 @@ def _interrupt_disposition_restored() -> Iterator[None]:
             signal.signal(signal.SIGINT, previous)
 
 
+def _cancelled_outcome(error: BaseException) -> Outcome:
+    """§14.14 rule 6: a cancellation reports what the command already committed.
+
+    The classification is the cancellation's, and everything else comes from
+    the projection the interrupted operation attached. A cancellation that
+    named nothing while rows were durable would read as effect-free, and the
+    owner would reasonably retry work that has no duplicate identity to
+    converge the second attempt on.
+    """
+
+    return replace(
+        committed_outcome(error), exit_code=9, diagnostic_class="cancelled"
+    )
+
+
 def _run_command(
     context: typer.Context,
     command: CommandPath,
@@ -451,16 +467,20 @@ def _run_command(
     with _interrupt_disposition_restored():
         if interrupt is not None and threading.current_thread() is threading.main_thread():
             signal.signal(signal.SIGINT, handle_interrupt)
-        _run_operation(
-            context,
-            command,
-            operation,
-            init_command=init_command,
-            interruption_observed=(
-                interruption_observed.is_set if interrupt is not None else None
-            ),
-            startup_active=startup_active if interrupt is not None else None,
-        )
+        # The deferral is released only when this scope closes, once the
+        # envelope has been emitted: releasing it earlier would let the held
+        # signal discard the very report §14.14 rule 6 armed it to protect.
+        with interrupt_boundary():
+            _run_operation(
+                context,
+                command,
+                operation,
+                init_command=init_command,
+                interruption_observed=(
+                    interruption_observed.is_set if interrupt is not None else None
+                ),
+                startup_active=startup_active if interrupt is not None else None,
+            )
 
 
 # §14.15/§14.16 name `deletion_incomplete` as the residual class for these
@@ -510,18 +530,18 @@ def _run_operation(
             with collect_preamble_residuals(preamble_residuals):
                 with collect_unproven_residuals(unproven_residuals):
                     outcome = operation(workspace, controls)
-        except Exception:
+        except Exception as error:
             if interruption_observed is not None and interruption_observed():
-                outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
+                outcome = _cancelled_outcome(error)
             else:
                 raise
         finally:
             if startup_active is not None:
                 startup_active.clear()
-    except KeyboardInterrupt:
-        outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
-    except Abort:
-        outcome = Outcome(exit_code=9, diagnostic_class="cancelled")
+    except KeyboardInterrupt as error:
+        outcome = _cancelled_outcome(error)
+    except Abort as error:
+        outcome = _cancelled_outcome(error)
     except MigrationFailedError as error:
         status = inspect_workspace(workspace) if workspace is not None else None
         outcome = Outcome(
@@ -557,9 +577,28 @@ def _run_operation(
             surface = _failing_surface(error)
             if surface is not None:
                 typer.echo(surface, err=True)
-    except Exception:
-        outcome = Outcome(exit_code=1, diagnostic_class="internal_error")
+    except Exception as error:
+        outcome = replace(
+            committed_outcome(error),
+            exit_code=1,
+            diagnostic_class="internal_error",
+        )
         typer.echo("The operation failed unexpectedly.", err=True)
+
+    if interrupt_pending():
+        # §14.14 rule 6: the interrupt arrived while a committed effect was
+        # being turned into this envelope. The report is complete, so the
+        # cancellation is a classification rather than an unwind — there is
+        # nothing left to undo. Rule 6 gives it precedence over every class
+        # observed alongside it, so a teardown that also failed is reclassified
+        # here and keeps the projection it carried.
+        #
+        # The signal stays held through the emission below. Rule 6 owes the
+        # owner a class-9 envelope naming the durable rows, and a command that
+        # took a `KeyboardInterrupt` through `_emit` would exit with those rows
+        # and no report — the very defect the deferral exists to prevent. The
+        # boundary consumes the signal once the report is out.
+        outcome = replace(outcome, exit_code=9, diagnostic_class="cancelled")
 
     if outcome.exit_code and outcome.retry is not None and not controls.json_output:
         # §13.13 retry guidance is an operator diagnostic in human mode; the
