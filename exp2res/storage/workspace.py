@@ -824,18 +824,24 @@ def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -
     and the managed-output roots as the lock finds them. §13.14 rule 9 binds
     every managed-output mutation below to those for as long as the lock is
     held.
+
+    Every open on the way in refuses to follow a symlink, the marker directory
+    included. A `.exp2res` swapped for a link to another workspace would
+    otherwise hand back that workspace's lock and database while the managed
+    roots still came from the requested pathname: the binding would refuse the
+    cleanup, but the business mutation would already have landed in the wrong
+    tree.
     """
 
     lock_path = workspace / ".exp2res" / "lock"
     if not _is_real_file(lock_path):
         raise SchemaCompatibilityError()
-    flags = os.O_RDWR
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDWR | no_follow
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     marker_fd: int | None = None
     try:
-        marker_fd = os.open(workspace / ".exp2res", directory_flags)
+        marker_fd = os.open(workspace / ".exp2res", directory_flags | no_follow)
         descriptor = os.open("lock", flags, dir_fd=marker_fd)
     except OSError as error:
         if marker_fd is not None:

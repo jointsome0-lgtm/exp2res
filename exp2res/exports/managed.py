@@ -434,7 +434,9 @@ def _validate_existing_path(path: Path, out_root: Path, *, directory: bool) -> N
         raise OSError("managed path resolves outside out root") from error
 
 
-def _mkdir_private(path: Path, out_root: Path) -> tuple[int, int] | None:
+def _mkdir_private(
+    path: Path, out_root: Path, *, bound_to: Path | None = None
+) -> tuple[int, int] | None:
     """Make one managed directory private, naming the entry if it made it.
 
     §13.14 rule 9 binds a reserved parent absent at the lock to this command's
@@ -442,6 +444,12 @@ def _mkdir_private(path: Path, out_root: Path) -> tuple[int, int] | None:
     identity comes off the open descriptor, because a pathname re-read after
     the close would name whatever answers by then, which is the substitution
     the binding exists to catch.
+
+    `bound_to` names the pathname whose lock-time record covers this entry, and
+    an entry this command did not create has to match that record before the
+    mode is changed. Leaving the question to the caller's next gate would put
+    the refusal after the mutation: a parent standing where the lock found none
+    would already have been chmod-ed by a command holding no authority over it.
     """
 
     created = False
@@ -457,6 +465,12 @@ def _mkdir_private(path: Path, out_root: Path) -> tuple[int, int] | None:
             dir_fd=parent_descriptor,
         )
         try:
+            if not created and bound_to is not None:
+                found = os.fstat(descriptor)
+                if locked_tree_identities_established() and locked_tree_identity(
+                    bound_to
+                ) != (found.st_dev, found.st_ino):
+                    raise ManagedOutputIncompleteError((str(out_root),))
             os.fchmod(descriptor, 0o700)
             opened = os.fstat(descriptor)
             if stat.S_IMODE(opened.st_mode) != 0o700:
@@ -771,7 +785,7 @@ def _ensure_managed_parents(
     for parent, key in ((assessment, assessment_key), (branch, branch_key)):
         if still_live is not None and not still_live():
             raise ManagedOutputIncompleteError((str(out_root),))
-        created = _mkdir_private(parent, out_root)
+        created = _mkdir_private(parent, out_root, bound_to=key)
         if created is not None:
             record_locked_tree_identity(key, created)
     return out_root, assessment, branch

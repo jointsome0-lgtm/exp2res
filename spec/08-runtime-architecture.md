@@ -61,6 +61,6 @@ LLM use is allowed, but all LLM outputs must be structured, validated, and verif
 34. If a process dies while holding the writer lock, the OS releases the advisory lock and SQLite restores a consistent database by rolling back any in-flight transaction through WAL recovery.
 35. Managed outputs may remain stale or residual; the next writer applies the §13 preamble, reconciles §13.14's deterministically named candidate and rollback siblings, and applies §13.13 rules 4–6 rather than trusting any directory as current.
 36. No lock repair or `fsck` pass is required.
-37. The writer lock establishes the identity of what it covers: the database, read beside the lock entry itself rather than through the workspace pathname a second time, and the directories a later removal re-resolves by name — the managed-output roots and the migration-backup store — as the lock finds them. §13.14 rule 9 binds every managed-output mutation to that identity for as long as the lock is held.
+37. The writer lock establishes the identity of what it covers: the database, read beside the lock entry itself rather than through the workspace pathname a second time, and the directories a later removal re-resolves by name — the managed-output roots and the migration-backup store — as the lock finds them. Neither the lock entry nor the workspace marker directory holding it is reached through a symlink, so the entry the lock is taken on always lies in the requested workspace. §13.14 rule 9 binds every managed-output mutation to that identity for as long as the lock is held.
 
 ---

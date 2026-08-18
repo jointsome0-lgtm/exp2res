@@ -7,10 +7,15 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 
 import pytest
 
-from exp2res.errors import IntegrityFailureError, ManagedOutputIncompleteError
+from exp2res.errors import (
+    IntegrityFailureError,
+    ManagedOutputIncompleteError,
+    SchemaCompatibilityError,
+)
 from exp2res.exports import managed
 import exp2res.services.privacy as privacy_service
 from exp2res.services.privacy import anchor_locked_database, remove_managed_backups
@@ -1544,3 +1549,58 @@ def test_a_backup_store_absent_at_the_lock_is_still_nothing_to_purge(
 
     assert removed == ()
     assert residuals == ()
+
+
+def test_a_parent_appearing_after_the_gate_is_refused_before_its_mode_changes(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The caller's gate cannot cover what appears after it ran.
+
+    A reserved parent the lock never saw, created by something else in that
+    window, would otherwise be adopted as pre-existing and made private by a
+    command holding no authority over it — the refusal landing only after the
+    mutation it was meant to prevent.
+    """
+
+    parent = workspace / "out" / "assessment"
+    if parent.is_dir():
+        shutil.rmtree(parent)
+    real_open = managed._open_directory_fd
+    intruded: list[bool] = []
+
+    def create_then_open(path: Path, out_root: Path) -> int:
+        descriptor = real_open(path, out_root)
+        if not intruded and path.name == "out":
+            intruded.append(True)
+            os.mkdir(parent, 0o755)
+        return descriptor
+
+    with anchor_locked_database(workspace):
+        still_live = managed.locked_workspace_predicate(workspace)
+        monkeypatch.setattr(managed, "_open_directory_fd", create_then_open)
+        with pytest.raises(ManagedOutputIncompleteError):
+            managed._ensure_managed_parents(workspace, still_live=still_live)
+
+    assert intruded == [True]
+    assert stat.S_IMODE(parent.stat().st_mode) == 0o755
+
+
+def test_a_symlinked_marker_never_hands_back_a_lock(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§8.1 rule 37 reads the database beside the entry the lock was taken on.
+
+    A `.exp2res` swapped for a link to another workspace would otherwise hand
+    back that workspace's lock and database while the managed roots still came
+    from the requested pathname, so the business mutation would land in a tree
+    this command never locked.
+    """
+
+    marker = workspace / ".exp2res"
+    detached = tmp_path / "detached-marker"
+    shutil.move(str(marker), str(detached))
+    marker.symlink_to(detached, target_is_directory=True)
+
+    with pytest.raises(SchemaCompatibilityError):
+        with workspace_module.writer_lock(workspace):
+            pass
