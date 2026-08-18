@@ -201,8 +201,40 @@ def anchor_locked_tree_identities(paths: Iterable[Path]) -> Iterator[None]:
         _LOCKED_TREE_IDENTITIES.reset(token)
 
 
+def record_locked_tree_identity(path: Path) -> None:
+    """Record a pathname this command created under the lock it holds.
+
+    A root absent when the lock was taken is established by the holding
+    command's own creation step and by nothing else. Adopting whatever answers
+    to the name at the next check would hand the binding to any entry that
+    appeared meanwhile, which is the substitution the record exists to catch —
+    one level down and with the command's own authority behind it.
+    """
+
+    identities = _LOCKED_TREE_IDENTITIES.get()
+    if identities is None:
+        return
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except OSError:
+        return
+    identities[str(path)] = (info.st_dev, info.st_ino)
+
+
+def locked_tree_identities_established() -> bool:
+    """Answer whether a lock recorded what the managed pathnames reached."""
+
+    return _LOCKED_TREE_IDENTITIES.get() is not None
+
+
 def locked_tree_identity(path: Path) -> tuple[int, int] | None:
-    """Read the identity recorded for one pathname when the lock was taken."""
+    """Read the identity established for one pathname under the held lock.
+
+    Nothing is recorded for a pathname that was absent when the lock was taken
+    and that this command has not created since, which is the same answer as
+    for a pathname no lock covers: not established, and so never something this
+    command may mutate.
+    """
 
     identities = _LOCKED_TREE_IDENTITIES.get()
     if identities is None:

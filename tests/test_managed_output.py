@@ -1180,7 +1180,7 @@ def test_a_replaced_managed_root_is_a_mismatch_even_with_the_database_in_place(
     _plant_assessment_set(workspace, "snapshot_vera_0002")
 
     with anchor_locked_database(workspace):
-        still_live = managed._locked_database_predicate(workspace)
+        still_live = managed.locked_workspace_predicate(workspace)
         assert still_live()
         moved = tmp_path / "detached-out"
         shutil.move(str(workspace / "out"), str(moved))
@@ -1232,3 +1232,53 @@ def test_a_candidate_hidden_by_a_replacement_is_reported_not_assumed_gone(
     assert stranded.name.startswith(".exp2res-candidate-")
     surviving = list((moved[0] / "out" / "assessment").glob(".exp2res-candidate-*"))
     assert [path.name for path in surviving] == [stranded.name]
+
+
+def test_a_parent_the_lock_never_saw_is_not_adopted_by_appearing(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """A reserved parent absent at the lock binds to this command's own mkdir.
+
+    Adopting whatever answers to the name at the next check would hand the
+    binding to any directory that appeared meanwhile — the same substitution
+    one level down, carried out with this command's authority.
+    """
+
+    for parent in ("assessment", "branch"):
+        if (workspace / "out" / parent).is_dir():
+            shutil.rmtree(workspace / "out" / parent)
+
+    with anchor_locked_database(workspace):
+        still_live = managed.locked_workspace_predicate(workspace)
+        assert still_live()
+        (workspace / "out" / "assessment").mkdir(mode=0o700)
+        assert not still_live()
+
+    with anchor_locked_database(workspace):
+        # The same directory, now established by the lock that found it.
+        assert managed.locked_workspace_predicate(workspace)()
+
+
+def test_the_parents_this_command_creates_are_the_ones_it_binds_to(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """A first publication into a workspace without reserved parents proceeds.
+
+    The refusal above is about an entry this command did not make; its own
+    creation step records what it made, so the export that follows is bound to
+    those entries rather than blocked by their absence at the lock.
+    """
+
+    for parent in ("assessment", "branch"):
+        if (workspace / "out" / parent).is_dir():
+            shutil.rmtree(workspace / "out" / parent)
+    graph = assessment_graph(all_sections=False)
+
+    with anchor_locked_database(workspace):
+        manifest, members = managed.publish_assessment(
+            workspace, graph, clock=lambda: NOW
+        )
+
+    published = workspace / "out" / "assessment" / manifest.entity_id
+    assert published.is_dir()
+    assert {str(path) for path in published.iterdir()} == set(members)

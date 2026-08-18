@@ -26,8 +26,10 @@ from exp2res.domain.models import (
 from exp2res.errors import IntegrityFailureError, ManagedOutputIncompleteError
 from exp2res.services.privacy import (
     locked_database_anchor,
+    locked_tree_identities_established,
     locked_tree_identity,
     managed_root_paths,
+    record_locked_tree_identity,
     report_unproven_residual,
     workspace_database_is_live,
 )
@@ -432,11 +434,19 @@ def _validate_existing_path(path: Path, out_root: Path, *, directory: bool) -> N
         raise OSError("managed path resolves outside out root") from error
 
 
-def _mkdir_private(path: Path, out_root: Path) -> None:
+def _mkdir_private(path: Path, out_root: Path) -> bool:
+    """Make one managed directory private, reporting whether it created it.
+
+    §13.14 rule 9 binds a reserved parent absent at the lock to this command's
+    own creation, so the caller has to be told which of the two happened here.
+    """
+
+    created = False
     parent_descriptor = _open_directory_fd(path.parent, out_root)
     try:
         if _lstat(path) is None:
             os.mkdir(path.name, 0o700, dir_fd=parent_descriptor)
+            created = True
         descriptor = os.open(
             path.name,
             _open_flags(os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)),
@@ -451,6 +461,7 @@ def _mkdir_private(path: Path, out_root: Path) -> None:
     finally:
         os.close(parent_descriptor)
     _validate_existing_path(path, out_root, directory=True)
+    return created
 
 
 def _open_flags(base: int) -> int:
@@ -747,12 +758,18 @@ def _ensure_managed_parents(
     """
 
     _root, out_root = _canonical_roots(workspace)
+    _out_key, assessment_key, branch_key = managed_root_paths(workspace)
     assessment = out_root / "assessment"
     branch = out_root / "branch"
-    for parent in (assessment, branch):
+    for parent, key in ((assessment, assessment_key), (branch, branch_key)):
         if still_live is not None and not still_live():
             raise ManagedOutputIncompleteError((str(out_root),))
-        _mkdir_private(parent, out_root)
+        if _mkdir_private(parent, out_root):
+            # A parent the lock found absent becomes bound here, where this
+            # command made it, and not at whatever answers to the name later.
+            # The key is the pathname the lock recorded under; the entry it
+            # reaches is the one just created either way.
+            record_locked_tree_identity(key)
     return out_root, assessment, branch
 
 
@@ -769,7 +786,7 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
     refusal leaves no directories behind either.
     """
 
-    still_live = _locked_database_predicate(workspace)
+    still_live = locked_workspace_predicate(workspace)
     residuals: set[str] = set()
 
     def refuse_if_replaced(reported: tuple[str, ...]) -> tuple[str, ...]:
@@ -864,23 +881,18 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
     return refuse_if_replaced(tuple(sorted(residuals, key=fs_id_key)))
 
 
-def _locked_database_predicate(workspace: Path) -> Callable[[], bool]:
+def locked_workspace_predicate(workspace: Path) -> Callable[[], bool]:
     """Build §13.14 rule 9's predicate for one workspace under the held lock.
 
     Every entry point that touches managed output builds it the same way, so
-    the binding cannot drift between them, and the anchor is captured once per
-    operation rather than re-read at each question — a re-read would answer
-    about whatever the pathname reaches by then, which is the substitution the
-    rule exists to catch.
+    the binding cannot drift between them. What each question re-reads is the
+    record the lock established, never the filesystem's own account of what the
+    pathname ought to be — that account is written by whoever holds the
+    pathname, which is the substitution the rule exists to catch.
     """
 
     expected_database = locked_database_anchor()
     managed_roots = managed_root_paths(workspace)
-    pinned: dict[Path, tuple[int, int]] = {}
-    for root in managed_roots:
-        recorded = locked_tree_identity(root)
-        if recorded is not None:
-            pinned[root] = recorded
 
     def still_live() -> bool:
         """Answer whether both the database and the managed tree are the ones.
@@ -892,24 +904,22 @@ def _locked_database_predicate(workspace: Path) -> Callable[[], bool]:
         committed to stayed detached — and unlike a whole-workspace
         replacement, no later check would notice.
 
-        A root the lock recorded binds from the lock. A root absent then is
-        pinned the first time it is seen instead, because the reserved parents
-        are created under this same lock and that creation is this command's
-        own work. Once pinned either way, a root that changes or disappears is
-        a mismatch: nothing under a held writer lock removes a managed parent.
+        The comparison is against what the lock established and nothing else,
+        which makes both directions a mismatch: a root that changed hands, and
+        equally a root standing where the lock found none and this command
+        created none. Absence on both sides is the ordinary state before a
+        first publication, and the creation step records what it made, so the
+        only entry that answers here is one this command is entitled to.
         """
 
         if not workspace_database_is_live(workspace, expected_database):
             return False
+        if not locked_tree_identities_established():
+            return False
         for root in managed_roots:
             info = _lstat(root)
             identity = None if info is None else (info.st_dev, info.st_ino)
-            known = pinned.get(root)
-            if known is None:
-                if identity is not None:
-                    pinned[root] = identity
-                continue
-            if identity != known:
+            if identity != locked_tree_identity(root):
                 return False
         return True
 
@@ -1186,7 +1196,7 @@ def remove_managed_sets_for_locked_database(
     report them.
     """
 
-    still_live = _locked_database_predicate(workspace)
+    still_live = locked_workspace_predicate(workspace)
     if not still_live():
         stranded = (
             *assessment_set_paths(workspace, snapshot_ids, existing_only=False),
@@ -1230,7 +1240,7 @@ def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
     enumerate are the replacement's and say nothing about what was stranded.
     """
 
-    still_live = _locked_database_predicate(workspace)
+    still_live = locked_workspace_predicate(workspace)
     managed_root = str((workspace / "out").absolute())
     if not still_live():
         return (managed_root,)
@@ -1539,7 +1549,7 @@ def _bound_publication(workspace: Path) -> Callable[[], bool]:
     re-ask it as the protocol proceeds.
     """
 
-    still_live = _locked_database_predicate(workspace)
+    still_live = locked_workspace_predicate(workspace)
     if not still_live():
         raise ManagedOutputIncompleteError((str((workspace / "out").absolute()),))
     return still_live

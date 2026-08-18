@@ -35,7 +35,11 @@ from exp2res.errors import (
     SelectorNotFoundError,
     WorkspaceBusyError,
 )
-from exp2res.exports.managed import branch_set_paths, remove_branch_sets
+from exp2res.exports.managed import (
+    branch_set_paths,
+    locked_workspace_predicate,
+    remove_branch_sets,
+)
 from exp2res.pipeline.stage8 import Stage8Result, run_job_description_parse
 from exp2res.services.capture import new_id
 from exp2res.services.extraction import RunTracking, build_llm_execution
@@ -43,7 +47,6 @@ from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
     locked_database_anchor,
-    workspace_database_is_live,
     purge_managed_backups as _purge_managed_backups,
 )
 from exp2res.storage.repository import (
@@ -459,8 +462,12 @@ def _delete_locked(
         branch_parent = str((workspace / "out" / "branch").absolute())
         unlinked_sets: list[str] = []
         try:
-            def database_is_live() -> bool:
-                return workspace_database_is_live(workspace, database_identity)
+            # §13.14 rule 9's binding, built the way every managed entry
+            # point builds it: a database-only check here would let `out/branch`
+            # renamed and replaced beside an untouched database pass, and the
+            # removal below would then unlink from the replacement while this
+            # workspace's own sets survived detached.
+            database_is_live = locked_workspace_predicate(workspace)
 
             existing_branch_sets = branch_set_paths(workspace, branch_ids)
             if not database_is_live():

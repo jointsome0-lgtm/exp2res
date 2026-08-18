@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import shutil
 
 import pytest
 from typer.testing import CliRunner
@@ -1563,3 +1564,69 @@ def test_an_interrupt_mid_cleanup_still_reports_what_it_unlinked(
         assert connection.execute(
             "SELECT COUNT(*) FROM job_descriptions"
         ).fetchone()[0] == 1
+
+
+def test_a_replaced_branch_parent_is_never_purged_from(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§13.14 rule 9: the binding covers the managed roots, not the database alone.
+
+    `out/branch` renamed and replaced beside an untouched database answers to
+    the same name, so a database-only check would have the purge unlink from
+    the replacement while this workspace's own sets survived detached.
+    """
+
+    _result, added = add_job_description(
+        workspace, tmp_path, monkeypatch, ids=BranchTestIds()
+    )
+    job_description_id = added["affected_ids"]["created"][0]["ids"][0]
+    with read_database(workspace) as connection:
+        requirement_id = get_job_description(
+            connection, job_description_id
+        ).parsed.requirements[0].id
+
+    ids, facts = prepare_graph(workspace)
+    assessed = run_stage6(
+        workspace,
+        FakeContractRunner([assessment_response(fact_ids=list(facts))]),
+        ids,
+    )
+    branch_id, _bullet_id = plant_branch(
+        workspace,
+        snapshot_id=assessed.snapshot_id,
+        fact_ids=facts,
+        job_description_id=job_description_id,
+        requirement_ids=(requirement_id,),
+    )
+    branch_set = plant_branch_set(workspace, branch_id)
+    real_paths = jd_service.branch_set_paths
+    detached: list[Path] = []
+
+    def replace_the_parent_then_report(*arguments, **keywords):
+        if not detached:
+            branch_parent = workspace / "out" / "branch"
+            aside = tmp_path / "detached-branch"
+            shutil.move(str(branch_parent), str(aside))
+            branch_parent.mkdir(mode=0o700)
+            (branch_parent / branch_id).mkdir(mode=0o700)
+            detached.append(aside)
+        return real_paths(*arguments, **keywords)
+
+    monkeypatch.setattr(jd_service, "branch_set_paths", replace_the_parent_then_report)
+
+    result, envelope = invoke_json(
+        workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
+    )
+
+    assert result.exit_code == 8
+    assert envelope["diagnostic_class"] == "deletion_incomplete"
+    assert str(branch_set.absolute()) in envelope["residual_paths"]
+    assert envelope["result"]["removed_managed_paths"] == []
+    # The set this workspace committed against is untouched in the tree the
+    # lock covered, and the replacement's identically named set is left alone.
+    assert (detached[0] / branch_id).is_dir()
+    assert (workspace / "out" / "branch" / branch_id).is_dir()
+    with read_database(workspace) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM job_descriptions"
+        ).fetchone()[0] == 0
