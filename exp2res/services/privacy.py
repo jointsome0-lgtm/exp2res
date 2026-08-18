@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 import os
 from pathlib import Path
 import sqlite3
@@ -50,6 +53,13 @@ def locked_database_identity(workspace: Path) -> os.stat_result | None:
     surrounding `out/` no longer belongs to, which is the substitution the
     check exists to catch. An unreadable or non-conforming path yields `None`,
     which rule 9 never treats as permission to remove.
+
+    A non-regular final entry is one of those non-conforming paths. `os.stat`
+    with `follow_symlinks=False` answers happily about a symlink, and a
+    database file replaced by one after SQLite opened the original would
+    otherwise become the anchor: every later read finds the same symlink, so
+    the comparison would authorize cleanup of whatever tree that name reaches
+    while the mutations stay in the original open file.
     """
 
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
@@ -59,9 +69,11 @@ def locked_database_identity(workspace: Path) -> os.stat_result | None:
     try:
         workspace_fd = os.open(workspace, directory_flags | no_follow)
         marker_fd = os.open(".exp2res", directory_flags | no_follow, dir_fd=workspace_fd)
-        return os.stat(DATABASE_NAME, dir_fd=marker_fd, follow_symlinks=False)
+        current = os.stat(DATABASE_NAME, dir_fd=marker_fd, follow_symlinks=False)
     except OSError:
         return None
+    else:
+        return current if stat.S_ISREG(current.st_mode) else None
     finally:
         for descriptor in (marker_fd, workspace_fd):
             if descriptor is not None:
@@ -69,6 +81,42 @@ def locked_database_identity(workspace: Path) -> os.stat_result | None:
                     os.close(descriptor)
                 except OSError:
                     pass
+
+
+_LOCKED_DATABASE_IDENTITY: ContextVar[os.stat_result | None] = ContextVar(
+    "exp2res_locked_database_identity", default=None
+)
+
+
+@contextmanager
+def anchor_locked_database(workspace: Path) -> Iterator[None]:
+    """Anchor §13.14 rule 9's identity for the span of one held writer lock.
+
+    The anchor belongs to the lock, not to the frame that wants to clean up.
+    A stage handed an already-open connection runs arbitrarily long after the
+    lock was taken — a whole LLM invocation, in the §13 stages — so an identity
+    it read for itself could describe a workspace already renamed and replaced,
+    and would then authorize cleanup of the replacement while every mutation
+    stayed in the original open database. `writer_lock` establishes the value
+    once, where the authority is acquired, and every cleanup below it reads
+    that one.
+
+    Outside a held lock the anchor is absent, which rule 9 treats as a refusal
+    rather than as permission: a removal that cannot name the database it
+    belongs to is exactly the removal the rule exists to stop.
+    """
+
+    token = _LOCKED_DATABASE_IDENTITY.set(locked_database_identity(workspace))
+    try:
+        yield
+    finally:
+        _LOCKED_DATABASE_IDENTITY.reset(token)
+
+
+def locked_database_anchor() -> os.stat_result | None:
+    """Read the identity anchored when the held writer lock was acquired."""
+
+    return _LOCKED_DATABASE_IDENTITY.get()
 
 
 def workspace_database_is_live(

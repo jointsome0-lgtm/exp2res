@@ -59,7 +59,6 @@ from exp2res.llm.resume_verifier import (
 )
 from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
-from exp2res.services.privacy import locked_database_identity
 from exp2res.storage.repository import (
     BULLET_EXPORT_ALLOWLIST,
     current_branch_by_folded_name,
@@ -413,7 +412,6 @@ def run_bullet_verification(
         with writer_database(
             workspace, timeout_ms=timeout_ms, reconcile=True
         ) as connection:
-            database_identity = locked_database_identity(workspace)
             branch = current_branch_by_folded_name(connection, branch_name)
             if branch is None:
                 raise SelectorNotFoundError()
@@ -573,7 +571,6 @@ def run_bullet_verification(
                 # Cleanup failure never rolls the committed pass back.
                 residual_paths = remove_managed_sets_for_locked_database(
                     workspace,
-                    expected_database=database_identity,
                     branch_ids=(branch.id,),
                     removed_ledger=cleaned_sets,
                 )

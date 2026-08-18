@@ -46,7 +46,6 @@ from exp2res.llm.fact_extractor import (
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
-from exp2res.services.privacy import locked_database_identity
 from exp2res.storage.repository import (
     insert_experience_fact,
     list_assessment_snapshots,
@@ -397,7 +396,6 @@ def run_fact_extraction(
         else writer_database(workspace, timeout_ms=timeout_ms, reconcile=reconcile)
     )
     with held as connection:
-        database_identity = locked_database_identity(workspace)
         contexts = plan_lineages(connection, log_id=log_id)
         run_id = id_factory("run")
         generation_ids = tuple(id_factory("gen") for _ in contexts)
@@ -616,7 +614,6 @@ def run_fact_extraction(
         try:
             residual_paths = remove_managed_sets_for_locked_database(
                 workspace,
-                expected_database=database_identity,
                 snapshot_ids=superseded_snapshot_ids,
                 branch_ids=branch_swap.branch_ids,
                 removed_ledger=cleaned_sets,

@@ -42,7 +42,7 @@ from exp2res.services.extraction import RunTracking, build_llm_execution
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
-    locked_database_identity,
+    locked_database_anchor,
     workspace_database_is_live,
     purge_managed_backups as _purge_managed_backups,
 )
@@ -398,8 +398,9 @@ def _delete_locked(
         selected = get_job_description(connection, job_description_id)
         if selected is None:
             raise SelectorNotFoundError()
-        # §13.14 rule 9's anchor, taken under the §8.1 writer authority.
-        database_identity = locked_database_identity(workspace)
+        # §13.14 rule 9's anchor, established where the §8.1 writer authority
+        # was acquired rather than read again here.
+        database_identity = locked_database_anchor()
         # §13.13 rule 10 orders managed-path removal before the database
         # transaction, so the writer lock is never held across filesystem I/O
         # and an interrupt between the two leaves no half-open transaction.
@@ -458,18 +459,29 @@ def _delete_locked(
         branch_parent = str((workspace / "out" / "branch").absolute())
         unlinked_sets: list[str] = []
         try:
+            def database_is_live() -> bool:
+                return workspace_database_is_live(workspace, database_identity)
+
             existing_branch_sets = branch_set_paths(workspace, branch_ids)
-            if not workspace_database_is_live(workspace, database_identity):
+            if not database_is_live():
                 # The pathname no longer resolves to the database this command
                 # holds open, so removing anything under it would purge a
                 # foreign tree while this workspace's own sets survive. Every
                 # set is reported residual instead (§13.13 rule 6), exactly as
-                # the backup purge above does on the same mismatch.
-                residual_paths.extend(existing_branch_sets)
+                # the backup purge above does on the same mismatch — and
+                # unfiltered by what the pathname holds, because that is
+                # another workspace's content and says nothing about the sets
+                # this deletion strands here.
+                residual_paths.extend(
+                    branch_set_paths(workspace, branch_ids, existing_only=False)
+                )
             else:
                 residual_paths.extend(
                     remove_branch_sets(
-                        workspace, branch_ids, removed_ledger=unlinked_sets
+                        workspace,
+                        branch_ids,
+                        removed_ledger=unlinked_sets,
+                        still_live=database_is_live,
                     )
                 )
                 # A path counts as removed only when it is proven gone: a

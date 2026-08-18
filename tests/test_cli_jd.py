@@ -1529,7 +1529,7 @@ def test_an_interrupt_mid_cleanup_still_reports_what_it_unlinked(
     unlinked.mkdir(mode=0o700, parents=True)
 
     def interrupt_after_one(
-        _workspace: Path, _branch_ids, *, removed_ledger=None
+        _workspace: Path, _branch_ids, *, removed_ledger=None, still_live=None
     ):
         if removed_ledger is not None:
             removed_ledger.append(str(unlinked))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -23,7 +24,10 @@ from exp2res.domain.models import (
     validate_structural,
 )
 from exp2res.errors import IntegrityFailureError, ManagedOutputIncompleteError
-from exp2res.services.privacy import workspace_database_is_live
+from exp2res.services.privacy import (
+    locked_database_anchor,
+    workspace_database_is_live,
+)
 
 from .branch import (
     BranchExportGraph,
@@ -786,7 +790,11 @@ def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
 
 
 def _managed_set_paths(
-    workspace: Path, entity_ids: tuple[str, ...] | list[str], *, parent_name: str
+    workspace: Path,
+    entity_ids: tuple[str, ...] | list[str],
+    *,
+    parent_name: str,
+    existing_only: bool = True,
 ) -> tuple[str, ...]:
     """Report-only paths of existing ID-keyed sets an invalidation affects.
 
@@ -795,6 +803,13 @@ def _managed_set_paths(
     commit and the removal still reports the retained stale set (§13
     stale-export invalidation rule). Envelope assembly drops any reported path
     that no longer exists, so a completed removal clears its own pending report.
+
+    `existing_only=False` reports every selected set whether or not the
+    pathname currently holds it. §13.14 rule 9's mismatch arm needs that: there
+    the pathname reaches a *different* workspace, so what exists under it says
+    nothing about the sets left stale in the one the mutation committed to, and
+    filtering by it would report complete invalidation of a tree this process
+    never touched.
     """
 
     selected = tuple(sorted(set(entity_ids), key=fs_id_key))
@@ -808,6 +823,9 @@ def _managed_set_paths(
         if ENTITY_ID.fullmatch(entity_id) is None:
             continue
         path = parent / entity_id
+        if not existing_only:
+            paths.append(str(path))
+            continue
         try:
             exists = _lstat(path) is not None
         except OSError:
@@ -829,6 +847,7 @@ def _remove_managed_sets(
     *,
     parent_name: str,
     removed_ledger: list[str] | None = None,
+    still_live: Callable[[], bool] | None = None,
 ) -> tuple[str, ...]:
     """Remove exactly the selected ID-keyed sets after commit.
 
@@ -837,6 +856,19 @@ def _remove_managed_sets(
     finishes, so a caller that must report durable effects after a cancellation
     mid-pass has no other way to learn what this function already removed
     (§14.14 rule 6).
+
+    `still_live` is §13.14 rule 9's binding, re-asked at every point this pass
+    is about to commit to the pathname: once after the roots resolve, and again
+    before each entry is unlinked. One check at the entry would authorize the
+    whole pass, and the pass is long — every selected assessment ID, then every
+    branch ID — so a workspace replaced anywhere inside it would have the
+    remainder removed from the foreign tree. Whatever the pass has not reached
+    when the answer turns false is reported residual instead.
+
+    POSIX unlinks by name, so this narrows the window rather than closing it:
+    no filesystem offers removal bound to the inode an open connection holds.
+    §8.1's single business writer and §29's local boundary — anything able to
+    rename the workspace root is already inside it — bound what remains.
     """
 
     selected = tuple(sorted(set(entity_ids), key=fs_id_key))
@@ -846,11 +878,16 @@ def _remove_managed_sets(
     if not selected:
         return ()
 
+    def live() -> bool:
+        return still_live is None or still_live()
+
     try:
         _root, out_root = _canonical_roots(workspace)
     except ManagedOutputIncompleteError as error:
         return error.residual_paths
     parent = out_root / parent_name
+    if not live():
+        return tuple(str(parent / entity_id) for entity_id in selected)
     try:
         if _lstat(parent) is None:
             return ()
@@ -864,8 +901,13 @@ def _remove_managed_sets(
 
     residuals: set[str] = set()
     unlinked: list[str] = []
-    for entity_id in selected:
+    for position, entity_id in enumerate(selected):
         path = parent / entity_id
+        if not live():
+            residuals.update(
+                str(parent / remaining) for remaining in selected[position:]
+            )
+            break
         try:
             if _lstat(path) is None:
                 continue
@@ -899,9 +941,17 @@ def _remove_managed_sets(
 
 
 def assessment_set_paths(
-    workspace: Path, snapshot_ids: tuple[str, ...] | list[str]
+    workspace: Path,
+    snapshot_ids: tuple[str, ...] | list[str],
+    *,
+    existing_only: bool = True,
 ) -> tuple[str, ...]:
-    return _managed_set_paths(workspace, snapshot_ids, parent_name="assessment")
+    return _managed_set_paths(
+        workspace,
+        snapshot_ids,
+        parent_name="assessment",
+        existing_only=existing_only,
+    )
 
 
 def remove_assessment_sets(
@@ -909,21 +959,28 @@ def remove_assessment_sets(
     snapshot_ids: tuple[str, ...] | list[str],
     *,
     removed_ledger: list[str] | None = None,
+    still_live: Callable[[], bool] | None = None,
 ) -> tuple[str, ...]:
     return _remove_managed_sets(
         workspace,
         snapshot_ids,
         parent_name="assessment",
         removed_ledger=removed_ledger,
+        still_live=still_live,
     )
 
 
 def branch_set_paths(
-    workspace: Path, branch_ids: tuple[str, ...] | list[str]
+    workspace: Path,
+    branch_ids: tuple[str, ...] | list[str],
+    *,
+    existing_only: bool = True,
 ) -> tuple[str, ...]:
     """§13.14 rule 1: a resume set lives only at `out/branch/<branch-id>/`."""
 
-    return _managed_set_paths(workspace, branch_ids, parent_name="branch")
+    return _managed_set_paths(
+        workspace, branch_ids, parent_name="branch", existing_only=existing_only
+    )
 
 
 def remove_branch_sets(
@@ -931,19 +988,20 @@ def remove_branch_sets(
     branch_ids: tuple[str, ...] | list[str],
     *,
     removed_ledger: list[str] | None = None,
+    still_live: Callable[[], bool] | None = None,
 ) -> tuple[str, ...]:
     return _remove_managed_sets(
         workspace,
         branch_ids,
         parent_name="branch",
         removed_ledger=removed_ledger,
+        still_live=still_live,
     )
 
 
 def remove_managed_sets_for_locked_database(
     workspace: Path,
     *,
-    expected_database: os.stat_result | None,
     snapshot_ids: tuple[str, ...] | list[str] = (),
     branch_ids: tuple[str, ...] | list[str] = (),
     removed_ledger: list[str] | None = None,
@@ -954,26 +1012,46 @@ def remove_managed_sets_for_locked_database(
     while the §8.1 writer lock pins the inode it was opened through rather
     than the name. A workspace renamed and replaced in between therefore
     leaves the caller committing to one tree and unlinking from another. The
-    identity the caller anchored under its lock is what separates the two, and
-    a mismatch — including an anchor that could never be established — reports
-    every in-scope set as an unsuccessful invalidation instead of removing
-    anything.
+    identity anchored when the lock was acquired is what separates the two,
+    and a mismatch — including an anchor that could never be established —
+    reports every in-scope set as an unsuccessful invalidation instead of
+    removing anything.
 
-    Assessment sets precede branch sets on both arms, so the mismatch reports
-    exactly the paths the removal would otherwise have reported, in the order
-    the call sites already report them.
+    The anchor arrives from `writer_lock` rather than from a parameter, so a
+    call site cannot supply one read too late to mean anything; the removal
+    pass re-asks the same question at every point it is about to commit to the
+    pathname.
+
+    Both arms report every selected set, unfiltered by what the pathname holds:
+    on a mismatch the pathname reaches another workspace entirely, so its
+    contents are no evidence about the sets this mutation left stale. Assessment
+    sets precede branch sets on both arms, in the order the call sites already
+    report them.
     """
 
-    if not workspace_database_is_live(workspace, expected_database):
+    expected_database = locked_database_anchor()
+
+    def still_live() -> bool:
+        return workspace_database_is_live(workspace, expected_database)
+
+    if not still_live():
         return (
-            *assessment_set_paths(workspace, snapshot_ids),
-            *branch_set_paths(workspace, branch_ids),
+            *assessment_set_paths(workspace, snapshot_ids, existing_only=False),
+            *branch_set_paths(workspace, branch_ids, existing_only=False),
         )
     return (
         *remove_assessment_sets(
-            workspace, snapshot_ids, removed_ledger=removed_ledger
+            workspace,
+            snapshot_ids,
+            removed_ledger=removed_ledger,
+            still_live=still_live,
         ),
-        *remove_branch_sets(workspace, branch_ids, removed_ledger=removed_ledger),
+        *remove_branch_sets(
+            workspace,
+            branch_ids,
+            removed_ledger=removed_ledger,
+            still_live=still_live,
+        ),
     )
 
 

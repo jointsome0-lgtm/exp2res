@@ -53,7 +53,6 @@ from exp2res.llm.contracts import (
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
-from exp2res.services.privacy import locked_database_identity
 from exp2res.storage.repository import (
     get_assessment_snapshot,
     get_raw_log,
@@ -340,7 +339,6 @@ def run_assessment_verification(
     with writer_database(
         workspace, timeout_ms=timeout_ms, reconcile=True
     ) as connection:
-        database_identity = locked_database_identity(workspace)
         snapshot = get_assessment_snapshot(
             connection, snapshot_id, current_only=False
         )
@@ -563,7 +561,6 @@ def run_assessment_verification(
         try:
             residual_paths = remove_managed_sets_for_locked_database(
                 workspace,
-                expected_database=database_identity,
                 snapshot_ids=(snapshot_id,),
                 branch_ids=branch_swap.branch_ids,
                 removed_ledger=cleaned_sets,

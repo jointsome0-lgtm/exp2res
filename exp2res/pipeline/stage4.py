@@ -46,7 +46,6 @@ from exp2res.llm.detector import (
 from exp2res.llm.registry import LLMSelection
 from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
-from exp2res.services.privacy import locked_database_identity
 from exp2res.storage.repository import (
     insert_contradiction,
     insert_gap_question,
@@ -355,7 +354,6 @@ def run_detection_generation(
         else writer_database(workspace, timeout_ms=timeout_ms, reconcile=reconcile)
     )
     with held as connection:
-        database_identity = locked_database_identity(workspace)
         facts = tuple(
             sorted(list_experience_facts(connection), key=lambda fact: id_key(fact.id))
         )
@@ -637,7 +635,6 @@ def run_detection_generation(
         try:
             residual_paths = remove_managed_sets_for_locked_database(
                 workspace,
-                expected_database=database_identity,
                 snapshot_ids=superseded_snapshot_ids,
                 branch_ids=branch_swap.branch_ids,
                 removed_ledger=cleaned_sets,

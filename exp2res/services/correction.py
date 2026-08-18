@@ -42,7 +42,6 @@ from exp2res.services.capture import (
     new_id,
     validate_project_label,
 )
-from exp2res.services.privacy import locked_database_identity
 from exp2res.services.source_files import (
     authorize_artifact_locators,
     read_capture_file,
@@ -197,7 +196,6 @@ def capture_correction(
         else writer_database(workspace, timeout_ms=timeout_ms)
     )
     with held as connection:
-        database_identity = locked_database_identity(workspace)
         try:
             connection.execute("BEGIN IMMEDIATE")
             target = get_raw_log(connection, log_id)
@@ -353,7 +351,6 @@ def capture_correction(
         try:
             residual_paths = remove_managed_sets_for_locked_database(
                 workspace,
-                expected_database=database_identity,
                 snapshot_ids=superseded_snapshot_ids,
                 branch_ids=branch_swap.branch_ids,
                 removed_ledger=cleaned_sets,

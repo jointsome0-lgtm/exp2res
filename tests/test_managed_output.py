@@ -12,7 +12,8 @@ import pytest
 
 from exp2res.errors import ManagedOutputIncompleteError
 from exp2res.exports import managed
-from exp2res.services.privacy import locked_database_identity
+from exp2res.services.privacy import anchor_locked_database
+from exp2res.storage.workspace import writer_database
 
 from export_helpers import (
     assessment_graph,
@@ -414,36 +415,40 @@ def _plant_assessment_set(workspace: Path, entity_id: str) -> Path:
     return path
 
 
+def _replace_workspace(workspace: Path, tmp_path: Path, *, name: str) -> Path:
+    """Rename `workspace` aside and leave a bare replacement at its pathname."""
+
+    moved = tmp_path / name
+    shutil.move(str(workspace), str(moved))
+    (workspace / ".exp2res").mkdir(mode=0o700, parents=True)
+    (workspace / ".exp2res" / "exp2res.sqlite").write_bytes(b"")
+    return moved
+
+
 def test_a_replaced_workspace_reports_every_set_instead_of_removing_it(
     workspace: Path, tmp_path: Path
 ) -> None:
     """§13.14 rule 9: a foreign tree is reported, never cleaned.
 
-    The anchor is read while the pathname still holds this workspace's own
-    database, exactly as a caller does under its writer lock, and the tree is
-    then replaced beneath it.
+    The anchor is established while the pathname still holds this workspace's
+    own database, exactly as `writer_lock` does, and the tree is then replaced
+    beneath it.
     """
 
     snapshot_set = _plant_assessment_set(workspace, "snapshot_vera_0001")
     branch_set = _plant_branch_set(workspace, "branch_vera_0001")
-    identity = locked_database_identity(workspace)
-    assert identity is not None
-
-    replacement = tmp_path / "replacement"
-    shutil.move(str(workspace), str(replacement))
-    (workspace / ".exp2res").mkdir(mode=0o700, parents=True)
-    (workspace / ".exp2res" / "exp2res.sqlite").write_bytes(b"")
-    foreign_snapshot = _plant_assessment_set(workspace, "snapshot_vera_0001")
-    foreign_branch = _plant_branch_set(workspace, "branch_vera_0001")
 
     banked: list[str] = []
-    residuals = managed.remove_managed_sets_for_locked_database(
-        workspace,
-        expected_database=identity,
-        snapshot_ids=["snapshot_vera_0001"],
-        branch_ids=["branch_vera_0001"],
-        removed_ledger=banked,
-    )
+    with anchor_locked_database(workspace):
+        replacement = _replace_workspace(workspace, tmp_path, name="replacement")
+        foreign_snapshot = _plant_assessment_set(workspace, "snapshot_vera_0001")
+        foreign_branch = _plant_branch_set(workspace, "branch_vera_0001")
+        residuals = managed.remove_managed_sets_for_locked_database(
+            workspace,
+            snapshot_ids=["snapshot_vera_0001"],
+            branch_ids=["branch_vera_0001"],
+            removed_ledger=banked,
+        )
 
     assert residuals == (str(foreign_snapshot), str(foreign_branch))
     assert banked == []
@@ -453,17 +458,85 @@ def test_a_replaced_workspace_reports_every_set_instead_of_removing_it(
     assert branch_set == workspace / "out" / "branch" / "branch_vera_0001"
 
 
+def test_a_replacement_without_matching_sets_still_reports_them_all(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """Rule 9 reports the stale sets, not what the foreign pathname holds.
+
+    The replacement owns none of the selected IDs. Filtering the report by what
+    exists under the pathname would answer "nothing left to invalidate" about a
+    tree this command never wrote to, while the sets it actually stranded live
+    on in the renamed original.
+    """
+
+    _plant_assessment_set(workspace, "snapshot_vera_0001")
+    _plant_branch_set(workspace, "branch_vera_0001")
+
+    with anchor_locked_database(workspace):
+        moved = _replace_workspace(workspace, tmp_path, name="empty-replacement")
+        (workspace / "out" / "assessment").mkdir(mode=0o700, parents=True)
+        (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
+        residuals = managed.remove_managed_sets_for_locked_database(
+            workspace,
+            snapshot_ids=["snapshot_vera_0001"],
+            branch_ids=["branch_vera_0001"],
+        )
+
+    assert residuals == (
+        str(workspace / "out" / "assessment" / "snapshot_vera_0001"),
+        str(workspace / "out" / "branch" / "branch_vera_0001"),
+    )
+    assert (moved / "out" / "assessment" / "snapshot_vera_0001").is_dir()
+    assert (moved / "out" / "branch" / "branch_vera_0001").is_dir()
+
+
+def test_a_workspace_replaced_mid_pass_keeps_the_rest_of_the_sets(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """Rule 9 is re-asked per entry, not once for the whole pass.
+
+    The replacement lands after the first removal, so a single check at the
+    entry would authorize every later unlink against the foreign tree.
+    """
+
+    first = _plant_assessment_set(workspace, "snapshot_vera_0001")
+    _plant_assessment_set(workspace, "snapshot_vera_0002")
+    real_remove_entry = managed._remove_entry
+    moved: list[Path] = []
+
+    def replace_after_first(path: Path, out_root: Path) -> bool:
+        removed = real_remove_entry(path, out_root)
+        if not moved:
+            moved.append(_replace_workspace(workspace, tmp_path, name="mid-pass"))
+            _plant_assessment_set(workspace, "snapshot_vera_0002")
+        return removed
+
+    with anchor_locked_database(workspace):
+        managed._remove_entry = replace_after_first
+        try:
+            residuals = managed.remove_managed_sets_for_locked_database(
+                workspace, snapshot_ids=["snapshot_vera_0001", "snapshot_vera_0002"]
+            )
+        finally:
+            managed._remove_entry = real_remove_entry
+
+    assert residuals == (
+        str(workspace / "out" / "assessment" / "snapshot_vera_0002"),
+    )
+    assert not (moved[0] / "out" / "assessment" / "snapshot_vera_0001").exists()
+    assert first == workspace / "out" / "assessment" / "snapshot_vera_0001"
+    assert (workspace / "out" / "assessment" / "snapshot_vera_0002").is_dir()
+
+
 def test_an_anchor_that_was_never_established_removes_nothing(
     workspace: Path,
 ) -> None:
-    """Rule 9: an unreadable anchor is refusal, not permission."""
+    """Rule 9: an absent anchor is refusal, not permission."""
 
     planted = _plant_assessment_set(workspace, "snapshot_vera_0001")
 
     residuals = managed.remove_managed_sets_for_locked_database(
-        workspace,
-        expected_database=None,
-        snapshot_ids=["snapshot_vera_0001"],
+        workspace, snapshot_ids=["snapshot_vera_0001"]
     )
 
     assert residuals == (str(planted),)
@@ -477,14 +550,39 @@ def test_the_live_workspace_still_has_its_sets_removed(workspace: Path) -> None:
     branch_set = _plant_branch_set(workspace, "branch_vera_0001")
 
     banked: list[str] = []
-    residuals = managed.remove_managed_sets_for_locked_database(
-        workspace,
-        expected_database=locked_database_identity(workspace),
-        snapshot_ids=["snapshot_vera_0001"],
-        branch_ids=["branch_vera_0001"],
-        removed_ledger=banked,
-    )
+    with anchor_locked_database(workspace):
+        residuals = managed.remove_managed_sets_for_locked_database(
+            workspace,
+            snapshot_ids=["snapshot_vera_0001"],
+            branch_ids=["branch_vera_0001"],
+            removed_ledger=banked,
+        )
 
     assert residuals == ()
     assert banked == [str(snapshot_set), str(branch_set)]
     assert not snapshot_set.exists() and not branch_set.exists()
+
+
+def test_the_anchor_belongs_to_the_lock_not_to_the_cleanup_frame(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§13.14 rule 9 anchors where the §8.1 authority is acquired.
+
+    A stage handed an already-open connection reaches its cleanup a whole LLM
+    invocation after the lock was taken. An identity read there would describe
+    the replacement and authorize cleaning it, while every mutation stayed in
+    the original open database.
+    """
+
+    _plant_assessment_set(workspace, "snapshot_vera_0001")
+
+    with writer_database(workspace):
+        moved = _replace_workspace(workspace, tmp_path, name="after-acquisition")
+        foreign = _plant_assessment_set(workspace, "snapshot_vera_0001")
+        residuals = managed.remove_managed_sets_for_locked_database(
+            workspace, snapshot_ids=["snapshot_vera_0001"]
+        )
+
+    assert residuals == (str(foreign),)
+    assert foreign.is_dir()
+    assert (moved / "out" / "assessment" / "snapshot_vera_0001").is_dir()

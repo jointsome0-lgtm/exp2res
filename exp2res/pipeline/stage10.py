@@ -61,7 +61,6 @@ from exp2res.llm.resume_writer import (
 )
 from exp2res.llm.runner import CallBudgets, ContractRunner
 from exp2res.services.capture import new_id
-from exp2res.services.privacy import locked_database_identity
 from exp2res.storage.repository import (
     STAGE10_ANCHOR_ALLOWLIST,
     bullet_log_closure,
@@ -373,7 +372,6 @@ def run_bullet_generation(
         with writer_database(
             workspace, timeout_ms=timeout_ms, reconcile=True
         ) as connection:
-            database_identity = locked_database_identity(workspace)
             job_description = get_job_description(connection, job_description_id)
             if job_description is None:
                 raise SelectorNotFoundError()
@@ -637,7 +635,6 @@ def run_bullet_generation(
                 # so cleanup failure or interruption never rolls it back.
                 residual_paths = remove_managed_sets_for_locked_database(
                     workspace,
-                    expected_database=database_identity,
                     branch_ids=replaced.branch_ids,
                     removed_ledger=cleaned_sets,
                 )
