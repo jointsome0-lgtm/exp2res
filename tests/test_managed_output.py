@@ -1002,3 +1002,38 @@ def test_the_preamble_creates_no_parents_in_a_replacement(
     assert unproven == list(residuals)
     assert list((workspace / "out").iterdir()) == []
     assert not (moved[0] / "out" / "assessment").exists()
+
+
+def test_a_candidate_half_written_when_the_workspace_changes_hands(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every member write reopens the candidate through its absolute path.
+
+    One check before the first write authorizes a pass that spans the whole
+    set, so the remaining members would land in a replacement holding the same
+    candidate name — and the cleanup would then recurse into that foreign tree
+    instead of reporting the half-written set it actually left behind.
+    """
+
+    graph = assessment_graph(all_sections=False)
+    real_write = managed._write_private_file
+    moved: list[Path] = []
+
+    def write_then_replace(path: Path, data: bytes, out_root: Path) -> None:
+        real_write(path, data, out_root)
+        if not moved:
+            moved.append(_replace_workspace(workspace, tmp_path, name="mid-candidate"))
+            (workspace / "out" / "assessment").mkdir(mode=0o700, parents=True)
+            (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
+
+    monkeypatch.setattr(managed, "_write_private_file", write_then_replace)
+
+    with anchor_locked_database(workspace):
+        with pytest.raises(ManagedOutputIncompleteError) as caught:
+            managed.publish_assessment(workspace, graph, clock=lambda: NOW)
+
+    stranded = Path(caught.value.residual_paths[0])
+    assert stranded.name.startswith(".exp2res-candidate-")
+    assert list((workspace / "out" / "assessment").iterdir()) == []
+    surviving = list((moved[0] / "out" / "assessment").glob(".exp2res-candidate-*"))
+    assert [path.name for path in surviving] == [stranded.name]

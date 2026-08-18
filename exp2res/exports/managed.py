@@ -1369,25 +1369,46 @@ def _build_candidate(
     members: dict[str, bytes],
     manifest: AssessmentManifest | ResumeManifest,
     member_names: tuple[str, ...],
+    still_live: Callable[[], bool] | None = None,
 ) -> Path:
+    """Write one complete candidate set, bound to the locked database.
+
+    Every member write reopens the candidate through its absolute path, so a
+    single check before the first one authorizes the rest of a pass that spans
+    the whole set: the later writes would land in a replacement holding the
+    same candidate name, and the cleanup below would then recursively remove a
+    directory in that foreign tree. Its own removal is bound for the same
+    reason, and refuses rather than reaching there.
+    """
+
+    def require_live(residual: Path) -> None:
+        if still_live is not None and not still_live():
+            raise ManagedOutputIncompleteError((str(residual),))
+
     candidate = parent / f".exp2res-candidate-{entity_id}-{secrets.token_hex(16)}"
     try:
+        require_live(out_root)
         _mkdir_private(candidate, out_root)
     except BaseException:
-        if _lstat(candidate) is not None and not _remove_tree(candidate, out_root):
+        if _lstat(candidate) is not None and not _remove_tree(
+            candidate, out_root, still_live
+        ):
             raise ManagedOutputIncompleteError((str(candidate),)) from None
         raise
     try:
         for name in sorted(member_names, key=fs_id_key):
+            require_live(candidate)
             _write_private_file(candidate / name, members[name], out_root)
+        require_live(candidate)
         _write_private_file(candidate / "manifest.json", manifest_bytes(manifest), out_root)
         if _inspect_set(candidate, parent, out_root) != manifest:
             raise IntegrityFailureError("candidate_manifest_validation_failed")
         _fsync_directory(candidate, out_root)
         _fsync_directory(parent, out_root)
+        require_live(candidate)
         return candidate
     except BaseException:
-        _candidate_cleanup(candidate, out_root)
+        _candidate_cleanup(candidate, out_root, still_live)
         raise
 
 
@@ -1532,9 +1553,14 @@ def _publish_set(
         if still_live is not None and not still_live():
             raise ManagedOutputIncompleteError((str(residual),))
 
-    require_live(out_root)
     candidate = _build_candidate(
-        parent, out_root, entity_id, members, candidate_manifest, member_names
+        parent,
+        out_root,
+        entity_id,
+        members,
+        candidate_manifest,
+        member_names,
+        still_live=still_live,
     )
     final_path = parent / entity_id
     rollback: Path | None = None
