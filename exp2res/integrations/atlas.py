@@ -156,13 +156,19 @@ def raw_identity(raw: Mapping[str, Any]) -> Optional[str]:
 
 
 def check(record: AtlasRecord, raw: Mapping[str, Any]) -> None:
-    """Require every accepted structured value byte-exactly in `text`.
+    """Require §19.2's fidelity list byte-exactly in `text`.
 
     The adapter's `text` is the authoritative complete source rendering, so
-    the persisted projection carries each accepted value rather than only
-    its hash. Bounds and `as_of` are compared as their exact accepted input
-    strings: two spellings of one instant validate to the same datetime and
-    hash alike, but only the supplied one can appear in the source text.
+    what the list names the persisted projection carries in full rather than
+    only as a hash. Bounds and `as_of` are compared as their exact accepted
+    input strings: two spellings of one instant validate to the same datetime
+    and hash alike, but only the supplied one can appear in the source text.
+
+    The snapshot-wide `occurred` is on the list beside the trail segments'.
+    It is the placement that governs the record — it maps unchanged to
+    `RawLog.occurred` — so checking a segment's bounds while leaving the
+    record's own unchecked would verify the narrower value and trust the
+    wider one.
     """
 
     required: list[str] = [record.summary]
@@ -181,6 +187,12 @@ def check(record: AtlasRecord, raw: Mapping[str, Any]) -> None:
         reference.reference for reference in record.evidence_references
     )
     required.append(raw["as_of"])
+    raw_snapshot = raw["occurred"]
+    for bound in ("start", "end"):
+        supplied = raw_snapshot.get(bound)
+        if supplied is not None:
+            required.append(supplied)
+    required.extend((record.occurred.precision, record.occurred.confidence))
     for value in required:
         if value not in record.text:
             raise RecordRejected("atlas_text_fidelity")

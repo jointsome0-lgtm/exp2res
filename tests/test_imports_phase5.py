@@ -923,6 +923,17 @@ def test_atlas_snapshot_round_trip_creates_one_pair_and_no_claim(
             {"evidence_references": [{"reference": "atlas:evidence:absent"}]},
         ),
         ("as-of-not-in-text", {"as_of": "2026-07-14T21:00:00+03:00"}),
+        (
+            "snapshot-bound-not-in-text",
+            {
+                "occurred": {
+                    "start": "2026-06-01T00:00:00+02:00",
+                    "end": ATLAS_END,
+                    "precision": "date_range",
+                    "confidence": "high",
+                }
+            },
+        ),
     ],
 )
 def test_atlas_text_fidelity_failures_are_invalid_acquisition(
@@ -934,6 +945,35 @@ def test_atlas_text_fidelity_failures_are_invalid_acquisition(
 
     assert counts(outcome) == (0, 0, 1)
     assert raw_rows(workspace) == []
+
+
+def test_a_snapshot_wider_than_its_trail_is_accepted_when_the_text_says_so(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§19.2's snapshot-wide bullet is satisfiable, not merely restrictive.
+
+    The snapshot may legitimately span more than any segment; what the rule
+    requires is that the source text render the wider bounds it claims.
+    """
+
+    earlier = "2026-06-01T00:00:00+02:00"
+    payload = write_payload(
+        tmp_path,
+        "wide-snapshot.json",
+        atlas_record(
+            occurred={
+                "start": earlier,
+                "end": ATLAS_END,
+                "precision": "date_range",
+                "confidence": "high",
+            },
+            text=f"{ATLAS_TEXT} Snapshot span: {earlier} to {ATLAS_END}.",
+        ),
+    )
+    outcome = run_import(workspace, "atlas", payload)
+
+    assert counts(outcome) == (1, 0, 0)
+    assert raw_rows(workspace)[0]["occurred_start"] == earlier
 
 
 @pytest.mark.parametrize(
