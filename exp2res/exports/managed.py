@@ -958,6 +958,12 @@ def _remove_managed_sets(
         return tuple(str(parent / entity_id) for entity_id in selected)
     try:
         if _lstat(parent) is None:
+            # Absence is proof of a finished cleanup only in the tree this
+            # pass is bound to. An empty replacement makes the parent read as
+            # absent while every selected set survives in the tree the caller
+            # committed to, which this would otherwise report as complete.
+            if not live():
+                return tuple(str(parent / entity_id) for entity_id in selected)
             return ()
         _validate_existing_path(parent, out_root, directory=True)
     except OSError:
@@ -978,6 +984,11 @@ def _remove_managed_sets(
             break
         try:
             if _lstat(path) is None:
+                # Same reading as the absent parent above: an entry missing
+                # from a replacement says nothing about the one this pass was
+                # bound to remove.
+                if not live():
+                    residuals.add(str(path))
                 continue
             removed = _remove_entry(path, out_root, still_live)
         except OSError:
@@ -1114,7 +1125,7 @@ def remove_managed_sets_for_locked_database(
         )
         report_unproven_residual(stranded)
         return stranded
-    return (
+    residuals = (
         *remove_assessment_sets(
             workspace,
             snapshot_ids,
@@ -1128,6 +1139,15 @@ def remove_managed_sets_for_locked_database(
             still_live=still_live,
         ),
     )
+    if residuals and not still_live():
+        # The identity held at the entry and failed somewhere inside the pass,
+        # so these paths are the mismatch arm's reports arriving one frame
+        # later. They travel the same unwithdrawable channel: the pathname now
+        # reaches a workspace this command never wrote to, and §14.14 rule 4's
+        # existence re-check would otherwise drop every one of them for being
+        # absent there.
+        report_unproven_residual(residuals)
+    return residuals
 
 
 def remove_all_managed_output_entries(workspace: Path) -> tuple[str, ...]:
@@ -1476,6 +1496,20 @@ def _publish_set(
     assessment set and a bullet pack.
     """
 
+    def require_live(residual: Path) -> None:
+        """Refuse the next mutation unless §13.14 rule 9's binding still holds.
+
+        The gate at the entry point cannot carry the whole protocol: a
+        first-time export has no prior set and no rollback, so every removal
+        that consults the predicate is skipped and the candidate would be
+        written and made visible in a replacement without a second question.
+        Each step that writes to the pathname therefore asks again.
+        """
+
+        if still_live is not None and not still_live():
+            raise ManagedOutputIncompleteError((str(residual),))
+
+    require_live(out_root)
     candidate = _build_candidate(
         parent, out_root, entity_id, members, candidate_manifest, member_names
     )
@@ -1508,6 +1542,7 @@ def _publish_set(
             rollback = parent / (
                 f".exp2res-rollback-{entity_id}-{secrets.token_hex(16)}"
             )
+            require_live(candidate)
             try:
                 _rename(final_path, rollback)
                 _fsync_directory(parent, out_root)
@@ -1520,6 +1555,7 @@ def _publish_set(
                     except BaseException:
                         raise ManagedOutputIncompleteError((str(rollback),)) from None
                 raise
+        require_live(candidate)
         try:
             _rename(candidate, final_path)
             published = True

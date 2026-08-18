@@ -39,6 +39,22 @@ def vacuum_residuals(
 DATABASE_NAME = "exp2res.sqlite"
 
 
+def locked_database_identity_at(marker_fd: int) -> os.stat_result | None:
+    """Read the identity of the database this open `.exp2res` entry holds.
+
+    Taking the identity through a descriptor rather than a pathname is what
+    lets `writer_lock` anchor the workspace it actually locked: the lock file
+    and the database are opened through one `.exp2res` entry, so a workspace
+    renamed and replaced between the two cannot substitute one for the other.
+    """
+
+    try:
+        current = os.stat(DATABASE_NAME, dir_fd=marker_fd, follow_symlinks=False)
+    except OSError:
+        return None
+    return current if stat.S_ISREG(current.st_mode) else None
+
+
 def locked_database_identity(workspace: Path) -> os.stat_result | None:
     """Read the identity of the database this pathname currently holds.
 
@@ -69,11 +85,9 @@ def locked_database_identity(workspace: Path) -> os.stat_result | None:
     try:
         workspace_fd = os.open(workspace, directory_flags | no_follow)
         marker_fd = os.open(".exp2res", directory_flags | no_follow, dir_fd=workspace_fd)
-        current = os.stat(DATABASE_NAME, dir_fd=marker_fd, follow_symlinks=False)
+        return locked_database_identity_at(marker_fd)
     except OSError:
         return None
-    else:
-        return current if stat.S_ISREG(current.st_mode) else None
     finally:
         for descriptor in (marker_fd, workspace_fd):
             if descriptor is not None:
@@ -106,7 +120,24 @@ def anchor_locked_database(workspace: Path) -> Iterator[None]:
     belongs to is exactly the removal the rule exists to stop.
     """
 
-    token = _LOCKED_DATABASE_IDENTITY.set(locked_database_identity(workspace))
+    with anchor_locked_database_identity(locked_database_identity(workspace)):
+        yield
+
+
+@contextmanager
+def anchor_locked_database_identity(
+    identity: os.stat_result | None,
+) -> Iterator[None]:
+    """Anchor an identity the caller already read through its own descriptor.
+
+    `writer_lock` reads the database beside the lock file it holds rather than
+    beside the pathname it was given. A workspace renamed and replaced between
+    the lock and this anchor would otherwise install the replacement's database
+    as the identity every later check compares against, so the replacement
+    would answer "still live" to a command holding none of its authority.
+    """
+
+    token = _LOCKED_DATABASE_IDENTITY.set(identity)
     try:
         yield
     finally:
@@ -267,6 +298,24 @@ def purge_managed_backups(
                 return False
             return (named.st_dev, named.st_ino) == (opened.st_dev, opened.st_ino)
 
+        def workspace_is_named() -> bool:
+            """Answer whether the workspace pathname still names this root.
+
+            The chain below matches each level back to its parent, and the
+            topmost level has no parent descriptor to be matched against — so
+            a rename of the workspace root itself is invisible to it. Every
+            path this function reports is built from the pathname, so without
+            this the pass would unlink the detached original store while
+            naming files in the untouched replacement.
+            """
+
+            try:
+                named = os.stat(workspace, follow_symlinks=False)
+                opened = os.fstat(workspace_fd)
+            except OSError:
+                return False
+            return (named.st_dev, named.st_ino) == (opened.st_dev, opened.st_ino)
+
         def root_is_live() -> bool:
             """Answer whether the open descriptors still are the live store.
 
@@ -282,7 +331,8 @@ def purge_managed_backups(
             """
 
             return (
-                _same_entry(".exp2res", workspace_fd, marker_fd)
+                workspace_is_named()
+                and _same_entry(".exp2res", workspace_fd, marker_fd)
                 and _same_entry("backup", marker_fd, backup_fd)
                 and database_is_live()
             )
@@ -342,21 +392,21 @@ def purge_managed_backups(
                     refused.append(managed_path)
                     break
                 os.unlink(entry.name, dir_fd=backup_fd)
+                # A removal is only durable once the directory entry itself is
+                # flushed: the database deletion commits right after this call,
+                # so a crash in between could otherwise leave a backup holding
+                # the purged vacancy while the envelope claims it was removed.
+                # The flush precedes the ledger rather than closing the loop,
+                # because the ledger is what a cancellation mid-pass reports as
+                # durable effect (§14.14 rule 6) and a cancellation arriving
+                # during a closing flush would publish unflushed unlinks. A
+                # failed flush is reported rather than assumed (§13.13 rule 6).
+                os.fsync(backup_fd)
                 removed.append(managed_path)
                 if removed_ledger is not None:
                     removed_ledger.append(managed_path)
             except OSError:
                 refused.append(managed_path)
-        if removed:
-            # A removal is only durable once the directory entry itself is
-            # flushed: the database deletion commits right after this call, so
-            # a crash in between could otherwise leave a backup holding the
-            # purged vacancy while the envelope claims it was removed. A
-            # failed flush is reported rather than assumed (§13.13 rule 6).
-            try:
-                os.fsync(backup_fd)
-            except OSError:
-                refused.append(str(backup_root.absolute()))
         # POSIX unlinks by name, so no removal is atomic with the `stat` that
         # classified it: a concurrent rename or recreation can leave a file
         # under a name this pass already visited. Completeness is therefore

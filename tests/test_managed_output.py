@@ -12,7 +12,9 @@ import pytest
 
 from exp2res.errors import ManagedOutputIncompleteError
 from exp2res.exports import managed
+import exp2res.services.privacy as privacy_service
 from exp2res.services.privacy import anchor_locked_database, remove_managed_backups
+import exp2res.storage.workspace as workspace_module
 from exp2res.storage.workspace import writer_database
 
 from export_helpers import (
@@ -807,3 +809,160 @@ def test_the_anchor_belongs_to_the_lock_not_to_the_cleanup_frame(
     assert residuals == (str(foreign),)
     assert foreign.is_dir()
     assert (moved / "out" / "assessment" / "snapshot_vera_0001").is_dir()
+
+
+def test_the_anchor_is_read_beside_the_lock_not_through_the_pathname(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§8.1 rule 30: the identity comes from the entry the lock was taken on.
+
+    A replacement landing between the lock and the anchor would otherwise be
+    installed as the identity every later check trusts, so the workspace whose
+    authority this command never acquired would answer "still live" to it.
+    """
+
+    _plant_assessment_set(workspace, "snapshot_vera_0001")
+    real_flock = workspace_module.fcntl.flock
+    swapped: list[Path] = []
+
+    def flock_then_replace(descriptor: int, operation: int) -> None:
+        real_flock(descriptor, operation)
+        if not swapped:
+            swapped.append(_replace_workspace(workspace, tmp_path, name="mid-lock"))
+
+    monkeypatch.setattr(workspace_module.fcntl, "flock", flock_then_replace)
+
+    with workspace_module.writer_lock(workspace):
+        foreign = _plant_assessment_set(workspace, "snapshot_vera_0001")
+        residuals = managed.remove_managed_sets_for_locked_database(
+            workspace, snapshot_ids=["snapshot_vera_0001"]
+        )
+
+    assert residuals == (str(foreign),)
+    assert foreign.is_dir()
+    assert (swapped[0] / "out" / "assessment" / "snapshot_vera_0001").is_dir()
+
+
+def test_a_first_time_publication_is_bound_after_its_entry_gate(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule 9 reaches the candidate and its promotion, not only the cleanups.
+
+    A first-time export has no prior set and no rollback, so every removal that
+    consults the predicate is skipped: without a check of its own, the pass
+    would write the candidate and rename it into the replacement and report a
+    successful export assembled from the original database.
+    """
+
+    graph = assessment_graph(all_sections=False)
+    real_parents = managed._ensure_managed_parents
+    moved: list[Path] = []
+
+    def parents_then_replace(target: Path):
+        roots = real_parents(target)
+        moved.append(_replace_workspace(workspace, tmp_path, name="after-gate"))
+        (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
+        (workspace / "out" / "assessment").mkdir(mode=0o700, parents=True)
+        return roots
+
+    monkeypatch.setattr(managed, "_ensure_managed_parents", parents_then_replace)
+
+    with anchor_locked_database(workspace):
+        with pytest.raises(ManagedOutputIncompleteError):
+            managed.publish_assessment(workspace, graph, clock=lambda: NOW)
+
+    assert list((workspace / "out" / "assessment").iterdir()) == []
+    assert not (moved[0] / "out" / "assessment" / graph.snapshot.value.id).exists()
+
+
+def test_an_absent_parent_in_a_replacement_is_not_a_finished_cleanup(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """Absence proves a removal only in the tree the pass is bound to.
+
+    An empty replacement makes the managed parent read as absent, which the
+    selective helper would otherwise report as nothing left to clean while
+    every selected set survives in the tree the caller committed to.
+    """
+
+    planted = _plant_assessment_set(workspace, "snapshot_vera_0001")
+
+    with anchor_locked_database(workspace):
+        moved = _replace_workspace(workspace, tmp_path, name="empty-replacement")
+        residuals = managed.remove_managed_sets_for_locked_database(
+            workspace, snapshot_ids=["snapshot_vera_0001"]
+        )
+
+    assert residuals == (str(workspace / "out" / "assessment" / "snapshot_vera_0001"),)
+    assert (moved / "out" / "assessment" / "snapshot_vera_0001").is_dir()
+    assert not planted.exists()
+
+
+def test_a_backup_purge_notices_the_workspace_root_changing_hands(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The purge chain matches each level to its parent; the root has none.
+
+    Every path it reports is built from the pathname, so a rename of the
+    workspace root itself would leave it unlinking the detached original store
+    while naming files in the untouched replacement.
+    """
+
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, parents=True)
+    (backup_root / "pre-migration.sqlite").write_bytes(b"")
+    real_scandir = privacy_service.os.scandir
+    moved: list[Path] = []
+
+    def scandir_then_replace(descriptor):
+        if not moved:
+            moved.append(_replace_workspace(workspace, tmp_path, name="root-renamed"))
+        return real_scandir(descriptor)
+
+    with anchor_locked_database(workspace):
+        monkeypatch.setattr(privacy_service.os, "scandir", scandir_then_replace)
+        removed, residuals = privacy_service.purge_managed_backups(
+            workspace,
+            expected_database=privacy_service.locked_database_anchor(),
+        )
+
+    assert removed == ()
+    assert residuals == (str(backup_root.absolute()),)
+    assert (moved[0] / ".exp2res" / "backup" / "pre-migration.sqlite").is_file()
+
+
+def test_a_mismatch_arriving_mid_pass_reports_through_the_unproven_channel(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """A late mismatch reports like an early one, not like an ordinary residual.
+
+    The entry check held, so these paths leave by the ordinary return. They
+    still name a workspace the command never wrote to, and §14.14 rule 4's
+    existence re-check would drop every one of them for being absent there.
+    """
+
+    _plant_assessment_set(workspace, "snapshot_vera_0001")
+    _plant_assessment_set(workspace, "snapshot_vera_0002")
+    real_remove_entry = managed._remove_entry
+    moved: list[Path] = []
+
+    def replace_after_first(path: Path, out_root: Path, still_live=None) -> bool:
+        removed = real_remove_entry(path, out_root, still_live)
+        if not moved:
+            moved.append(_replace_workspace(workspace, tmp_path, name="late-mismatch"))
+        return removed
+
+    unproven: list[str] = []
+    with anchor_locked_database(workspace):
+        with privacy_service.collect_unproven_residuals(unproven):
+            managed._remove_entry = replace_after_first
+            try:
+                residuals = managed.remove_managed_sets_for_locked_database(
+                    workspace, snapshot_ids=["snapshot_vera_0001", "snapshot_vera_0002"]
+                )
+            finally:
+                managed._remove_entry = real_remove_entry
+
+    assert residuals
+    assert set(unproven) == set(residuals)
+    assert not (workspace / "out").exists()

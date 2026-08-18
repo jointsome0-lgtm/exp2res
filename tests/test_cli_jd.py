@@ -912,7 +912,11 @@ def test_human_listing_keeps_one_job_description_on_one_line(
 def test_a_backup_directory_flush_failure_is_reported_as_residual(
     workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§13.13 rule 6: an unproven durable removal is residual, not success."""
+    """§13.13 rule 6: an unproven durable removal is residual, not success.
+
+    The flush precedes the ledger, so the backup whose removal it could not
+    prove is named individually rather than the whole store standing in for it.
+    """
 
     _result, added = add_job_description(workspace, tmp_path, monkeypatch)
     job_description_id = added["affected_ids"]["created"][0]["ids"][0]
@@ -931,7 +935,10 @@ def test_a_backup_directory_flush_failure_is_reported_as_residual(
 
     assert result.exit_code == 8
     assert envelope["diagnostic_class"] == "deletion_incomplete"
-    assert envelope["residual_paths"] == [str(backup_root.absolute())]
+    assert envelope["residual_paths"] == [
+        str((backup_root / "pre-migration.sqlite").absolute())
+    ]
+    assert envelope["result"]["removed_managed_paths"] == []
 
 
 def test_a_backup_replaced_by_a_fifo_is_skipped_without_blocking(

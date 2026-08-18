@@ -26,7 +26,10 @@ from exp2res.errors import (
     WorkspaceBusyError,
     WorkspaceError,
 )
-from exp2res.services.privacy import anchor_locked_database
+from exp2res.services.privacy import (
+    anchor_locked_database_identity,
+    locked_database_identity_at,
+)
 
 from .schema import (
     SCHEMA_V12_SQL,
@@ -819,9 +822,14 @@ def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -
     flags = os.O_RDWR
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    marker_fd: int | None = None
     try:
-        descriptor = os.open(lock_path, flags)
+        marker_fd = os.open(workspace / ".exp2res", directory_flags)
+        descriptor = os.open("lock", flags, dir_fd=marker_fd)
     except OSError as error:
+        if marker_fd is not None:
+            os.close(marker_fd)
         raise SchemaCompatibilityError() from error
     deadline = time.monotonic() + max(timeout_ms, 0) / 1000
     try:
@@ -837,10 +845,17 @@ def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -
         # that a cleanup running many frames below — after a whole LLM
         # invocation, in the §13 stages — compares against the workspace this
         # lock was taken on rather than against whatever the pathname reaches
-        # by then.
-        with anchor_locked_database(workspace):
+        # by then. It is read beside the lock file just acquired, not through
+        # the pathname again: a replacement landing between the two would
+        # otherwise be installed as the identity every later check trusts.
+        identity = locked_database_identity_at(marker_fd)
+        os.close(marker_fd)
+        marker_fd = None
+        with anchor_locked_database_identity(identity):
             yield
     finally:
+        if marker_fd is not None:
+            os.close(marker_fd)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
         finally:
