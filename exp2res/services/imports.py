@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from exp2res.domain.results import (
     AffectedIds,
+    carry_committed,
     ImportCounts,
     ImportRecordGroups,
     ImportRecordResult,
@@ -43,6 +44,7 @@ from exp2res.pipeline.stage1 import persist_manual_capture
 from exp2res.services.capture import (
     Clock,
     IdFactory,
+    capture_outcome,
     new_id,
     validate_project_label,
 )
@@ -422,14 +424,21 @@ def import_design_document(
             )
         except (ValidationError, ValueError, TypeError) as error:
             raise ImportDocumentInvalidError() from error
+        bundle = RawLogBundle(raw_log, evidence_items)
         try:
             persist_manual_capture(
                 workspace,
                 raw_log=raw_log,
                 evidence_items=evidence_items,
                 timeout_ms=timeout_ms,
+                # §14.5 shares §14.2's record shape, so it owes §14.14 rule 6
+                # the same report: the pair is durable and the retry the owner
+                # would make against an empty cancellation would duplicate it.
+                on_committed=lambda error: carry_committed(
+                    error, capture_outcome(bundle)
+                ),
             )
-            return RawLogBundle(raw_log, evidence_items)
+            return bundle
         except IdCollisionError as error:
             last_collision = error
             continue

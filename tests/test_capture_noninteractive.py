@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
+import signal
 import sqlite3
 
 import pytest
@@ -520,16 +522,27 @@ def test_an_interrupt_between_the_commit_and_the_return_names_the_pair(
     assert [log.id for log in stored] == created["raw_log"]
 
 
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
 def test_an_interrupt_while_the_envelope_is_assembled_names_the_pair(
     workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The narrowest window: committed, returned, not yet reported."""
+    """The narrowest window: committed, returned, not yet reported.
+
+    A real SIGINT, not a raised object: the hand-off from the returned bundle
+    to the outcome is one bytecode, so only refusing delivery closes it. The
+    signal is held, the envelope is built, and the command still ends
+    cancelled.
+    """
 
     source = tmp_path / "Vera Example retro.md"
     source.write_bytes(b"Vera Example committed before assembly.\n")
+    real_outcome = cli_module.capture_outcome
 
     def interrupt_before_reporting(bundle):
-        raise KeyboardInterrupt()
+        os.kill(os.getpid(), signal.SIGINT)
+        return real_outcome(bundle)
 
     monkeypatch.setattr(cli_module, "capture_outcome", interrupt_before_reporting)
     result, envelope = invoke_json(
@@ -587,6 +600,84 @@ def test_an_interrupted_gap_answer_names_the_pair_it_committed(
     assert {log.id for log in list_logs(workspace)} - before == set(created["raw_log"])
 
 
+class _CommitThenInterrupt:
+    """A connection whose `commit()` succeeds and then does not return."""
+
+    def __init__(self, connection, *, durable: bool) -> None:
+        self._connection = connection
+        self._durable = durable
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def commit(self) -> None:
+        if self._durable:
+            self._connection.commit()
+        raise KeyboardInterrupt()
+
+
+@contextmanager
+def _interrupting_writer(real, *, durable: bool):
+    @contextmanager
+    def opened(*args, **kwargs):
+        with real(*args, **kwargs) as connection:
+            yield _CommitThenInterrupt(connection, durable=durable)
+
+    yield opened
+
+
+def test_a_commit_that_does_not_return_reports_the_row_it_stored(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§14.14 rule 6 asks the database, not the assignment after `commit()`.
+
+    SQLite can make a transaction durable and then fail to return, so a flag
+    set on the next line answers the wrong question: the capture would roll
+    back nothing and report nothing while the pair stands.
+    """
+
+    source = tmp_path / "Vera Example durable.md"
+    source.write_bytes(b"Vera Example committed without returning.\n")
+    before = {log.id for log in list_logs(workspace)}
+    with _interrupting_writer(stage1_module.writer_database, durable=True) as opened:
+        monkeypatch.setattr(stage1_module, "writer_database", opened)
+        result, envelope = invoke_json(
+            workspace, ["log", "today", "--file", str(source)]
+        )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    created = _committed_pair(envelope)
+    assert {log.id for log in list_logs(workspace)} - before == set(created["raw_log"])
+
+
+def test_a_gap_answer_whose_commit_never_ran_names_nothing(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The converse for the form that commits its own transaction.
+
+    The transaction is still open, so the handler below rolls it back. Naming
+    its intended IDs would send the owner reconciling against rows that never
+    existed.
+    """
+
+    gap_id = seed_gap(workspace, monkeypatch)
+    before = {log.id for log in list_logs(workspace)}
+    source = tmp_path / "Vera Example uncommitted answer.md"
+    source.write_bytes(b"Vera Example answered nothing.\n")
+    with _interrupting_writer(capture_service.writer_database, durable=False) as opened:
+        monkeypatch.setattr(capture_service, "writer_database", opened)
+        result, envelope = invoke_json(
+            workspace,
+            ["gaps", "answer", "--gap-id", gap_id, "--file", str(source)],
+        )
+    monkeypatch.undo()
+
+    assert result.exit_code == 9
+    assert envelope["affected_ids"]["created"] == []
+    assert {log.id for log in list_logs(workspace)} == before
+
+
 def test_a_capture_interrupted_before_its_commit_names_nothing(
     workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -598,9 +689,6 @@ def test_a_capture_interrupted_before_its_commit_names_nothing(
 
     source = tmp_path / "Vera Example rolled back.md"
     source.write_bytes(b"Vera Example never committed.\n")
-
-    def interrupt_inside_the_transaction() -> None:
-        raise KeyboardInterrupt()
 
     result, envelope = invoke_json(
         workspace, ["log", "today", "--file", str(source)]

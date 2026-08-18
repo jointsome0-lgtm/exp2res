@@ -73,13 +73,13 @@ from exp2res.errors import (
     SelectorNotFoundError,
     SnapshotNotCurrentError,
 )
+from exp2res.services.interrupts import interrupt_pending, resume_interrupt
 from exp2res.services.capture import (
     capture_daily,
     capture_daily_file,
     capture_gap_answer,
     capture_gap_answer_file,
     capture_outcome,
-    report_capture,
     capture_retro,
     capture_retro_file,
     validate_gap_answer_selection,
@@ -467,16 +467,24 @@ def _run_command(
     with _interrupt_disposition_restored():
         if interrupt is not None and threading.current_thread() is threading.main_thread():
             signal.signal(signal.SIGINT, handle_interrupt)
-        _run_operation(
-            context,
-            command,
-            operation,
-            init_command=init_command,
-            interruption_observed=(
-                interruption_observed.is_set if interrupt is not None else None
-            ),
-            startup_active=startup_active if interrupt is not None else None,
-        )
+        try:
+            _run_operation(
+                context,
+                command,
+                operation,
+                init_command=init_command,
+                interruption_observed=(
+                    interruption_observed.is_set if interrupt is not None else None
+                ),
+                startup_active=startup_active if interrupt is not None else None,
+            )
+        finally:
+            # The deferral is released only here, once the envelope has been
+            # emitted: releasing it earlier would let the held signal discard
+            # the very report §14.14 rule 6 armed it to protect. A deferral
+            # that outlived its command would make the next one
+            # uninterruptible, so this runs on every exit.
+            resume_interrupt()
 
 
 # §14.15/§14.16 name `deletion_incomplete` as the residual class for these
@@ -526,6 +534,14 @@ def _run_operation(
             with collect_preamble_residuals(preamble_residuals):
                 with collect_unproven_residuals(unproven_residuals):
                     outcome = operation(workspace, controls)
+            if interrupt_pending():
+                # §14.14 rule 6: the interrupt arrived while a committed effect
+                # was being turned into this envelope. The report is complete,
+                # so the cancellation is a classification rather than an
+                # unwind — there is nothing left to undo.
+                outcome = replace(
+                    outcome, exit_code=9, diagnostic_class="cancelled"
+                )
         except Exception as error:
             if interruption_observed is not None and interruption_observed():
                 outcome = _cancelled_outcome(error)
@@ -911,26 +927,28 @@ def log_today(
         artifact_values = tuple(artifacts or ())
         validate_artifact_locator_count(artifact_values)
         if source_file is not None:
-            bundle = capture_daily_file(
-                workspace,
-                source_path=source_file,
-                project=project,
-                artifacts=artifact_values,
+            return capture_outcome(
+                capture_daily_file(
+                    workspace,
+                    source_path=source_file,
+                    project=project,
+                    artifacts=artifact_values,
+                )
             )
-            return report_capture(bundle, lambda: capture_outcome(bundle))
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
         require_compatible(workspace)
         # Fail closed on the local-time contract before collecting owner text.
         workspace_zone(require_timezone(load_workspace_config(workspace)))
         raw_text = typer.prompt("Describe what happened", err=True)
-        bundle = capture_daily(
-            workspace,
-            raw_text=raw_text,
-            project=project,
-            artifacts=artifact_values,
+        return capture_outcome(
+            capture_daily(
+                workspace,
+                raw_text=raw_text,
+                project=project,
+                artifacts=artifact_values,
+            )
         )
-        return report_capture(bundle, lambda: capture_outcome(bundle))
 
     _run_command(context, "log today", operation)
 
@@ -959,14 +977,15 @@ def log_retro(
                 confidence=cast(TemporalConfidence, confidence),
                 timezone_name=timezone_name,
             )
-            bundle = capture_retro_file(
-                workspace,
-                source_path=source_file,
-                occurred=occurred,
-                project=project,
-                artifacts=artifact_values,
+            return capture_outcome(
+                capture_retro_file(
+                    workspace,
+                    source_path=source_file,
+                    occurred=occurred,
+                    project=project,
+                    artifacts=artifact_values,
+                )
             )
-            return report_capture(bundle, lambda: capture_outcome(bundle))
         if _noninteractive(controls):
             raise NonInteractiveInputRequired()
         require_compatible(workspace)
@@ -1007,14 +1026,15 @@ def log_retro(
             confidence=cast(TemporalConfidence, confidence_value),
             timezone_name=timezone_name,
         )
-        bundle = capture_retro(
-            workspace,
-            occurred=occurred,
-            raw_text=raw_text,
-            project=project_value,
-            artifacts=artifact_values,
+        return capture_outcome(
+            capture_retro(
+                workspace,
+                occurred=occurred,
+                raw_text=raw_text,
+                project=project_value,
+                artifacts=artifact_values,
+            )
         )
-        return report_capture(bundle, lambda: capture_outcome(bundle))
 
     _run_command(context, "log retro", operation)
 
@@ -1391,10 +1411,11 @@ def import_file(
     # reports `result = null` with its created IDs in `affected_ids`, exactly
     # as the §14.2 captures whose record shape it shares do.
     def operation(workspace: Path, _controls: Controls) -> Outcome:
-        bundle = import_design_document(
-            workspace, source_path=source_path, project=project
+        return capture_outcome(
+            import_design_document(
+                workspace, source_path=source_path, project=project
+            )
         )
-        return report_capture(bundle, lambda: capture_outcome(bundle))
 
     _run_command(context, "import file", operation)
 
@@ -1711,19 +1732,16 @@ def gaps_answer(
         # §13/§14.7: capture removed every current snapshot's assessment set
         # after commit. It supersedes no snapshot and reports no §13.13 rule 9
         # regeneration command — the view needs re-export, not regeneration.
-        return report_capture(
-            bundle,
-            lambda: Outcome(
-                affected_ids=AffectedIds.of(
-                    created=(
-                        ("evidence_item", evidence_ids),
-                        ("raw_log", [bundle.raw_log.id]),
-                    ),
+        return Outcome(
+            affected_ids=AffectedIds.of(
+                created=(
+                    ("evidence_item", evidence_ids),
+                    ("raw_log", [bundle.raw_log.id]),
                 ),
-                residual_paths=list(bundle.residual_paths),
-                human_result=(
-                    f"Answered gap {gap_id} with raw log {bundle.raw_log.id}."
-                ),
+            ),
+            residual_paths=list(bundle.residual_paths),
+            human_result=(
+                f"Answered gap {gap_id} with raw log {bundle.raw_log.id}."
             ),
         )
 
