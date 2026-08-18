@@ -1064,6 +1064,46 @@ def test_atlas_payload_locator_outside_selection_is_rejected(
     assert raw_rows(workspace) == []
 
 
+@pytest.mark.parametrize(
+    ("locator", "selected"),
+    [
+        ("atlas-2026-07-14T20:00:00.txt", False),
+        ("./atlas-2026-07-14T20:00:00.txt", True),
+        ("2026:atlas.txt", True),
+        ("snapshots/atlas:2026.txt", True),
+    ],
+    ids=["scheme-first-segment", "dot-prefixed", "no-scheme-colon", "later-segment"],
+)
+def test_atlas_first_segment_colons_split_on_the_scheme(
+    workspace: Path, tmp_path: Path, locator: str, selected: bool
+) -> None:
+    """§19.2: a first segment carrying a URI scheme is read as that URI.
+
+    A colon no scheme precedes cannot be, so it needs no `./` — the boundary
+    the contract states is the one the acquisition gate applies.
+    """
+
+    payload_root = tmp_path / "payload"
+    (payload_root / "snapshots").mkdir(parents=True)
+    for name in ("atlas-2026-07-14T20:00:00.txt", "2026:atlas.txt"):
+        (payload_root / name).write_text("Vera Example snapshot.\n", encoding="utf-8")
+    (payload_root / "snapshots" / "atlas:2026.txt").write_text(
+        "Vera Example snapshot.\n", encoding="utf-8"
+    )
+
+    payload = write_payload(
+        payload_root, "atlas.json", atlas_record(path=locator, content_digest=None)
+    )
+    outcome = run_import(workspace, "atlas", payload)
+
+    if selected:
+        assert counts(outcome) == (1, 0, 0)
+        assert evidence_rows(workspace)[0]["path"] is not None
+    else:
+        assert counts(outcome) == (0, 0, 1)
+        assert outcome.rejected[0].reason.startswith("payload_locator_")
+
+
 def test_atlas_duplicate_and_conflicting_replays(
     workspace: Path, tmp_path: Path
 ) -> None:

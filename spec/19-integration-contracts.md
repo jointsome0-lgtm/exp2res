@@ -144,7 +144,7 @@ Source-text fidelity:
   - Every evidence `reference`.
   - The exact accepted `as_of` input string.
   - The snapshot-wide `occurred`: each non-null bound's exact accepted ISO input string, its precision literal, and its confidence literal. The trail bullet above is trail-scoped, and this one carries the placement that governs the record.
-- The list is exhaustive, and what it names the persisted source projection carries in full rather than only as a hash. It excludes the members that address the record rather than describe the experience — `record_id`, `path`, and `content_digest` — which the source text is never required to spell. A mismatch is invalid acquisition.
+- The list is exhaustive, and what it names the persisted source projection carries in full rather than only as a hash. Every member it omits addresses or routes the record rather than describing the experience — `source`, `record_id`, `domain`, `path`, and `content_digest` — and the source text is never required to spell any of them. A mismatch is invalid acquisition.
 - `occurred` maps unchanged to `RawLog.occurred`.
 - `as_of` remains snapshot provenance and never substitutes for experience placement.
 - `RawLog.recorded_at` remains the independent service-assigned import time under §5.4.
@@ -155,7 +155,7 @@ Referenced snapshot document:
 - The path identifies the single source snapshot document represented by the linked `EvidenceItem`, not one member of `evidence_references`.
 - Those `evidence_references` are inert logical source IDs and never path or fetch authority.
 - The path/digest pair follows §19.4 rule 6 and maps only to `EvidenceItem.path` and its named digest metadata.
-- That rule makes `path` polymorphic: a POSIX path or a `file:` URI. A relative path whose first segment contains a colon is therefore read as an absolute URI, as RFC 3986 requires of any relative reference, so a `./` prefix is what states the relative reading — `./atlas-2026-07-14T20:00:00.txt` rather than `atlas-2026-07-14T20:00:00.txt`. §29.4 owns the acquisition gate that applies the distinction.
+- That rule makes `path` polymorphic: a POSIX path or a `file:` URI. A value whose first segment carries a URI scheme — a letter, then letters, digits, `+`, `-`, or `.`, then a colon — is therefore read as that URI, so a `./` prefix is what states the relative reading of a name that would otherwise be one: `./atlas-2026-07-14T20:00:00.txt` rather than `atlas-2026-07-14T20:00:00.txt`. A first-segment colon no scheme precedes, as in `2026:atlas.txt`, cannot be read as a URI and is a relative path unprefixed. §29.4 owns the acquisition gate that applies the distinction.
 - Required nullable members give omission and explicit absence one record shape before §19.4 hashing.
 
 The `knowledge_state_snapshot` strength is high only within §9.4's stated knowledge-attribution scope.
