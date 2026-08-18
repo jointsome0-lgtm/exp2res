@@ -30,7 +30,7 @@ from exp2res.services.privacy import (
     anchor_locked_database_identity,
     anchor_locked_tree_identities,
     locked_database_identity_at,
-    managed_root_paths,
+    locked_tree_paths,
 )
 
 from .schema import (
@@ -855,7 +855,7 @@ def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -
         os.close(marker_fd)
         marker_fd = None
         with anchor_locked_database_identity(identity):
-            with anchor_locked_tree_identities(managed_root_paths(workspace)):
+            with anchor_locked_tree_identities(locked_tree_paths(workspace)):
                 yield
     finally:
         if marker_fd is not None:

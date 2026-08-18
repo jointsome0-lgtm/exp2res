@@ -904,6 +904,11 @@ def locked_workspace_predicate(workspace: Path) -> Callable[[], bool]:
         committed to stayed detached — and unlike a whole-workspace
         replacement, no later check would notice.
 
+        A root that cannot be read at all answers the same way. This runs
+        inside exception handlers that owe a residual report, so letting an
+        unreadable ancestor raise from here would replace that report — or a
+        cancellation — with an internal error over a committed transaction.
+
         The comparison is against what the lock established and nothing else,
         which makes both directions a mismatch: a root that changed hands, and
         equally a root standing where the lock found none and this command
@@ -917,7 +922,10 @@ def locked_workspace_predicate(workspace: Path) -> Callable[[], bool]:
         if not locked_tree_identities_established():
             return False
         for root in managed_roots:
-            info = _lstat(root)
+            try:
+                info = _lstat(root)
+            except OSError:
+                return False
             identity = None if info is None else (info.st_dev, info.st_ino)
             if identity != locked_tree_identity(root):
                 return False

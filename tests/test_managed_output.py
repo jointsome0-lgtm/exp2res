@@ -1438,3 +1438,62 @@ def test_an_interrupted_removal_still_names_the_sets_a_mismatch_stranded(
         "snapshot_vera_0001",
         "snapshot_vera_0002",
     ]
+
+
+def test_an_unreadable_managed_root_is_a_failed_binding_not_a_raise(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The predicate runs inside handlers that owe a residual report.
+
+    An ancestor that becomes unsearchable mid-pass would otherwise raise from
+    here and replace that report — or a cancellation — with an internal error
+    over a transaction the caller has already committed.
+    """
+
+    _plant_assessment_set(workspace, "snapshot_vera_0001")
+    real_lstat = managed._lstat
+    refused = [False]
+
+    def refuse_the_parent(path: Path):
+        if not refused[0] and path.name == "assessment":
+            refused[0] = True
+            raise PermissionError(13, "Permission denied")
+        return real_lstat(path)
+
+    with anchor_locked_database(workspace):
+        still_live = managed.locked_workspace_predicate(workspace)
+        assert still_live()
+        monkeypatch.setattr(managed, "_lstat", refuse_the_parent)
+        assert not still_live()
+
+
+def test_a_backup_store_replaced_under_the_lock_is_never_purged(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§13.14 rule 9 covers the backup store the same way it covers `out/`.
+
+    Matching the open descriptor back to its name proves only that the name
+    still reaches it, which a replacement satisfies as readily as the original.
+    """
+
+    backup_root = workspace / ".exp2res" / "backup"
+    backup_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    original = backup_root / "exp2res-v11-20260817T000000.000000Z.sqlite"
+    original.write_bytes(b"Vera Example migration backup")
+    identity = privacy_service.locked_database_identity(workspace)
+
+    with anchor_locked_database(workspace):
+        detached = tmp_path / "detached-backup"
+        shutil.move(str(backup_root), str(detached))
+        backup_root.mkdir(mode=0o700)
+        planted = backup_root / "exp2res-v11-20260818T000000.000000Z.sqlite"
+        planted.write_bytes(b"Vera Example replacement backup")
+        removed, residuals = privacy_service.purge_managed_backups(
+            workspace, expected_database=identity
+        )
+
+    assert removed == ()
+    assert residuals == (str(backup_root.absolute()),)
+    survivor = detached / original.name
+    assert survivor.read_bytes() == b"Vera Example migration backup"
+    assert planted.read_bytes() == b"Vera Example replacement backup"

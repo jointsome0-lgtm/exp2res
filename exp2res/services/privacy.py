@@ -52,6 +52,23 @@ def managed_root_paths(workspace: Path) -> tuple[Path, ...]:
     return (out, out / "assessment", out / "branch")
 
 
+def backup_root_path(workspace: Path) -> Path:
+    """Name the migration-backup store the writer lock also covers."""
+
+    return workspace / ".exp2res" / "backup"
+
+
+def locked_tree_paths(workspace: Path) -> tuple[Path, ...]:
+    """Name every directory whose identity the writer lock establishes.
+
+    The managed-output roots plus the backup store: each is re-resolved by name
+    at every removal, and each holds owner data a substitution would leave
+    behind while the pass reported success against a replacement.
+    """
+
+    return (*managed_root_paths(workspace), backup_root_path(workspace))
+
+
 def locked_database_identity_at(marker_fd: int) -> os.stat_result | None:
     """Read the identity of the database this open `.exp2res` entry holds.
 
@@ -134,7 +151,7 @@ def anchor_locked_database(workspace: Path) -> Iterator[None]:
     """
 
     with anchor_locked_database_identity(locked_database_identity(workspace)):
-        with anchor_locked_tree_identities(managed_root_paths(workspace)):
+        with anchor_locked_tree_identities(locked_tree_paths(workspace)):
             yield
 
 
@@ -408,6 +425,28 @@ def purge_managed_backups(
                 return False
             return (named.st_dev, named.st_ino) == (opened.st_dev, opened.st_ino)
 
+        def backup_is_established() -> bool:
+            """Answer whether this store is the entry the lock recorded.
+
+            Matching the descriptor back to its name proves only that the name
+            still reaches it, which a replacement satisfies as readily as the
+            original. A caller that binds its database binds this too: without
+            it, a store renamed aside after the lock would have its replacement
+            emptied and reported purged while the owner data this command was
+            deleting survived in the detached original.
+            """
+
+            if expected_database is None:
+                return True
+            recorded = locked_tree_identity(backup_root)
+            if recorded is None:
+                return False
+            try:
+                opened = os.fstat(backup_fd)
+            except OSError:
+                return False
+            return (opened.st_dev, opened.st_ino) == recorded
+
         def root_is_live() -> bool:
             """Answer whether the open descriptors still are the live store.
 
@@ -426,6 +465,7 @@ def purge_managed_backups(
                 workspace_is_named()
                 and _same_entry(".exp2res", workspace_fd, marker_fd)
                 and _same_entry("backup", marker_fd, backup_fd)
+                and backup_is_established()
                 and database_is_live()
             )
 
