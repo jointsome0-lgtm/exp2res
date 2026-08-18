@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 import signal
+import threading
 
 
 _DEFERRABLE = hasattr(signal, "pthread_sigmask")
@@ -18,11 +19,19 @@ _pending_on_entry = False
 def interrupt_boundary() -> Iterator[None]:
     """Own every deferral one command takes, and release it on the way out.
 
-    Blocking a signal is process-global, so the right to do it belongs to
+    Blocking a signal outlives any one call, so the right to do it belongs to
     whoever will report the cancellation. Inside this scope `defer_interrupt`
     holds SIGINT; outside it — a service called from a test, a library,
     another tool — the call is inert and ordinary Ctrl-C semantics stand,
     because nothing there would ever unblock what it masked.
+
+    The right is also declined where it cannot be honoured. A signal mask is
+    per-thread, so in a process with another unmasked thread a
+    process-directed SIGINT is still delivered there and still reaches this
+    thread as a `KeyboardInterrupt` inside the window. Arming would promise a
+    guarantee it cannot keep, so it is not armed at all and the projection
+    carried on the raised exception remains the report. §14's command surface
+    is single-threaded; `views serve` runs threads and takes no capture.
 
     The release is this scope's own last act, after the envelope has been
     written: a command that unblocked earlier could take a `KeyboardInterrupt`
@@ -33,7 +42,7 @@ def interrupt_boundary() -> Iterator[None]:
 
     global _owned
     outer = _owned
-    _owned = True
+    _owned = threading.active_count() == 1
     try:
         yield
     finally:
@@ -60,8 +69,9 @@ def defer_interrupt() -> None:
 
     A SIGINT the caller had already blocked and left pending is recorded as
     theirs, so this command neither reports it as its own cancellation nor
-    consumes it. Where the platform has no signal mask this is all inert, and
-    the carried projection on the raised exception remains the report.
+    consumes it. Where the platform has no signal mask, or the boundary
+    declined to arm, this is all inert and the carried projection on the
+    raised exception remains the report.
     """
 
     global _deferred, _restore_mask, _pending_on_entry

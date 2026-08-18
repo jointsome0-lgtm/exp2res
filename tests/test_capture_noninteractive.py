@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import signal
 import sqlite3
+import threading
 
 import pytest
 import typer
@@ -807,6 +808,48 @@ def test_a_caller_that_blocks_sigint_keeps_its_policy_and_its_signal(
         if signal.SIGINT in signal.sigpending():
             signal.sigwait({signal.SIGINT})
         signal.pthread_sigmask(signal.SIG_SETMASK, outer)
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "pthread_sigmask"), reason="no signal mask on this platform"
+)
+def test_the_deferral_is_declined_where_another_thread_can_take_the_signal(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A guarantee that cannot be kept is not made.
+
+    A signal mask is per-thread. With another unmasked thread alive a
+    process-directed SIGINT is delivered there and still reaches this one as a
+    `KeyboardInterrupt` inside the window, so arming would only claim a
+    protection the process cannot provide.
+    """
+
+    source = tmp_path / "Vera Example threaded.md"
+    source.write_bytes(b"Vera Example ran beside another thread.\n")
+    real_outcome = cli_module.capture_outcome
+    seen: dict[str, object] = {}
+
+    def recording_outcome(bundle):
+        seen["masked"] = signal.SIGINT in signal.pthread_sigmask(
+            signal.SIG_BLOCK, set()
+        )
+        return real_outcome(bundle)
+
+    release = threading.Event()
+    other = threading.Thread(target=release.wait, daemon=True)
+    other.start()
+    try:
+        monkeypatch.setattr(cli_module, "capture_outcome", recording_outcome)
+        result, _envelope = invoke_json(
+            workspace, ["log", "today", "--file", str(source)]
+        )
+        monkeypatch.undo()
+    finally:
+        release.set()
+        other.join(timeout=5)
+
+    assert result.exit_code == 0
+    assert seen["masked"] is False
 
 
 def test_a_capture_interrupted_before_its_commit_names_nothing(
