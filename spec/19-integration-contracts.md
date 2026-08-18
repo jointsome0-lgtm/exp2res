@@ -155,7 +155,8 @@ Referenced snapshot document:
 - The path identifies the single source snapshot document represented by the linked `EvidenceItem`, not one member of `evidence_references`.
 - Those `evidence_references` are inert logical source IDs and never path or fetch authority.
 - The path/digest pair follows §19.4 rule 6 and maps only to `EvidenceItem.path` and its named digest metadata.
-- That rule makes `path` polymorphic: a POSIX path or a `file:` URI. A value whose first segment carries a URI scheme — a letter, then letters, digits, `+`, `-`, or `.`, then a colon — is therefore read as that URI, so a `./` prefix is what states the relative reading of a name that would otherwise be one: `./atlas-2026-07-14T20:00:00.txt` rather than `atlas-2026-07-14T20:00:00.txt`. A first-segment colon no scheme precedes, as in `2026:atlas.txt`, cannot be read as a URI and is a relative path unprefixed. §29.4 owns the acquisition gate that applies the distinction.
+- Of the two forms §19.4 rule 6 allows, a payload `path` carries only the first: a relative POSIX path beneath the payload root. The §19 preamble subjects it to §29.4's POSIX-only acquisition, so a scheme-prefixed value — `file:` included — is non-selected rather than dereferenced.
+- A value whose first segment carries a URI scheme — a letter, then letters, digits, `+`, `-`, or `.`, then a colon — is read as that URI, and so refused. A `./` prefix is what states the relative reading of a name a scheme would otherwise claim: `./atlas-2026-07-14T20:00:00.txt` rather than `atlas-2026-07-14T20:00:00.txt`. A first-segment colon no scheme precedes, as in `2026:atlas.txt`, cannot be read as a URI and needs no prefix. §29.4 owns the gate that applies the distinction.
 - Required nullable members give omission and explicit absence one record shape before §19.4 hashing.
 
 The `knowledge_state_snapshot` strength is high only within §9.4's stated knowledge-attribution scope.

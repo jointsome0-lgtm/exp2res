@@ -1071,8 +1071,15 @@ def test_atlas_payload_locator_outside_selection_is_rejected(
         ("./atlas-2026-07-14T20:00:00.txt", True),
         ("2026:atlas.txt", True),
         ("snapshots/atlas:2026.txt", True),
+        ("file:snapshots/atlas:2026.txt", False),
     ],
-    ids=["scheme-first-segment", "dot-prefixed", "no-scheme-colon", "later-segment"],
+    ids=[
+        "scheme-first-segment",
+        "dot-prefixed",
+        "no-scheme-colon",
+        "later-segment",
+        "file-uri",
+    ],
 )
 def test_atlas_first_segment_colons_split_on_the_scheme(
     workspace: Path, tmp_path: Path, locator: str, selected: bool
