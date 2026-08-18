@@ -1282,3 +1282,115 @@ def test_the_parents_this_command_creates_are_the_ones_it_binds_to(
     published = workspace / "out" / "assessment" / manifest.entity_id
     assert published.is_dir()
     assert {str(path) for path in published.iterdir()} == set(members)
+
+
+def test_a_parent_replaced_between_its_creation_and_the_record_binds_nothing(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The creation records the entry it held open, not the name it was given.
+
+    A pathname restatted after the descriptor closes answers about whatever
+    holds the name by then, so a replacement landing in that window would be
+    installed as the very identity the binding trusts.
+    """
+
+    for parent in ("assessment", "branch"):
+        if (workspace / "out" / parent).is_dir():
+            shutil.rmtree(workspace / "out" / parent)
+    real_open = managed.os.open
+    swapped: list[Path] = []
+    assessment = workspace / "out" / "assessment"
+
+    def replace_after_the_descriptor_closes(*arguments, **keywords):
+        descriptor = real_open(*arguments, **keywords)
+        if not swapped and arguments[0] == "assessment":
+            aside = tmp_path / "detached-assessment"
+            shutil.move(str(assessment), str(aside))
+            assessment.mkdir(mode=0o700)
+            swapped.append(aside)
+        return descriptor
+
+    monkeypatch.setattr(managed.os, "open", replace_after_the_descriptor_closes)
+
+    with anchor_locked_database(workspace):
+        still_live = managed.locked_workspace_predicate(workspace)
+        with pytest.raises(ManagedOutputIncompleteError):
+            managed._ensure_managed_parents(workspace, still_live=still_live)
+        assert not still_live()
+
+
+def test_a_candidate_stranded_by_its_own_creation_is_reported(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The creation arm validates the pathname after making the entry.
+
+    A binding that failed in between leaves the made candidate in the tree this
+    pass built in, while the name reaches the other one — so an existence probe
+    there is no more proof of a finished cleanup than it is further down.
+    """
+
+    graph = assessment_graph(all_sections=False)
+    real_validate = managed._validate_existing_path
+    moved: list[Path] = []
+
+    def replace_then_refuse(path: Path, out_root: Path, *, directory: bool) -> None:
+        if not moved and ".exp2res-candidate-" in path.name:
+            moved.append(_replace_workspace(workspace, tmp_path, name="mid-mkdir"))
+            (workspace / "out" / "assessment").mkdir(mode=0o700, parents=True)
+            (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
+            raise OSError("Vera Example injected validation failure")
+        real_validate(path, out_root, directory=directory)
+
+    monkeypatch.setattr(managed, "_validate_existing_path", replace_then_refuse)
+
+    with anchor_locked_database(workspace):
+        with pytest.raises(ManagedOutputIncompleteError) as caught:
+            managed.publish_assessment(workspace, graph, clock=lambda: NOW)
+
+    stranded = Path(caught.value.residual_paths[0])
+    assert stranded.name.startswith(".exp2res-candidate-")
+    surviving = list((moved[0] / "out" / "assessment").glob(".exp2res-candidate-*"))
+    assert [path.name for path in surviving] == [stranded.name]
+
+
+def test_a_rollback_move_survives_a_flush_that_never_reaches_the_next_gate(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rename is a fact; the probes that follow it are not.
+
+    A replacement landing between the rollback move and its flush leaves the
+    prior set aside in the original tree under a name nothing points at, and
+    every later existence probe answers about the replacement instead.
+    """
+
+    graph = assessment_graph(all_sections=False)
+    _publish(workspace, graph)
+    changed = graph_with_gap_answered(graph, True)
+    real_flush = managed._fsync_directory
+    moved: list[Path] = []
+
+    def replace_then_fail(path: Path, out_root: Path) -> None:
+        rollbacks = list(path.glob(".exp2res-rollback-*")) if path.is_dir() else []
+        if not moved and rollbacks:
+            moved.append(_replace_workspace(workspace, tmp_path, name="mid-rollback"))
+            (workspace / "out" / "assessment").mkdir(mode=0o700, parents=True)
+            (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
+            raise OSError("Vera Example injected flush failure")
+        real_flush(path, out_root)
+
+    monkeypatch.setattr(managed, "_fsync_directory", replace_then_fail)
+
+    unproven: list[str] = []
+    with anchor_locked_database(workspace):
+        with privacy_service.collect_unproven_residuals(unproven):
+            with pytest.raises(ManagedOutputIncompleteError) as caught:
+                managed.publish_assessment(workspace, changed, clock=lambda: NOW)
+
+    names = [Path(path).name for path in caught.value.residual_paths]
+    assert any(name.startswith(".exp2res-rollback-") for name in names)
+    assert any(name.startswith(".exp2res-candidate-") for name in names)
+    # §13.14 rule 9: a mismatch report is never withdrawn by a later existence
+    # check against the tree the pathname now reaches.
+    assert {Path(path).name for path in unproven} == set(names)
+    stranded = moved[0] / "out" / "assessment"
+    assert set(names) <= {path.name for path in stranded.iterdir()}

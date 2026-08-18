@@ -434,14 +434,18 @@ def _validate_existing_path(path: Path, out_root: Path, *, directory: bool) -> N
         raise OSError("managed path resolves outside out root") from error
 
 
-def _mkdir_private(path: Path, out_root: Path) -> bool:
-    """Make one managed directory private, reporting whether it created it.
+def _mkdir_private(path: Path, out_root: Path) -> tuple[int, int] | None:
+    """Make one managed directory private, naming the entry if it made it.
 
     §13.14 rule 9 binds a reserved parent absent at the lock to this command's
-    own creation, so the caller has to be told which of the two happened here.
+    own creation, and to that entry rather than to the name it was given: the
+    identity comes off the open descriptor, because a pathname re-read after
+    the close would name whatever answers by then, which is the substitution
+    the binding exists to catch.
     """
 
     created = False
+    identity: tuple[int, int] | None = None
     parent_descriptor = _open_directory_fd(path.parent, out_root)
     try:
         if _lstat(path) is None:
@@ -454,14 +458,17 @@ def _mkdir_private(path: Path, out_root: Path) -> bool:
         )
         try:
             os.fchmod(descriptor, 0o700)
-            if stat.S_IMODE(os.fstat(descriptor).st_mode) != 0o700:
+            opened = os.fstat(descriptor)
+            if stat.S_IMODE(opened.st_mode) != 0o700:
                 raise OSError("private directory mode unavailable")
+            if created:
+                identity = (opened.st_dev, opened.st_ino)
         finally:
             os.close(descriptor)
     finally:
         os.close(parent_descriptor)
     _validate_existing_path(path, out_root, directory=True)
-    return created
+    return identity
 
 
 def _open_flags(base: int) -> int:
@@ -764,12 +771,14 @@ def _ensure_managed_parents(
     for parent, key in ((assessment, assessment_key), (branch, branch_key)):
         if still_live is not None and not still_live():
             raise ManagedOutputIncompleteError((str(out_root),))
-        if _mkdir_private(parent, out_root):
+        created = _mkdir_private(parent, out_root)
+        if created is not None:
             # A parent the lock found absent becomes bound here, where this
             # command made it, and not at whatever answers to the name later.
-            # The key is the pathname the lock recorded under; the entry it
-            # reaches is the one just created either way.
-            record_locked_tree_identity(key)
+            # The key is the pathname the lock recorded under; the identity is
+            # the entry `_mkdir_private` held open, so a replacement landing
+            # between its close and this line binds nothing.
+            record_locked_tree_identity(key, created)
     return out_root, assessment, branch
 
 
@@ -1482,11 +1491,13 @@ def _build_candidate(
     try:
         require_live(out_root)
         _mkdir_private(candidate, out_root)
-    except BaseException:
-        if _lstat(candidate) is not None and not _remove_tree(
-            candidate, out_root, still_live
-        ):
-            raise ManagedOutputIncompleteError((str(candidate),)) from None
+    except BaseException as error:
+        # `_mkdir_private` validates the pathname after creating the entry, so
+        # its own failure can leave a made candidate behind — and a binding
+        # that failed in between puts that candidate in the tree this pass
+        # built in while the name reaches the other one. Absence here is
+        # therefore no more a finished cleanup than it is further down.
+        _clean_or_report_candidate(candidate, out_root, still_live, error)
         raise
     try:
         for name in sorted(member_names, key=fs_id_key):
@@ -1646,6 +1657,21 @@ def _publish_set(
         if still_live is not None and not still_live():
             raise ManagedOutputIncompleteError((str(residual),))
 
+    def strand_under_mismatch(paths: tuple[str, ...], error: BaseException) -> None:
+        """Name what a move already made left behind in the tree it was made in.
+
+        A rename that succeeded is a fact; probing the pathname afterwards is
+        not, because under a failed binding the probe answers about a tree this
+        pass never wrote to. The report therefore travels the unwithdrawable
+        channel on its own, and only an ordinary failure is escalated into a
+        raise — §14.14 rule 6 keeps a cancelled command reporting as cancelled.
+        """
+
+        reported = tuple(sorted(set(paths), key=fs_id_key))
+        report_unproven_residual(reported)
+        if not isinstance(error, KeyboardInterrupt):
+            raise ManagedOutputIncompleteError(reported)
+
     def require_live_pair(residual: Path, rollback: Path | None) -> None:
         """Refuse, naming the rollback too when the prior set is already aside."""
 
@@ -1703,10 +1729,20 @@ def _publish_set(
                 f".exp2res-rollback-{entity_id}-{secrets.token_hex(16)}"
             )
             require_live(candidate)
+            moved_aside = False
             try:
                 _rename(final_path, rollback)
+                moved_aside = True
                 _fsync_directory(parent, out_root)
-            except BaseException:
+            except BaseException as error:
+                if moved_aside and still_live is not None and not still_live():
+                    # This is the last gate the flush failure reaches, and the
+                    # prior set is already aside under the rollback name. The
+                    # probes below would consult the tree the pathname reaches
+                    # now, find neither entry there, and let the failure escape
+                    # naming only the candidate — while the tree this pass moved
+                    # in keeps a set no current name points at.
+                    strand_under_mismatch((str(candidate), str(rollback)), error)
                 if _lstat(rollback) is not None and _lstat(final_path) is None:
                     try:
                         _rename(rollback, final_path)
