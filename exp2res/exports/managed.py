@@ -26,6 +26,8 @@ from exp2res.domain.models import (
 from exp2res.errors import IntegrityFailureError, ManagedOutputIncompleteError
 from exp2res.services.privacy import (
     locked_database_anchor,
+    locked_tree_identity,
+    managed_root_paths,
     report_unproven_residual,
     workspace_database_is_live,
 )
@@ -873,9 +875,43 @@ def _locked_database_predicate(workspace: Path) -> Callable[[], bool]:
     """
 
     expected_database = locked_database_anchor()
+    managed_roots = managed_root_paths(workspace)
+    pinned: dict[Path, tuple[int, int]] = {}
+    for root in managed_roots:
+        recorded = locked_tree_identity(root)
+        if recorded is not None:
+            pinned[root] = recorded
 
     def still_live() -> bool:
-        return workspace_database_is_live(workspace, expected_database)
+        """Answer whether both the database and the managed tree are the ones.
+
+        The database identity alone leaves one substitution uncovered: `out/`
+        or either reserved parent renamed and replaced while the database stays
+        put. Every helper below reopens those by pathname, so the pass would
+        remove from and publish into the replacement while the sets it
+        committed to stayed detached — and unlike a whole-workspace
+        replacement, no later check would notice.
+
+        A root the lock recorded binds from the lock. A root absent then is
+        pinned the first time it is seen instead, because the reserved parents
+        are created under this same lock and that creation is this command's
+        own work. Once pinned either way, a root that changes or disappears is
+        a mismatch: nothing under a held writer lock removes a managed parent.
+        """
+
+        if not workspace_database_is_live(workspace, expected_database):
+            return False
+        for root in managed_roots:
+            info = _lstat(root)
+            identity = None if info is None else (info.st_dev, info.st_ino)
+            known = pinned.get(root)
+            if known is None:
+                if identity is not None:
+                    pinned[root] = identity
+                continue
+            if identity != known:
+                return False
+        return True
 
     return still_live
 
@@ -1368,8 +1404,45 @@ def read_current_assessment_members(
 def _candidate_cleanup(
     path: Path, out_root: Path, still_live: Callable[[], bool] | None = None
 ) -> None:
-    if _lstat(path) is not None and not _remove_tree(path, out_root, still_live):
+    """Remove one candidate, or report it when the binding will not allow it.
+
+    An absent entry is ordinarily a finished cleanup. Under a failed binding it
+    is the opposite: the pathname reaches a tree that never held this
+    candidate, while the one the pass built it in keeps it — so the fast path
+    would let the original exception escape with nothing naming what was left.
+    """
+
+    if _lstat(path) is None:
+        if still_live is not None and not still_live():
+            raise ManagedOutputIncompleteError((str(path),))
+        return
+    if not _remove_tree(path, out_root, still_live):
         raise ManagedOutputIncompleteError((str(path),))
+
+
+def _clean_or_report_candidate(
+    path: Path,
+    out_root: Path,
+    still_live: Callable[[], bool] | None,
+    error: BaseException,
+) -> None:
+    """Clean the candidate without letting the report displace what is louder.
+
+    Two in-flight errors outrank this refusal. §14.14 rule 6: a cancelled
+    command reports as cancelled, not as an integrity failure that hides the
+    interrupt. And an incomplete-output error already carries its own residual
+    set, usually a wider one than this single path — a refusal raised over it
+    would narrow the report to the candidate alone. Either way the refusal is
+    still heard: it travels the channel the envelope assembles however the
+    command ended.
+    """
+
+    try:
+        _candidate_cleanup(path, out_root, still_live)
+    except ManagedOutputIncompleteError as refused:
+        if not isinstance(error, (KeyboardInterrupt, ManagedOutputIncompleteError)):
+            raise
+        report_unproven_residual(refused.residual_paths)
 
 
 def _build_candidate(
@@ -1417,8 +1490,8 @@ def _build_candidate(
         _fsync_directory(parent, out_root)
         require_live(candidate)
         return candidate
-    except BaseException:
-        _candidate_cleanup(candidate, out_root, still_live)
+    except BaseException as error:
+        _clean_or_report_candidate(candidate, out_root, still_live, error)
         raise
 
 
@@ -1686,9 +1759,9 @@ def _publish_set(
             str(final_path / name) for name in sorted(all_names, key=fs_id_key)
         )
         return current, paths
-    except BaseException:
-        if not published and _lstat(candidate) is not None:
-            _candidate_cleanup(candidate, out_root, still_live)
+    except BaseException as error:
+        if not published:
+            _clean_or_report_candidate(candidate, out_root, still_live, error)
         raise
 
 

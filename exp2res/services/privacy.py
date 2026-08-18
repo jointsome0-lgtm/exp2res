@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 import os
@@ -37,6 +37,19 @@ def vacuum_residuals(
 
 
 DATABASE_NAME = "exp2res.sqlite"
+
+
+def managed_root_paths(workspace: Path) -> tuple[Path, ...]:
+    """Name the managed-output roots §13.14 rule 9's binding has to cover.
+
+    They live here rather than beside the export code that owns their contract
+    because this module is what the writer lock reaches to record identities,
+    and the export module reads them back from here — one definition, imported
+    in the direction that already exists.
+    """
+
+    out = workspace / "out"
+    return (out, out / "assessment", out / "branch")
 
 
 def locked_database_identity_at(marker_fd: int) -> os.stat_result | None:
@@ -121,7 +134,8 @@ def anchor_locked_database(workspace: Path) -> Iterator[None]:
     """
 
     with anchor_locked_database_identity(locked_database_identity(workspace)):
-        yield
+        with anchor_locked_tree_identities(managed_root_paths(workspace)):
+            yield
 
 
 @contextmanager
@@ -148,6 +162,52 @@ def locked_database_anchor() -> os.stat_result | None:
     """Read the identity anchored when the held writer lock was acquired."""
 
     return _LOCKED_DATABASE_IDENTITY.get()
+
+
+_LOCKED_TREE_IDENTITIES: ContextVar[dict[str, tuple[int, int]] | None] = ContextVar(
+    "exp2res_locked_tree_identities", default=None
+)
+
+
+@contextmanager
+def anchor_locked_tree_identities(paths: Iterable[Path]) -> Iterator[None]:
+    """Record what the given pathnames reach at the moment the lock is taken.
+
+    The database anchor answers whether the pathname still reaches the same
+    database, and nothing else. The directories the managed paths are built
+    from are re-resolved by name at every mutation, so one of them renamed and
+    replaced beside an untouched database is indistinguishable from the one the
+    command committed against — no later check can tell them apart, because
+    both answer to the same name and neither is the database. Recording the
+    identity before a substitution could happen is what makes them distinct,
+    and the lock is the only moment early enough to be sure of it.
+
+    A pathname that is absent here is recorded as nothing rather than as an
+    identity: the reserved parents are created under this same lock, so their
+    first appearance is this command's own work and binds from there.
+    """
+
+    identities: dict[str, tuple[int, int]] = {}
+    for path in paths:
+        try:
+            info = os.stat(path, follow_symlinks=False)
+        except OSError:
+            continue
+        identities[str(path)] = (info.st_dev, info.st_ino)
+    token = _LOCKED_TREE_IDENTITIES.set(identities)
+    try:
+        yield
+    finally:
+        _LOCKED_TREE_IDENTITIES.reset(token)
+
+
+def locked_tree_identity(path: Path) -> tuple[int, int] | None:
+    """Read the identity recorded for one pathname when the lock was taken."""
+
+    identities = _LOCKED_TREE_IDENTITIES.get()
+    if identities is None:
+        return None
+    return identities.get(str(path))
 
 
 _UNPROVEN_RESIDUALS: ContextVar[list[str] | None] = ContextVar(

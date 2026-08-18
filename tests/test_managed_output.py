@@ -1164,3 +1164,71 @@ def test_a_first_time_export_never_validates_a_replacement_into_success(
     assert (
         promoted[0] / "out" / "assessment" / graph.snapshot.value.id
     ).is_dir()
+
+
+def test_a_replaced_managed_root_is_a_mismatch_even_with_the_database_in_place(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """The database identity alone leaves one substitution uncovered.
+
+    `out/` renamed and replaced while the database stays put would have the
+    pass remove from and publish into the replacement, and unlike a
+    whole-workspace replacement no later check would notice.
+    """
+
+    planted = _plant_assessment_set(workspace, "snapshot_vera_0001")
+    _plant_assessment_set(workspace, "snapshot_vera_0002")
+
+    with anchor_locked_database(workspace):
+        still_live = managed._locked_database_predicate(workspace)
+        assert still_live()
+        moved = tmp_path / "detached-out"
+        shutil.move(str(workspace / "out"), str(moved))
+        (workspace / "out" / "assessment").mkdir(mode=0o700, parents=True)
+        (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
+        assert not still_live()
+        residuals = managed.remove_managed_sets_for_locked_database(
+            workspace, snapshot_ids=["snapshot_vera_0001", "snapshot_vera_0002"]
+        )
+
+    assert residuals == (
+        str(workspace / "out" / "assessment" / "snapshot_vera_0001"),
+        str(workspace / "out" / "assessment" / "snapshot_vera_0002"),
+    )
+    assert (moved / "assessment" / "snapshot_vera_0001").is_dir()
+    assert (moved / "assessment" / "snapshot_vera_0002").is_dir()
+    assert not planted.exists()
+
+
+def test_a_candidate_hidden_by_a_replacement_is_reported_not_assumed_gone(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absence is a finished cleanup only where the pass actually built.
+
+    Under a failed binding the pathname reaches a tree that never held this
+    candidate, so the fast path would let the write failure escape with
+    nothing naming the partial candidate left in the original.
+    """
+
+    graph = assessment_graph(all_sections=False)
+    real_write = managed._write_private_file
+    moved: list[Path] = []
+
+    def write_then_replace_and_fail(path: Path, data: bytes, out_root: Path) -> None:
+        real_write(path, data, out_root)
+        if not moved:
+            moved.append(_replace_workspace(workspace, tmp_path, name="hidden"))
+            (workspace / "out" / "assessment").mkdir(mode=0o700, parents=True)
+            (workspace / "out" / "branch").mkdir(mode=0o700, parents=True)
+            raise OSError("Vera Example injected write failure")
+
+    monkeypatch.setattr(managed, "_write_private_file", write_then_replace_and_fail)
+
+    with anchor_locked_database(workspace):
+        with pytest.raises(ManagedOutputIncompleteError) as caught:
+            managed.publish_assessment(workspace, graph, clock=lambda: NOW)
+
+    stranded = Path(caught.value.residual_paths[0])
+    assert stranded.name.startswith(".exp2res-candidate-")
+    surviving = list((moved[0] / "out" / "assessment").glob(".exp2res-candidate-*"))
+    assert [path.name for path in surviving] == [stranded.name]

@@ -28,7 +28,9 @@ from exp2res.errors import (
 )
 from exp2res.services.privacy import (
     anchor_locked_database_identity,
+    anchor_locked_tree_identities,
     locked_database_identity_at,
+    managed_root_paths,
 )
 
 from .schema import (
@@ -852,7 +854,13 @@ def writer_lock(workspace: Path, *, timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -
         os.close(marker_fd)
         marker_fd = None
         with anchor_locked_database_identity(identity):
-            yield
+            # The database identity covers the database alone. The managed
+            # roots every §13.14 path is built from answer to their own names,
+            # so one of them renamed and replaced beside an untouched database
+            # would look exactly like the tree this lock covers. Recording them
+            # here is the last moment before this command can act on them.
+            with anchor_locked_tree_identities(managed_root_paths(workspace)):
+                yield
     finally:
         if marker_fd is not None:
             os.close(marker_fd)
