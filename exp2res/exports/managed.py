@@ -1037,6 +1037,7 @@ def _remove_managed_sets(
             # The unlinks are visible but not durable. The returned residual is
             # lost whenever a later half of the same pass is cancelled, so the
             # ledger must not claim these removals either.
+            residuals.update(unlinked)
             residuals.add(str(parent))
             unlinked = []
         else:
@@ -1045,7 +1046,11 @@ def _remove_managed_sets(
                 # so a replacement landing since the last unlink means it
                 # succeeded against a directory in another tree and proves
                 # nothing about these entries. Unflushed is exactly the state
-                # above, and it is reported the same way.
+                # above, and it is reported the same way: un-banked, and named
+                # individually — dropping them from the report as well would
+                # leave a set a crash may restore counted as neither removed
+                # nor residual.
+                residuals.update(unlinked)
                 residuals.add(str(parent))
                 unlinked = []
     # Only a flushed removal is banked: an interrupt inside the flush skips this
@@ -1663,6 +1668,13 @@ def _publish_set(
             residual = str(rollback) if rollback is not None else str(final_path)
             raise ManagedOutputIncompleteError((residual,)) from error
 
+        # A first-time export has no rollback to remove, so nothing above this
+        # point asks again after the promotion. Both flushes reopened the
+        # parent by pathname, and the validation below reads the final set the
+        # same way: against a replacement holding a matching set they would all
+        # succeed, and the export would report a workspace whose lock it never
+        # held while its own published set stayed stranded.
+        require_live_pair(final_path, rollback)
         current = _inspect_set(final_path, parent, out_root)
         if (
             current is None

@@ -409,7 +409,9 @@ def test_an_unflushed_removal_is_never_banked(
     residuals = managed.remove_branch_sets(
         workspace, ["branch_vera_0002"], removed_ledger=banked
     )
-    assert residuals == (str(failed.parent),)
+    # The set joins its parent in the report: un-banked and unnamed would leave
+    # a set a crash may restore counted as neither removed nor residual.
+    assert residuals == (str(failed.parent), str(failed))
     assert banked == []
     assert not failed.exists()
 
@@ -535,6 +537,7 @@ def test_a_workspace_replaced_mid_pass_keeps_the_rest_of_the_sets(
 
     assert residuals == (
         str(workspace / "out" / "assessment"),
+        str(workspace / "out" / "assessment" / "snapshot_vera_0001"),
         str(workspace / "out" / "assessment" / "snapshot_vera_0002"),
     )
     assert banked == []
@@ -1120,3 +1123,44 @@ def test_a_nonconforming_id_is_refused_even_on_the_mismatch_report(
             managed.remove_managed_sets_for_locked_database(
                 workspace, snapshot_ids=["Snapshot/Vera/0001"]
             )
+
+
+def test_a_first_time_export_never_validates_a_replacement_into_success(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing asks again after the promotion when there is no rollback.
+
+    Both flushes reopen the parent by pathname and the closing validation reads
+    the final set the same way, so a replacement holding a matching set answers
+    all three — and the export would report a workspace whose lock it never
+    held while its own published set stayed stranded.
+    """
+
+    graph = assessment_graph(all_sections=False)
+    _publish(workspace, graph)
+    donor = tmp_path / "donor"
+    shutil.copytree(workspace / "out", donor)
+    shutil.rmtree(workspace / "out" / "assessment" / graph.snapshot.value.id)
+
+    real_fsync_directory = managed._fsync_directory
+    promoted: list[Path] = []
+
+    def flush_after_promotion(path: Path, out_root: Path) -> None:
+        final = workspace / "out" / "assessment" / graph.snapshot.value.id
+        if not promoted and final.is_dir():
+            promoted.append(_replace_workspace(workspace, tmp_path, name="post-rename"))
+            shutil.copytree(donor, workspace / "out")
+        real_fsync_directory(path, out_root)
+
+    monkeypatch.setattr(managed, "_fsync_directory", flush_after_promotion)
+
+    with anchor_locked_database(workspace):
+        with pytest.raises(ManagedOutputIncompleteError) as caught:
+            managed.publish_assessment(workspace, graph, clock=lambda: NOW)
+
+    assert caught.value.residual_paths == (
+        str(workspace / "out" / "assessment" / graph.snapshot.value.id),
+    )
+    assert (
+        promoted[0] / "out" / "assessment" / graph.snapshot.value.id
+    ).is_dir()
