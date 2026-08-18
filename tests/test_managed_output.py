@@ -12,7 +12,7 @@ import pytest
 
 from exp2res.errors import ManagedOutputIncompleteError
 from exp2res.exports import managed
-from exp2res.services.privacy import anchor_locked_database
+from exp2res.services.privacy import anchor_locked_database, remove_managed_backups
 from exp2res.storage.workspace import writer_database
 
 from export_helpers import (
@@ -24,6 +24,13 @@ from export_helpers import (
 
 pytestmark = [pytest.mark.lifecycle, pytest.mark.golden]
 NOW = datetime(2026, 7, 20, 12, tzinfo=timezone.utc)
+
+
+def _reconcile(workspace: Path) -> tuple[str, ...]:
+    """Run §13.14 rule 5's preamble under an anchor, as `writer_database` does."""
+
+    with anchor_locked_database(workspace):
+        return managed.reconcile_managed_outputs(workspace)
 
 
 def _publish(workspace: Path, graph):
@@ -249,7 +256,7 @@ def test_failed_restoration_reports_rollback_residual_and_no_current_set(
 
 def test_symlink_final_is_left_untouched_and_reported(workspace: Path) -> None:
     graph = assessment_graph(all_sections=False)
-    assert managed.reconcile_managed_outputs(workspace) == ()
+    assert _reconcile(workspace) == ()
     outside = workspace.parent / "Vera Example outside"
     outside.mkdir()
     sentinel = outside / "sentinel.txt"
@@ -267,13 +274,13 @@ def test_preamble_candidate_restore_remove_and_ambiguous_matrix(
     workspace: Path,
 ) -> None:
     graph = assessment_graph(all_sections=False)
-    assert managed.reconcile_managed_outputs(workspace) == ()
+    assert _reconcile(workspace) == ()
     parent = workspace / "out" / "assessment"
     candidate = parent / (
         f".exp2res-candidate-{graph.snapshot.value.id}-{'a' * 32}"
     )
     candidate.mkdir(mode=0o700)
-    assert managed.reconcile_managed_outputs(workspace) == ()
+    assert _reconcile(workspace) == ()
     assert not candidate.exists()
 
     _publish(workspace, graph)
@@ -282,13 +289,13 @@ def test_preamble_candidate_restore_remove_and_ambiguous_matrix(
         f".exp2res-rollback-{graph.snapshot.value.id}-{'b' * 32}"
     )
     os.rename(final, rollback)
-    assert managed.reconcile_managed_outputs(workspace) == ()
+    assert _reconcile(workspace) == ()
     assert final.is_dir() and not rollback.exists()
 
     os.rename(final, rollback)
     _publish(workspace, graph)
     assert final.is_dir() and rollback.is_dir()
-    assert managed.reconcile_managed_outputs(workspace) == ()
+    assert _reconcile(workspace) == ()
     assert final.is_dir() and not rollback.exists()
 
     os.rename(final, rollback)
@@ -296,14 +303,14 @@ def test_preamble_candidate_restore_remove_and_ambiguous_matrix(
         f".exp2res-rollback-{graph.snapshot.value.id}-{'c' * 32}"
     )
     shutil.copytree(rollback, second, copy_function=shutil.copy2)
-    residuals = managed.reconcile_managed_outputs(workspace)
+    residuals = _reconcile(workspace)
     assert residuals == tuple(sorted((str(rollback), str(second))))
     assert rollback.is_dir() and second.is_dir() and not final.exists()
 
 
 def test_preamble_planted_symlink_candidate_is_reported_once(workspace: Path) -> None:
     graph = assessment_graph(all_sections=False)
-    assert managed.reconcile_managed_outputs(workspace) == ()
+    assert _reconcile(workspace) == ()
     parent = workspace / "out" / "assessment"
     outside = workspace.parent / "Vera Example candidate target"
     outside.mkdir()
@@ -311,7 +318,7 @@ def test_preamble_planted_symlink_candidate_is_reported_once(workspace: Path) ->
         f".exp2res-candidate-{graph.snapshot.value.id}-{'d' * 32}"
     )
     candidate.symlink_to(outside, target_is_directory=True)
-    residuals = managed.reconcile_managed_outputs(workspace)
+    residuals = _reconcile(workspace)
     assert residuals == (str(candidate),)
     assert candidate.is_symlink() and outside.is_dir()
 
@@ -333,7 +340,7 @@ def test_an_unstattable_set_is_a_residual_and_never_an_exception(
     holding for the envelope.
     """
 
-    assert managed.reconcile_managed_outputs(workspace) == ()
+    assert _reconcile(workspace) == ()
     first = _plant_branch_set(workspace, "branch_vera_0001")
     second = _plant_branch_set(workspace, "branch_vera_0002")
     real_lstat = managed._lstat
@@ -375,7 +382,7 @@ def test_an_unflushed_removal_is_never_banked(
     the caller must keep reporting the set rather than subtract it.
     """
 
-    assert managed.reconcile_managed_outputs(workspace) == ()
+    assert _reconcile(workspace) == ()
     interrupted = _plant_branch_set(workspace, "branch_vera_0001")
 
     def interrupt_flush(*_arguments, **_keywords):
@@ -504,8 +511,8 @@ def test_a_workspace_replaced_mid_pass_keeps_the_rest_of_the_sets(
     real_remove_entry = managed._remove_entry
     moved: list[Path] = []
 
-    def replace_after_first(path: Path, out_root: Path) -> bool:
-        removed = real_remove_entry(path, out_root)
+    def replace_after_first(path: Path, out_root: Path, still_live=None) -> bool:
+        removed = real_remove_entry(path, out_root, still_live)
         if not moved:
             moved.append(_replace_workspace(workspace, tmp_path, name="mid-pass"))
             _plant_assessment_set(workspace, "snapshot_vera_0002")
@@ -526,6 +533,142 @@ def test_a_workspace_replaced_mid_pass_keeps_the_rest_of_the_sets(
     assert not (moved[0] / "out" / "assessment" / "snapshot_vera_0001").exists()
     assert first == workspace / "out" / "assessment" / "snapshot_vera_0001"
     assert (workspace / "out" / "assessment" / "snapshot_vera_0002").is_dir()
+
+
+def test_a_workspace_replaced_between_two_members_keeps_the_rest_of_the_set(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """One set is many pathname-resolved unlinks, and each is bound.
+
+    A per-ID recheck alone stops at the set boundary, so a replacement landing
+    after an early member would have the remainder of the tree — and its
+    closing directory — removed from the foreign set of the same name.
+    """
+
+    planted = _plant_assessment_set(workspace, "snapshot_vera_0001")
+    for name in ("report.html", "report.md", "self_claims.json"):
+        (planted / name).write_text("{}\n", encoding="utf-8")
+    real_open_directory_fd = managed._open_directory_fd
+    moved: list[Path] = []
+
+    def replace_after_first_member(path: Path, out_root: Path) -> int:
+        descriptor = real_open_directory_fd(path, out_root)
+        if not moved and path.name == "snapshot_vera_0001":
+            moved.append(_replace_workspace(workspace, tmp_path, name="mid-set"))
+            foreign = _plant_assessment_set(workspace, "snapshot_vera_0001")
+            for name in ("report.html", "report.md", "self_claims.json"):
+                (foreign / name).write_text("{}\n", encoding="utf-8")
+        return descriptor
+
+    with anchor_locked_database(workspace):
+        managed._open_directory_fd = replace_after_first_member
+        try:
+            residuals = managed.remove_managed_sets_for_locked_database(
+                workspace, snapshot_ids=["snapshot_vera_0001"]
+            )
+        finally:
+            managed._open_directory_fd = real_open_directory_fd
+
+    foreign_set = workspace / "out" / "assessment" / "snapshot_vera_0001"
+    assert residuals == (str(foreign_set),)
+    assert sorted(path.name for path in foreign_set.iterdir()) == [
+        "manifest.json",
+        "report.html",
+        "report.md",
+        "self_claims.json",
+    ]
+
+
+def test_the_writer_preamble_is_bound_to_the_locked_database(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """§13.14 rule 9 covers rule 5's preamble, removals and promotion alike.
+
+    Reconciliation clears abandoned candidates and promotes a surviving
+    rollback, all by pathname. Under a replacement it would tidy another
+    workspace's half-published sets while this one's stayed abandoned.
+    """
+
+    parent = workspace / "out" / "assessment"
+    parent.mkdir(mode=0o700, parents=True)
+
+    with anchor_locked_database(workspace):
+        moved = _replace_workspace(workspace, tmp_path, name="before-preamble")
+        foreign_parent = workspace / "out" / "assessment"
+        foreign_parent.mkdir(mode=0o700, parents=True)
+        candidate = foreign_parent / ".exp2res-candidate-snapshot_vera_0001-abcd"
+        candidate.mkdir(mode=0o700)
+        (candidate / "manifest.json").write_text("{}\n", encoding="utf-8")
+        residuals = managed.reconcile_managed_outputs(workspace)
+
+    assert residuals == (str((workspace / "out").absolute()),)
+    assert candidate.is_dir()
+    assert not (workspace / "out" / "branch").exists()
+    assert (moved / "out" / "assessment").is_dir()
+
+
+def test_the_total_sweep_is_bound_to_the_locked_database(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """Rule 9 binds the widest removal too — it takes whatever it finds.
+
+    A privacy deletion sweeping a replacement would empty another workspace's
+    managed output entirely while the tree it is deleting from kept all of it.
+    """
+
+    _plant_assessment_set(workspace, "snapshot_vera_0001")
+
+    with anchor_locked_database(workspace):
+        moved = _replace_workspace(workspace, tmp_path, name="before-sweep")
+        foreign = _plant_assessment_set(workspace, "snapshot_vera_0001")
+        residuals = managed.remove_all_managed_output_entries(workspace)
+
+    assert residuals == (str((workspace / "out").absolute()),)
+    assert foreign.is_dir()
+    assert (moved / "out" / "assessment" / "snapshot_vera_0001").is_dir()
+
+
+def test_the_backup_sweep_takes_its_anchor_from_the_lock(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """Rule 9 supplies `remove_managed_backups` the anchor it never took.
+
+    `jd delete` already passed one explicitly for its partial purge; the
+    whole-store sweep read none, so a replacement's backups were purged while
+    this workspace's own survived.
+    """
+
+    store = workspace / ".exp2res" / "backup"
+    store.mkdir(mode=0o700, exist_ok=True)
+    (store / "schema-10.sqlite").write_bytes(b"Vera Example migration backup")
+
+    with anchor_locked_database(workspace):
+        moved = _replace_workspace(workspace, tmp_path, name="before-backup-sweep")
+        foreign_store = workspace / ".exp2res" / "backup"
+        foreign_store.mkdir(mode=0o700)
+        foreign_backup = foreign_store / "schema-10.sqlite"
+        foreign_backup.write_bytes(b"Vera Example replacement backup")
+        residuals = remove_managed_backups(workspace)
+
+    assert residuals == (str(foreign_store.absolute()),)
+    assert foreign_backup.read_bytes() == b"Vera Example replacement backup"
+    assert (moved / ".exp2res" / "backup" / "schema-10.sqlite").is_file()
+
+
+def test_the_backup_sweep_without_an_anchor_removes_nothing(
+    workspace: Path,
+) -> None:
+    """An anchor that was never established is refusal, not permission."""
+
+    store = workspace / ".exp2res" / "backup"
+    store.mkdir(mode=0o700, exist_ok=True)
+    backup = store / "schema-10.sqlite"
+    backup.write_bytes(b"Vera Example migration backup")
+
+    residuals = remove_managed_backups(workspace)
+
+    assert residuals == (str(store.absolute()),)
+    assert backup.read_bytes() == b"Vera Example migration backup"
 
 
 def test_an_anchor_that_was_never_established_removes_nothing(

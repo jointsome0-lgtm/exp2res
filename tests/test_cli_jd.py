@@ -1183,7 +1183,12 @@ def test_a_workspace_swapped_under_the_lock_is_never_purged(
 
     assert result.exit_code == 8
     assert envelope["diagnostic_class"] == "deletion_incomplete"
-    assert envelope["residual_paths"] == [str(backup_root.absolute())]
+    # The rule 5 preamble refuses on the same mismatch, so its managed root is
+    # reported beside the backup store the deletion could not purge.
+    assert envelope["residual_paths"] == [
+        str(backup_root.absolute()),
+        str((workspace / "out").absolute()),
+    ]
     assert envelope["result"]["removed_managed_paths"] == []
     assert backup.read_bytes() == b"Vera Example migration backup"
 
@@ -1214,7 +1219,10 @@ def test_an_unreadable_database_anchor_refuses_the_purge(
     )
 
     assert result.exit_code == 8
-    assert envelope["residual_paths"] == [str(backup_root.absolute())]
+    assert envelope["residual_paths"] == [
+        str(backup_root.absolute()),
+        str((workspace / "out").absolute()),
+    ]
     assert backup.read_bytes() == b"Vera Example migration backup"
 
 

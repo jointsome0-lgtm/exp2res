@@ -119,6 +119,39 @@ def locked_database_anchor() -> os.stat_result | None:
     return _LOCKED_DATABASE_IDENTITY.get()
 
 
+_UNPROVEN_RESIDUALS: ContextVar[list[str] | None] = ContextVar(
+    "exp2res_unproven_residuals", default=None
+)
+
+
+@contextmanager
+def collect_unproven_residuals(residuals: list[str]) -> Iterator[None]:
+    """Collect residuals whose own pathname cannot testify about them."""
+
+    token = _UNPROVEN_RESIDUALS.set(residuals)
+    try:
+        yield
+    finally:
+        _UNPROVEN_RESIDUALS.reset(token)
+
+
+def report_unproven_residual(paths) -> None:
+    """Report residual paths no later existence check may withdraw.
+
+    §14.14's envelope assembly drops a reported residual whose path is gone,
+    because the ordinary reason for that is a later step in the same command
+    completing the invalidation. §13.14 rule 9's mismatch arm breaks that
+    reasoning: it names sets stranded in the workspace the mutation committed
+    to, spelled through a pathname that now reaches a different one, so their
+    absence there is a fact about the replacement and no evidence at all about
+    the sets. Those reports come through here instead and are never withdrawn.
+    """
+
+    sink = _UNPROVEN_RESIDUALS.get()
+    if sink is not None:
+        sink.extend(paths)
+
+
 def workspace_database_is_live(
     workspace: Path, expected_database: os.stat_result | None
 ) -> bool:
@@ -347,7 +380,20 @@ def purge_managed_backups(
 
 
 def remove_managed_backups(workspace: Path) -> tuple[str, ...]:
-    """Remove every regular migration backup, reporting only its residuals."""
+    """Remove every regular migration backup, reporting only its residuals.
 
-    _removed, residuals = purge_managed_backups(workspace)
+    §13.14 rule 9 binds this like every other managed removal, and supplies the
+    anchor from the held writer lock rather than from the caller — the same
+    identity `jd delete` already passes explicitly for its partial purge. An
+    anchor that could not be established is a refusal, so the store is reported
+    residual rather than a replacement's backups being purged while this
+    workspace's own survive.
+    """
+
+    expected_database = locked_database_anchor()
+    if expected_database is None:
+        return (str((workspace / ".exp2res" / "backup").absolute()),)
+    _removed, residuals = purge_managed_backups(
+        workspace, expected_database=expected_database
+    )
     return residuals
