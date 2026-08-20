@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.services.job_descriptions as jd_service
+import exp2res.services.stages as stages_service
 import exp2res.services.privacy as privacy_service
 import exp2res.exports.managed as managed_outputs
 from exp2res.cli import app
@@ -44,7 +45,7 @@ def install_fake_execution(
     ids: ParserIds | None = None,
 ) -> None:
     monkeypatch.setattr(
-        jd_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), fake),
     )
@@ -1134,10 +1135,28 @@ def test_a_cleanup_only_cancellation_still_reports_its_removals(
     backup = backup_root / "schema-10.sqlite"
     backup.write_bytes(b"Vera Example migration backup")
 
-    def interrupting_run(*_arguments, **_keywords):
-        raise KeyboardInterrupt()
+    class InterruptOnRunRow:
+        """Interrupt at the first `INSERT INTO processing_runs` the command issues."""
 
-    monkeypatch.setattr(jd_service, "create_orchestration_run", interrupting_run)
+        def __init__(self, connection) -> None:
+            self._connection = connection
+
+        def __getattr__(self, name: str):
+            return getattr(self._connection, name)
+
+        def execute(self, sql: str, *parameters):
+            if "INSERT INTO processing_runs" in sql:
+                raise KeyboardInterrupt()
+            return self._connection.execute(sql, *parameters)
+
+    real_writer = jd_service.writer_database
+
+    @contextmanager
+    def wrapped(target: Path, **keywords):
+        with real_writer(target, **keywords) as connection:
+            yield InterruptOnRunRow(connection)
+
+    monkeypatch.setattr(jd_service, "writer_database", wrapped)
 
     result, envelope = invoke_json(
         workspace, ["--yes", "jd", "delete", "--jd", job_description_id]

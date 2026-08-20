@@ -78,7 +78,7 @@ def _run_cli_stage(
 ):
     monkeypatch.setattr(service, "new_id", ids)
     monkeypatch.setattr(
-        service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,

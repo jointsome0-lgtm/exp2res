@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+import sqlite3
+from typing import Any, Callable, Iterable
 
 from exp2res import __version__
 from exp2res.config import call_budgets, load_workspace_config
@@ -16,8 +18,10 @@ from exp2res.domain.models import (
     GapQuestion,
     SelfClaim,
 )
-from exp2res.domain.results import extend_committed
+from exp2res.domain.results import AffectedIds, extend_committed
 from exp2res.errors import (
+    Exp2ResError,
+    LLMCancelledError,
     LLMInvocationError,
     SelectorNotFoundError,
     SnapshotNotCurrentError,
@@ -53,7 +57,12 @@ from exp2res.storage.repository import (
     list_gap_questions,
     list_self_claims_for_snapshot,
 )
-from exp2res.storage.telemetry import committed_runs
+from exp2res.services.writers import transaction
+from exp2res.storage.telemetry import (
+    committed_runs,
+    create_processing_run,
+    finish_processing_run,
+)
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     read_database,
@@ -113,45 +122,162 @@ def build_llm_execution(
     return selection, budgets, LazyPreflightRunner(build_runner)
 
 
-class RunTracking:
+def failure_code_for(error: BaseException) -> str:
+    """§12.13 `failure_code`: the one mapping from a raised error."""
+
+    if isinstance(error, LLMInvocationError):
+        return error.failure_code
+    if isinstance(error, KeyboardInterrupt):
+        return "cancelled"
+    if isinstance(error, Exp2ResError):
+        return error.diagnostic_class
+    return "internal_error"
+
+
+class RunIds:
     """§14.14 rule 5: the run IDs a command allocated, so a failure reports the committed ones."""
 
     def __init__(self, new_id: Callable[[str], str]) -> None:
-        self.allocated_runs: list[str] = []
+        self.allocated: list[str] = []
         self._new_id = new_id
 
     def allocate(self, kind: str) -> str:
         value = self._new_id(kind)
         if kind == "run":
-            self.allocated_runs.append(value)
+            self.allocated.append(value)
         return value
 
-    def extend_committed_runs(
-        self, workspace: Path, error: BaseException
+    def carry(
+        self, connection: sqlite3.Connection, error: BaseException, *, created_as: str | None = None
+    ) -> bool:
+        """Extend `error` with the committed run IDs and, as `created_as`, what the
+        completed ones created (§12 rule 11: `output_ids`, not allocated IDs)."""
+
+        run_ids, created = committed_runs(connection, self.allocated)
+        fields: dict[str, Any] = {"run_ids": list(run_ids)}
+        if created_as and created:
+            fields["affected_ids"] = AffectedIds.of(created=((created_as, created),))
+        extend_committed(error, **fields)
+        return bool(created)
+
+
+class Run(RunIds):
+    """One content-free §12.13 row: `create()`, then `finish()` completed with
+    `outputs` (the created rows) or failed with `failure_code_for(error)`. As a
+    context manager the exit does the terminal write, carries the committed run
+    IDs onto an `Exp2ResError` and re-raises it — §14.14 rule 6: a
+    `KeyboardInterrupt` as the class-9 `LLMCancelledError` (a raw one would reach
+    the CLI as an empty envelope), another `Exception` as a secret-safe class-1
+    error; `failure` keeps the original so a caller can fold its stage result in."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        stage: str,
+        input_ids: Callable[[sqlite3.Connection], Iterable[str]],
+        metadata: dict[str, str],
+        clock: Callable[[], datetime],
+        new_id: Callable[[str], str],
+        own_transaction: bool = True,
     ) -> None:
-        with read_database(workspace) as connection:
-            extend_committed(
-                error,
-                run_ids=list(committed_runs(connection, self.allocated_runs)),
+        super().__init__(new_id)
+        self.id = self.allocate("run")
+        self.outputs: list[str] = []
+        self.failure: BaseException | None = None
+        self._connection = connection
+        self._stage, self._input_ids, self._metadata = stage, input_ids, metadata
+        self._clock = clock
+        self._own_transaction = own_transaction
+
+    def _write(self, work: Callable[[sqlite3.Connection], None]) -> None:
+        if self._own_transaction:
+            with transaction(self._connection) as held:
+                work(held)
+        else:
+            work(self._connection)
+
+    def create(self) -> None:
+        # `input_ids` is read inside the row's own transaction (§8.1).
+        self._write(
+            lambda held: create_processing_run(
+                held,
+                run_id=self.id,
+                stage=self._stage,
+                started_at=self._clock(),
+                provider=None,
+                model=None,
+                prompt_policy_hash=None,
+                input_ids=self._input_ids(held),
+                metadata=self._metadata,
             )
+        )
+
+    def finish(self, *, failure_code: str | None = None) -> None:
+        self._write(
+            lambda held: finish_processing_run(
+                held,
+                run_id=self.id,
+                finished_at=self._clock(),
+                status="failed" if failure_code else "completed",
+                failure_code=failure_code,
+                output_ids=() if failure_code else self.outputs,
+            )
+        )
+
+    def __enter__(self) -> "Run":
+        try:
+            self.create()
+        except BaseException as error:
+            self._fail(error)
+        return self
+
+    def __exit__(self, _type, error: BaseException | None, _traceback) -> None:
+        if error is None:
+            self.finish()
+        else:
+            self._fail(error)
+
+    def _fail(self, error: BaseException) -> None:
+        self.failure = error
+        try:
+            self.finish(failure_code=failure_code_for(error))
+        except Exception:
+            pass
+        if isinstance(error, KeyboardInterrupt):
+            carrier: Exp2ResError = LLMCancelledError()
+        elif isinstance(error, Exp2ResError):
+            carrier = error
+        elif isinstance(error, Exception):
+            carrier = Exp2ResError()
+        else:
+            raise error
+        try:
+            self.carry(self._connection, carrier)
+        except Exception:
+            extend_committed(carrier, run_ids=[])
+        if carrier is error:
+            raise error
+        raise carrier from error
 
 
 def launch_stage(workspace: Path, stage: Callable[..., Any], **selectors: Any) -> Any:
     # §14.14 rule 4: callers check compatibility and selectors before this.
     selection, budgets, runner = build_llm_execution(workspace)
-    tracking = RunTracking(new_id)
+    ids = RunIds(new_id)
     try:
         return stage(
             workspace,
             selection=selection,
             budgets=budgets,
             runner=runner,
-            id_factory=tracking.allocate,
+            id_factory=ids.allocate,
             cli_version=__version__,
             **selectors,
         )
     except LLMInvocationError as error:
-        tracking.extend_committed_runs(workspace, error)
+        with read_database(workspace) as connection:
+            ids.carry(connection, error)
         raise
 
 
