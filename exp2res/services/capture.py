@@ -305,7 +305,6 @@ def capture_retro_file(
 ) -> RawLogBundle:
     validate_project_label(project)
     raw_text, external_ref = _acquire_source(workspace, source_path)
-    # Straight to capture_manual: capture_retro would run the gate a second time.
     return capture_manual(
         workspace,
         entry_type="manual_retro",

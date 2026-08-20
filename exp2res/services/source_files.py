@@ -532,14 +532,12 @@ ARTIFACT_LOCATOR = LocatorPolicy(
         "unsupported": ArtifactLocatorUnsupportedPathError,
         "unresolved": ArtifactLocatorUnresolvableError,
     },
-    # A drive letter parses as a one-character scheme: refused before URI validation.
     form=lambda value: WINDOWS_DRIVE.match(value) is not None,
     structural=True,
     remote=True,
     file_uri=True,
     posix=True,
 )
-# Same admission as capture time, or the §15 re-check diverges; rule 18 spellings pass.
 PROMPT_LOCATOR = replace(ARTIFACT_LOCATOR, structural=False, form=_RULE_18_FORM)
 REMOTE_LOCATOR = LocatorPolicy(
     refuse={
@@ -606,7 +604,6 @@ def reauthorize_prompt_locators(
                     and child is not None
                     and isinstance(child, str)
                 ):
-                    # Remote provenance stays inert unless it is a Windows form.
                     if _scheme(child) not in (None, "file") and not _forbidden_supplied_form(
                         child, uri_authority=True
                     ):
