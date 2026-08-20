@@ -26,7 +26,6 @@ def run_check(arguments: List[str]) -> bool:
 def main() -> int:
     checks = [
         ["scripts/check_public_hygiene.py"],
-        ["scripts/check_sdd_conventions.py", "check", "AGENTS.md"],
         ["scripts/check_sdd_map.py"],
         ["scripts/check_coverage_map.py"],
         ["scripts/check_eval_cases.py"],

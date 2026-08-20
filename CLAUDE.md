@@ -1,10 +1,10 @@
 # CLAUDE.md
 
 Read [AGENTS.md](AGENTS.md) first: it is the shared agent contract for this
-repository (SDD refinement rules, the spec canon, shared skills) and applies
+repository (how work happens, the spec canon, shared skills) and applies
 to Claude Code in full.
 
-Per the canon the SDD map is imported below.
+Per the canon the spec map is imported below.
 
 @SDD.md
 

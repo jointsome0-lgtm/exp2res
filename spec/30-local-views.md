@@ -1,6 +1,6 @@
 ## §30. Local Views
 
-§30 specifies the local-view shape for selfos embedding. V1 ships the CLI first, and the view slice inside its scope is the mirror view plus the gap-question view that the §14.17 command serves on loopback. Like every other § of this document, that scope is a binding contract on the implementation rather than a report of one: the slice builds in §22's Phase 3, where §24.59 and §21.57 track it and stay `pending` until it does. The JD-to-bullet-pack view is not in V1 scope at all. A complete resume document model remains a later post-mirror iteration under §18. That deferral does not relax the contracts below when the deferred view is built.
+§30 specifies the local-view shape for selfos embedding. V1 ships the CLI first, and the view slice inside its scope is the mirror view plus the gap-question view that the §14.17 command serves on loopback. The slice builds in §22's Phase 3, where §24.59 and §21.57 track it and stay `pending` until it does. The JD-to-bullet-pack view is not in V1 scope at all. A complete resume document model remains a later post-mirror iteration under §18. That deferral does not relax the contracts below when the deferred view is built.
 
 1. **Coupling and serving boundary.**
 
