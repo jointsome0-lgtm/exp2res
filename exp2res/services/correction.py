@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -24,10 +24,7 @@ from exp2res.exports.managed import (
 )
 from exp2res.pipeline.branch_lifecycle import supersede_current_branches
 from exp2res.pipeline.lineage import plan_lineages
-from exp2res.pipeline.orchestration import (
-    unfinished_stale_paths,
-    withdraw_pending_unless_superseded,
-)
+from exp2res.pipeline.orchestration import withdraw_pending_unless_superseded
 from exp2res.services.capture import (
     build_capture_pair,
     new_id,
@@ -39,8 +36,8 @@ from exp2res.services.source_files import (
     read_capture_file,
 )
 from exp2res.services.writers import (
-    banked_transaction,
     held_writer,
+    operation,
     retry_id_collisions,
     savepoint,
 )
@@ -146,19 +143,22 @@ def capture_correction(
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     pending_stale_paths: tuple[str, ...] = ()
     superseded_snapshot_ids: tuple[str, ...] = ()
+    captured: CorrectionOutcome | None = None
+    journal = None
 
     # §8.1: `correction add` passes the writer authority it holds across rebuild.
-    with held_writer(
-        connection, writer_database, workspace, timeout_ms=timeout_ms
-    ) as connection:
+    held = held_writer(connection, writer_database, workspace, timeout_ms=timeout_ms)
+    try:
         # Pending report before commit: the commit-to-cleanup window still
         # reports the stale sets; a proven rollback withdraws.
-        with banked_transaction(
-            connection,
-            on_commit_error=lambda: withdraw_pending_unless_superseded(
+        with operation(
+            held,
+            on_rollback=lambda: withdraw_pending_unless_superseded(
                 connection, pending_stale_paths, superseded_snapshot_ids
             ),
-        ):
+        ) as op:
+            journal = op.journal
+            connection = op.connection
             target = get_raw_log(connection, log_id)
             if target is None:
                 raise SelectorNotFoundError()
@@ -242,9 +242,7 @@ def capture_correction(
                 *branch_set_paths(workspace, branch_swap.branch_ids),
             )
             report_managed_residuals(pending_stale_paths)
-
-        def build_outcome(residuals: tuple[str, ...]) -> CorrectionOutcome:
-            return CorrectionOutcome(
+            captured = CorrectionOutcome(
                 raw_log=raw_log,
                 evidence_items=evidence_items,
                 superseded_fact_ids=superseded_fact_ids,
@@ -262,22 +260,26 @@ def capture_correction(
                     )
                 ),
                 invalidated_branches=branch_swap.invalidated_branches,
-                residual_paths=residuals,
+                residual_paths=(),
             )
-
-        cleaned_sets: list[str] = []
-        try:
-            residual_paths = remove_managed_sets_for_locked_database(
-                workspace,
-                snapshot_ids=superseded_snapshot_ids,
-                branch_ids=branch_swap.branch_ids,
-                removed_ledger=cleaned_sets,
+            # §14.14 rule 5: a pending set the interrupted cleanup already
+            # unlinked must not travel as though retained.
+            op.after_commit(
+                lambda: remove_managed_sets_for_locked_database(
+                    workspace,
+                    snapshot_ids=superseded_snapshot_ids,
+                    branch_ids=branch_swap.branch_ids,
+                    removed_ledger=op.journal.unlinks,
+                ),
+                unproven=pending_stale_paths,
             )
-        except KeyboardInterrupt:
-            # §14.14 rule 6: already committed, so the cancellation carries it.
-            raise cancelled_with(
-                correction_outcome=build_outcome(
-                    unfinished_stale_paths(pending_stale_paths, cleaned_sets)
-                )
-            ) from None
-        return build_outcome(residual_paths)
+            captured = replace(captured, residual_paths=op.journal.unresolved)
+        return captured
+    except KeyboardInterrupt as error:
+        # §14.14 rule 6: already committed, so the cancellation carries it.
+        journal = getattr(error, "operation_journal", journal)
+        if journal is None or not journal.committed or captured is None:
+            raise
+        raise cancelled_with(
+            replace(captured, residual_paths=journal.unresolved)
+        ) from None

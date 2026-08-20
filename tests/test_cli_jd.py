@@ -21,7 +21,7 @@ from exp2res.storage.workspace import read_database, writer_database
 
 from exp2res.storage.repository import get_job_description
 
-from fakes import FakeContractRunner
+from fakes import FakeContractRunner, proxy_writer, raise_interrupt
 from test_branch_substrate import plant_branch, plant_branch_set
 from test_stage3_extraction import SELECTION, budgets
 from test_stage6_assessment import assessment_response, prepare_graph, run_stage6
@@ -449,27 +449,7 @@ def test_an_interrupt_as_commit_returns_still_reports_the_deletion(
     _result, added = add_job_description(workspace, tmp_path, monkeypatch)
     job_description_id = added["affected_ids"]["created"][0]["ids"][0]
 
-    class InterruptOnCommitReturn:
-        """Commit for real, then raise as the C call returns to Python."""
-
-        def __init__(self, connection) -> None:
-            self._connection = connection
-
-        def __getattr__(self, name: str):
-            return getattr(self._connection, name)
-
-        def commit(self) -> None:
-            self._connection.commit()
-            raise KeyboardInterrupt()
-
-    real_writer = jd_service.writer_database
-
-    @contextmanager
-    def wrapped(target: Path, **keywords):
-        with real_writer(target, **keywords) as connection:
-            yield InterruptOnCommitReturn(connection)
-
-    monkeypatch.setattr(jd_service, "writer_database", wrapped)
+    proxy_writer(monkeypatch, jd_service, after_commit=raise_interrupt)
 
     result, envelope = invoke_json(
         workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
@@ -619,10 +599,11 @@ def test_an_interrupt_after_the_checkpoint_still_reports_the_deletion(
     _result, added = add_job_description(workspace, tmp_path, monkeypatch)
     job_description_id = added["affected_ids"]["created"][0]["ids"][0]
 
-    def interrupt(*_arguments: object, **_keywords: object):
-        raise KeyboardInterrupt()
+    def interrupt_checkpoint(sql: str):
+        if sql.startswith("PRAGMA wal_checkpoint"):
+            raise KeyboardInterrupt()
 
-    monkeypatch.setattr(jd_service, "_delete_checkpoint_residuals", interrupt)
+    proxy_writer(monkeypatch, jd_service, on_statement=interrupt_checkpoint)
 
     result, envelope = invoke_json(
         workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
@@ -983,10 +964,11 @@ def test_a_cancelled_delete_reports_its_committed_effect_in_human_mode(
     _result, added = add_job_description(workspace, tmp_path, monkeypatch)
     job_description_id = added["affected_ids"]["created"][0]["ids"][0]
 
-    def interrupt(*_arguments: object, **_keywords: object):
-        raise KeyboardInterrupt()
+    def interrupt_checkpoint(sql: str):
+        if sql.startswith("PRAGMA wal_checkpoint"):
+            raise KeyboardInterrupt()
 
-    monkeypatch.setattr(jd_service, "_delete_checkpoint_residuals", interrupt)
+    proxy_writer(monkeypatch, jd_service, on_statement=interrupt_checkpoint)
 
     result = runner.invoke(
         app,
@@ -1135,28 +1117,12 @@ def test_a_cleanup_only_cancellation_still_reports_its_removals(
     backup = backup_root / "schema-10.sqlite"
     backup.write_bytes(b"Vera Example migration backup")
 
-    class InterruptOnRunRow:
-        """Interrupt at the first `INSERT INTO processing_runs` the command issues."""
+    def interrupt_on_run_row(sql: str):
+        # Interrupt at the first `INSERT INTO processing_runs` the command issues.
+        if "INSERT INTO processing_runs" in sql:
+            raise KeyboardInterrupt()
 
-        def __init__(self, connection) -> None:
-            self._connection = connection
-
-        def __getattr__(self, name: str):
-            return getattr(self._connection, name)
-
-        def execute(self, sql: str, *parameters):
-            if "INSERT INTO processing_runs" in sql:
-                raise KeyboardInterrupt()
-            return self._connection.execute(sql, *parameters)
-
-    real_writer = jd_service.writer_database
-
-    @contextmanager
-    def wrapped(target: Path, **keywords):
-        with real_writer(target, **keywords) as connection:
-            yield InterruptOnRunRow(connection)
-
-    monkeypatch.setattr(jd_service, "writer_database", wrapped)
+    proxy_writer(monkeypatch, jd_service, on_statement=interrupt_on_run_row)
 
     result, envelope = invoke_json(
         workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
@@ -1261,33 +1227,12 @@ def test_an_interrupt_entering_the_transaction_reports_no_deletion(
     _result, added = add_job_description(workspace, tmp_path, monkeypatch)
     job_description_id = added["affected_ids"]["created"][0]["ids"][0]
 
-    class InterruptOnBegin:
-        """Refuse the transaction exactly as it opens."""
+    def interrupt_on_begin(statement: str):
+        # Refuse the transaction exactly as it opens.
+        if statement == "BEGIN IMMEDIATE":
+            raise KeyboardInterrupt()
 
-        def __init__(self, connection) -> None:
-            self._connection = connection
-
-        def __getattr__(self, name: str):
-            return getattr(self._connection, name)
-
-        @property
-        def in_transaction(self) -> bool:
-            return self._connection.in_transaction
-
-        def execute(self, statement: str, *arguments):
-            if statement == "BEGIN IMMEDIATE":
-                raise KeyboardInterrupt()
-
-            return self._connection.execute(statement, *arguments)
-
-    real_writer = jd_service.writer_database
-
-    @contextmanager
-    def wrapped(target: Path, **keywords):
-        with real_writer(target, **keywords) as connection:
-            yield InterruptOnBegin(connection)
-
-    monkeypatch.setattr(jd_service, "writer_database", wrapped)
+    proxy_writer(monkeypatch, jd_service, on_statement=interrupt_on_begin)
 
     result, envelope = invoke_json(
         workspace, ["--yes", "jd", "delete", "--jd", job_description_id]
@@ -1483,27 +1428,7 @@ def test_a_cancelled_purge_still_reports_the_branch_generation(
         requirement_ids=(),
     )
 
-    class InterruptOnCommitReturn:
-        """Commit for real, then raise as the C call returns to Python."""
-
-        def __init__(self, connection) -> None:
-            self._connection = connection
-
-        def __getattr__(self, name: str):
-            return getattr(self._connection, name)
-
-        def commit(self) -> None:
-            self._connection.commit()
-            raise KeyboardInterrupt()
-
-    real_writer = jd_service.writer_database
-
-    @contextmanager
-    def wrapped(target: Path, **keywords):
-        with real_writer(target, **keywords) as connection:
-            yield InterruptOnCommitReturn(connection)
-
-    monkeypatch.setattr(jd_service, "writer_database", wrapped)
+    proxy_writer(monkeypatch, jd_service, after_commit=raise_interrupt)
 
     result, envelope = invoke_json(
         workspace, ["--yes", "jd", "delete", "--jd", job_description_id]

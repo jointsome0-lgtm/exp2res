@@ -755,7 +755,7 @@ def test_a_torn_payload_still_reports_its_complete_result(
             id_factory=rewriting_factory,
         )
 
-    assert counts(failure.value.import_outcome) == (200, 0, 0)
+    assert counts(failure.value.operation_result) == (200, 0, 0)
     assert failure.value.import_classified is True
     assert len(raw_rows(workspace)) == 200
 
@@ -805,7 +805,7 @@ def test_a_signal_during_payload_teardown_reports_the_committed_records(
     with pytest.raises(OperationCancelledError) as failure:
         run_import(workspace, "ephemeris", payload)
 
-    assert counts(failure.value.import_outcome) == (1, 0, 0)
+    assert counts(failure.value.operation_result) == (1, 0, 0)
     assert failure.value.import_classified is True
     assert len(raw_rows(workspace)) == 1
 

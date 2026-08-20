@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-import sqlite3
 from typing import Callable
 from uuid import uuid4
 
@@ -27,16 +26,14 @@ from exp2res.errors import (
     GapAlreadyAnsweredError,
     InvalidInputError,
     SelectorNotFoundError,
-    WorkspaceBusyError,
 )
 from exp2res.exports.managed import (
     assessment_set_paths,
     remove_managed_sets_for_locked_database,
 )
 from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
-from exp2res.services.interrupts import defer_interrupt
 from exp2res.services.privacy import table_ids
-from exp2res.services.writers import is_busy, retry_id_collisions, savepoint
+from exp2res.services.writers import operation, retry_id_collisions, savepoint
 from exp2res.services.source_files import (
     ArtifactLocator,
     authorize_artifact_locators,
@@ -364,21 +361,6 @@ def validate_gap_answer_selection(workspace: Path, *, gap_id: str) -> None:
         _select_answerable_gap(connection, gap_id)
 
 
-def _gap_answer_is_durable(connection, gap_id: str) -> bool | None:
-    # `commit()` can raise after the transaction is durable, so read the row;
-    # None (unknown) is a distinct answer because its two consumers default
-    # in opposite directions.
-    try:
-        if connection.in_transaction:
-            return False
-        row = connection.execute(
-            "SELECT answered FROM gap_questions WHERE id = ?", (gap_id,)
-        ).fetchone()
-        return bool(row and row[0])
-    except Exception:
-        return None
-
-
 def capture_gap_answer(
     workspace: Path,
     *,
@@ -395,86 +377,81 @@ def capture_gap_answer(
     config = load_workspace_config(workspace)
     occurred = today_occurred(now=now, timezone_name=require_timezone(config))
     authorized_artifacts = authorize_artifact_locators(artifacts, config=config)
-    # §14.14 rule 6: set once provably durable; every later exit reports it.
-    answered: Outcome | None = None
+    pending: tuple[str, ...] = ()
+    bundle: RawLogBundle | None = None
+    journal = None
 
     try:
-        with writer_database(workspace, timeout_ms=timeout_ms) as connection:
-            try:
-                connection.execute("BEGIN IMMEDIATE")
-                gap = _select_answerable_gap(connection, gap_id)
+        # §14.14 rule 6: rollback withdraws the pending stale-set report; a
+        # commit keeps it through the commit-to-cleanup window.
+        with operation(
+            writer_database(workspace, timeout_ms=timeout_ms),
+            on_rollback=lambda: withdraw_managed_residuals(pending),
+        ) as op:
+            journal = op.journal
+            connection = op.connection
+            gap = _select_answerable_gap(connection, gap_id)
 
-                def attempt(index: int) -> tuple[RawLog, tuple[EvidenceItem, ...]]:
-                    raw_log, evidence_items = build_capture_pair(
-                        recorded_at=now,
-                        artifacts=authorized_artifacts,
-                        id_factory=id_factory,
-                        entry_type="gap_answer",
-                        source_type="manual_entry",
-                        occurred=occurred,
-                        raw_text=raw_text,
-                        project=None,
-                        external_ref=external_ref,
-                        corrects_log_id=None,
-                        metadata={
-                            "question_text": gap.question,
-                            "question_reason": gap.reason,
-                        },
+            def attempt(index: int) -> tuple[RawLog, tuple[EvidenceItem, ...]]:
+                raw_log, evidence_items = build_capture_pair(
+                    recorded_at=now,
+                    artifacts=authorized_artifacts,
+                    id_factory=id_factory,
+                    entry_type="gap_answer",
+                    source_type="manual_entry",
+                    occurred=occurred,
+                    raw_text=raw_text,
+                    project=None,
+                    external_ref=external_ref,
+                    corrects_log_id=None,
+                    metadata={
+                        "question_text": gap.question,
+                        "question_reason": gap.reason,
+                    },
+                )
+
+                def insert() -> None:
+                    insert_raw_log(connection, raw_log)
+                    for evidence_item in evidence_items:
+                        insert_evidence_item(connection, evidence_item)
+                    mark_gap_answered(
+                        connection, gap_id=gap.id, answer_log_id=raw_log.id
                     )
 
-                    def insert() -> None:
-                        insert_raw_log(connection, raw_log)
-                        for evidence_item in evidence_items:
-                            insert_evidence_item(connection, evidence_item)
-                        mark_gap_answered(
-                            connection, gap_id=gap.id, answer_log_id=raw_log.id
-                        )
+                savepoint(connection, f"gap_answer_{index}", insert)
+                return raw_log, evidence_items
 
-                    savepoint(connection, f"gap_answer_{index}", insert)
-                    return raw_log, evidence_items
-
-                raw_log, evidence_items = retry_id_collisions(attempt)
-                # §13 stale-export trigger: stale sets are reported pending
-                # before COMMIT so the commit-to-cleanup window still
-                # reports them; rollback withdraws the report.
-                snapshot_ids = table_ids(
-                    connection, "assessment_snapshots", "superseded_at IS NULL"
-                )
-                pending = assessment_set_paths(workspace, snapshot_ids)
-                try:
-                    report_managed_residuals(pending)
-                    defer_interrupt()
-                    connection.commit()
-                except BaseException:
-                    # Withdraw the report only on proven rollback; name the
-                    # pair only on proven commit; unknown does neither.
-                    durable = _gap_answer_is_durable(connection, gap.id)
-                    if durable is False:
-                        withdraw_managed_residuals(pending)
-                    elif durable:
-                        answered = capture_outcome(RawLogBundle(raw_log, evidence_items))
-                    raise
-                answered = capture_outcome(RawLogBundle(raw_log, evidence_items))
-                residuals = remove_managed_sets_for_locked_database(
+            raw_log, evidence_items = retry_id_collisions(attempt)
+            # §13 stale-export trigger: stale sets are reported pending before
+            # COMMIT so the commit-to-cleanup window still reports them.
+            snapshot_ids = table_ids(
+                connection, "assessment_snapshots", "superseded_at IS NULL"
+            )
+            pending = assessment_set_paths(workspace, snapshot_ids)
+            report_managed_residuals(pending)
+            bundle = RawLogBundle(raw_log, evidence_items)
+            op.after_commit(
+                lambda: remove_managed_sets_for_locked_database(
                     workspace,
                     snapshot_ids=snapshot_ids,
-                )
-                bundle = RawLogBundle(raw_log, evidence_items, residuals)
-                # Teardown can still fail; its report carries the residuals.
-                answered = capture_outcome(bundle)
-                return bundle
-            except sqlite3.OperationalError as error:
-                connection.rollback()
-                if is_busy(error):
-                    raise WorkspaceBusyError() from error
-                raise
-            except BaseException:
-                connection.rollback()
-                raise
+                    removed_ledger=op.journal.unlinks,
+                ),
+                unproven=pending,
+            )
+            bundle = RawLogBundle(raw_log, evidence_items, op.journal.unresolved)
+        return bundle
     except BaseException as error:
-        # Rule 6: writer teardown failures still report the durable pair.
-        if answered is not None:
-            carry_committed(error, answered)
+        # Rule 6: every exit after the commit — cleanup, teardown — reports the pair.
+        journal = getattr(error, "operation_journal", journal)
+        if journal is None:
+            raise
+        if journal.committed and bundle is not None:
+            carry_committed(
+                error,
+                capture_outcome(
+                    RawLogBundle(bundle.raw_log, bundle.evidence_items, journal.unresolved)
+                ),
+            )
         raise
 
 

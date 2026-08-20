@@ -60,12 +60,11 @@ def wal_path(database: Path) -> str:
     return str(database.with_name(database.name + "-wal"))
 
 
-def cancelled_with(**carried: object) -> OperationCancelledError:
-    """§14.14 rule 6: a cancellation carrying the outcome already committed."""
+def cancelled_with(result: object) -> OperationCancelledError:
+    """§14.14 rule 6: a cancellation carrying the typed result of what already happened."""
 
     cancelled = OperationCancelledError()
-    for name, value in carried.items():
-        setattr(cancelled, name, value)
+    cancelled.operation_result = result
     return cancelled
 
 
@@ -461,10 +460,11 @@ def purge_managed_backups(
                 del removed_ledger[ledger_mark:]
             return root_residual
         residuals = sorted({*refused, *surviving}, key=os.fsencode)
-        return (
-            tuple(path for path in removed if path not in surviving),
-            tuple(residuals),
-        )
+        proven = tuple(path for path in removed if path not in surviving)
+        if removed_ledger is not None:
+            # The ledger ends as the re-enumeration proof, not the first pass.
+            removed_ledger[ledger_mark:] = proven
+        return proven, tuple(residuals)
     except OSError:
         return root_residual
     finally:
@@ -472,13 +472,15 @@ def purge_managed_backups(
             os.close(descriptor)
 
 
-def remove_managed_backups(workspace: Path) -> tuple[str, ...]:
+def remove_managed_backups(
+    workspace: Path, *, removed_ledger: list[str] | None = None
+) -> tuple[str, ...]:
     """Remove every regular migration backup under the lock's §13.14 rule 9 anchor; report residuals."""
 
     expected_database = locked_database_anchor()
     if expected_database is None:
         return (str((workspace / ".exp2res" / "backup").absolute()),)
     _removed, residuals = purge_managed_backups(
-        workspace, expected_database=expected_database
+        workspace, expected_database=expected_database, removed_ledger=removed_ledger
     )
     return residuals
