@@ -777,6 +777,21 @@ class AdvancingClock:
             self._now += seconds
 
 
+def test_drain_expiry_between_verdict_checks_never_becomes_a_timeout(tmp_path):
+    clock = TickingClock(9.0, 11.0)
+    server = ViewServer(
+        tmp_path,
+        BindAddress(host="127.0.0.1", port=8731),
+        _clock=clock,
+        _timeouts=GENEROUS,
+    )
+    server._draining.set()
+    server._drain_deadline = 10.0
+
+    assert server._verdict(deadline=20.0) is None
+    assert server._verdict(deadline=20.0) == "gone"
+
+
 class SlowSlots:
     """Admission slots whose acquisition costs observable time."""
 

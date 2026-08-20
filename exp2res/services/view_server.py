@@ -892,9 +892,11 @@ class ViewServer:
     def _verdict(self, deadline: float) -> Literal["gone", "timeout"] | None:
         """§30 rule 7: nothing once gone, `processing_timeout` once the phase expired."""
 
-        if self._gone():
+        now = self._clock()
+        drain = self._drain_bound()
+        if self._immediate.is_set() or (drain is not None and drain.at <= now):
             return "gone"
-        if self._left(deadline) <= 0:
+        if deadline <= now:
             return "timeout"
         return None
 
