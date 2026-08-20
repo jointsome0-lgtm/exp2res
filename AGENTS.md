@@ -14,13 +14,13 @@ Treat this as a public engine repository in the [selfos topology](https://github
 
 ## How work happens
 
-- Default: issue → PR. No spec edit unless the PR moves a documented contract.
+- Default flow is issue → PR. No spec edit unless the PR moves a documented contract.
 - A PR that moves a documented contract updates the owning § file in the same PR.
 - Trade-offs get one Decision Log line; the rationale lives in the issue or commit.
-- § numbers are stable anchors: never renumber, never reuse a retired number.
+- § numbers never change meaning. No renumbering, and a retired number is never reused.
 - Findings and open questions go to GitHub issues, never to committed report files.
-- Design before code only where reversal is expensive: schemas, deletion and
-  lifecycle semantics, cross-repo contracts.
+- Design before code only where reversal is expensive, which means schemas,
+  deletion and lifecycle semantics, and cross-repo contracts.
 
 ## Canon
 
@@ -34,11 +34,11 @@ Specification: `SDD.md` is the map (§ index and numbering rules); the body live
 
 Shared skills install from the `selfos-skills` repo (an Agent Skills catalog): `npx skills add jointsome0-lgtm/selfos-skills --skill grill-sdd slice --agent claude-code --global --yes` (full catalog: `--skill '*'`). To grill the spec: `/grill-sdd`. If a needed skill is missing from a session, ask the user to install/update it with the same command.
 
-Decision Log entries follow the vendored grammar
-(`scripts/check_decision_log.py`, checker 1.1.0, baseline 2026-07-15 for
-pre-adoption history) and are one or two sentences — the decision, then
-the rejected alternative — linted at an 80-word ceiling with a 40-word
-warning.
+Decision Log entries follow the vendored grammar in
+`scripts/check_decision_log.py` (checker 1.1.0, baseline 2026-07-15 for
+pre-adoption history). An entry is one or two sentences, the decision and
+then the rejected alternative. The lint fails above 80 words and warns
+above 40.
 
 Git worktrees: create them only in `.worktrees/<name>` inside the repo (globally gitignored via `~/.config/git/ignore`), never as sibling directories. Any work that will open a PR branches and builds in such a worktree, never in the primary checkout — the primary checkout stays on a clean `main` so parallel sessions don't fight for its index. Trivial read-only work and single-file doc edits on a clean main need no worktree. Remove the worktree and delete its local branch once its PR merges.
 
