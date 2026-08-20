@@ -20,6 +20,7 @@ from exp2res.cli import app
 from exp2res.errors import IdCollisionError
 from exp2res.storage.repository import insert_evidence_item, insert_raw_log
 
+from fakes import proxy_writer, raise_interrupt
 from test_imports_phase5 import (
     atlas_record,
     ephemeris_record,
@@ -378,17 +379,9 @@ def test_a_commit_the_signal_outran_is_still_reported(
         "outran.jsonl",
         [ephemeris_record(f"vera-ephemeris-5{index:04d}") for index in range(3)],
     )
-    persist = imports_service._persist
-
-    def interrupt_after_the_commit_returns(*args, **kwargs):
-        persist(*args, **kwargs)
-        # The narrowest window there is: the record is durable, and the
-        # classifier has not filed it anywhere yet.
-        raise KeyboardInterrupt()
-
-    monkeypatch.setattr(
-        imports_service, "_persist", interrupt_after_the_commit_returns
-    )
+    # The narrowest window there is: the record is durable, and the
+    # classifier has not filed it anywhere yet.
+    proxy_writer(monkeypatch, imports_service, after_commit=raise_interrupt)
     result, envelope = _invoke_json(workspace, ["import", "ephemeris", payload])
 
     assert result.exit_code == 9

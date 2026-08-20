@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -50,10 +51,9 @@ from exp2res.services.capture import (
     validate_project_label,
 )
 from exp2res.services.source_files import open_payload_file, read_document_file
-from exp2res.services.writers import is_busy, retry_id_collisions, transaction
+from exp2res.services.writers import is_busy, operation, retry_id_collisions
 from exp2res.storage.repository import (
     RawLogBundle,
-    committed_import_records,
     insert_evidence_item,
     insert_raw_log,
     retained_import_hashes,
@@ -151,8 +151,8 @@ def _persist(
     raw_log: RawLog,
     evidence_items: tuple[EvidenceItem, ...],
 ) -> None:
-    """§13.1 rule 5 pair, one transaction per record."""
-    with transaction(connection):
+    """§13.1 rule 5 pair, one transaction per record (§19.4 rule 4)."""
+    with operation(nullcontext(connection)):
         insert_raw_log(connection, raw_log)
         for evidence_item in evidence_items:
             insert_evidence_item(connection, evidence_item)
@@ -167,7 +167,6 @@ def _classify(
     retained: dict[str, str],
     recorded_at: datetime,
     id_factory: IdFactory,
-    attempted: list[ImportedRecord],
     classified: dict[str, list[ImportedRecord]],
 ) -> tuple[str, ImportedRecord]:
     def bank(outcome: str, result: ImportedRecord) -> tuple[str, ImportedRecord]:
@@ -258,50 +257,20 @@ def _classify(
             evidence_item_ids=tuple(item.id for item in evidence_items),
             content_hash=digest,
         )
-        # Before the transaction: after a signal only the workspace knows if this committed.
-        attempted.append(candidate)
         try:
             _persist(connection, raw_log=raw_log, evidence_items=evidence_items)
         except IdCollisionError:
-            # Cheap path; `committed_import_records` matches identity and hash regardless.
-            attempted.pop()
+            raise
+        except BaseException as error:
+            # §14.14 rule 6: a signal as the record's commit returns still banks it.
+            journal = getattr(error, "operation_journal", None)
+            if journal is not None and journal.committed:
+                bank("accepted", candidate)
             raise
         retained[identity] = digest
         return bank("accepted", candidate)
 
     return retry_id_collisions(attempt)
-
-
-def _cancelled_report(
-    connection: sqlite3.Connection,
-    *,
-    attempted: list[ImportedRecord],
-    classified: dict[str, list[ImportedRecord]],
-) -> ImportOutcome:
-    """§14.14 rule 6: re-read every attempted candidate under the lock (a signal may
-    follow the commit); a failed read falls back to the classified subset."""
-
-    try:
-        if connection.in_transaction:
-            # §19.4 rule 4: an open transaction is uncommitted.
-            connection.rollback()
-        keys = [
-            (record.raw_log_id or "", record.source_record_id, record.content_hash)
-            for record in attempted
-        ]
-        committed = committed_import_records(connection, keys)
-    except sqlite3.Error:
-        accepted = tuple(classified["accepted"])
-    else:
-        # Per candidate: two candidates can share a generated ID.
-        accepted = tuple(
-            record for record, key in zip(attempted, keys) if key in committed
-        )
-    return ImportOutcome(
-        accepted=accepted,
-        duplicate=tuple(classified["duplicate"]),
-        rejected=tuple(classified["rejected"]),
-    )
 
 
 def import_design_document(
@@ -394,27 +363,22 @@ def import_payload(
         "duplicate": [],
         "rejected": [],
     }
-    attempted: list[ImportedRecord] = []
-
-    def attach(error: Exp2ResError, outcome: ImportOutcome) -> Exp2ResError:
-        error.import_outcome = outcome
-        error.import_classified = is_complete(outcome)
-        return error
-
-    def is_complete(outcome: ImportOutcome) -> bool:
-        # §14.14 rules 4–5: derived from the outcome, not set by a statement a signal could precede.
-        if records is None:
-            return False
-        return len(outcome.accepted) + len(outcome.duplicate) + len(
-            outcome.rejected
-        ) == records.total
 
     def report() -> ImportOutcome:
+        # §14.14 rule 5: banked where decided, so the classification is the report.
         return ImportOutcome(
             accepted=tuple(classified["accepted"]),
             duplicate=tuple(classified["duplicate"]),
             rejected=tuple(classified["rejected"]),
         )
+
+    def attach(error: Exp2ResError) -> Exp2ResError:
+        outcome = error.operation_result = report()
+        # §14.14 rules 4–5: derived from the outcome, not set by a statement a signal could precede.
+        error.import_classified = records is not None and len(outcome.accepted) + len(
+            outcome.duplicate
+        ) + len(outcome.rejected) == records.total
+        return error
 
     try:
         with open_payload_file(payload_path, config=config) as (payload, root):
@@ -424,58 +388,33 @@ def import_payload(
             # Before the §8.1 lock: refused with nothing committed.
             replay = iter(records)
             with writer_database(workspace, timeout_ms=timeout_ms) as connection:
-                try:
-                    # One scan under the §8.1 lock, extended as records are accepted.
-                    retained = retained_import_hashes(
-                        connection, contract.source_system
+                # One scan under the §8.1 lock, extended as records are accepted.
+                retained = retained_import_hashes(connection, contract.source_system)
+                for parsed in replay:
+                    _classify(
+                        connection,
+                        parsed,
+                        contract=contract,
+                        context=context,
+                        retained=retained,
+                        recorded_at=recorded_at,
+                        id_factory=id_factory,
+                        classified=classified,
                     )
-                    for parsed in replay:
-                        _classify(
-                            connection,
-                            parsed,
-                            contract=contract,
-                            context=context,
-                            retained=retained,
-                            recorded_at=recorded_at,
-                            id_factory=id_factory,
-                            attempted=attempted,
-                            classified=classified,
-                        )
-                except sqlite3.OperationalError as error:
-                    progress = _cancelled_report(
-                        connection, attempted=attempted, classified=classified
-                    )
-                    if is_busy(error):
-                        raise attach(WorkspaceBusyError(), progress) from error
-                    # Class 1, but the base class keeps §19.4 rule 4's rows reportable.
-                    raise attach(Exp2ResError(), progress) from error
-                except KeyboardInterrupt:
-                    # §14.14 rule 6: reported, not restored.
-                    raise attach(
-                        OperationCancelledError(),
-                        _cancelled_report(
-                            connection, attempted=attempted, classified=classified
-                        ),
-                    ) from None
-                except Exp2ResError as error:
-                    # §19.4 rule 4: a failure never withdraws an accepted record.
-                    attach(
-                        error,
-                        _cancelled_report(
-                            connection, attempted=attempted, classified=classified
-                        ),
-                    )
-                    raise
     except KeyboardInterrupt:
-        # Outside the loop the connection is closed: report the in-memory classification.
-        raise attach(OperationCancelledError(), report()) from None
+        # §14.14 rule 6: reported, not restored.
+        raise attach(OperationCancelledError()) from None
+    except sqlite3.OperationalError as error:
+        if is_busy(error):
+            raise attach(WorkspaceBusyError()) from error
+        # Class 1, but the base class keeps §19.4 rule 4's rows reportable.
+        raise attach(Exp2ResError()) from error
     except Exp2ResError as error:
-        if getattr(error, "import_outcome", None) is None:
-            attach(error, report())
-        raise
+        # §19.4 rule 4: a failure never withdraws an accepted record.
+        raise attach(error)
     except Exception as error:
         # §14.14 rule 6: a teardown failure still reports.
-        raise attach(Exp2ResError(), report()) from error
+        raise attach(Exp2ResError()) from error
     # §14.14 rule 6: durable and unreported, hold delivery.
     defer_interrupt()
     return report()
