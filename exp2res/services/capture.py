@@ -253,33 +253,21 @@ def capture_daily(
     )
 
 
-def capture_daily_file(
-    workspace: Path,
-    *,
-    source_path: str,
-    project: str | None = None,
-    artifacts: tuple[str, ...] = (),
-    clock: Clock | None = None,
-    id_factory: IdFactory = new_id,
-    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
-    after_raw_insert: FailureHook | None = None,
-) -> RawLogBundle:
-    validate_project_label(project)
+def _acquire_source(workspace: Path, source_path: str) -> tuple[str, str | None]:
     # §12.14, §14.14: compatibility and timezone gate source acquisition.
     require_compatible(workspace)
     config = load_workspace_config(workspace)
     workspace_zone(require_timezone(config))
-    raw_text, external_ref = read_capture_file(source_path, config=config)
+    return read_capture_file(source_path, config=config)
+
+
+def capture_daily_file(
+    workspace: Path, *, source_path: str, project: str | None = None, **options
+) -> RawLogBundle:
+    validate_project_label(project)
+    raw_text, external_ref = _acquire_source(workspace, source_path)
     return capture_daily(
-        workspace,
-        raw_text=raw_text,
-        project=project,
-        external_ref=external_ref,
-        artifacts=artifacts,
-        clock=clock,
-        id_factory=id_factory,
-        timeout_ms=timeout_ms,
-        after_raw_insert=after_raw_insert,
+        workspace, raw_text=raw_text, project=project, external_ref=external_ref, **options
     )
 
 
@@ -313,35 +301,19 @@ def capture_retro(
 
 
 def capture_retro_file(
-    workspace: Path,
-    *,
-    source_path: str,
-    occurred: OccurredAt,
-    project: str | None = None,
-    artifacts: tuple[str, ...] = (),
-    clock: Clock | None = None,
-    id_factory: IdFactory = new_id,
-    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
-    after_raw_insert: FailureHook | None = None,
+    workspace: Path, *, source_path: str, project: str | None = None, **options
 ) -> RawLogBundle:
     validate_project_label(project)
-    require_compatible(workspace)
-    config = load_workspace_config(workspace)
-    workspace_zone(require_timezone(config))
-    raw_text, external_ref = read_capture_file(source_path, config=config)
+    raw_text, external_ref = _acquire_source(workspace, source_path)
+    # Straight to capture_manual: capture_retro would run the gate a second time.
     return capture_manual(
         workspace,
         entry_type="manual_retro",
         source_type="user_memory",
-        occurred=occurred,
         raw_text=raw_text,
         project=project,
         external_ref=external_ref,
-        artifacts=artifacts,
-        clock=clock,
-        id_factory=id_factory,
-        timeout_ms=timeout_ms,
-        after_raw_insert=after_raw_insert,
+        **options,
     )
 
 
@@ -456,28 +428,11 @@ def capture_gap_answer(
 
 
 def capture_gap_answer_file(
-    workspace: Path,
-    *,
-    gap_id: str,
-    source_path: str,
-    artifacts: tuple[str, ...] = (),
-    clock: Clock | None = None,
-    id_factory: IdFactory = new_id,
-    timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+    workspace: Path, *, source_path: str, **options
 ) -> RawLogBundle:
-    require_compatible(workspace)
-    config = load_workspace_config(workspace)
-    workspace_zone(require_timezone(config))
-    raw_text, external_ref = read_capture_file(source_path, config=config)
+    raw_text, external_ref = _acquire_source(workspace, source_path)
     return capture_gap_answer(
-        workspace,
-        gap_id=gap_id,
-        raw_text=raw_text,
-        external_ref=external_ref,
-        artifacts=artifacts,
-        clock=clock,
-        id_factory=id_factory,
-        timeout_ms=timeout_ms,
+        workspace, raw_text=raw_text, external_ref=external_ref, **options
     )
 
 
