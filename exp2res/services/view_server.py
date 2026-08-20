@@ -25,6 +25,7 @@ from exp2res.errors import (
     ViewBindNotLoopbackError,
 )
 from exp2res.services import views
+from exp2res.services.views import Deadline
 from exp2res.services.view_http import (
     ParsedRequest,
     RequestParser,
@@ -56,6 +57,10 @@ _SAFE_METHODS = (b"GET", b"HEAD")
 
 def _timed_out() -> views.ViewPage:
     return views.standard_page("processing_timeout")
+
+
+def _verdict_page(verdict: str) -> views.ViewPage | None:
+    return None if verdict == "gone" else _timed_out()
 
 # Every value is §14.14 rule 6 cancellation to the §14.17 command.
 ServeResult = Literal["drained", "expired", "interrupted"]
@@ -674,7 +679,7 @@ class ViewServer:
         with self._state_lock:
             deadline = self._drain_deadline
         assert deadline is not None
-        expired = self._wait_idle(deadline)
+        expired = self._wait_idle(Deadline(deadline))
         if expired and not self._immediate.is_set():
             self._force_close()
         if self._immediate.is_set():
@@ -696,21 +701,21 @@ class ViewServer:
         with self._idle:
             self._idle.notify_all()
 
-    def _phase_deadline(self, deadline: float) -> float:
-        # §14.17: under a drain, every phase wait is `min(phase, drain)`.
+    def _drain_bound(self) -> Deadline | None:
         if not self._draining.is_set():
-            return deadline
+            return None
         with self._state_lock:
             drain = self._drain_deadline
-        return deadline if drain is None else min(deadline, drain)
+        return None if drain is None else Deadline(drain)
+
+    def _phase_deadline(self, deadline: float) -> Deadline:
+        # §14.17: under a drain, every phase wait is `min(phase, drain)`.
+        return Deadline(deadline).capped(self._drain_bound())
 
     def _drain_expired(self) -> bool:
         # Expiry does not set `_immediate`; this is the thread's only signal.
-        if not self._draining.is_set():
-            return False
-        with self._state_lock:
-            drain = self._drain_deadline
-        return drain is not None and self._clock() >= drain
+        drain = self._drain_bound()
+        return drain is not None and drain.expired(self._clock)
 
     def _serve_connection(self, connection: socket.socket, admitted_at: float) -> None:
         line: tuple[str, str | None] | None = None
@@ -794,7 +799,7 @@ class ViewServer:
         # No-drain path: admitted lines precede the sentinel, bounded by the §8.1 timeout.
         if self._immediate.is_set():
             return
-        self._wait_idle(self._clock() + self._timeouts.drain)
+        self._wait_idle(Deadline(self._clock() + self._timeouts.drain))
 
     def _flush(self, reporter: threading.Thread) -> None:
         # Sliced join so a second interruption is seen.
@@ -803,7 +808,7 @@ class ViewServer:
         if deadline is None:
             return
         while reporter.is_alive():
-            remaining = deadline - self._clock()
+            remaining = Deadline(deadline).left(self._clock)
             if remaining <= 0 or self._immediate.is_set():
                 return
             reporter.join(min(remaining, _FLUSH_POLL_SECONDS))
@@ -820,7 +825,7 @@ class ViewServer:
         while not parser.done:
             if self._immediate.is_set():
                 return None
-            remaining = self._phase_deadline(receive_deadline) - self._clock()
+            remaining = self._left(receive_deadline)
             if remaining <= 0:
                 return None
             try:
@@ -842,7 +847,7 @@ class ViewServer:
             parser.feed(chunk)
             tail = (tail + chunk)[-3:]
         completed_at = self._clock()
-        if self._phase_deadline(receive_deadline) - completed_at <= 0:
+        if self._phase_deadline(receive_deadline).expired(lambda: completed_at):
             # Completed late = receive expiry.
             return None
         return parser, completed_at
@@ -870,9 +875,7 @@ class ViewServer:
         return self._resolve_abandonable(request, deadline, lease)
 
     def _within(self, page: views.ViewPage, deadline: float) -> views.ViewPage:
-        if self._clock() < deadline:
-            return page
-        return _timed_out()
+        return _timed_out() if Deadline(deadline).expired(self._clock) else page
 
     def _failed(self, deadline: float) -> views.ViewPage:
         # §30 rule 7 still owes one outcome.
@@ -884,14 +887,23 @@ class ViewServer:
         return self._immediate.is_set() or self._drain_expired()
 
     def _left(self, deadline: float) -> float:
-        return self._phase_deadline(deadline) - self._clock()
+        return self._phase_deadline(deadline).left(self._clock)
 
-    def _wait_idle(self, deadline: float) -> bool:
+    def _verdict(self, deadline: float) -> Literal["gone", "timeout"] | None:
+        """§30 rule 7: nothing once gone, `processing_timeout` once the phase expired."""
+
+        if self._gone():
+            return "gone"
+        if self._left(deadline) <= 0:
+            return "timeout"
+        return None
+
+    def _wait_idle(self, deadline: Deadline) -> bool:
         """Wait on the admitted count until `deadline`; True when it expired first."""
 
         with self._idle:
             while self._active and not self._immediate.is_set():
-                remaining = deadline - self._clock()
+                remaining = deadline.left(self._clock)
                 if remaining <= 0:
                     return True
                 self._idle.wait(remaining)
@@ -921,10 +933,8 @@ class ViewServer:
         deadline: float,
         lease: _AdmissionLease | None,
     ) -> views.ViewPage | None:
-        if self._gone():
-            return None
-        if self._left(deadline) <= 0:
-            return _timed_out()
+        if verdict := self._verdict(deadline):
+            return _verdict_page(verdict)
         if not self._ensure_process_reaper():
             return self._failed(deadline)
         try:
@@ -1044,22 +1054,18 @@ class ViewServer:
         os.set_blocking(receiver.fileno(), False)
         try:
             while True:
-                if self._gone():
-                    return None
+                if verdict := self._verdict(deadline):
+                    return _verdict_page(verdict)
                 if process_done and eof:
                     break
                 remaining = self._left(deadline)
-                if remaining <= 0:
-                    return _timed_out()
                 ready = wait_for_connections((receiver, process.sentinel), remaining)
                 process_done = process_done or process.sentinel in ready
                 if receiver not in ready:
                     continue
                 while True:
-                    if self._gone():
-                        return None
-                    if self._clock() >= deadline:
-                        return _timed_out()
+                    if verdict := self._verdict(deadline):
+                        return _verdict_page(verdict)
                     try:
                         chunk = os.read(receiver.fileno(), 65536)
                     except BlockingIOError:
@@ -1068,10 +1074,8 @@ class ViewServer:
                         eof = True
                         break
                     buffer.extend(chunk)
-                    if self._gone():
-                        return None
-                    if self._clock() >= deadline:
-                        return _timed_out()
+                    if verdict := self._verdict(deadline):
+                        return _verdict_page(verdict)
                     framed_size = _framed_size(buffer)
                     if framed_size is not None and len(buffer) >= framed_size:
                         if len(buffer) != framed_size:
@@ -1189,7 +1193,7 @@ class ViewServer:
         """Compose under the processing budget, send under the emit one."""
 
         header, body = compose_response_parts(page, head=head)
-        if self._clock() >= processing_deadline:
+        if Deadline(processing_deadline).expired(self._clock):
             # §14.17: ordinary processing deadline only, never `min(phase, drain)` —
             # §30 rule 7: a drain truncates delivery, never relabels an outcome.
             page = views.standard_page("processing_timeout")
