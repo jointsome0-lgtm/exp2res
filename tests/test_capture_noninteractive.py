@@ -19,10 +19,11 @@ import exp2res.pipeline.stage1 as stage1_module
 import exp2res.services.capture as capture_service
 import exp2res.services.stages as detection_service
 from exp2res.cli import app
+from exp2res.domain.results import committed_outcome
 from exp2res.errors import WorkspaceBusyError
 from exp2res.services.logs import list_logs, show_log
 
-from fakes import FakeContractRunner
+from fakes import FakeContractRunner, raise_interrupt
 from test_stage3_extraction import SELECTION, budgets
 from test_stage4_detection import DetectionIds, detector_response, prepare_fact
 
@@ -579,6 +580,8 @@ def test_an_interrupted_gap_answer_names_the_pair_it_committed(
     before = {log.id for log in list_logs(workspace)}
     source = tmp_path / "Vera Example answer.md"
     source.write_bytes(b"Vera Example answered the gap.\n")
+    live = tmp_path / "vera-example-assessment-set"
+    live.write_bytes(b"a stale set awaiting cleanup\n")
 
     def interrupt_during_the_managed_cleanup(*args, **kwargs):
         # The answer and its gap transition are durable; §14.7's stale-set
@@ -590,6 +593,9 @@ def test_an_interrupted_gap_answer_names_the_pair_it_committed(
         "remove_managed_sets_for_locked_database",
         interrupt_during_the_managed_cleanup,
     )
+    monkeypatch.setattr(
+        capture_service, "assessment_set_paths", lambda *a, **k: (str(live),)
+    )
     result, envelope = invoke_json(
         workspace,
         ["gaps", "answer", "--gap-id", gap_id, "--file", str(source)],
@@ -598,8 +604,36 @@ def test_an_interrupted_gap_answer_names_the_pair_it_committed(
 
     assert result.exit_code == 9
     assert envelope["status"] == "cancelled"
+    assert envelope["residual_paths"] == [str(live)]
     created = _committed_pair(envelope)
     assert {log.id for log in list_logs(workspace)} - before == set(created["raw_log"])
+
+
+def test_an_interrupted_gap_cleanup_carries_its_unproven_stale_path(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gap_id = seed_gap(workspace, monkeypatch)
+    live = tmp_path / "vera-example-assessment-set"
+    live.write_bytes(b"a stale set awaiting cleanup\n")
+
+    monkeypatch.setattr(
+        capture_service, "assessment_set_paths", lambda *a, **k: (str(live),)
+    )
+    monkeypatch.setattr(
+        capture_service,
+        "remove_managed_sets_for_locked_database",
+        raise_interrupt,
+    )
+
+    with pytest.raises(KeyboardInterrupt) as failure:
+        capture_service.capture_gap_answer(
+            workspace,
+            gap_id=gap_id,
+            raw_text="Vera Example committed before stale-set cleanup.",
+        )
+
+    assert committed_outcome(failure.value).residual_paths == [str(live)]
+    assert failure.value.operation_journal.unresolved == (str(live),)
 
 
 class _CommitThenInterrupt:

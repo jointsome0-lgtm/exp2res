@@ -430,15 +430,24 @@ def capture_gap_answer(
             bundle = RawLogBundle(raw_log, evidence_items)
             op.after_commit(
                 lambda: remove_managed_sets_for_locked_database(
-                    workspace, snapshot_ids=snapshot_ids
-                )
+                    workspace,
+                    snapshot_ids=snapshot_ids,
+                    removed_ledger=op.journal.unlinks,
+                ),
+                unproven=pending,
             )
             bundle = RawLogBundle(raw_log, evidence_items, op.journal.unresolved)
         return bundle
     except BaseException as error:
         # Rule 6: every exit after the commit — cleanup, teardown — reports the pair.
-        if error.operation_journal.committed and bundle is not None:
-            carry_committed(error, capture_outcome(bundle))
+        journal = error.operation_journal
+        if journal.committed and bundle is not None:
+            carry_committed(
+                error,
+                capture_outcome(
+                    RawLogBundle(bundle.raw_log, bundle.evidence_items, journal.unresolved)
+                ),
+            )
         raise
 
 
