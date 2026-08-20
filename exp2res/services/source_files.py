@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
-from functools import lru_cache
+from dataclasses import dataclass, replace
+from functools import lru_cache, partial
 import hashlib
 import io
 import os
@@ -448,20 +448,131 @@ def _scheme(value: str) -> str | None:
     return None if scheme_match is None else value[: scheme_match.end() - 1].casefold()
 
 
-def _authorize_local_locator(
-    value: str, *, config: WorkspaceConfig
-) -> str:
-    if _forbidden_supplied_form(value):
-        raise ArtifactLocatorUnsupportedPathError()
+def _checked(
+    validate: Callable[[str], object], value: str, error: Callable[[], Exception]
+) -> None:
     try:
-        validate_posix_path(value)
-    except (UnicodeError, ValueError, TypeError) as error:
-        raise ArtifactLocatorUnsupportedPathError() from error
+        validate(value)
+    except (UnicodeError, ValueError, TypeError) as cause:
+        raise error() from cause
+
+
+@dataclass(frozen=True)
+class LocatorPolicy:
+    """One §29.4 admission; defaults admit a bare local path and nothing else.
+
+    `refuse`: the `_classify_resolved` kinds plus `unsupported`, `unresolved`, `not_file`, `escape`."""
+
+    refuse: Refusals
+    form: Callable[[str], bool]
+    structural: bool = False
+    remote: bool = False
+    file_uri: bool = False
+    local: bool = True
+    posix: bool = False
+    require_file: bool = False
+
+
+def authorize_locator(
+    value: str,
+    *,
+    config: WorkspaceConfig | None,
+    policy: LocatorPolicy,
+    root: Path | None = None,
+) -> ArtifactLocator:
+    """Step order is the contract: structural → supplied form → scheme → local
+    spelling → rule 8 relative form → resolve → regular file → containment → rules 9–14."""
+
+    refuse = policy.refuse
+    if policy.structural:
+        _checked(validate_structural, value, refuse["invalid"])
+    if policy.form(value):
+        raise refuse["unsupported"]()
+    local = value
+    if policy.remote:
+        scheme = _scheme(value)
+        if scheme is not None and scheme != "file":
+            _checked(_validate_absolute_uri, value, refuse["invalid"])
+            return ArtifactLocator(uri=value, path=None)
+        if scheme == "file":
+            if not policy.file_uri:
+                raise refuse["unsupported"]()
+            local = _file_uri_path(value)
+    if not policy.local:
+        raise refuse["invalid"]()
+    if policy.posix:
+        _checked(validate_posix_path, local, refuse["unsupported"])
+    if root is not None and (
+        URI_SCHEME.match(local) is not None
+        or local.startswith("/")
+        or any(part == ".." for part in PurePosixPath(local).parts)
+    ):
+        raise refuse["escape"]()
     try:
-        resolved = Path(value).resolve(strict=True)
+        if root is not None:
+            root = root.resolve(strict=True)
+        resolved = (Path(local) if root is None else root / local).resolve(strict=True)
     except (OSError, RuntimeError) as error:
-        raise ArtifactLocatorUnresolvableError() from error
-    return _classify_resolved(resolved, config=config, refuse=_LOCAL_LOCATOR_REFUSALS)
+        raise refuse["unresolved"]() from error
+    if policy.require_file and not resolved.is_file():
+        raise refuse["not_file"]()
+    # Containment after symlink resolution.
+    if root is not None and resolved != root and root not in resolved.parents:
+        raise refuse["escape"]()
+    assert config is not None
+    return ArtifactLocator(
+        uri=None, path=_classify_resolved(resolved, config=config, refuse=refuse)
+    )
+
+
+_RULE_18_FORM = partial(_forbidden_supplied_form, uri_authority=True)
+ARTIFACT_LOCATOR = LocatorPolicy(
+    refuse={
+        **_LOCAL_LOCATOR_REFUSALS,
+        "unsupported": ArtifactLocatorUnsupportedPathError,
+        "unresolved": ArtifactLocatorUnresolvableError,
+    },
+    # A drive letter parses as a one-character scheme: refused before URI validation.
+    form=lambda value: WINDOWS_DRIVE.match(value) is not None,
+    structural=True,
+    remote=True,
+    file_uri=True,
+    posix=True,
+)
+# Same admission as capture time, or the §15 re-check diverges; rule 18 spellings pass.
+PROMPT_LOCATOR = replace(ARTIFACT_LOCATOR, structural=False, form=_RULE_18_FORM)
+REMOTE_LOCATOR = LocatorPolicy(
+    refuse={
+        "invalid": ArtifactLocatorInvalidError,
+        "unsupported": ArtifactLocatorUnsupportedPathError,
+    },
+    form=_RULE_18_FORM,
+    structural=True,
+    remote=True,
+    local=False,
+)
+PAYLOAD_LOCATOR = LocatorPolicy(
+    refuse={
+        **_PAYLOAD_LOCATOR_REFUSALS,
+        "unsupported": lambda: PayloadLocatorError("payload_locator_path_unsupported"),
+        "unresolved": lambda: PayloadLocatorError("payload_locator_unresolved"),
+        "not_file": lambda: PayloadLocatorError("payload_locator_unresolved"),
+        "escape": lambda: PayloadLocatorError("payload_locator_non_selected"),
+    },
+    form=_forbidden_supplied_form,
+    posix=True,
+    require_file=True,
+)
+SELECTED_FILE = LocatorPolicy(
+    refuse={
+        **_SELECTED_FILE_REFUSALS,
+        "unsupported": ForbiddenPathError,
+        "unresolved": InvalidInputError,
+        "not_file": ForbiddenPathError,
+    },
+    form=_forbidden_supplied_form,
+    require_file=True,
+)
 
 
 def authorize_artifact_locators(
@@ -473,25 +584,7 @@ def authorize_artifact_locators(
     accepted: list[ArtifactLocator] = []
     stored_keys: set[tuple[str, str]] = set()
     for value in supplied:
-        try:
-            validate_structural(value)
-        except (UnicodeError, ValueError, TypeError) as error:
-            raise ArtifactLocatorInvalidError() from error
-
-        scheme = _scheme(value)
-        if WINDOWS_DRIVE.match(value) is not None:
-            raise ArtifactLocatorUnsupportedPathError()
-        if scheme is not None and scheme != "file":
-            try:
-                _validate_absolute_uri(value)
-            except ValueError as error:
-                raise ArtifactLocatorInvalidError() from error
-            locator = ArtifactLocator(uri=value, path=None)
-        else:
-            local_value = _file_uri_path(value) if scheme is not None else value
-            canonical = _authorize_local_locator(local_value, config=config)
-            locator = ArtifactLocator(uri=None, path=canonical)
-
+        locator = authorize_locator(value, config=config, policy=ARTIFACT_LOCATOR)
         if locator.stored_key in stored_keys:
             raise ArtifactLocatorDuplicateError()
         stored_keys.add(locator.stored_key)
@@ -513,22 +606,13 @@ def reauthorize_prompt_locators(
                     and child is not None
                     and isinstance(child, str)
                 ):
-                    scheme = _scheme(child)
-                    # Same order as capture-time authorization, or the re-check diverges.
-                    windows_form = _forbidden_supplied_form(
+                    # Remote provenance stays inert unless it is a Windows form.
+                    if _scheme(child) not in (None, "file") and not _forbidden_supplied_form(
                         child, uri_authority=True
-                    )
-                    if scheme is not None and scheme != "file" and not windows_form:
+                    ):
                         continue
                     try:
-                        if windows_form:
-                            raise ArtifactLocatorUnsupportedPathError()
-                        local_value = (
-                            _file_uri_path(child)
-                            if scheme == "file"
-                            else child
-                        )
-                        _authorize_local_locator(local_value, config=config)
+                        authorize_locator(child, config=config, policy=PROMPT_LOCATOR)
                     except InvalidInputError as error:
                         raise LocatorReauthorizationFailedError() from error
                 visit(child)
@@ -537,6 +621,8 @@ def reauthorize_prompt_locators(
                 visit(child)
 
     visit(payload)
+
+
 def _not_utf8() -> InvalidInputError:
     failure = InvalidInputError()
     failure.diagnostic_class = "input_not_utf8"
@@ -628,17 +714,9 @@ def _authorize_selected_file(
 ) -> tuple[Path, str]:
     """§29.4 rules 4–14: (path to open, canonical path to persist)."""
 
-    if _forbidden_supplied_form(supplied):
-        raise ForbiddenPathError()
-    try:
-        resolved = Path(supplied).resolve(strict=True)
-    except OSError as error:
-        raise InvalidInputError() from error
-    if not resolved.is_file():
-        raise ForbiddenPathError()
-    return resolved, _classify_resolved(
-        resolved, config=config, refuse=_SELECTED_FILE_REFUSALS
-    )
+    canonical = authorize_locator(supplied, config=config, policy=SELECTED_FILE).path
+    assert canonical is not None
+    return Path(canonical), canonical
 
 
 @contextmanager
@@ -715,22 +793,9 @@ def open_payload_file(
 def validate_remote_locator(value: str) -> str:
     """§29.4 rule 18: absolute URI, bytes unchanged."""
 
-    try:
-        validate_structural(value)
-    except (UnicodeError, ValueError, TypeError) as error:
-        raise ArtifactLocatorInvalidError() from error
-    if _forbidden_supplied_form(value, uri_authority=True):
-        raise ArtifactLocatorUnsupportedPathError()
-    scheme = _scheme(value)
-    if scheme is None:
-        raise ArtifactLocatorInvalidError()
-    if scheme == "file":
-        raise ArtifactLocatorUnsupportedPathError()
-    try:
-        _validate_absolute_uri(value)
-    except ValueError as error:
-        raise ArtifactLocatorInvalidError() from error
-    return value
+    uri = authorize_locator(value, config=None, policy=REMOTE_LOCATOR).uri
+    assert uri is not None
+    return uri
 
 
 def authorize_payload_locator(
@@ -738,24 +803,8 @@ def authorize_payload_locator(
 ) -> str:
     """§29.4 rule 8: authorize an embedded locator unopened; returns the canonical path."""
 
-    if _forbidden_supplied_form(value) or WINDOWS_DRIVE.match(value) is not None:
-        raise PayloadLocatorError("payload_locator_path_unsupported")
-    try:
-        validate_posix_path(value)
-    except (UnicodeError, ValueError, TypeError) as error:
-        raise PayloadLocatorError("payload_locator_path_unsupported") from error
-    if URI_SCHEME.match(value) is not None or value.startswith("/"):
-        raise PayloadLocatorError("payload_locator_non_selected")
-    if any(part == ".." for part in PurePosixPath(value).parts):
-        raise PayloadLocatorError("payload_locator_non_selected")
-    try:
-        root = payload_root.resolve(strict=True)
-        resolved = (root / value).resolve(strict=True)
-    except (OSError, RuntimeError) as error:
-        raise PayloadLocatorError("payload_locator_unresolved") from error
-    if not resolved.is_file():
-        raise PayloadLocatorError("payload_locator_unresolved")
-    # Containment after symlink resolution.
-    if resolved != root and root not in resolved.parents:
-        raise PayloadLocatorError("payload_locator_non_selected")
-    return _classify_resolved(resolved, config=config, refuse=_PAYLOAD_LOCATOR_REFUSALS)
+    canonical = authorize_locator(
+        value, config=config, policy=PAYLOAD_LOCATOR, root=payload_root
+    ).path
+    assert canonical is not None
+    return canonical
