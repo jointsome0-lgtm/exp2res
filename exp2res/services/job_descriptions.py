@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
-from typing import Callable, Iterable
+from typing import Callable
 
 from pydantic import ValidationError
 
@@ -42,16 +42,15 @@ from exp2res.services.stages import Run, RunIds
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     cancelled_with,
-    checkpoint_residuals as _delete_checkpoint_residuals,
+    checkpoint_residuals,
     deletion_outcome,
     generation_ids,
-    locked_database_anchor,
-    purge_managed_backups as _purge_managed_backups,
+    remove_managed_backups,
     report_unproven_residual,
     sorted_paths,
     wal_path,
 )
-from exp2res.services.writers import banked_transaction, held_writer, retry_id_collisions
+from exp2res.services.writers import held_writer, operation, retry_id_collisions
 from exp2res.storage.repository import (
     get_job_description,
     list_job_descriptions as _list_job_descriptions,
@@ -72,6 +71,8 @@ class PurgedBranch:
 
 @dataclass(frozen=True)
 class JobDescriptionDeleteOutcome:
+    """`committed=False`: managed cleanup ran before a cancelled deletion (§14.14 rule 6)."""
+
     run_id: str
     selected: JobDescription
     purged_branches: tuple[PurgedBranch, ...]
@@ -80,15 +81,7 @@ class JobDescriptionDeleteOutcome:
     purged_generation_ids: tuple[str, ...]
     removed_managed_paths: tuple[str, ...]
     residual_paths: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class JobDescriptionCleanupOutcome:
-    """§14.14 rule 6: managed cleanup done before a cancelled deletion."""
-
-    selected: JobDescription
-    removed_managed_paths: tuple[str, ...]
-    residual_paths: tuple[str, ...]
+    committed: bool = True
 
 
 def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
@@ -225,210 +218,144 @@ def delete_job_description(
 
     now = clock or (lambda: datetime.now(timezone.utc))
     allocate_id = id_factory or new_id
-    residual_paths: list[str] = []
-    removed_paths: list[str] = []
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    deleted: JobDescriptionDeleteOutcome | None = None
     held = held_writer(
         connection, writer_database, workspace, owner_delete=True, timeout_ms=timeout_ms
     )
-    # §14.14 rule 6: one cancellation boundary over checkpoint, result build and
-    # teardown that still reports a committed deletion (or earlier managed cleanup).
-    committed: list[JobDescriptionDeleteOutcome] = []
-    cleaned: list[JobDescriptionCleanupOutcome] = []
+    # §14.14 rule 6: one cancellation boundary over cleanup, checkpoint, result
+    # build and teardown that still reports a committed deletion (or earlier managed cleanup).
     try:
-        return _delete_locked(
-            workspace,
-            held=held,
-            job_description_id=job_description_id,
-            allocate_id=allocate_id,
-            residual_paths=residual_paths,
-            removed_paths=removed_paths,
-            committed=committed,
-            cleaned=cleaned,
-            now=now,
-        )
-    except KeyboardInterrupt:
-        if committed:
-            raise cancelled_with(delete_outcome=committed[-1]) from None
-        if cleaned and (
-            cleaned[-1].removed_managed_paths or cleaned[-1].residual_paths
-        ):
-            raise cancelled_with(cleanup_outcome=cleaned[-1]) from None
-        raise
-
-
-def _delete_locked(
-    workspace: Path,
-    *,
-    held,
-    job_description_id: str,
-    allocate_id: Callable[[str], str],
-    residual_paths: list[str],
-    removed_paths: list[str],
-    committed: list[JobDescriptionDeleteOutcome],
-    cleaned: list[JobDescriptionCleanupOutcome],
-    now: Callable[[], datetime],
-) -> JobDescriptionDeleteOutcome:
-    database = workspace / ".exp2res" / "exp2res.sqlite"
-    backup_root = str((workspace / ".exp2res" / "backup").absolute())
-    with held as connection:
-        selected = get_job_description(connection, job_description_id)
-        if selected is None:
-            raise SelectorNotFoundError()
-        database_identity = locked_database_anchor()
-        # §12 rule 11: a colliding telemetry ID must not abort the purge.
-        run = Run(
-            connection,
-            stage="13.13",
-            input_ids=lambda _held: (job_description_id,),
-            metadata={"mode": "job_description"},
-            clock=now,
-            new_id=lambda _kind: _allocate_run_id(connection, allocate_id),
-            own_transaction=False,
-        )
-        orchestration_run_id = run.id
-        # §13.13 rule 10: managed removal precedes the transaction; these IDs name `out/branch/<id>/`.
-        purged_branches = tuple(
-            PurgedBranch(id=row["id"], name=row["name"])
-            for row in connection.execute(
-                "SELECT id, name FROM resume_branches WHERE job_description_id = ? "
-                "ORDER BY CAST(id AS BLOB)",
-                (job_description_id,),
+        with operation(held) as op:
+            connection = op.connection
+            selected = get_job_description(connection, job_description_id)
+            if selected is None:
+                raise SelectorNotFoundError()
+            # §12 rule 11: a colliding telemetry ID must not abort the purge.
+            run = Run(
+                connection,
+                stage="13.13",
+                input_ids=lambda _held: (job_description_id,),
+                metadata={"mode": "job_description"},
+                clock=now,
+                new_id=lambda _kind: _allocate_run_id(connection, allocate_id),
+                own_transaction=False,
             )
-        )
-        (
-            purged_bullet_ids,
-            purged_finding_ids,
-            purged_generation_ids,
-        ) = _dependent_purge_targets(connection, job_description_id)
-        # §14.14 rule 6: names what was unlinked mid-pass.
-        unlinked: list[str] = []
-        try:
-            if database_identity is None:
-                removed, backup_residuals = (), (backup_root,)
-            else:
-                removed, backup_residuals = _purge_managed_backups(
-                    workspace,
-                    expected_database=database_identity,
-                    removed_ledger=unlinked,
-                )
-        except KeyboardInterrupt:
-            cleaned.append(
-                JobDescriptionCleanupOutcome(
-                    selected=selected,
-                    removed_managed_paths=sorted_paths(unlinked),
-                    residual_paths=(backup_root,),
+            # §13.13 rule 10: managed removal precedes the rows; these IDs name `out/branch/<id>/`.
+            purged_branches = tuple(
+                PurgedBranch(id=row["id"], name=row["name"])
+                for row in connection.execute(
+                    "SELECT id, name FROM resume_branches WHERE job_description_id = ? "
+                    "ORDER BY CAST(id AS BLOB)",
+                    (job_description_id,),
                 )
             )
-            raise
-        removed_paths.extend(removed)
-        residual_paths.extend(backup_residuals)
-        # §13.13 rule 10: exact ID-keyed sets; §13.14 owns path validation.
-        branch_ids = tuple(branch.id for branch in purged_branches)
-        branch_parent = str((workspace / "out" / "branch").absolute())
-        unlinked_sets: list[str] = []
-        try:
-            database_is_live = locked_workspace_predicate(workspace)
-
-            existing_branch_sets = branch_set_paths(workspace, branch_ids)
-            if not database_is_live():
-                # §13.13 rule 6: binding lost — removal would purge a foreign tree.
-                residual_paths.extend(
-                    branch_set_paths(workspace, branch_ids, existing_only=False)
-                )
-            else:
-                residual_paths.extend(
-                    remove_branch_sets(
-                        workspace,
-                        branch_ids,
-                        removed_ledger=unlinked_sets,
-                        still_live=database_is_live,
-                    )
-                )
-                if database_is_live():
-                    surviving = set(branch_set_paths(workspace, branch_ids))
-                    removed_paths.extend(
-                        path for path in existing_branch_sets if path not in surviving
-                    )
-                else:
-                    # §13.13 rule 6: binding lost mid-pass, nothing proven removed.
-                    unlinked_sets.clear()
-                    report_unproven_residual(
-                        branch_set_paths(workspace, branch_ids, existing_only=False)
-                    )
-                    residual_paths.extend(
-                        branch_set_paths(workspace, branch_ids, existing_only=False)
-                    )
-        except OSError:
-            # §13.13 rule 6: cleanup never blocks deletion.
-            removed_paths.extend(unlinked_sets)
-            residual_paths.append(branch_parent)
-        except KeyboardInterrupt:
-            # §14.14 rule 6: only this carries what was unlinked.
-            removed_paths.extend(unlinked_sets)
-            cleaned.append(
-                JobDescriptionCleanupOutcome(
-                    selected=selected,
-                    removed_managed_paths=sorted_paths(removed_paths),
-                    residual_paths=sorted_paths((*residual_paths, branch_parent)),
-                )
-            )
-            raise
-        cleaned.append(
-            JobDescriptionCleanupOutcome(
-                selected=selected,
-                removed_managed_paths=sorted_paths(removed_paths),
-                residual_paths=sorted_paths(residual_paths),
-            )
-        )
-        def build_outcome(residuals: Iterable[str]) -> JobDescriptionDeleteOutcome:
-            return JobDescriptionDeleteOutcome(
-                run_id=orchestration_run_id,
+            (
+                purged_bullet_ids,
+                purged_finding_ids,
+                purged_generation_ids,
+            ) = _dependent_purge_targets(connection, job_description_id)
+            deleted = JobDescriptionDeleteOutcome(
+                run_id=run.id,
                 selected=selected,
                 purged_branches=purged_branches,
                 purged_bullet_ids=purged_bullet_ids,
                 purged_finding_ids=purged_finding_ids,
                 purged_generation_ids=purged_generation_ids,
-                removed_managed_paths=sorted_paths(removed_paths),
-                residual_paths=sorted_paths(residuals),
+                removed_managed_paths=(),
+                residual_paths=(),
+                committed=False,
             )
-
-        # Durable: the WAL is residual until a checkpoint proves erasure.
-        def bank() -> None:
-            committed.append(build_outcome((*residual_paths, wal_path(database))))
-
-        with banked_transaction(connection, bank):
+            op.remove(
+                remove_managed_backups,
+                workspace,
+                fallback=str((workspace / ".exp2res" / "backup").absolute()),
+            )
+            op.remove(
+                _remove_branch_sets,
+                workspace,
+                tuple(branch.id for branch in purged_branches),
+                fallback=str((workspace / "out" / "branch").absolute()),
+            )
             selected = get_job_description(connection, job_description_id)
             if selected is None:
                 raise SelectorNotFoundError()
             # §24.47: telemetry in the deletion's own transaction.
             run.create()
             # §13.13 rule 10: FK order findings → bullets → branches → vacancy.
-            connection.execute(
+            op.execute(
                 "DELETE FROM verification_findings "
                 "WHERE target_type = 'resume_bullet' "
                 f"AND target_id IN ({_DEPENDENT_BULLETS})",
                 (job_description_id,),
             )
-            connection.execute(
+            op.execute(
                 f"DELETE FROM resume_bullets WHERE branch_id IN ({_DEPENDENT_BRANCHES})",
                 (job_description_id,),
             )
-            connection.execute(
+            op.execute(
                 "DELETE FROM resume_branches WHERE job_description_id = ?",
                 (job_description_id,),
             )
-            connection.execute(
+            op.execute(
                 "DELETE FROM job_descriptions WHERE id = ?", (job_description_id,)
             )
             # §13.13 rule 5: a hash is an oracle.
-            connection.execute(
-                "UPDATE llm_calls SET input_hash = NULL, output_hash = NULL"
-            )
+            op.execute("UPDATE llm_calls SET input_hash = NULL, output_hash = NULL")
             run.finish()
-        residual_paths.extend(_delete_checkpoint_residuals(connection, database))
-        outcome = build_outcome(tuple(residual_paths))
-        committed.append(outcome)
-        return outcome
+            # Durable: the WAL is residual until a checkpoint proves erasure.
+            op.after_commit(
+                lambda: checkpoint_residuals(connection, database),
+                unproven=(wal_path(database),),
+            )
+            deleted = replace(
+                deleted,
+                removed_managed_paths=sorted_paths(op.journal.unlinks),
+                residual_paths=op.journal.unresolved,
+                committed=True,
+            )
+        return deleted
+    except KeyboardInterrupt as error:
+        journal = error.operation_journal
+        if deleted is None or not (
+            journal.committed or journal.unlinks or journal.unresolved
+        ):
+            raise
+        raise cancelled_with(
+            replace(
+                deleted,
+                removed_managed_paths=sorted_paths(journal.unlinks),
+                residual_paths=journal.unresolved,
+                committed=journal.committed,
+            )
+        ) from None
+
+
+def _remove_branch_sets(
+    workspace: Path, branch_ids: tuple[str, ...], *, removed_ledger: list[str]
+) -> tuple[str, ...]:
+    """§13.13 rule 10: exact ID-keyed sets; §13.14 owns path validation.
+
+    §13.13 rule 6: removal is proven by re-enumeration, so the ledger ends as
+    that proof; a binding lost mid-pass proves nothing removed."""
+
+    database_is_live = locked_workspace_predicate(workspace)
+    existing = branch_set_paths(workspace, branch_ids)
+    if not database_is_live():
+        # §13.13 rule 6: binding lost — removal would purge a foreign tree.
+        return branch_set_paths(workspace, branch_ids, existing_only=False)
+    mark = len(removed_ledger)
+    residuals = remove_branch_sets(
+        workspace, branch_ids, removed_ledger=removed_ledger, still_live=database_is_live
+    )
+    if database_is_live():
+        surviving = set(branch_set_paths(workspace, branch_ids))
+        removed_ledger[mark:] = [path for path in existing if path not in surviving]
+        return residuals
+    del removed_ledger[mark:]
+    stranded = branch_set_paths(workspace, branch_ids, existing_only=False)
+    report_unproven_residual(stranded)
+    return (*residuals, *stranded)
 
 
 def jd_delete_affected(deleted: JobDescriptionDeleteOutcome) -> AffectedIds:

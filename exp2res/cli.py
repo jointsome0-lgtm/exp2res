@@ -142,7 +142,6 @@ from exp2res.services.job_descriptions import (
     jd_delete_outcome,
     jd_delete_result,
     job_description_projection,
-    JobDescriptionCleanupOutcome,
     JobDescriptionDeleteOutcome,
     list_job_descriptions,
     run_jd_add_file,
@@ -1208,7 +1207,7 @@ def _store_correction(
         except OperationCancelledError as error:
             committed = cast(
                 CorrectionOutcome | None,
-                getattr(error, "correction_outcome", None),
+                getattr(error, "operation_result", None),
             )
             if committed is not None:
                 try:
@@ -1318,7 +1317,7 @@ def _import_decorate(error: Exp2ResError) -> None:
     them reports less than the others.
     """
 
-    committed = cast(ImportOutcome | None, getattr(error, "import_outcome", None))
+    committed = cast(ImportOutcome | None, getattr(error, "operation_result", None))
     if committed is None:
         return
     extend_committed(
@@ -1357,7 +1356,7 @@ def _import_command(
                 # The classification is complete and durable; an interrupt in
                 # result assembly still reports it under §14.14 rule 6.
                 cancelled = OperationCancelledError()
-                cancelled.import_outcome = imported
+                cancelled.operation_result = imported
                 cancelled.import_classified = True
                 raise cancelled from None
         except Exp2ResError as error:
@@ -1368,7 +1367,7 @@ def _import_command(
                 # rendered. That boundary now belongs to the cancellation, and
                 # rendering it there is the same bounded work.
                 cancelled = OperationCancelledError()
-                cancelled.import_outcome = getattr(error, "import_outcome", None)
+                cancelled.operation_result = getattr(error, "operation_result", None)
                 cancelled.import_classified = getattr(
                     error, "import_classified", False
                 )
@@ -1918,7 +1917,7 @@ def logs_delete(
             except OperationCancelledError as error:
                 committed = cast(
                     DeleteOutcome | None,
-                    getattr(error, "delete_outcome", None),
+                    getattr(error, "operation_result", None),
                 )
                 if committed is not None:
                     try:
@@ -2041,7 +2040,7 @@ def jd_list(context: typer.Context) -> None:
     _run_command(context, "jd list", operation)
 
 
-def _jd_cleanup_result(cleaned: JobDescriptionCleanupOutcome) -> JdDeleteResult:
+def _jd_cleanup_result(cleaned: JobDescriptionDeleteOutcome) -> JdDeleteResult:
     return JdDeleteResult(
         selected_job_description=job_description_projection(cleaned.selected),
         purged_branches=[],
@@ -2051,7 +2050,7 @@ def _jd_cleanup_result(cleaned: JobDescriptionCleanupOutcome) -> JdDeleteResult:
     )
 
 
-def _jd_cleanup_human_result(cleaned: JobDescriptionCleanupOutcome) -> str:
+def _jd_cleanup_human_result(cleaned: JobDescriptionDeleteOutcome) -> str:
     lines = [
         f"Job description {cleaned.selected.id} was not deleted; managed "
         "cleanup had already run."
@@ -2092,9 +2091,9 @@ def jd_delete(
         except OperationCancelledError as error:
             committed = cast(
                 JobDescriptionDeleteOutcome | None,
-                getattr(error, "delete_outcome", None),
+                getattr(error, "operation_result", None),
             )
-            if committed is not None:
+            if committed is not None and committed.committed:
                 # The error's own class-9 classification replaces the
                 # projection's on emission, so carrying it whole is safe.
                 carry_committed(error, jd_delete_outcome(committed))
@@ -2102,16 +2101,12 @@ def jd_delete(
             # §14.14 rule 6: managed cleanup ran before the transaction, so
             # its effects are reported even though nothing was deleted — no
             # affected IDs and no run, because neither became durable.
-            cleaned = cast(
-                JobDescriptionCleanupOutcome | None,
-                getattr(error, "cleanup_outcome", None),
-            )
-            if cleaned is not None:
+            if committed is not None:
                 extend_committed(
                     error,
-                    residual_paths=list(cleaned.residual_paths),
-                    result=_jd_cleanup_result(cleaned),
-                    human_result=_jd_cleanup_human_result(cleaned),
+                    residual_paths=list(committed.residual_paths),
+                    result=_jd_cleanup_result(committed),
+                    human_result=_jd_cleanup_human_result(committed),
                 )
             raise
         try:
@@ -2251,7 +2246,7 @@ def workspace_purge(
         except OperationCancelledError as error:
             committed = cast(
                 PurgeOutcome | None,
-                getattr(error, "purge_outcome", None),
+                getattr(error, "operation_result", None),
             )
             if committed is not None:
                 carry_committed(error, purge_outcome(committed))

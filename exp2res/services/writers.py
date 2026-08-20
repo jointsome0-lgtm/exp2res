@@ -48,21 +48,6 @@ def transaction(connection: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
         raise
 
 
-@contextmanager
-def business_transaction(
-    connection: sqlite3.Connection,
-) -> Iterator[sqlite3.Connection]:
-    """`transaction` that reports SQLite contention as §14.14 `workspace_busy`."""
-
-    try:
-        with transaction(connection) as held:
-            yield held
-    except sqlite3.OperationalError as error:
-        if is_busy(error):
-            raise WorkspaceBusyError() from error
-        raise
-
-
 @dataclass
 class Journal:
     """What one `operation` did so far (§14.14 rule 6): `unlinks` are the durable
@@ -181,44 +166,6 @@ def operation(
         if raised is error:
             raise
         raise raised from error
-
-
-@contextmanager
-def banked_transaction(
-    connection: sqlite3.Connection,
-    bank: Callable[[], None] | None = None,
-    *,
-    on_commit_error: Callable[[], None] | None = None,
-) -> Iterator[sqlite3.Connection]:
-    """`business_transaction` that runs `bank()` once the commit is durable — also
-    when the exception lands as `commit()` returns (§14.14 rule 6).
-    `on_commit_error()` runs first whenever `commit()` itself raised."""
-
-    # `in_transaction` is false before BEGIN too, so a flag guards the bank.
-    commit_reached = False
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        yield connection
-        commit_reached = True
-        connection.commit()
-    except sqlite3.OperationalError as error:
-        if commit_reached and on_commit_error is not None:
-            on_commit_error()
-        connection.rollback()
-        if is_busy(error):
-            raise WorkspaceBusyError() from error
-        raise
-    except BaseException:
-        if commit_reached and on_commit_error is not None:
-            on_commit_error()
-        if connection.in_transaction or not commit_reached:
-            connection.rollback()
-            raise
-        if bank is not None:
-            bank()
-        raise
-    if bank is not None:
-        bank()
 
 
 def savepoint(

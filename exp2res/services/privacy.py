@@ -460,10 +460,11 @@ def purge_managed_backups(
                 del removed_ledger[ledger_mark:]
             return root_residual
         residuals = sorted({*refused, *surviving}, key=os.fsencode)
-        return (
-            tuple(path for path in removed if path not in surviving),
-            tuple(residuals),
-        )
+        proven = tuple(path for path in removed if path not in surviving)
+        if removed_ledger is not None:
+            # The ledger ends as the re-enumeration proof, not the first pass.
+            removed_ledger[ledger_mark:] = proven
+        return proven, tuple(residuals)
     except OSError:
         return root_residual
     finally:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import sqlite3
 
@@ -18,14 +18,13 @@ from exp2res.errors import SelectorNotFoundError
 from exp2res.exports.managed import remove_all_managed_output_entries
 from exp2res.services.privacy import (
     cancelled_with,
-    checkpoint_residuals as _delete_checkpoint_residuals,
+    checkpoint_residuals,
     generation_ids,
-    remove_managed_backups as _remove_managed_backups,
-    sorted_paths,
+    remove_managed_backups,
     table_ids,
     wal_path,
 )
-from exp2res.services.writers import business_transaction, held_writer
+from exp2res.services.writers import held_writer, operation
 from exp2res.storage.repository import (
     RawLogBundle,
     get_bundle,
@@ -94,12 +93,15 @@ def delete_log(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     connection: sqlite3.Connection | None = None,
 ) -> DeleteOutcome:
-    residual_paths: list[str] = []
+    database = workspace / ".exp2res" / "exp2res.sqlite"
+    deleted: DeleteOutcome | None = None
     # §8.1: `logs delete` passes the owner-delete authority it holds across rebuild.
-    with held_writer(
+    held = held_writer(
         connection, writer_database, workspace, owner_delete=True, timeout_ms=timeout_ms
-    ) as connection:
-        with business_transaction(connection):
+    )
+    try:
+        with operation(held) as op:
+            connection = op.connection
             selected = get_raw_log(connection, log_id)
             if selected is None:
                 raise SelectorNotFoundError()
@@ -142,28 +144,32 @@ def delete_log(
                     if table != "verification_findings"
                 ),
             )
-            residual_paths.extend(_remove_managed_backups(workspace))
+            op.remove(
+                remove_managed_backups,
+                workspace,
+                fallback=str((workspace / ".exp2res" / "backup").absolute()),
+            )
             # §13.13 rule 5: every managed entry goes before the privacy purge;
             # the database deletion commits regardless.
-            residual_paths.extend(remove_all_managed_output_entries(workspace))
+            op.remove(
+                lambda target, removed_ledger: remove_all_managed_output_entries(target),
+                workspace,
+                fallback=str((workspace / "out").absolute()),
+            )
             # §13.13 rule 5: purge before the raw_logs delete so answer_log_id's
             # ON DELETE SET NULL never fires into the answered-iff CHECK.
-            connection.execute("DELETE FROM verification_findings")
+            op.execute("DELETE FROM verification_findings")
             # Bullets and branches go before the snapshots their FK names.
-            connection.execute("DELETE FROM resume_bullets")
-            connection.execute("DELETE FROM resume_branches")
-            connection.execute("DELETE FROM self_claims")
-            connection.execute("DELETE FROM assessment_snapshots")
-            connection.execute("DELETE FROM gap_questions")
-            connection.execute("DELETE FROM contradictions")
-            connection.execute("DELETE FROM experience_facts")
-            connection.execute(
-                "UPDATE llm_calls SET input_hash = NULL, output_hash = NULL"
-            )
-            connection.execute("DELETE FROM raw_logs WHERE id = ?", (log_id,))
-
-        def build_outcome(residuals: tuple[str, ...]) -> DeleteOutcome:
-            return DeleteOutcome(
+            op.execute("DELETE FROM resume_bullets")
+            op.execute("DELETE FROM resume_branches")
+            op.execute("DELETE FROM self_claims")
+            op.execute("DELETE FROM assessment_snapshots")
+            op.execute("DELETE FROM gap_questions")
+            op.execute("DELETE FROM contradictions")
+            op.execute("DELETE FROM experience_facts")
+            op.execute("UPDATE llm_calls SET input_hash = NULL, output_hash = NULL")
+            op.execute("DELETE FROM raw_logs WHERE id = ?", (log_id,))
+            deleted = DeleteOutcome(
                 selected_log=selected,
                 evidence_item_ids=evidence_ids,
                 purged_fact_ids=purged["experience_facts"],
@@ -177,19 +183,18 @@ def delete_log(
                 purged_generation_ids=purged_generation_ids,
                 invalidated_views=invalidated_views,
                 invalidated_branches=invalidated_branches,
-                residual_paths=sorted_paths(residuals),
+                residual_paths=(),
             )
-
-        database = workspace / ".exp2res" / "exp2res.sqlite"
-        try:
-            residual_paths.extend(
-                _delete_checkpoint_residuals(connection, database)
+            # §14.14 rule 6: the WAL stays residual until the checkpoint proves erasure.
+            op.after_commit(
+                lambda: checkpoint_residuals(connection, database),
+                unproven=(wal_path(database),),
             )
-        except KeyboardInterrupt:
-            # §14.14 rule 6: already committed; the WAL stays residual until a
-            # later writer proves erasure.
-            raise cancelled_with(
-                delete_outcome=build_outcome((*residual_paths, wal_path(database)))
-            ) from None
-
-        return build_outcome(tuple(residual_paths))
+            deleted = replace(deleted, residual_paths=op.journal.unresolved)
+        return deleted
+    except KeyboardInterrupt as error:
+        if not error.operation_journal.committed or deleted is None:
+            raise
+        raise cancelled_with(
+            replace(deleted, residual_paths=error.operation_journal.unresolved)
+        ) from None

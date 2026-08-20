@@ -12,7 +12,6 @@ from typer.testing import CliRunner
 
 from exp2res.cli import app
 import exp2res.services.stages as stages_service
-import exp2res.services.logs as logs_service
 from exp2res.services.capture import capture_daily
 from exp2res.services.logs import delete_log, list_logs, show_log
 from exp2res.domain.models import (
@@ -278,7 +277,7 @@ def test_delete_reports_undecodable_backup_entry_without_blocking_purge(
 
 
 def test_logs_delete_removes_every_managed_set_and_reports_cleanup_residual(
-    workspace: Path, monkeypatch: pytest.MonkeyPatch
+    workspace: Path,
 ) -> None:
     bundle = capture_daily(
         workspace,
@@ -308,14 +307,12 @@ def test_logs_delete_removes_every_managed_set_and_reports_cleanup_residual(
         raw_text="Vera Example residual deletion source",
         clock=lambda: FIXED_NOW.replace(hour=13),
     )
-    residual = str(workspace / "out" / "branch" / "branch_vera_residual")
-    monkeypatch.setattr(
-        logs_service,
-        "remove_all_managed_output_entries",
-        lambda _workspace: (residual,),
-    )
+    # §13.14: a symlink is never followed or removed, so it stays residual.
+    residual = workspace / "out" / "branch" / "branch_vera_residual"
+    residual.symlink_to(workspace.parent, target_is_directory=True)
     incomplete = delete_log(workspace, log_id=second.raw_log.id)
-    assert incomplete.residual_paths == (residual,)
+    assert incomplete.residual_paths == (str(residual),)
+    assert residual.is_symlink()
     assert list_logs(workspace) == ()
 
 

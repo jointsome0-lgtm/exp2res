@@ -33,7 +33,7 @@ from exp2res.storage.repository import (
 from exp2res.storage.workspace import read_database
 
 from conftest import FIXED_NOW
-from fakes import FakeContractRunner
+from fakes import FakeContractRunner, proxy_writer
 from test_stage3_extraction import (
     SELECTION,
     TestIds,
@@ -788,18 +788,16 @@ def test_delete_rebuild_failure_never_restores_deleted_record(
 def test_interrupted_delete_checkpoint_reports_committed_purge(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import exp2res.services.logs as logs_service
-
     target, _other, _fact, _detected, assessed, _export_dir = (
         _prepare_full_graph(workspace)
     )
 
-    def interrupt_checkpoint(*_args, **_kwargs):
-        raise KeyboardInterrupt()
+    def interrupt_checkpoint(sql: str):
+        if sql.startswith("PRAGMA wal_checkpoint"):
+            raise KeyboardInterrupt()
 
-    monkeypatch.setattr(
-        logs_service, "_delete_checkpoint_residuals", interrupt_checkpoint
-    )
+    # `logs delete` runs on the writer the CLI holds across the rebuild.
+    proxy_writer(monkeypatch, cli_module, on_statement=interrupt_checkpoint)
     result, envelope = _invoke_json(
         workspace,
         ["--yes", "logs", "delete", "--log-id", target.id],

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -22,6 +21,7 @@ from exp2res.storage.schema import PURGE_ENTITY_TABLES, PURGE_TABLE_ORDER
 from exp2res.storage.workspace import CURRENT_SCHEMA_VERSION
 
 from conftest import FIXED_NOW
+from fakes import CannedRows, proxy_writer, raise_interrupt
 from test_cli_correction import _prepare_full_graph
 
 
@@ -350,21 +350,22 @@ def test_workspace_purge_erasure_failure_is_exit_8_after_committed_deletion(
     )
     events: list[str] = []
 
-    def checkpoint(_connection, database: Path) -> tuple[str, ...]:
-        step = "initial_checkpoint" if not events else "final_checkpoint"
+    def erasure_step(sql: str):
+        if sql.startswith("PRAGMA wal_checkpoint"):
+            step = "initial_checkpoint" if "vacuum" not in events else "final_checkpoint"
+        elif sql == "VACUUM":
+            step = "vacuum"
+        else:
+            return None
         events.append(step)
-        return (
-            (str(database.with_name(database.name + "-wal")),)
-            if failed_step == step
-            else ()
-        )
+        if failed_step != step:
+            return None
+        if step == "vacuum":
+            raise sqlite3.DatabaseError("VACUUM refused")
+        # A busy checkpoint reports `busy = 1` and leaves the WAL untruncated.
+        return CannedRows((1, 0, 0))
 
-    def vacuum(_connection, database: Path) -> tuple[str, ...]:
-        events.append("vacuum")
-        return (str(database),) if failed_step == "vacuum" else ()
-
-    monkeypatch.setattr(workspace_service, "checkpoint_residuals", checkpoint)
-    monkeypatch.setattr(workspace_service, "vacuum_residuals", vacuum)
+    proxy_writer(monkeypatch, workspace_service, on_statement=erasure_step)
 
     result, envelope = _invoke_json(workspace, ["workspace", "purge", "--yes"])
 
@@ -394,14 +395,11 @@ def test_workspace_purge_interrupt_after_commit_reports_committed_effects(
         clock=lambda: FIXED_NOW,
     )
 
-    def interrupt_checkpoint(_connection, _database):
-        raise KeyboardInterrupt
+    def interrupt_checkpoint(sql: str):
+        if sql.startswith("PRAGMA wal_checkpoint"):
+            raise KeyboardInterrupt
 
-    monkeypatch.setattr(
-        workspace_service,
-        "checkpoint_residuals",
-        interrupt_checkpoint,
-    )
+    proxy_writer(monkeypatch, workspace_service, on_statement=interrupt_checkpoint)
 
     result, envelope = _invoke_json(workspace, ["workspace", "purge", "--yes"])
 
@@ -472,11 +470,8 @@ def test_preamble_residual_makes_the_human_result_report_incompleteness(
         ".exp2res-candidate-snapshot_vera_purge_preamble-" + "b" * 32
     )
     candidate.symlink_to(target, target_is_directory=True)
-    # The preamble reports the ambiguous sibling; this purge run reports no
-    # residual of its own, which is exactly the divergence under test.
-    monkeypatch.setattr(
-        workspace_service, "remove_all_managed_output_entries", lambda _workspace: ()
-    )
+    # The preamble reports the ambiguous sibling before the purge service runs;
+    # the human result must already be incomplete on that report alone.
 
     result = runner.invoke(
         app,
@@ -505,10 +500,11 @@ def test_interrupt_between_erasure_steps_still_reports_committed_purge(
         clock=lambda: FIXED_NOW,
     )
 
-    def interrupt(*_arguments, **_keywords):
-        raise KeyboardInterrupt()
+    def interrupt_vacuum(sql: str):
+        if sql == "VACUUM":
+            raise KeyboardInterrupt()
 
-    monkeypatch.setattr(workspace_service, "vacuum_residuals", interrupt)
+    proxy_writer(monkeypatch, workspace_service, on_statement=interrupt_vacuum)
 
     result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
 
@@ -537,14 +533,15 @@ def test_unreadable_managed_root_cannot_block_the_database_purge(
         clock=lambda: FIXED_NOW,
     )
 
-    def denied(_workspace: Path) -> tuple[str, ...]:
-        raise PermissionError(13, "Permission denied")
-
-    monkeypatch.setattr(
-        workspace_service, "remove_all_managed_output_entries", denied
-    )
-
-    result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory modes")
+    managed_root = workspace / "out"
+    managed_root.mkdir(mode=0o700, exist_ok=True)
+    managed_root.chmod(0)
+    try:
+        result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
+    finally:
+        managed_root.chmod(0o700)
 
     assert result.exit_code == 8
     assert envelope["diagnostic_class"] == "deletion_incomplete"
@@ -592,27 +589,7 @@ def test_interrupt_on_commit_return_still_reports_the_durable_purge(
         clock=lambda: FIXED_NOW,
     )
 
-    class InterruptOnCommitReturn:
-        """Commit for real, then raise as the C call returns to Python."""
-
-        def __init__(self, connection: sqlite3.Connection) -> None:
-            self._connection = connection
-
-        def __getattr__(self, name: str):
-            return getattr(self._connection, name)
-
-        def commit(self) -> None:
-            self._connection.commit()
-            raise KeyboardInterrupt()
-
-    real_writer = workspace_service.writer_database
-
-    @contextmanager
-    def wrapped(target: Path, **keywords):
-        with real_writer(target, **keywords) as connection:
-            yield InterruptOnCommitReturn(connection)
-
-    monkeypatch.setattr(workspace_service, "writer_database", wrapped)
+    proxy_writer(monkeypatch, workspace_service, after_commit=raise_interrupt)
 
     result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
 
@@ -644,11 +621,11 @@ def test_erasure_residual_never_tells_the_owner_to_remove_the_database(
         clock=lambda: FIXED_NOW,
     )
     database = workspace / ".exp2res" / "exp2res.sqlite"
-    monkeypatch.setattr(
-        workspace_service,
-        "vacuum_residuals",
-        lambda _connection, path: (str(path),),
-    )
+    def refuse_vacuum(sql: str):
+        if sql == "VACUUM":
+            raise sqlite3.DatabaseError("VACUUM refused")
+
+    proxy_writer(monkeypatch, workspace_service, on_statement=refuse_vacuum)
 
     result = runner.invoke(
         app,
@@ -678,17 +655,9 @@ def test_interrupt_during_connection_teardown_still_reports_the_purge(
         raw_text="Vera Example teardown interrupt",
         clock=lambda: FIXED_NOW,
     )
-    real_writer = workspace_service.writer_database
-
-    @contextmanager
-    def interrupting_teardown(target: Path, **keywords):
-        with real_writer(target, **keywords) as connection:
-            yield connection
-        # The purge has returned its result; the interrupt lands while the
-        # writer lock and connection are being released.
-        raise KeyboardInterrupt()
-
-    monkeypatch.setattr(workspace_service, "writer_database", interrupting_teardown)
+    # The purge has returned its result; the interrupt lands while the
+    # writer lock and connection are being released.
+    proxy_writer(monkeypatch, workspace_service, after_teardown=raise_interrupt)
 
     result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
 
@@ -721,19 +690,13 @@ def test_interrupt_in_pre_transaction_cleanup_keeps_its_residuals(
     planted = assessment / "snapshot_vera_pre_transaction"
     planted.symlink_to(target, target_is_directory=True)
 
-    def interrupt_after_managed_removal(_workspace: Path):
-        raise KeyboardInterrupt()
+    def interrupt_first_delete(sql: str):
+        if sql.startswith("DELETE FROM"):
+            raise KeyboardInterrupt()
 
-    # Backups are enumerated first and report the planted symlink's sibling
-    # residual; the managed-output pass is interrupted immediately after.
-    monkeypatch.setattr(
-        workspace_service, "remove_managed_backups", lambda _w: (str(planted),)
-    )
-    monkeypatch.setattr(
-        workspace_service,
-        "remove_all_managed_output_entries",
-        interrupt_after_managed_removal,
-    )
+    # The managed-output pass reports the planted symlink as its residual; the
+    # interrupt lands before the first purge row, so nothing commits.
+    proxy_writer(monkeypatch, workspace_service, on_statement=interrupt_first_delete)
 
     result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
 
@@ -764,12 +727,14 @@ def test_busy_final_checkpoint_reports_the_live_database_too(
     wal = database.with_name(database.name + "-wal")
     calls: list[int] = []
 
-    def busy_final(_connection, path: Path) -> tuple[str, ...]:
+    def busy_final(sql: str):
+        if not sql.startswith("PRAGMA wal_checkpoint"):
+            return None
         calls.append(1)
         # Only the final checkpoint is contended.
-        return () if len(calls) == 1 else (str(path.with_name(path.name + "-wal")),)
+        return None if len(calls) == 1 else CannedRows((1, 0, 0))
 
-    monkeypatch.setattr(workspace_service, "checkpoint_residuals", busy_final)
+    proxy_writer(monkeypatch, workspace_service, on_statement=busy_final)
 
     result, envelope = _invoke_json(workspace, ["--yes", "workspace", "purge"])
 
