@@ -8,8 +8,6 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
-from pydantic import ValidationError
-
 from exp2res.config import load_workspace_config
 from exp2res.domain.canonical import id_key
 from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
@@ -18,12 +16,7 @@ from exp2res.domain.results import (
     InvalidatedView,
     invalidated_view,
 )
-from exp2res.errors import (
-    IdCollisionError,
-    OperationCancelledError,
-    SelectorNotFoundError,
-    WorkspaceBusyError,
-)
+from exp2res.errors import SelectorNotFoundError
 from exp2res.exports.managed import (
     assessment_set_paths,
     branch_set_paths,
@@ -36,16 +29,21 @@ from exp2res.pipeline.orchestration import (
     withdraw_pending_unless_superseded,
 )
 from exp2res.services.capture import (
-    build_capture_evidence_items,
-    invalid_capture,
+    build_capture_pair,
     new_id,
     validate_project_label,
 )
+from exp2res.services.privacy import cancelled_with
 from exp2res.services.source_files import (
     authorize_artifact_locators,
     read_capture_file,
 )
-from exp2res.services.writers import held_writer
+from exp2res.services.writers import (
+    banked_transaction,
+    held_writer,
+    retry_id_collisions,
+    savepoint,
+)
 from exp2res.storage.repository import (
     get_raw_log,
     insert_evidence_item,
@@ -165,14 +163,21 @@ def capture_correction(
         artifacts, config=load_workspace_config(workspace)
     )
     now = (clock or (lambda: datetime.now(timezone.utc)))()
-    last_collision: IdCollisionError | None = None
+    pending_stale_paths: tuple[str, ...] = ()
+    superseded_snapshot_ids: tuple[str, ...] = ()
 
     # §8.1: `correction add` passes the writer authority it holds across rebuild.
     with held_writer(
         connection, writer_database, workspace, timeout_ms=timeout_ms
     ) as connection:
-        try:
-            connection.execute("BEGIN IMMEDIATE")
+        # Pending report before commit: the commit-to-cleanup window still
+        # reports the stale sets; a proven rollback withdraws.
+        with banked_transaction(
+            connection,
+            on_commit_error=lambda: withdraw_pending_unless_superseded(
+                connection, pending_stale_paths, superseded_snapshot_ids
+            ),
+        ):
             target = get_raw_log(connection, log_id)
             if target is None:
                 raise SelectorNotFoundError()
@@ -206,51 +211,32 @@ def capture_correction(
                 ),
             )
 
-            raw_log: RawLog | None = None
-            evidence_items: tuple[EvidenceItem, ...] | None = None
-            for attempt in range(3):
-                raw_id = id_factory("raw_log")
-                try:
-                    raw_log = RawLog(
-                        id=raw_id,
-                        recorded_at=now,
-                        entry_type="correction",
-                        source_type="manual_entry",
-                        occurred=occurred,
-                        raw_text=raw_text,
-                        project=project,
-                        # §14.4/§29.4: the authorized real path, file form only.
-                        external_ref=external_ref,
-                        corrects_log_id=target.id,
-                        metadata={},
-                    )
-                    evidence_items = build_capture_evidence_items(
-                        raw_log_id=raw_id,
-                        created_at=now,
-                        artifacts=authorized_artifacts,
-                        id_factory=id_factory,
-                    )
-                except (ValidationError, ValueError, TypeError) as error:
-                    raise invalid_capture(
-                        error, "Correction capture failed strict validation."
-                    ) from error
-                savepoint = f"correction_{attempt}"
-                connection.execute(f"SAVEPOINT {savepoint}")
-                try:
+            def attempt(index: int) -> tuple[RawLog, tuple[EvidenceItem, ...]]:
+                raw_log, evidence_items = build_capture_pair(
+                    recorded_at=now,
+                    artifacts=authorized_artifacts,
+                    id_factory=id_factory,
+                    message="Correction capture failed strict validation.",
+                    entry_type="correction",
+                    source_type="manual_entry",
+                    occurred=occurred,
+                    raw_text=raw_text,
+                    project=project,
+                    # §14.4/§29.4: the authorized real path, file form only.
+                    external_ref=external_ref,
+                    corrects_log_id=target.id,
+                    metadata={},
+                )
+
+                def insert() -> None:
                     insert_raw_log(connection, raw_log)
                     for evidence_item in evidence_items:
                         insert_evidence_item(connection, evidence_item)
-                except IdCollisionError as error:
-                    connection.execute(f"ROLLBACK TO {savepoint}")
-                    connection.execute(f"RELEASE {savepoint}")
-                    last_collision = error
-                    continue
-                connection.execute(f"RELEASE {savepoint}")
-                break
-            else:
-                raise IdCollisionError() from last_collision
 
-            assert raw_log is not None and evidence_items is not None
+                savepoint(connection, f"correction_{index}", insert)
+                return raw_log, evidence_items
+
+            raw_log, evidence_items = retry_id_collisions(attempt)
             mark_facts_superseded(connection, superseded_fact_ids, now)
             mark_gap_questions_superseded(connection, superseded_gap_ids, now)
             mark_contradictions_superseded(
@@ -269,28 +255,11 @@ def capture_correction(
             mark_assessment_snapshots_superseded(
                 connection, superseded_snapshot_ids, now
             )
-            # Pending report before commit: the commit-to-cleanup window still
-            # reports the stale sets; a proven rollback withdraws.
             pending_stale_paths = (
                 *assessment_set_paths(workspace, superseded_snapshot_ids),
                 *branch_set_paths(workspace, branch_swap.branch_ids),
             )
             report_managed_residuals(pending_stale_paths)
-            try:
-                connection.commit()
-            except BaseException:
-                withdraw_pending_unless_superseded(
-                    connection, pending_stale_paths, superseded_snapshot_ids
-                )
-                raise
-        except sqlite3.OperationalError as error:
-            connection.rollback()
-            if "locked" in str(error).lower() or "busy" in str(error).lower():
-                raise WorkspaceBusyError() from error
-            raise
-        except BaseException:
-            connection.rollback()
-            raise
 
         def build_outcome(residuals: tuple[str, ...]) -> CorrectionOutcome:
             return CorrectionOutcome(
@@ -330,9 +299,9 @@ def capture_correction(
             )
         except KeyboardInterrupt:
             # §14.14 rule 6: already committed, so the cancellation carries it.
-            cancelled = OperationCancelledError()
-            cancelled.correction_outcome = build_outcome(
-                unfinished_stale_paths(pending_stale_paths, cleaned_sets)
-            )
-            raise cancelled from None
+            raise cancelled_with(
+                correction_outcome=build_outcome(
+                    unfinished_stale_paths(pending_stale_paths, cleaned_sets)
+                )
+            ) from None
         return build_outcome(residual_paths)

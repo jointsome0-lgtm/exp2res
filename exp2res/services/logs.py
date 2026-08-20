@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
 import sqlite3
 
@@ -15,14 +14,15 @@ from exp2res.domain.results import (
     invalidated_branch,
     invalidated_view,
 )
-from exp2res.errors import (
-    OperationCancelledError,
-    SelectorNotFoundError,
-)
+from exp2res.errors import SelectorNotFoundError
 from exp2res.exports.managed import remove_all_managed_output_entries
 from exp2res.services.privacy import (
+    cancelled_with,
     checkpoint_residuals as _delete_checkpoint_residuals,
     remove_managed_backups as _remove_managed_backups,
+    sorted_paths,
+    table_ids,
+    wal_path,
 )
 from exp2res.services.writers import business_transaction, held_writer
 from exp2res.storage.repository import (
@@ -55,6 +55,18 @@ class DeleteOutcome:
     invalidated_views: tuple[InvalidatedView, ...]
     invalidated_branches: tuple[InvalidatedBranch, ...]
     residual_paths: tuple[str, ...]
+
+
+_PURGED_TABLES = (
+    "experience_facts",
+    "gap_questions",
+    "contradictions",
+    "verification_findings",
+    "self_claims",
+    "assessment_snapshots",
+    "resume_branches",
+    "resume_bullets",
+)
 
 
 def list_logs(
@@ -97,30 +109,7 @@ def delete_log(
                     key=id_key,
                 )
             )
-            purged_fact_ids = tuple(
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM experience_facts ORDER BY CAST(id AS BLOB)"
-                )
-            )
-            purged_gap_ids = tuple(
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM gap_questions ORDER BY CAST(id AS BLOB)"
-                )
-            )
-            purged_contradiction_ids = tuple(
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM contradictions ORDER BY CAST(id AS BLOB)"
-                )
-            )
-            purged_finding_ids = tuple(
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM verification_findings ORDER BY CAST(id AS BLOB)"
-                )
-            )
+            purged = {table: table_ids(connection, table) for table in _PURGED_TABLES}
             snapshot_rows = connection.execute(
                 "SELECT id, scope FROM assessment_snapshots "
                 "WHERE superseded_at IS NULL ORDER BY CAST(id AS BLOB)"
@@ -128,30 +117,6 @@ def delete_log(
             invalidated_views = tuple(
                 invalidated_view(scope=row["scope"], snapshot_id=row["id"])
                 for row in snapshot_rows
-            )
-            purged_claim_ids = tuple(
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM self_claims ORDER BY CAST(id AS BLOB)"
-                )
-            )
-            purged_snapshot_ids = tuple(
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM assessment_snapshots ORDER BY CAST(id AS BLOB)"
-                )
-            )
-            purged_branch_ids = tuple(
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM resume_branches ORDER BY CAST(id AS BLOB)"
-                )
-            )
-            purged_bullet_ids = tuple(
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM resume_bullets ORDER BY CAST(id AS BLOB)"
-                )
             )
             # §13.13 rule 9: command output only, never persisted.
             invalidated_branches = tuple(
@@ -175,15 +140,8 @@ def delete_log(
                 sorted(
                     {
                         row[0]
-                        for table in (
-                            "experience_facts",
-                            "gap_questions",
-                            "contradictions",
-                            "self_claims",
-                            "assessment_snapshots",
-                            "resume_branches",
-                            "resume_bullets",
-                        )
+                        for table in _PURGED_TABLES
+                        if table != "verification_findings"
                         for row in connection.execute(
                             f"SELECT DISTINCT generation_id FROM {table}"
                         )
@@ -215,18 +173,18 @@ def delete_log(
             return DeleteOutcome(
                 selected_log=selected,
                 evidence_item_ids=evidence_ids,
-                purged_fact_ids=purged_fact_ids,
-                purged_gap_ids=purged_gap_ids,
-                purged_contradiction_ids=purged_contradiction_ids,
-                purged_finding_ids=purged_finding_ids,
-                purged_claim_ids=purged_claim_ids,
-                purged_snapshot_ids=purged_snapshot_ids,
-                purged_branch_ids=purged_branch_ids,
-                purged_bullet_ids=purged_bullet_ids,
+                purged_fact_ids=purged["experience_facts"],
+                purged_gap_ids=purged["gap_questions"],
+                purged_contradiction_ids=purged["contradictions"],
+                purged_finding_ids=purged["verification_findings"],
+                purged_claim_ids=purged["self_claims"],
+                purged_snapshot_ids=purged["assessment_snapshots"],
+                purged_branch_ids=purged["resume_branches"],
+                purged_bullet_ids=purged["resume_bullets"],
                 purged_generation_ids=purged_generation_ids,
                 invalidated_views=invalidated_views,
                 invalidated_branches=invalidated_branches,
-                residual_paths=tuple(sorted(set(residuals), key=os.fsencode)),
+                residual_paths=sorted_paths(residuals),
             )
 
         database = workspace / ".exp2res" / "exp2res.sqlite"
@@ -237,13 +195,8 @@ def delete_log(
         except KeyboardInterrupt:
             # §14.14 rule 6: already committed; the WAL stays residual until a
             # later writer proves erasure.
-            cancelled = OperationCancelledError()
-            cancelled.delete_outcome = build_outcome(
-                (
-                    *residual_paths,
-                    str(database.with_name(database.name + "-wal")),
-                )
-            )
-            raise cancelled from None
+            raise cancelled_with(
+                delete_outcome=build_outcome((*residual_paths, wal_path(database)))
+            ) from None
 
         return build_outcome(tuple(residual_paths))

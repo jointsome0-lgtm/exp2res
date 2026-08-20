@@ -50,7 +50,7 @@ from exp2res.services.capture import (
     validate_project_label,
 )
 from exp2res.services.source_files import open_payload_file, read_document_file
-from exp2res.services.writers import is_busy, transaction
+from exp2res.services.writers import is_busy, retry_id_collisions, transaction
 from exp2res.storage.repository import (
     RawLogBundle,
     committed_import_records,
@@ -236,8 +236,7 @@ def _classify(
             ImportedRecord(number, identity, reason=rejection.reason),
         )
 
-    last_collision: IdCollisionError | None = None
-    for _attempt in range(3):
+    def attempt(_index: int) -> ImportedRecord:
         try:
             raw_log, evidence_items = _build_bundle(
                 plan,
@@ -263,14 +262,14 @@ def _classify(
         attempted.append(candidate)
         try:
             _persist(connection, raw_log=raw_log, evidence_items=evidence_items)
-        except IdCollisionError as error:
+        except IdCollisionError:
             # Cheap path; `committed_import_records` matches identity and hash regardless.
             attempted.pop()
-            last_collision = error
-            continue
+            raise
         retained[identity] = digest
         return bank("accepted", candidate)
-    raise IdCollisionError() from last_collision
+
+    return retry_id_collisions(attempt)
 
 
 def _cancelled_report(
@@ -323,8 +322,7 @@ def import_design_document(
     raw_text, canonical_path = read_document_file(source_path, config=config)
     recorded_at = (clock or (lambda: datetime.now(timezone.utc)))()
 
-    last_collision: IdCollisionError | None = None
-    for _attempt in range(3):
+    def attempt(_index: int) -> RawLogBundle:
         raw_id = id_factory("raw_log")
         try:
             raw_log = RawLog(
@@ -361,22 +359,17 @@ def import_design_document(
         except (ValidationError, ValueError, TypeError) as error:
             raise ImportDocumentInvalidError() from error
         bundle = RawLogBundle(raw_log, evidence_items)
-        try:
-            persist_manual_capture(
-                workspace,
-                raw_log=raw_log,
-                evidence_items=evidence_items,
-                timeout_ms=timeout_ms,
-                # §14.14 rule 6: report the durable pair.
-                on_committed=lambda error: carry_committed(
-                    error, capture_outcome(bundle)
-                ),
-            )
-            return bundle
-        except IdCollisionError as error:
-            last_collision = error
-            continue
-    raise IdCollisionError() from last_collision
+        persist_manual_capture(
+            workspace,
+            raw_log=raw_log,
+            evidence_items=evidence_items,
+            timeout_ms=timeout_ms,
+            # §14.14 rule 6: report the durable pair.
+            on_committed=lambda error: carry_committed(error, capture_outcome(bundle)),
+        )
+        return bundle
+
+    return retry_id_collisions(attempt)
 
 
 def import_payload(

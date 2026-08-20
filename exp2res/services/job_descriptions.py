@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import sqlite3
 from typing import Callable, Iterable
@@ -32,7 +31,6 @@ from exp2res.errors import (
     LLMInvocationError,
     OperationCancelledError,
     SelectorNotFoundError,
-    WorkspaceBusyError,
 )
 from exp2res.exports.managed import (
     branch_set_paths,
@@ -44,17 +42,22 @@ from exp2res.services.capture import new_id
 from exp2res.services.stages import RunTracking, build_llm_execution
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
+    cancelled_with,
     checkpoint_residuals as _delete_checkpoint_residuals,
+    deletion_outcome,
     locked_database_anchor,
     purge_managed_backups as _purge_managed_backups,
     report_unproven_residual,
+    sorted_paths,
+    wal_path,
 )
-from exp2res.services.writers import held_writer
+from exp2res.services.writers import banked_transaction, held_writer
 from exp2res.storage.repository import (
     get_job_description,
     list_job_descriptions as _list_job_descriptions,
 )
-from exp2res.storage.telemetry import create_processing_run, finish_processing_run
+from exp2res.services.lifecycle import create_orchestration_run
+from exp2res.storage.telemetry import finish_processing_run
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     read_database,
@@ -88,10 +91,6 @@ class JobDescriptionCleanupOutcome:
     selected: JobDescription
     removed_managed_paths: tuple[str, ...]
     residual_paths: tuple[str, ...]
-
-
-def _path_key(value: str) -> bytes:
-    return os.fsencode(value)
 
 
 def _committed_effects(
@@ -303,15 +302,12 @@ def delete_job_description(
             now=now,
         )
     except KeyboardInterrupt:
-        cancelled = OperationCancelledError()
         if committed:
-            cancelled.delete_outcome = committed[-1]
-            raise cancelled from None
+            raise cancelled_with(delete_outcome=committed[-1]) from None
         if cleaned and (
             cleaned[-1].removed_managed_paths or cleaned[-1].residual_paths
         ):
-            cancelled.cleanup_outcome = cleaned[-1]
-            raise cancelled from None
+            raise cancelled_with(cleanup_outcome=cleaned[-1]) from None
         raise
 
 
@@ -365,7 +361,7 @@ def _delete_locked(
             cleaned.append(
                 JobDescriptionCleanupOutcome(
                     selected=selected,
-                    removed_managed_paths=tuple(sorted(set(unlinked), key=_path_key)),
+                    removed_managed_paths=sorted_paths(unlinked),
                     residual_paths=(backup_root,),
                 )
             )
@@ -418,26 +414,18 @@ def _delete_locked(
             cleaned.append(
                 JobDescriptionCleanupOutcome(
                     selected=selected,
-                    removed_managed_paths=tuple(
-                        sorted(set(removed_paths), key=_path_key)
-                    ),
-                    residual_paths=tuple(
-                        sorted({*residual_paths, branch_parent}, key=_path_key)
-                    ),
+                    removed_managed_paths=sorted_paths(removed_paths),
+                    residual_paths=sorted_paths((*residual_paths, branch_parent)),
                 )
             )
             raise
         cleaned.append(
             JobDescriptionCleanupOutcome(
                 selected=selected,
-                removed_managed_paths=tuple(
-                    sorted(set(removed_paths), key=_path_key)
-                ),
-                residual_paths=tuple(sorted(set(residual_paths), key=_path_key)),
+                removed_managed_paths=sorted_paths(removed_paths),
+                residual_paths=sorted_paths(residual_paths),
             )
         )
-        write_ahead_log = str(database.with_name(database.name + "-wal"))
-
         def build_outcome(residuals: Iterable[str]) -> JobDescriptionDeleteOutcome:
             return JobDescriptionDeleteOutcome(
                 run_id=orchestration_run_id,
@@ -446,30 +434,25 @@ def _delete_locked(
                 purged_bullet_ids=purged_bullet_ids,
                 purged_finding_ids=purged_finding_ids,
                 purged_generation_ids=purged_generation_ids,
-                removed_managed_paths=tuple(
-                    sorted(set(removed_paths), key=_path_key)
-                ),
-                residual_paths=tuple(sorted(set(residuals), key=_path_key)),
+                removed_managed_paths=sorted_paths(removed_paths),
+                residual_paths=sorted_paths(residuals),
             )
 
-        # `in_transaction` is false before BEGIN and after COMMIT.
-        commit_reached = False
-        try:
-            connection.execute("BEGIN IMMEDIATE")
+        # Durable: the WAL is residual until a checkpoint proves erasure.
+        def bank() -> None:
+            committed.append(build_outcome((*residual_paths, wal_path(database))))
+
+        with banked_transaction(connection, bank):
             selected = get_job_description(connection, job_description_id)
             if selected is None:
                 raise SelectorNotFoundError()
-            # §24.47: content-free telemetry in the deletion's own transaction.
-            create_processing_run(
+            # §24.47: telemetry in the deletion's own transaction.
+            create_orchestration_run(
                 connection,
                 run_id=orchestration_run_id,
-                stage="13.13",
                 started_at=now(),
-                provider=None,
-                model=None,
-                prompt_policy_hash=None,
                 input_ids=(job_description_id,),
-                metadata={"mode": "job_description"},
+                mode="job_description",
             )
             # §13.13 rule 10: FK order findings → bullets → branches → vacancy.
             connection.execute(
@@ -499,22 +482,6 @@ def _delete_locked(
                 finished_at=now(),
                 status="completed",
             )
-            commit_reached = True
-            connection.commit()
-        except sqlite3.OperationalError as error:
-            connection.rollback()
-            if "locked" in str(error).lower() or "busy" in str(error).lower():
-                raise WorkspaceBusyError() from error
-            raise
-        except BaseException:
-            # §14.14 rule 6: durable; the WAL is residual until a checkpoint proves erasure.
-            if connection.in_transaction or not commit_reached:
-                connection.rollback()
-                raise
-            committed.append(build_outcome((*residual_paths, write_ahead_log)))
-            raise
-        # Durable: bank the pessimistic outcome before any more work.
-        committed.append(build_outcome((*residual_paths, write_ahead_log)))
         residual_paths.extend(_delete_checkpoint_residuals(connection, database))
         outcome = build_outcome(tuple(residual_paths))
         committed.append(outcome)
@@ -572,14 +539,11 @@ def jd_delete_human_result(deleted: JobDescriptionDeleteOutcome) -> str:
 
 
 def jd_delete_outcome(deleted: JobDescriptionDeleteOutcome) -> Outcome:
-    exit_code = 8 if deleted.residual_paths else 0
-    return Outcome(
-        exit_code=exit_code,
-        diagnostic_class="deletion_incomplete" if exit_code else None,
+    return deletion_outcome(
+        deleted.residual_paths,
         affected_ids=jd_delete_affected(deleted),
         generation_ids=list(deleted.purged_generation_ids),
         run_ids=[deleted.run_id],
-        residual_paths=list(deleted.residual_paths),
         result=jd_delete_result(deleted),
         human_result=jd_delete_human_result(deleted),
     )

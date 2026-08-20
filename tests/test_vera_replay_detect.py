@@ -8,8 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-import exp2res.services.stages as detection_service
-import exp2res.services.stages as extraction_service
+import exp2res.services.stages as stages_service
 from exp2res.cli import app
 from exp2res.pipeline.stage4 import run_detection_generation
 from exp2res.storage.repository import list_contradictions, list_experience_facts
@@ -104,11 +103,11 @@ def test_vera_e2_cli_detect_replay_is_navigable_and_retains_paraphrases(
     ]
     extractor = FakeContractRunner(extractor_responses)
     monkeypatch.setattr(
-        extraction_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), extractor),
     )
-    real_stage3 = extraction_service.run_fact_extraction
+    real_stage3 = stages_service.run_fact_extraction
 
     def deterministic_stage3(selected_workspace: Path, **kwargs):
         kwargs.pop("id_factory", None)
@@ -123,7 +122,7 @@ def test_vera_e2_cli_detect_replay_is_navigable_and_retains_paraphrases(
         )
 
     monkeypatch.setattr(
-        extraction_service, "run_fact_extraction", deterministic_stage3
+        stages_service, "run_fact_extraction", deterministic_stage3
     )
     extracted, extracted_envelope = invoke_json(
         workspace, ["--yes", "extract"]
@@ -164,11 +163,11 @@ def test_vera_e2_cli_detect_replay_is_navigable_and_retains_paraphrases(
         ]
     )
     monkeypatch.setattr(
-        detection_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), detector),
     )
-    monkeypatch.setattr(detection_service, "new_id", ids)
+    monkeypatch.setattr(stages_service, "new_id", ids)
     real_stage4 = run_detection_generation
 
     def deterministic_stage4(selected_workspace: Path, **kwargs):
@@ -182,7 +181,7 @@ def test_vera_e2_cli_detect_replay_is_navigable_and_retains_paraphrases(
         )
 
     monkeypatch.setattr(
-        detection_service, "run_detection_generation", deterministic_stage4
+        stages_service, "run_detection_generation", deterministic_stage4
     )
 
     first_result, first = invoke_json(
