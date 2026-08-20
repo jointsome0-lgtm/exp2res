@@ -154,9 +154,9 @@ def operation(
                 op.commit()
             except BaseException:
                 if not journal.committed:
+                    connection.rollback()
                     if on_rollback is not None:
                         on_rollback()
-                    connection.rollback()
                 raise
     except BaseException as error:
         raised: BaseException = error

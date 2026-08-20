@@ -220,6 +220,7 @@ def delete_job_description(
     allocate_id = id_factory or new_id
     database = workspace / ".exp2res" / "exp2res.sqlite"
     deleted: JobDescriptionDeleteOutcome | None = None
+    journal = None
     held = held_writer(
         connection, writer_database, workspace, owner_delete=True, timeout_ms=timeout_ms
     )
@@ -227,6 +228,7 @@ def delete_job_description(
     # build and teardown that still reports a committed deletion (or earlier managed cleanup).
     try:
         with operation(held) as op:
+            journal = op.journal
             connection = op.connection
             selected = get_job_description(connection, job_description_id)
             if selected is None:
@@ -316,7 +318,9 @@ def delete_job_description(
             )
         return deleted
     except KeyboardInterrupt as error:
-        journal = error.operation_journal
+        journal = getattr(error, "operation_journal", journal)
+        if journal is None:
+            raise
         if deleted is None or not (
             journal.committed or journal.unlinks or journal.unresolved
         ):

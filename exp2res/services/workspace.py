@@ -67,6 +67,7 @@ def purge_workspace(
 ) -> PurgeOutcome:
     database = workspace / ".exp2res" / "exp2res.sqlite"
     purged = PurgeOutcome(deleted_ids=(), generation_ids=(), residual_paths=())
+    journal = None
     held = held_writer(
         connection, writer_database, workspace, owner_delete=True, timeout_ms=timeout_ms
     )
@@ -74,6 +75,7 @@ def purge_workspace(
     # construction and teardown; a committed purge is never reported empty.
     try:
         with operation(held) as op:
+            journal = op.journal
             connection = op.connection
             # §14.16: managed removal before the purge rows; §13.13 rule 6: no
             # filesystem failure blocks the purge, so it becomes a residual.
@@ -118,7 +120,9 @@ def purge_workspace(
             purged = replace(purged, residual_paths=op.journal.unresolved)
         return purged
     except KeyboardInterrupt as error:
-        journal = error.operation_journal
+        journal = getattr(error, "operation_journal", journal)
+        if journal is None:
+            raise
         if not journal.committed:
             # Pre-transaction cleanup already ran: its unresolved paths survive
             # the cancellation (the v1 envelope has no removed-path field).

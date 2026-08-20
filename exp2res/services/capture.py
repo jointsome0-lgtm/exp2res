@@ -379,6 +379,7 @@ def capture_gap_answer(
     authorized_artifacts = authorize_artifact_locators(artifacts, config=config)
     pending: tuple[str, ...] = ()
     bundle: RawLogBundle | None = None
+    journal = None
 
     try:
         # §14.14 rule 6: rollback withdraws the pending stale-set report; a
@@ -387,6 +388,7 @@ def capture_gap_answer(
             writer_database(workspace, timeout_ms=timeout_ms),
             on_rollback=lambda: withdraw_managed_residuals(pending),
         ) as op:
+            journal = op.journal
             connection = op.connection
             gap = _select_answerable_gap(connection, gap_id)
 
@@ -440,7 +442,9 @@ def capture_gap_answer(
         return bundle
     except BaseException as error:
         # Rule 6: every exit after the commit — cleanup, teardown — reports the pair.
-        journal = error.operation_journal
+        journal = getattr(error, "operation_journal", journal)
+        if journal is None:
+            raise
         if journal.committed and bundle is not None:
             carry_committed(
                 error,

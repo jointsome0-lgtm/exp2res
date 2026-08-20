@@ -144,6 +144,7 @@ def capture_correction(
     pending_stale_paths: tuple[str, ...] = ()
     superseded_snapshot_ids: tuple[str, ...] = ()
     captured: CorrectionOutcome | None = None
+    journal = None
 
     # §8.1: `correction add` passes the writer authority it holds across rebuild.
     held = held_writer(connection, writer_database, workspace, timeout_ms=timeout_ms)
@@ -156,6 +157,7 @@ def capture_correction(
                 connection, pending_stale_paths, superseded_snapshot_ids
             ),
         ) as op:
+            journal = op.journal
             connection = op.connection
             target = get_raw_log(connection, log_id)
             if target is None:
@@ -275,8 +277,9 @@ def capture_correction(
         return captured
     except KeyboardInterrupt as error:
         # §14.14 rule 6: already committed, so the cancellation carries it.
-        if not error.operation_journal.committed or captured is None:
+        journal = getattr(error, "operation_journal", journal)
+        if journal is None or not journal.committed or captured is None:
             raise
         raise cancelled_with(
-            replace(captured, residual_paths=error.operation_journal.unresolved)
+            replace(captured, residual_paths=journal.unresolved)
         ) from None

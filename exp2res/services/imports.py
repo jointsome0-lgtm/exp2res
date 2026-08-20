@@ -257,18 +257,17 @@ def _classify(
             evidence_item_ids=tuple(item.id for item in evidence_items),
             content_hash=digest,
         )
+        accepted = classified["accepted"]
         try:
+            accepted.append(candidate)
             _persist(connection, raw_log=raw_log, evidence_items=evidence_items)
-        except IdCollisionError:
-            raise
         except BaseException as error:
-            # §14.14 rule 6: a signal as the record's commit returns still banks it.
             journal = getattr(error, "operation_journal", None)
-            if journal is not None and journal.committed:
-                bank("accepted", candidate)
+            if (journal is None or not journal.committed) and candidate in accepted:
+                accepted.remove(candidate)
             raise
         retained[identity] = digest
-        return bank("accepted", candidate)
+        return "accepted", candidate
 
     return retry_id_collisions(attempt)
 

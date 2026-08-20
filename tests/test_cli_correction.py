@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from datetime import timedelta
 import json
@@ -23,6 +23,7 @@ from exp2res.llm.runner import AttemptTelemetry, PreparedCall, RawResult
 from exp2res.services.capture import new_id
 from exp2res.services.correction import capture_correction
 from exp2res.services.export import export_assessment
+from exp2res.services.writers import operation
 from exp2res.storage.repository import (
     get_raw_log,
     list_assessment_snapshots,
@@ -30,7 +31,7 @@ from exp2res.storage.repository import (
     list_experience_facts,
     list_gap_questions,
 )
-from exp2res.storage.workspace import read_database
+from exp2res.storage.workspace import read_database, writer_database
 
 from conftest import FIXED_NOW
 from fakes import FakeContractRunner, proxy_writer
@@ -52,6 +53,20 @@ from test_branch_substrate import plant_branch, plant_job_description
 
 pytestmark = [pytest.mark.contract, pytest.mark.lifecycle]
 runner = CliRunner()
+
+
+def test_operation_rolls_back_before_its_rollback_callback(workspace: Path) -> None:
+    transaction_states = []
+    with writer_database(workspace) as connection:
+        with pytest.raises(KeyboardInterrupt):
+            with operation(
+                nullcontext(connection),
+                on_rollback=lambda: transaction_states.append(
+                    connection.in_transaction
+                ),
+            ):
+                raise KeyboardInterrupt()
+    assert transaction_states == [False]
 
 
 def _raw(payload: bytes) -> RawResult:

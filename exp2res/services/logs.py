@@ -95,12 +95,14 @@ def delete_log(
 ) -> DeleteOutcome:
     database = workspace / ".exp2res" / "exp2res.sqlite"
     deleted: DeleteOutcome | None = None
+    journal = None
     # §8.1: `logs delete` passes the owner-delete authority it holds across rebuild.
     held = held_writer(
         connection, writer_database, workspace, owner_delete=True, timeout_ms=timeout_ms
     )
     try:
         with operation(held) as op:
+            journal = op.journal
             connection = op.connection
             selected = get_raw_log(connection, log_id)
             if selected is None:
@@ -193,8 +195,9 @@ def delete_log(
             deleted = replace(deleted, residual_paths=op.journal.unresolved)
         return deleted
     except KeyboardInterrupt as error:
-        if not error.operation_journal.committed or deleted is None:
+        journal = getattr(error, "operation_journal", journal)
+        if journal is None or not journal.committed or deleted is None:
             raise
         raise cancelled_with(
-            replace(deleted, residual_paths=error.operation_journal.unresolved)
+            replace(deleted, residual_paths=journal.unresolved)
         ) from None
