@@ -96,15 +96,22 @@ Git worktrees: create them only in `.worktrees/<name>` inside the repo (globally
 
 ## Context budget
 
-Every domain must fit in one agent context window whole: ≤150k tokens of
-code, measured without tests, data, and docs (bytes ÷ 4 is close enough).
+Every domain must fit in one agent context window whole: ≤150k tokens
+(bytes ÷ 4 is close enough). Data files never count.
 The whole repo fitting is the goal; 3× reduction comes before any new
 abstraction. Prefer deleting and merging over splitting into packages —
 a domain that needs a map to be read is too big. When a change grows a
 domain past the budget, the change is wrong, not the budget.
 
+Budget counts everything an agent reads to work in a domain: its code,
+its spec section, and its tests. Specs and tests shrink with the code —
+a spec longer than the code it describes is a smell. Archives (exec
+plans, review logs, decision-log history) are not read and do not count;
+keep them clearly out of the reading path.
+
 Baseline (2026-08-20): 366k code; largest domain `services` 82k. Every domain fits today.
-Target: whole package ≤150k.
+Target: whole package ≤150k. Spec 168k — cut 3×
+(`21-evals-cases.toml` 40k is data, not text); tests 413k follow the code.
 
 ## Style
 
