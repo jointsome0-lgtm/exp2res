@@ -38,8 +38,7 @@ from exp2res.errors import (
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
 SLASH_WINDOWS_DRIVE = re.compile(r"^/[A-Za-z]:[\\/]")
 URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
-# §29.4 rule 18: RFC 3986 allows one-character schemes, so `x://host/path`
-# is a remote locator, not drive `x:` — the `//` authority separates the two.
+# §29.4 rule 18: `x://host/path` is a remote locator (RFC 3986 one-char scheme), not drive `x:`.
 AUTHORITY_URI = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 URI_COMPONENT = re.compile(
@@ -49,7 +48,7 @@ URI_AUTHORITY = re.compile(
     r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@\[\]-]|%[0-9A-Fa-f]{2})*$"
 )
 MAX_ARTIFACT_LOCATORS = 16
-# §29.4 names exactly these persisted locator fields; all are stored canonical.
+# §29.4: exactly these persisted fields, stored canonical.
 PROMPT_LOCATOR_FIELDS = frozenset({"path", "uri", "url", "external_ref"})
 DENIED_COMPONENTS = {
     "secrets",
@@ -85,7 +84,7 @@ POSIX_CLASS_RANGES = {
 
 @dataclass(frozen=True)
 class ArtifactLocator:
-    """One validated inert locator in its exact persisted field shape."""
+    """One validated inert locator, persisted field shape."""
 
     uri: str | None
     path: str | None
@@ -100,14 +99,14 @@ class ArtifactLocator:
 
     @property
     def order_key(self) -> tuple[int, bytes]:
-        """§13.1's canonical order: local locators first, then by stored bytes."""
+        """§13.1 order: local first, then stored bytes."""
 
         field, value = self.stored_key
         return (0 if field == "path" else 1, value.encode("utf-8"))
 
 
 def _forbidden_supplied_form(value: str, *, uri_authority: bool = False) -> bool:
-    """Reject spellings §29.4 never accepts; `uri_authority` admits rule 18's `x://` form."""
+    """Reject spellings §29.4 never accepts; `uri_authority` admits rule 18."""
 
     if "\\" in value or value.startswith("//"):
         return True
@@ -157,7 +156,7 @@ def _class_regex(
     *,
     folded: bool,
 ) -> tuple[str, int] | None:
-    """Translate one git wildmatch bracket expression (unknown class → no match, unterminated → literal)."""
+    """One wildmatch bracket (unknown class → no match, unterminated → literal)."""
 
     cursor = index + 1
     negated = segment[cursor : cursor + 1] in {"!", "^"}
@@ -176,7 +175,7 @@ def _class_regex(
         if char == "]":
             if negated:
                 members = set(range(256)).difference(members)
-            # Git's WM_PATHNAME rejects `/` even from a negated bracket.
+            # WM_PATHNAME: no `/` even from a negated bracket.
             members.discard(ord("/"))
             if not members:
                 return "(?!)", cursor + 1
@@ -221,7 +220,7 @@ def _class_regex(
             endpoint = ord(segment[cursor + 1])
             if previous <= endpoint:
                 members.update(range(previous, endpoint + 1))
-            # A reversed range keeps its start (already a literal) and nothing else, as git does.
+            # Reversed range keeps only its start, as git does.
             previous = None
             cursor += 2
             continue
@@ -232,13 +231,13 @@ def _class_regex(
 
 
 def _utf8_byte_view(value: str) -> str:
-    """Expose each UTF-8 byte as one regex character without changing `/`."""
+    """One regex character per UTF-8 byte, `/` unchanged."""
 
     return value.encode("utf-8").decode("latin-1")
 
 
 def _segment_regex(segment: str, *, folded: bool = False) -> str:
-    """Translate one gitignore path segment; wildcards never cross `/`."""
+    """One gitignore segment; wildcards never cross `/`."""
 
     parts: list[str] = []
     index = 0
@@ -270,16 +269,12 @@ def _ignore_matcher(
     *,
     folded: bool = False,
 ) -> tuple[re.Pattern[str], bool, bool]:
-    """Compile one §29.4 pattern under gitignore rules → (regex, anchored, directory_only).
+    """One §29.4 pattern → (regex, anchored, directory_only); byte view so wildcard width follows wildmatch."""
 
-    Literals and targets use a one-char-per-UTF-8-byte view so wildcard
-    width follows git wildmatch, not code points.
-    """
-
-    # Gitignore drops unescaped trailing spaces (backslashes are rejected at config).
+    # Gitignore drops unescaped trailing spaces.
     without_trailing_spaces = pattern.rstrip(" ")
     directory_only = without_trailing_spaces.endswith("/")
-    # The trailing `/` still counts as a separator for anchoring.
+    # Trailing `/` still anchors.
     anchored = "/" in without_trailing_spaces
     normalized = (
         without_trailing_spaces[:-1]
@@ -287,12 +282,12 @@ def _ignore_matcher(
         else without_trailing_spaces
     )
     raw_segments = normalized.split("/")
-    # Consecutive separators never match in gitignore; don't collapse them.
+    # Consecutive separators never match in gitignore.
     if any(not segment for segment in raw_segments):
         return re.compile(r"(?!)"), anchored, directory_only
     segments: list[str] = []
     for segment in raw_segments:
-        # Collapse consecutive `**`: same meaning, avoids combinatorial matching.
+        # Collapse `**` runs: same meaning, no combinatorial matching.
         if segment == "**" and segments[-1:] == ["**"]:
             continue
         segments.append(segment)
@@ -311,7 +306,7 @@ def _ignore_matcher(
 
 
 def _match_prefixes(value: str, *, include_whole: bool) -> tuple[str, ...]:
-    """The path itself and each ancestor directory, as gitignore compares."""
+    """The path and each ancestor, as gitignore compares."""
 
     segments = value.split("/")
     upper = len(segments) if include_whole else len(segments) - 1
@@ -319,15 +314,14 @@ def _match_prefixes(value: str, *, include_whole: bool) -> tuple[str, ...]:
 
 
 def _ignored(path: Path, *, config: WorkspaceConfig, folded: bool) -> bool:
-    # §29.4 anchors patterns to the workspace root so capture and the §15
-    # re-check agree from any cwd; an unanchored pattern also applies at any
-    # depth, including outside the root.
+    # §29.4: root-anchored so capture and the §15 re-check agree from any cwd;
+    # unanchored patterns apply at any depth, outside the root too.
     try:
         relative: str | None = path.relative_to(config.root).as_posix()
     except ValueError:
         relative = None
     absolute = path.as_posix().lstrip("/")
-    # A directory-only rule also covers the directory itself; this stat reads no byte.
+    # A directory-only rule covers the directory itself.
     selected_is_directory = path.is_dir()
     for pattern in config.ignore_paths:
         compared_pattern = pattern.casefold() if folded else pattern
@@ -381,7 +375,7 @@ def _file_uri_path(value: str) -> str:
 
 
 def _validate_absolute_uri(value: str) -> None:
-    """Validate RFC 3986 URI syntax without rewriting the supplied bytes."""
+    """RFC 3986 syntax check, bytes unchanged."""
 
     if (
         not value.isascii()
@@ -440,7 +434,7 @@ def _authorize_local_locator(
 def authorize_artifact_locators(
     supplied: tuple[str, ...], *, config: WorkspaceConfig
 ) -> tuple[ArtifactLocator, ...]:
-    """Classify and authorize inert owner locators without opening them."""
+    """Classify and authorize inert locators without opening them."""
 
     validate_artifact_locator_count(supplied)
     accepted: list[ArtifactLocator] = []
@@ -474,14 +468,14 @@ def authorize_artifact_locators(
             raise ArtifactLocatorDuplicateError()
         stored_keys.add(locator.stored_key)
         accepted.append(locator)
-    # §13.1 orders items by stored locator, not input order.
+    # §13.1: by stored locator, not input order.
     return tuple(sorted(accepted, key=lambda locator: locator.order_key))
 
 
 def reauthorize_prompt_locators(
     payload: object, *, config: WorkspaceConfig
 ) -> None:
-    """Fail closed if a persisted local locator cannot enter a §15 prompt."""
+    """Fail closed if a persisted locator cannot enter a §15 prompt."""
 
     def visit(value: object) -> None:
         if isinstance(value, dict):
@@ -497,8 +491,7 @@ def reauthorize_prompt_locators(
                         if scheme_match is not None
                         else None
                     )
-                    # Same order as capture-time authorization (drive letter
-                    # parses as a scheme), or an accepted locator fails its re-check.
+                    # Same order as capture-time authorization, or the re-check diverges.
                     windows_form = _forbidden_supplied_form(
                         child, uri_authority=True
                     )
@@ -545,12 +538,9 @@ def _read_bounded_utf8(stream: BinaryIO) -> str:
 
 
 class PayloadFile:
-    """One selected §14.5 payload, re-readable without holding it in memory.
+    """One §14.5 payload, re-read by rewinding the proved descriptor (§19.4 rule 4: no size cap).
 
-    §19.4 rule 4 forbids a payload-size cap, so each pass rewinds the one
-    proved descriptor instead of reading whole. Newline translation is off:
-    JSONL delimits by LF alone and a CR inside a record must survive.
-    """
+    Newline translation is off: a CR inside a JSONL record must survive."""
 
     def __init__(self, stream: BinaryIO) -> None:
         self._text = io.TextIOWrapper(stream, encoding="utf-8", newline="\n")
@@ -563,7 +553,7 @@ class PayloadFile:
             raise InvalidInputError() from error
 
     def lines(self) -> Iterator[str]:
-        """Yield LF-delimited lines without terminators; `digest` is set only by an exhausted pass."""
+        """LF-delimited lines; `digest` is set only by an exhausted pass."""
 
         self._digest = None
         self._rewind()
@@ -579,7 +569,7 @@ class PayloadFile:
         self._digest = running.hexdigest()
 
     def text(self) -> str:
-        """Read the whole payload (single-document contracts); no digest, to avoid a second copy."""
+        """Whole payload for single-document contracts; no digest."""
 
         self._digest = None
         self._rewind()
@@ -591,7 +581,7 @@ class PayloadFile:
             raise InvalidInputError() from error
 
     def identity(self) -> tuple[int, int]:
-        """Cheap staleness pair (size, mtime) for pre-commit refusals; `digest` is the exact answer."""
+        """(size, mtime) staleness pair; `digest` is the exact answer."""
 
         try:
             status = os.fstat(self._text.fileno())
@@ -605,7 +595,7 @@ class PayloadFile:
         return self._digest
 
     def release(self) -> None:
-        """Drop the decoder without closing the descriptor its owner holds."""
+        """Drop the decoder; the owner closes the descriptor."""
 
         self._text.detach()
 
@@ -613,7 +603,7 @@ class PayloadFile:
 def _authorize_selected_file(
     supplied: str, *, config: WorkspaceConfig
 ) -> tuple[Path, str]:
-    """§29.4 rules 4–14 for one supplied path → (path to open, canonical path to persist)."""
+    """§29.4 rules 4–14: (path to open, canonical path to persist)."""
 
     if _forbidden_supplied_form(supplied):
         raise ForbiddenPathError()
@@ -634,7 +624,7 @@ def _authorize_selected_file(
 
 @contextmanager
 def _open_selected_file(resolved: Path) -> Iterator[BinaryIO]:
-    """Open the authorized path and prove the opened object is that file; caller reads are unguarded."""
+    """Open and prove the opened object is the authorized file."""
 
     descriptor: int | None = None
     try:
@@ -682,7 +672,7 @@ def read_capture_file(
 def read_document_file(
     supplied: str, *, config: WorkspaceConfig
 ) -> tuple[str, str]:
-    """Read one §14.5 `import file` document; no stdin form, so the canonical path is never `None`."""
+    """Read one §14.5 `import file` document (no stdin form)."""
 
     resolved, canonical = _authorize_selected_file(supplied, config=config)
     return _read_selected_file(resolved, _read_bounded_utf8), canonical
@@ -692,7 +682,7 @@ def read_document_file(
 def open_payload_file(
     supplied: str, *, config: WorkspaceConfig
 ) -> Iterator[tuple[PayloadFile, Path]]:
-    """Open one §14.5 payload; yield it with its §29.4 rule 8 root (the containing directory)."""
+    """Open one §14.5 payload with its §29.4 rule 8 root."""
 
     resolved, _ = _authorize_selected_file(supplied, config=config)
     with _open_selected_file(resolved) as stream:
@@ -704,7 +694,7 @@ def open_payload_file(
 
 
 def validate_remote_locator(value: str) -> str:
-    """§29.4 rule 18: a complete absolute URI, byte-for-byte unchanged."""
+    """§29.4 rule 18: absolute URI, bytes unchanged."""
 
     try:
         validate_structural(value)
@@ -716,7 +706,6 @@ def validate_remote_locator(value: str) -> str:
     if scheme_match is None:
         raise ArtifactLocatorInvalidError()
     if value[: scheme_match.end() - 1].casefold() == "file":
-        # Local locators persist only through the acquisition gate.
         raise ArtifactLocatorUnsupportedPathError()
     try:
         _validate_absolute_uri(value)
@@ -728,7 +717,7 @@ def validate_remote_locator(value: str) -> str:
 def authorize_payload_locator(
     value: str, *, payload_root: Path, config: WorkspaceConfig
 ) -> str:
-    """Authorize one payload-embedded locator (§29.4 rule 8) without opening it; returns the canonical path."""
+    """§29.4 rule 8: authorize an embedded locator unopened; returns the canonical path."""
 
     if _forbidden_supplied_form(value) or WINDOWS_DRIVE.match(value) is not None:
         raise PayloadLocatorError("payload_locator_path_unsupported")
@@ -747,7 +736,7 @@ def authorize_payload_locator(
         raise PayloadLocatorError("payload_locator_unresolved") from error
     if not resolved.is_file():
         raise PayloadLocatorError("payload_locator_unresolved")
-    # Containment after symlink resolution, so a link inside cannot reach out.
+    # Containment after symlink resolution.
     if resolved != root and root not in resolved.parents:
         raise PayloadLocatorError("payload_locator_non_selected")
     folded = _case_insensitive_lookup(resolved)

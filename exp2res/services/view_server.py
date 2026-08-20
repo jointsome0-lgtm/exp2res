@@ -1,5 +1,4 @@
-"""§14.17's loopback socket transport in front of §30's projections: admission,
-absolute phase deadlines on one injected clock, and interruption as state, never an exception."""
+"""§14.17 loopback transport over §30's projections: absolute phase deadlines, interruption as state."""
 
 from __future__ import annotations
 
@@ -45,9 +44,8 @@ GLOBAL_SELECTOR = "scope=global"
 # §30 rule 10: fixed service constants, no flag/env/config representation.
 MAX_CONNECTIONS = 32
 LISTEN_BACKLOG = 32
-# Progress lines held for a slow reporter before excess lines are dropped.
 REPORT_QUEUE_LIMIT = 64
-# Poll interval for the post-drain flush's two exits; not an allowance of its own.
+# Poll interval only, not an allowance.
 _FLUSH_POLL_SECONDS = 0.05
 _PROCESS_REAP_POLL_SECONDS = 0.05
 _RESULT_LENGTH = struct.Struct("!Q")
@@ -55,17 +53,16 @@ _RESULT_METADATA_LIMIT = 4096
 
 _SAFE_METHODS = (b"GET", b"HEAD")
 
-# How serving ended; every value is §14.14 rule 6 cancellation to the §14.17 command.
+# Every value is §14.14 rule 6 cancellation to the §14.17 command.
 ServeResult = Literal["drained", "expired", "interrupted"]
 
-# One progress line per completed response: outcome class and closed route, nothing else (§14.17).
+# §14.17: outcome class and closed route, nothing else.
 ReportLine = Callable[[str, str | None], None]
 ReportItem = tuple[Callable[..., None], tuple[object, ...], bool]
 
 
 def _check_bind(host: str, port: int) -> None:
-    # §30 rule 1: names are never resolved; port 0 is refused because an
-    # externally configured URL cannot name a port chosen at bind time (§14.17).
+    # §30 rule 1: no name resolution; port 0 refused (§14.17 URLs must name the port).
     if host not in LOOPBACK_HOSTS:
         raise ViewBindNotLoopbackError()
     if not isinstance(port, int) or isinstance(port, bool):
@@ -76,7 +73,7 @@ def _check_bind(host: str, port: int) -> None:
 
 @dataclass(frozen=True)
 class BindAddress:
-    """One literal loopback bind, unconstructable as anything else (§30 rule 1)."""
+    """§30 rule 1: one literal loopback bind."""
 
     host: str
     port: int
@@ -99,14 +96,14 @@ class BindAddress:
 
 
 def validate_bind(host: str, port: int) -> BindAddress:
-    """§30 rule 1: refuse before a socket exists; `BindAddress` enforces the same."""
+    """§30 rule 1: refuse before a socket exists."""
 
     _check_bind(host, port)
     return BindAddress(host=host, port=port)
 
 
 def bound_urls(bind: BindAddress) -> tuple[str, ...]:
-    """§14.17's two startup URLs in §30 rule 6's route order, derived from `views.ROUTES`."""
+    """§14.17 startup URLs in §30 rule 6 route order."""
 
     return tuple(
         bind.url(route.decode("ascii"), GLOBAL_SELECTOR) for route in views.ROUTES
@@ -115,7 +112,7 @@ def bound_urls(bind: BindAddress) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Timeouts:
-    """§14.17's absolute phase budgets in seconds; production derives them from §8.1 only."""
+    """§14.17 phase budgets in seconds, derived from §8.1."""
 
     receive: float
     processing: float
@@ -134,12 +131,11 @@ def default_timeouts(busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS) -> Timeouts
 
 
 class _AbandonedError(Exception):
-    """Stops an abandoned worker; deliberately outside the set `views.resolve` converts to outcomes."""
+    """Stops an abandoned worker; not an outcome `views.resolve` converts."""
 
 
 class _WorkerHandle:
-    """Lock-guarded rendezvous between one connection and its worker; after `abandon`
-    a late delivery is dropped, a running read interrupted, a later registration stopped."""
+    """Rendezvous of one connection and its worker; `abandon` drops, interrupts, and stops."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -150,15 +146,15 @@ class _WorkerHandle:
 
     @contextmanager
     def register(self, connection: sqlite3.Connection) -> Iterator[None]:
-        # `views.ConnectionRegistrar`. The progress handler also aborts statements
-        # started after abandonment, which `interrupt()` alone cannot reach.
+        # `views.ConnectionRegistrar`; the progress handler also aborts statements
+        # started after abandonment.
         with self._lock:
             abandoned = self._abandoned
             if not abandoned:
                 self._connection = connection
         if abandoned:
             raise _AbandonedError()
-        # n=1: checked at the first VM instruction, so short statements are caught too.
+        # n=1 so short statements are caught too.
         connection.set_progress_handler(self._abort_when_abandoned, 1)
         try:
             yield
@@ -175,8 +171,7 @@ class _WorkerHandle:
             if self._abandoned:
                 return
             self.page = page
-            # Set inside the lock: a page seen before the event would be
-            # misclassified as expired.
+            # Inside the lock, else a page seen before the event reads as expired.
             self.done.set()
 
     def abandon(self) -> None:
@@ -184,7 +179,6 @@ class _WorkerHandle:
             self._abandoned = True
             connection = self._connection
         if connection is not None:
-            # The worker may have closed it between the snapshot and here.
             with suppress(sqlite3.ProgrammingError):
                 connection.interrupt()
 
@@ -361,7 +355,7 @@ def _run_resolver_process(
 
 
 class ViewServer:
-    """One bound loopback listener serving §30's closed route set, one daemon thread per admitted request."""
+    """One loopback listener, one daemon thread per admitted request."""
 
     def __init__(
         self,
@@ -395,21 +389,18 @@ class ViewServer:
         self._origin = bind.origin.encode("ascii")
         self._slots = threading.Semaphore(MAX_CONNECTIONS)
         self._process_start_slots = threading.Semaphore(MAX_CONNECTIONS)
-        # Reentrant: `interrupt()` may run in a signal handler on a thread
-        # already holding the lock.
+        # Reentrant: `interrupt()` may run in a signal handler under the lock.
         self._state_lock = threading.RLock()
         self._sockets: set[socket.socket] = set()
         self._handles: set[_WorkerHandle | _ProcessHandle] = set()
-        # Admitted connections not yet closed; the drain waits on this count,
-        # never on threads.
+        # The drain waits on this count, never on threads.
         self._active = 0
         self._idle = threading.Condition(self._state_lock)
         self._draining = threading.Event()
         self._immediate = threading.Event()
         self._drain_deadline: float | None = None
         self._listener: socket.socket | None = None
-        # One reporter thread behind a bounded queue: a blocked stderr stalls
-        # only it and drops lines.
+        # Bounded queue: a blocked stderr stalls only the reporter.
         self._report_queue: queue.Queue[ReportItem | None] = queue.Queue(
             maxsize=REPORT_QUEUE_LIMIT + 3
         )
@@ -485,10 +476,10 @@ class ViewServer:
         self._stop_reporter()
 
     def open(self) -> None:
-        """Bind exactly the validated address, or fail without another try."""
+        """Bind the validated address once; no retry."""
 
         if self._draining.is_set():
-            # §14.14 rule 6: an earlier interruption outranks a bind not yet attempted.
+            # §14.14 rule 6: interruption outranks a bind not yet attempted.
             return
         family = socket.AF_INET6 if ":" in self.bind_address.host else socket.AF_INET
         try:
@@ -499,8 +490,7 @@ class ViewServer:
             if family == socket.AF_INET6:
                 # §30 rule 1: one literal address, so no IPv4 on the IPv6 socket.
                 listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-            # §30 rule 1 allows no fallback port, and this side's closes leave
-            # `TIME_WAIT` entries, so a restart needs address reuse to rebind.
+            # §30 rule 1: no fallback port, so `TIME_WAIT` must not block a rebind.
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind((self.bind_address.host, self.bind_address.port))
             listener.listen(LISTEN_BACKLOG)
@@ -508,21 +498,18 @@ class ViewServer:
             listener.close()
             raise ViewBindFailedError() from error
         with self._state_lock:
-            # Publication and the drain check are atomic: whichever side takes
-            # the lock first owns the close, so no port is left held.
+            # Atomic with the drain check: whoever takes the lock first owns the close.
             if not self._draining.is_set():
                 self._listener = listener
                 return
         listener.close()
 
     def interrupt(self) -> None:
-        """First call drains; a second forces the close. Never raises; signal-handler safe."""
+        """First call drains, second forces close; signal-handler safe."""
 
-        # Read before the lock: §14.17's drain deadline starts at the
-        # interruption instant, lock waits included.
+        # Before the lock: §14.17's drain deadline starts at the interruption instant.
         interrupted_at = self._clock()
         with self._state_lock:
-            # Classification and deadline write are atomic against a second interruption.
             second = self._draining.is_set()
             if not second:
                 self._drain_deadline = interrupted_at + self._timeouts.drain
@@ -534,14 +521,14 @@ class ViewServer:
             return
         listener = self._listener
         if listener is not None:
-            # Shutdown before close: close alone does not wake a blocked accept.
+            # close alone does not wake a blocked accept.
             with suppress(OSError):
                 listener.shutdown(socket.SHUT_RDWR)
             with suppress(OSError):
                 listener.close()
 
     def serve(self) -> ServeResult:
-        """Accept until interrupted, then drain; every exit retires the reporter."""
+        """Accept until interrupted, then drain; always retires the reporter."""
 
         try:
             return self._serve()
@@ -579,8 +566,7 @@ class ViewServer:
         listener = self._listener
         assert listener is not None
         if self._draining.is_set():
-            # `open` is public, so an interruption may precede `serve`; no
-            # reporter is started for an empty queue.
+            # An interruption may precede `serve`: no reporter for an empty queue.
             return self._drain()
         if (
             self._report is not None
@@ -597,15 +583,14 @@ class ViewServer:
                         break
                     raise
                 if not self._slots.acquire(blocking=False):
-                    # §30 rule 10: closed unread, so it reaches no state.
+                    # §30 rule 10: closed unread.
                     connection.close()
                     continue
                 # §14.17: the receive deadline starts at slot acquisition.
                 admitted_at = self._clock()
                 with self._state_lock:
-                    # `accept` can return a backlog socket after `interrupt`
-                    # closed the listener, so admission itself must check the
-                    # drain boundary, atomically with the sweep's snapshot.
+                    # `accept` may return a backlog socket after `interrupt`: check
+                    # the drain boundary here, atomically with the sweep's snapshot.
                     admitted = not self._draining.is_set()
                     if admitted:
                         self._sockets.add(connection)
@@ -622,12 +607,10 @@ class ViewServer:
                         daemon=True,
                     ).start()
                 except RuntimeError:
-                    # No thread will run this connection's release; the peer
-                    # gets §30 rule 10's unread close and serving continues.
+                    # No thread will release this one: §30 rule 10 unread close.
                     self._release_admission(connection)
         except BaseException:
-            # No drain on a failed `accept`: admitted requests must not outlive
-            # the call before the failure reaches §14.17's envelope.
+            # No drain on a failed `accept` (§14.17).
             self._force_close()
             raise
         finally:
@@ -636,11 +619,7 @@ class ViewServer:
         return self._drain()
 
     def _drain(self) -> ServeResult:
-        """Await open requests until the absolute drain deadline, then close.
-
-        Waits on the admitted count, never on threads: a wedged reporter or
-        abandoned worker must not spend §14.17's drain budget.
-        """
+        """Wait on the admitted count (never threads) until the §14.17 drain deadline, then close."""
 
         with self._state_lock:
             deadline = self._drain_deadline
@@ -658,7 +637,7 @@ class ViewServer:
         if self._immediate.is_set():
             return "interrupted"
         if expired:
-            # §14.17: expiry returns without joining the force-closed threads.
+            # §14.17: expiry does not join the force-closed threads.
             return "expired"
         return "drained"
 
@@ -683,7 +662,7 @@ class ViewServer:
         return deadline if drain is None else min(deadline, drain)
 
     def _drain_expired(self) -> bool:
-        # Expiry does not set `_immediate`, so this is a connection thread's only signal.
+        # Expiry does not set `_immediate`; this is the thread's only signal.
         if not self._draining.is_set():
             return False
         with self._state_lock:
@@ -697,7 +676,7 @@ class ViewServer:
             try:
                 received = self._receive(connection, admitted_at)
                 if received is None:
-                    # §30 rule 7: no complete request, nothing to answer.
+                    # §30 rule 7: no complete request, no answer.
                     return
                 parser, completed_at = received
                 # §14.17: the processing deadline starts at request completion.
@@ -712,19 +691,16 @@ class ViewServer:
                     route = parser.request.path.decode("ascii")
                 line = (page.outcome, route)
             except Exception:
-                # §30 rule 6: no traceback or peer detail in diagnostics.
+                # §30 rule 6: no traceback or peer detail.
                 pass
         finally:
             self._enqueue_report(line)
             self._release_admission(connection, lease)
 
     def _enqueue_report(self, line: tuple[str, str | None] | None) -> None:
-        """Non-blocking hand-off of one line to the reporter, or drop it.
+        """Hand one line to the reporter or drop it; must precede slot release.
 
-        Must run before the admission slot is released (a returning drain
-        retires the reporter). The queue's extra slot is reserved for the
-        stop sentinel, so saturation never swallows it.
-        """
+        The queue's extra slot is reserved for the stop sentinel."""
 
         if line is None or self._report is None:
             return
@@ -735,8 +711,7 @@ class ViewServer:
     def _release_admission(
         self, connection: socket.socket, lease: _AdmissionLease | None = None
     ) -> None:
-        # Order matters: close before deregistering (a concurrent forced close
-        # must never miss a live peer); the drain count drops last.
+        # Order: close, deregister (a forced close must not miss a live peer), then the drain count.
         with suppress(OSError):
             connection.close()
         with self._state_lock:
@@ -761,8 +736,7 @@ class ViewServer:
                 callback(*arguments)
 
     def _stop_reporter(self) -> None:
-        """Retire the reporter: every queued line precedes the sentinel, and the
-        flush waits only what the §14.17 drain deadline has left."""
+        """Retire the reporter; the flush waits only what the §14.17 drain deadline has left."""
 
         with self._state_lock:
             reporter = self._report_thread
@@ -774,8 +748,7 @@ class ViewServer:
         self._flush(reporter)
 
     def _await_producers(self) -> None:
-        # For the no-drain path (failed `accept`): let admitted requests queue
-        # their lines ahead of the sentinel, bounded by the §8.1 timeout.
+        # No-drain path: admitted lines precede the sentinel, bounded by the §8.1 timeout.
         if self._immediate.is_set():
             return
         deadline = self._clock() + self._timeouts.drain
@@ -787,7 +760,7 @@ class ViewServer:
                 self._idle.wait(remaining)
 
     def _flush(self, reporter: threading.Thread) -> None:
-        # Sliced join so a second interruption is seen, not merely recorded.
+        # Sliced join so a second interruption is seen.
         with self._state_lock:
             deadline = self._drain_deadline
         if deadline is None:
@@ -801,11 +774,11 @@ class ViewServer:
     def _receive(
         self, connection: socket.socket, admitted_at: float
     ) -> tuple[RequestParser, float] | None:
-        """Read one bounded envelope under the absolute receive deadline; `None` closes without bytes."""
+        """Read one bounded envelope under the receive deadline; `None` = close silently."""
 
         parser = RequestParser()
         receive_deadline = admitted_at + self._timeouts.receive
-        # Last three octets, so a terminator split across reads is still found.
+        # Last three octets: a terminator may split across reads.
         tail = b""
         while not parser.done:
             if self._immediate.is_set():
@@ -815,8 +788,7 @@ class ViewServer:
                 return None
             try:
                 connection.settimeout(remaining)
-                # §30 rule 2: a declared body is refused unread, so consume
-                # only through the header terminator.
+                # §30 rule 2: consume only through the header terminator; a body is refused unread.
                 peeked = connection.recv(parser.receive_budget, socket.MSG_PEEK)
                 if not peeked:
                     return None
@@ -834,7 +806,7 @@ class ViewServer:
             tail = (tail + chunk)[-3:]
         completed_at = self._clock()
         if self._phase_deadline(receive_deadline) - completed_at <= 0:
-            # A request completed late is a receive expiry, not admitted.
+            # Completed late = receive expiry.
             return None
         return parser, completed_at
 
@@ -844,7 +816,7 @@ class ViewServer:
         deadline: float,
         lease: _AdmissionLease | None = None,
     ) -> views.ViewPage | None:
-        """§30 rule 7's ordered pre-state refusals — authority, method, body — then the resolver."""
+        """§30 rule 7 pre-state refusals (authority, method, body), then the resolver."""
 
         if parser.malformed:
             return self._within(views.standard_page("malformed_request"), deadline)
@@ -861,7 +833,6 @@ class ViewServer:
         return self._resolve_abandonable(request, deadline, lease)
 
     def _within(self, page: views.ViewPage, deadline: float) -> views.ViewPage:
-        # The processing deadline bounds every check, pre-state refusals included.
         if self._clock() < deadline:
             return page
         return views.standard_page("processing_timeout")
@@ -1164,18 +1135,17 @@ class ViewServer:
     def _resolve_in_thread(
         self, request: ParsedRequest, deadline: float
     ) -> views.ViewPage | None:
-        """Resolve in a one-shot worker the connection thread can abandon on expiry."""
+        """Resolve in a worker the connection thread can abandon on expiry."""
 
         handle = _WorkerHandle()
         with self._state_lock:
             self._handles.add(handle)
         try:
             if self._immediate.is_set():
-                # Closes the wake race with a forced close that snapshotted
-                # the handle set before this registration.
+                # Closes the wake race with a forced close that snapshotted earlier.
                 return None
             if self._drain_expired():
-                # §14.17: never open a read the drain has already refused.
+                # §14.17: no read the drain already refused.
                 return None
             worker = threading.Thread(
                 target=self._run_resolver, args=(request, deadline, handle), daemon=True
@@ -1183,7 +1153,7 @@ class ViewServer:
             try:
                 worker.start()
             except RuntimeError:
-                # §30 rule 7 still owes one outcome; this thread can emit it.
+                # §30 rule 7 still owes one outcome.
                 return self._within(views.standard_page("internal_error"), deadline)
             finished = handle.done.wait(
                 max(0.0, self._phase_deadline(deadline) - self._clock())
@@ -1215,7 +1185,6 @@ class ViewServer:
                 busy_timeout_ms=self._busy_timeout_ms,
             )
         except BaseException:
-            # Anything escaping `resolve` still yields one page.
             page = views.standard_page("internal_error")
         handle.deliver(page)
 
@@ -1227,13 +1196,12 @@ class ViewServer:
         *,
         head: bool,
     ) -> views.ViewPage:
-        """Compose inside the processing budget, then send under the emit one; returns the page emitted."""
+        """Compose under the processing budget, send under the emit one."""
 
         header, body = compose_response_parts(page, head=head)
         if self._clock() >= processing_deadline:
-            # §14.17: composition is inside processing. The ordinary deadline
-            # only, never `min(phase, drain)` — §30 rule 7 lets a drain
-            # truncate delivery but never relabel a composed outcome.
+            # §14.17: ordinary processing deadline only, never `min(phase, drain)` —
+            # §30 rule 7: a drain truncates delivery, never relabels an outcome.
             page = views.standard_page("processing_timeout")
             header, body = compose_response_parts(page, head=head)
         deadline = self._clock() + self._timeouts.emit
