@@ -233,10 +233,14 @@ class Run(RunIds):
         return self
 
     def __exit__(self, _type, error: BaseException | None, _traceback) -> None:
-        if error is None:
-            self.finish()
-        else:
-            self._fail(error)
+        try:
+            if error is None:
+                # Inside the ladder: an interrupt at this commit must still report.
+                self.finish()
+                return
+        except BaseException as late:
+            error = late
+        self._fail(error)
 
     def _fail(self, error: BaseException) -> None:
         self.failure = error
