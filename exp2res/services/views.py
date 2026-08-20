@@ -479,14 +479,26 @@ def _compatibility_refusal(workspace: Path) -> _Refusal:
     )
 
 
-def _remaining(deadline: float) -> float:
-    return deadline - time.monotonic()
+@dataclass(frozen=True)
+class Deadline:
+    """§14.17: one absolute `time.monotonic` bound and its arithmetic."""
+
+    at: float
+
+    def left(self, clock: Callable[[], float] = time.monotonic) -> float:
+        return self.at - clock()
+
+    def expired(self, clock: Callable[[], float] = time.monotonic) -> bool:
+        return self.left(clock) <= 0
+
+    def capped(self, other: "Deadline | None") -> "Deadline":
+        return self if other is None or self.at <= other.at else other
 
 
-def _composed(page: ViewPage, deadline: float) -> ViewPage:
+def _composed(page: ViewPage, deadline: Deadline) -> ViewPage:
     """§14.17: a page not fully composed by the deadline is a timeout instead."""
 
-    if page.outcome == "processing_timeout" or _remaining(deadline) > 0:
+    if page.outcome == "processing_timeout" or not deadline.expired():
         return page
     return standard_page("processing_timeout")
 
@@ -504,12 +516,13 @@ def resolve(
     (`query` None without `?`); `deadline` is §14.17's `time.monotonic` bound;
     `register_connection` lets a transport interrupt the read on cancellation."""
 
+    bound = Deadline(deadline)
     if route not in ROUTES:
-        return _composed(standard_page("route_not_found"), deadline)
+        return _composed(standard_page("route_not_found"), bound)
     try:
         selector = _parse_selector(query)
 
-        if _remaining(deadline) < _FIRST_READ_MARGIN_FACTOR * busy_timeout_ms / 1000:
+        if bound.left() < _FIRST_READ_MARGIN_FACTOR * busy_timeout_ms / 1000:
             # §14.17: no room for a full contention wait — never open the read.
             raise _Refusal("processing_timeout")
 
@@ -536,7 +549,7 @@ def resolve(
                 raise
             raise _Refusal("workspace_busy") from error
 
-        if _remaining(deadline) <= 0:
+        if bound.expired():
             raise _Refusal("processing_timeout")
 
         # Phase 2 — §13.14 revalidation with no transaction open.
@@ -556,7 +569,7 @@ def resolve(
             )
         members = read.members or {}
 
-        if _remaining(deadline) <= 0:
+        if bound.expired():
             raise _Refusal("processing_timeout")
 
         if route == MIRROR_ROUTE:
@@ -575,8 +588,8 @@ def resolve(
                 outcome="served", status=_OUTCOMES["served"][0], body=render_html(document)
             )
     except _Refusal as refusal:
-        return _composed(_refusal_page(refusal), deadline)
+        return _composed(_refusal_page(refusal), bound)
     except (Exp2ResError, sqlite3.Error, OSError, ValueError):
         # §30 rule 7: fail closed, name no detail.
-        return _composed(standard_page("internal_error"), deadline)
-    return _composed(page, deadline)
+        return _composed(standard_page("internal_error"), bound)
+    return _composed(page, bound)

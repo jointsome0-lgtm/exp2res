@@ -11,7 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 from exp2res.cli import app
-import exp2res.services.lifecycle as lifecycle_service
+import exp2res.services.stages as stages_service
 import exp2res.services.logs as logs_service
 from exp2res.services.capture import capture_daily
 from exp2res.services.logs import delete_log, list_logs, show_log
@@ -420,7 +420,7 @@ def test_cli_owner_delete_reports_global_experience_fact_group(
     selected, retained, facts = _persist_facts_and_completed_calls(workspace)
     claim = _persist_claim(workspace, facts[0].id)
     monkeypatch.setattr(
-        lifecycle_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,

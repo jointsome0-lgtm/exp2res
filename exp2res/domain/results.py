@@ -433,6 +433,51 @@ class Outcome:
     completed_report: bool = False
 
 
+def merge_outcomes(*outcomes: Outcome) -> Outcome:
+    """One §14.14 rule 5 report from several stages' projections.
+
+    Effects merge duplicate-free in their identity order: entity classes by
+    name (the stages share no pair order to inherit), IDs by `id_key`, paths
+    by `os.fsencode`, one view per snapshot and — §13.13 rule 9 — one report
+    per branch name. Run IDs keep allocation order; warnings and findings
+    concatenate. The scalar fields (exit, result, text) are the first outcome's.
+    """
+
+    def classes(field_name: str) -> list[tuple[str, set[str]]]:
+        grouped: dict[str, set[str]] = {}
+        for outcome in outcomes:
+            for group in getattr(outcome.affected_ids, field_name):
+                grouped.setdefault(group.entity_type, set()).update(group.ids)
+        return sorted(grouped.items())
+
+    return replace(
+        outcomes[0],
+        affected_ids=AffectedIds.of(
+            created=classes("created"),
+            superseded=classes("superseded"),
+            deleted=classes("deleted"),
+        ),
+        generation_ids=list(
+            byte_sorted({item for outcome in outcomes for item in outcome.generation_ids})
+        ),
+        run_ids=list(
+            dict.fromkeys(item for outcome in outcomes for item in outcome.run_ids)
+        ),
+        invalidated_views=merged_invalidated_views(
+            *(outcome.invalidated_views for outcome in outcomes)
+        ),
+        invalidated_branches=merged_invalidated_branches(
+            *(outcome.invalidated_branches for outcome in outcomes)
+        ),
+        findings=[item for outcome in outcomes for item in outcome.findings],
+        residual_paths=sorted(
+            {item for outcome in outcomes for item in outcome.residual_paths},
+            key=os.fsencode,
+        ),
+        warnings=[item for outcome in outcomes for item in outcome.warnings],
+    )
+
+
 # §14.14 rules 5/6 require a failed or cancelled command to report the effects
 # it already committed. An exception is the only channel a raising operation
 # shares with §14's emitter, so the projection rides on it — as one whole

@@ -181,23 +181,31 @@ def require_running_run(
 
 def committed_runs(
     connection: sqlite3.Connection, run_ids: list[str]
-) -> tuple[str, ...]:
-    """Which of `run_ids` survived as §12.13 rows, in the order allocated.
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Which of `run_ids` survived as §12.13 rows, and what the completed ones created.
 
     A failing stage allocates run IDs before it writes them, so the caller
     cannot tell an allocated ID from a durable one. §14.14 rule 5 reports only
     the runs that actually committed, and the allocation order is already the
-    rule's deterministic identity order.
+    rule's deterministic identity order. The second tuple is the `output_ids`
+    of the completed rows — §12 rule 11: created rows, not allocated IDs.
     """
 
     if not run_ids:
-        return ()
+        return (), ()
     placeholders = ",".join("?" for _ in run_ids)
     rows = connection.execute(
-        f"SELECT id FROM processing_runs WHERE id IN ({placeholders})", run_ids
+        "SELECT id, status, output_ids_json FROM processing_runs "
+        f"WHERE id IN ({placeholders})",
+        run_ids,
     ).fetchall()
-    committed = {row[0] for row in rows}
-    return tuple(run_id for run_id in run_ids if run_id in committed)
+    committed = {row[0]: (row[1], row[2]) for row in rows}
+    created: list[str] = []
+    for run_id in run_ids:
+        status, output_ids_json = committed.get(run_id, (None, None))
+        if status == "completed":
+            created.extend(json.loads(output_ids_json or "[]"))
+    return tuple(run_id for run_id in run_ids if run_id in committed), tuple(created)
 
 
 def _stored_metadata(connection: sqlite3.Connection, run_id: str) -> dict[str, str]:

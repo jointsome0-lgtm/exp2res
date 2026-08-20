@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
-import exp2res.services.lifecycle as lifecycle_service
+import exp2res.services.stages as stages_service
 from exp2res.cli import app
 from exp2res.services.logs import list_logs, show_log
 
@@ -28,7 +28,7 @@ TARGET_ID = "log_vera_correction_source"
 
 def install_lifecycle_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        lifecycle_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,

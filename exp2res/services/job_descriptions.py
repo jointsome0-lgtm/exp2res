@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 import sqlite3
 from typing import Callable, Iterable
 
 from pydantic import ValidationError
 
-from exp2res.domain.canonical import id_key
 from exp2res import __version__
 from exp2res.config import load_workspace_config
 from exp2res.domain.models import JobDescription, validate_free_text
@@ -39,25 +37,25 @@ from exp2res.exports.managed import (
 )
 from exp2res.pipeline.stage8 import Stage8Result, run_job_description_parse
 from exp2res.services.capture import new_id
-from exp2res.services.stages import RunTracking, build_llm_execution
+from exp2res.services import stages
+from exp2res.services.stages import Run, RunIds
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     cancelled_with,
     checkpoint_residuals as _delete_checkpoint_residuals,
     deletion_outcome,
+    generation_ids,
     locked_database_anchor,
     purge_managed_backups as _purge_managed_backups,
     report_unproven_residual,
     sorted_paths,
     wal_path,
 )
-from exp2res.services.writers import banked_transaction, held_writer
+from exp2res.services.writers import banked_transaction, held_writer, retry_id_collisions
 from exp2res.storage.repository import (
     get_job_description,
     list_job_descriptions as _list_job_descriptions,
 )
-from exp2res.services.lifecycle import create_orchestration_run
-from exp2res.storage.telemetry import finish_processing_run
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     read_database,
@@ -93,37 +91,6 @@ class JobDescriptionCleanupOutcome:
     residual_paths: tuple[str, ...]
 
 
-def _committed_effects(
-    workspace: Path, run_ids: list[str]
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    # §12 rule 11: `output_ids`, not allocated IDs — a retried collision is no creation.
-
-    if not run_ids:
-        return (), ()
-    placeholders = ",".join("?" for _ in run_ids)
-    with read_database(workspace) as connection:
-        rows = connection.execute(
-            "SELECT id, status, output_ids_json FROM processing_runs "
-            f"WHERE id IN ({placeholders})",
-            run_ids,
-        ).fetchall()
-    committed = {row[0]: (row[1], row[2]) for row in rows}
-    created: list[str] = []
-    for run_id in run_ids:
-        status, output_ids_json = committed.get(run_id, (None, None))
-        if status != "completed":
-            continue
-        created.extend(json.loads(output_ids_json or "[]"))
-    return (
-        tuple(run_id for run_id in run_ids if run_id in committed),
-        tuple(created),
-    )
-
-
-def _created_job_descriptions(created: Iterable[str]) -> AffectedIds:
-    return AffectedIds.of(created=(("job_description", created),))
-
-
 def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
     require_compatible(workspace)
     # §14.14 rule 4: class 2 before any adapter or writer.
@@ -133,8 +100,8 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         failure = InvalidInputError()
         failure.public_message = "The vacancy text failed strict validation."
         raise failure from error
-    selection, budgets, runner = build_llm_execution(workspace)
-    tracking = RunTracking(new_id)
+    selection, budgets, runner = stages.build_llm_execution(workspace)
+    ids = RunIds(new_id)
     try:
         return run_job_description_parse(
             workspace,
@@ -142,34 +109,21 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
             selection=selection,
             budgets=budgets,
             runner=runner,
-            id_factory=tracking.allocate,
+            id_factory=ids.allocate,
             cli_version=__version__,
         )
     except LLMInvocationError as error:
-        runs, created = _committed_effects(workspace, tracking.allocated_runs)
         # §14.14 rule 6: the row may be durable.
-        extend_committed(
-            error,
-            run_ids=list(runs),
-            **(
-                {"affected_ids": _created_job_descriptions(created)}
-                if created
-                else {}
-            ),
-        )
+        with read_database(workspace) as connection:
+            ids.carry(connection, error, created_as="job_description")
         raise
     except KeyboardInterrupt as error:
         # §14.14 rule 6, one frame out: a durable creation is still reported.
-        runs, created = _committed_effects(workspace, tracking.allocated_runs)
-        if not created:
-            raise
         cancelled = OperationCancelledError()
-        extend_committed(
-            cancelled,
-            run_ids=list(runs),
-            affected_ids=_created_job_descriptions(created),
-            warnings=list(committed_outcome(error).warnings),
-        )
+        with read_database(workspace) as connection:
+            if not ids.carry(connection, cancelled, created_as="job_description"):
+                raise
+        extend_committed(cancelled, warnings=list(committed_outcome(error).warnings))
         raise cancelled from None
 
 
@@ -206,20 +160,20 @@ def show_job_description(
     return selected
 
 
-_RUN_ID_ATTEMPTS = 8
-
-
 def _allocate_run_id(
     connection: sqlite3.Connection, id_factory: Callable[[str], str]
 ) -> str:
     taken = {
         row[0] for row in connection.execute("SELECT id FROM processing_runs")
     }
-    for _attempt in range(_RUN_ID_ATTEMPTS):
+
+    def attempt(_index: int) -> str:
         candidate = id_factory("run")
-        if candidate and candidate not in taken:
-            return candidate
-    raise IdCollisionError()
+        if not candidate or candidate in taken:
+            raise IdCollisionError()
+        return candidate
+
+    return retry_id_collisions(attempt)
 
 
 # §13.13 rule 10 dependent set by vacancy ID; per-row placeholders could exceed SQLITE_LIMIT_VARIABLE_NUMBER.
@@ -249,22 +203,13 @@ def _dependent_purge_targets(
         )
     )
     # §12 rule 13: one generation ID spans branch and bullets.
-    generation_ids = tuple(
-        sorted(
-            {
-                row[0]
-                for statement in (
-                    "SELECT DISTINCT generation_id FROM resume_branches "
-                    "WHERE job_description_id = ?",
-                    "SELECT DISTINCT generation_id FROM resume_bullets "
-                    f"WHERE branch_id IN ({_DEPENDENT_BRANCHES})",
-                )
-                for row in connection.execute(statement, (job_description_id,))
-            },
-            key=id_key,
-        )
+    return bullet_ids, finding_ids, generation_ids(
+        connection,
+        (
+            ("resume_branches", "job_description_id = ?", (job_description_id,)),
+            ("resume_bullets", f"branch_id IN ({_DEPENDENT_BRANCHES})", (job_description_id,)),
+        ),
     )
-    return bullet_ids, finding_ids, generation_ids
 
 
 def delete_job_description(
@@ -331,7 +276,16 @@ def _delete_locked(
             raise SelectorNotFoundError()
         database_identity = locked_database_anchor()
         # §12 rule 11: a colliding telemetry ID must not abort the purge.
-        orchestration_run_id = _allocate_run_id(connection, allocate_id)
+        run = Run(
+            connection,
+            stage="13.13",
+            input_ids=lambda _held: (job_description_id,),
+            metadata={"mode": "job_description"},
+            clock=now,
+            new_id=lambda _kind: _allocate_run_id(connection, allocate_id),
+            own_transaction=False,
+        )
+        orchestration_run_id = run.id
         # §13.13 rule 10: managed removal precedes the transaction; these IDs name `out/branch/<id>/`.
         purged_branches = tuple(
             PurgedBranch(id=row["id"], name=row["name"])
@@ -447,13 +401,7 @@ def _delete_locked(
             if selected is None:
                 raise SelectorNotFoundError()
             # §24.47: telemetry in the deletion's own transaction.
-            create_orchestration_run(
-                connection,
-                run_id=orchestration_run_id,
-                started_at=now(),
-                input_ids=(job_description_id,),
-                mode="job_description",
-            )
+            run.create()
             # §13.13 rule 10: FK order findings → bullets → branches → vacancy.
             connection.execute(
                 "DELETE FROM verification_findings "
@@ -476,12 +424,7 @@ def _delete_locked(
             connection.execute(
                 "UPDATE llm_calls SET input_hash = NULL, output_hash = NULL"
             )
-            finish_processing_run(
-                connection,
-                run_id=orchestration_run_id,
-                finished_at=now(),
-                status="completed",
-            )
+            run.finish()
         residual_paths.extend(_delete_checkpoint_residuals(connection, database))
         outcome = build_outcome(tuple(residual_paths))
         committed.append(outcome)

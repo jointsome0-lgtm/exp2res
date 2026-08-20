@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 import exp2res.cli as cli_module
 import exp2res.exports.managed as managed_module
 import exp2res.services.lifecycle as lifecycle_service
+import exp2res.services.stages as stages_service
 from exp2res.cli import app
 from exp2res.domain.models import OccurredAt
 from exp2res.domain.temporal import governing_contains
@@ -73,7 +74,7 @@ def _lifecycle_response(call: PreparedCall) -> RawResult:
 
 def _install_lifecycle_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        lifecycle_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -496,7 +497,7 @@ def test_unknown_correction_selector_precedes_prompt_and_adapter(
 ) -> None:
     monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
     monkeypatch.setattr(
-        lifecycle_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
     )
@@ -531,7 +532,7 @@ def test_failed_correction_stays_committed_and_selected_recompute_repairs(
     )
     monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
     monkeypatch.setattr(
-        lifecycle_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -588,7 +589,7 @@ def test_lifecycle_failure_prints_retry_in_human_mode(
     )
     monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
     monkeypatch.setattr(
-        lifecycle_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -632,7 +633,7 @@ def test_failed_lifecycle_still_reports_the_invalidated_view(
     assert export_dir.is_dir()
     monkeypatch.setattr(cli_module, "_noninteractive", lambda _controls: False)
     monkeypatch.setattr(
-        lifecycle_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -730,7 +731,7 @@ def test_delete_rebuild_success_failure_zero_survivor_and_bare_recompute(
     # zero-survivor rebuild plans no call: a runner whose every invocation
     # fails proves the rebuild stayed offline through real empty stage runs.
     monkeypatch.setattr(
-        lifecycle_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), FakeContractRunner([])),
     )
@@ -763,7 +764,7 @@ def test_delete_rebuild_failure_never_restores_deleted_record(
         item_specs=(("evi_vera_delete_failure_survivor", "manual_claim"),),
     )
     monkeypatch.setattr(
-        lifecycle_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -911,19 +912,30 @@ def test_interrupt_after_orchestration_creation_reports_committed_run(
         item_specs=(("evi_vera_orchestration_interrupt", "manual_claim"),),
     )
     _install_lifecycle_runner(monkeypatch)
-    real_transaction = lifecycle_service.transaction
-    transaction_count = 0
+    class InterruptAfterFirstCommit:
+        """The interrupt lands as the first business `commit()` returns."""
+
+        def __init__(self, connection) -> None:
+            self._connection = connection
+            self._commits = 0
+
+        def __getattr__(self, name: str):
+            return getattr(self._connection, name)
+
+        def commit(self) -> None:
+            self._connection.commit()
+            self._commits += 1
+            if self._commits == 1:
+                raise KeyboardInterrupt()
+
+    real_writer = lifecycle_service.writer_database
 
     @contextmanager
-    def interrupt_after_first_commit(connection):
-        nonlocal transaction_count
-        with real_transaction(connection) as held:
-            yield held
-        transaction_count += 1
-        if transaction_count == 1:
-            raise KeyboardInterrupt()
+    def wrapped(target: Path, **keywords):
+        with real_writer(target, **keywords) as connection:
+            yield InterruptAfterFirstCommit(connection)
 
-    monkeypatch.setattr(lifecycle_service, "transaction", interrupt_after_first_commit)
+    monkeypatch.setattr(lifecycle_service, "writer_database", wrapped)
     result, envelope = _invoke_json(workspace, ["--yes", "recompute"])
 
     assert result.exit_code == 9

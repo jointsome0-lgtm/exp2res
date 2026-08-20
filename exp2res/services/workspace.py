@@ -8,7 +8,6 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
-from exp2res.domain.canonical import id_key
 from exp2res.domain.results import (
     AffectedIds,
     Outcome,
@@ -19,6 +18,7 @@ from exp2res.services.privacy import (
     cancelled_with,
     checkpoint_residuals,
     deletion_outcome,
+    generation_ids as generation_ids_of,
     remove_managed_backups,
     sorted_paths,
     table_ids,
@@ -57,24 +57,6 @@ def _capture_deleted_ids(
         if ids:
             captured.append((entity_type, ids))
     return tuple(captured)
-
-
-def _capture_generation_ids(connection: sqlite3.Connection) -> tuple[str, ...]:
-    generation_ids: set[str] = set()
-    for table in PURGE_TABLE_ORDER:
-        columns = {
-            row["name"] for row in connection.execute(f"PRAGMA table_info({table})")
-        }
-        if "generation_id" not in columns:
-            continue
-        generation_ids.update(
-            row[0]
-            for row in connection.execute(
-                f"SELECT DISTINCT generation_id FROM {table}"
-            )
-            if row[0] is not None
-        )
-    return tuple(sorted(generation_ids, key=id_key))
 
 
 def purge_workspace(
@@ -152,7 +134,9 @@ def _purge_locked(
             connection, lambda: committed.append(outcome(unproven))
         ):
             deleted_ids = _capture_deleted_ids(connection)
-            generation_ids = _capture_generation_ids(connection)
+            generation_ids = generation_ids_of(
+                connection, ((table, "", ()) for table in PURGE_TABLE_ORDER), probe_column=True
+            )
             for table in PURGE_TABLE_ORDER:
                 connection.execute(f"DELETE FROM {table}")
             connection.execute("DELETE FROM schema_meta")

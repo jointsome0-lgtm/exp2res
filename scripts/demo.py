@@ -325,7 +325,7 @@ def _stage_command(
         stack.enter_context(replaced(service, "new_id", ids))
         stack.enter_context(
             replaced(
-                service,
+                stages_service,
                 "build_llm_execution",
                 lambda _workspace: (
                     LLMSelection("codex-cli", "gpt-5.6-sol"),

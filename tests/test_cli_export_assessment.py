@@ -15,7 +15,7 @@ import exp2res.pipeline.stage6 as stage6_module
 import exp2res.pipeline.stage7 as stage7_module
 import exp2res.services.stages as assessment_service
 import exp2res.services.capture as capture_service
-import exp2res.services.lifecycle as lifecycle_service
+import exp2res.services.stages as stages_service
 from exp2res.cli import app
 from exp2res.errors import ManagedOutputIncompleteError
 from exp2res.storage.repository import list_raw_logs
@@ -185,7 +185,7 @@ def test_logs_delete_clears_a_preamble_residual_it_later_removed(
         if group["entity_type"] == "evidence_item"
     )
     monkeypatch.setattr(
-        lifecycle_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,

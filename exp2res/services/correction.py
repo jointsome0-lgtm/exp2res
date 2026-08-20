@@ -9,7 +9,7 @@ import sqlite3
 from typing import Callable
 
 from exp2res.config import load_workspace_config
-from exp2res.domain.canonical import id_key
+from exp2res.domain.canonical import byte_sorted, id_key
 from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
 from exp2res.domain.results import (
     InvalidatedBranch,
@@ -33,7 +33,7 @@ from exp2res.services.capture import (
     new_id,
     validate_project_label,
 )
-from exp2res.services.privacy import cancelled_with
+from exp2res.services.privacy import cancelled_with, generation_ids
 from exp2res.services.source_files import (
     authorize_artifact_locators,
     read_capture_file,
@@ -124,25 +124,6 @@ def _current_fact_ids(
     return tuple(row[0] for row in rows)
 
 
-def _generation_ids(
-    connection: sqlite3.Connection, table_and_ids: tuple[tuple[str, tuple[str, ...]], ...]
-) -> tuple[str, ...]:
-    values: set[str] = set()
-    for table, ids in table_and_ids:
-        if not ids:
-            continue
-        placeholders = ",".join("?" for _ in ids)
-        values.update(
-            row[0]
-            for row in connection.execute(
-                f"SELECT DISTINCT generation_id FROM {table} "
-                f"WHERE id IN ({placeholders})",
-                ids,
-            )
-        )
-    return tuple(sorted(values, key=id_key))
-
-
 def capture_correction(
     workspace: Path,
     *,
@@ -200,14 +181,18 @@ def capture_correction(
                 )
                 for snapshot in snapshots
             )
-            superseded_generation_ids = _generation_ids(
+            superseded_generation_ids = generation_ids(
                 connection,
                 (
-                    ("experience_facts", superseded_fact_ids),
-                    ("gap_questions", superseded_gap_ids),
-                    ("contradictions", superseded_contradiction_ids),
-                    ("self_claims", superseded_claim_ids),
-                    ("assessment_snapshots", superseded_snapshot_ids),
+                    (table, f"id IN ({','.join('?' for _ in ids)})", tuple(ids))
+                    for table, ids in (
+                        ("experience_facts", superseded_fact_ids),
+                        ("gap_questions", superseded_gap_ids),
+                        ("contradictions", superseded_contradiction_ids),
+                        ("self_claims", superseded_claim_ids),
+                        ("assessment_snapshots", superseded_snapshot_ids),
+                    )
+                    if ids
                 ),
             )
 
@@ -245,11 +230,8 @@ def capture_correction(
             # §13.13 rule 4: branches and bullets go before their anchoring
             # snapshots stop being current.
             branch_swap = supersede_current_branches(connection, superseded_at=now)
-            superseded_generation_ids = tuple(
-                sorted(
-                    {*superseded_generation_ids, *branch_swap.superseded_generation_ids},
-                    key=id_key,
-                )
+            superseded_generation_ids = byte_sorted(
+                {*superseded_generation_ids, *branch_swap.superseded_generation_ids}
             )
             mark_self_claims_superseded(connection, superseded_claim_ids, now)
             mark_assessment_snapshots_superseded(
@@ -266,16 +248,10 @@ def capture_correction(
                 raw_log=raw_log,
                 evidence_items=evidence_items,
                 superseded_fact_ids=superseded_fact_ids,
-                superseded_gap_ids=tuple(sorted(superseded_gap_ids, key=id_key)),
-                superseded_contradiction_ids=tuple(
-                    sorted(superseded_contradiction_ids, key=id_key)
-                ),
-                superseded_claim_ids=tuple(
-                    sorted(superseded_claim_ids, key=id_key)
-                ),
-                superseded_snapshot_ids=tuple(
-                    sorted(superseded_snapshot_ids, key=id_key)
-                ),
+                superseded_gap_ids=byte_sorted(superseded_gap_ids),
+                superseded_contradiction_ids=byte_sorted(superseded_contradiction_ids),
+                superseded_claim_ids=byte_sorted(superseded_claim_ids),
+                superseded_snapshot_ids=byte_sorted(superseded_snapshot_ids),
                 superseded_branch_ids=branch_swap.branch_ids,
                 superseded_bullet_ids=branch_swap.bullet_ids,
                 superseded_generation_ids=superseded_generation_ids,
