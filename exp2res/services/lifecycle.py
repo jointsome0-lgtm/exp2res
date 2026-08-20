@@ -26,7 +26,7 @@ from exp2res.llm.contracts import ContractWarning
 from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
 from exp2res.pipeline.stage4 import Stage4Result, run_detection_generation
 from exp2res.services.capture import new_id
-from exp2res.services.extraction import build_llm_execution
+from exp2res.services.stages import build_llm_execution
 from exp2res.storage.telemetry import (
     committed_runs,
     create_processing_run,

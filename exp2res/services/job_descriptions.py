@@ -42,7 +42,7 @@ from exp2res.exports.managed import (
 )
 from exp2res.pipeline.stage8 import Stage8Result, run_job_description_parse
 from exp2res.services.capture import new_id
-from exp2res.services.extraction import RunTracking, build_llm_execution
+from exp2res.services.stages import RunTracking, build_llm_execution
 from exp2res.services.source_files import read_capture_file
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
