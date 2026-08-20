@@ -50,6 +50,7 @@ from exp2res.services.capture import (
     validate_project_label,
 )
 from exp2res.services.source_files import open_payload_file, read_document_file
+from exp2res.services.writers import is_busy, transaction
 from exp2res.storage.repository import (
     RawLogBundle,
     committed_import_records,
@@ -151,16 +152,10 @@ def _persist(
     evidence_items: tuple[EvidenceItem, ...],
 ) -> None:
     """Commit one record's §13.1 rule 5 pair in its own transaction."""
-    connection.execute("BEGIN IMMEDIATE")
-    try:
+    with transaction(connection):
         insert_raw_log(connection, raw_log)
         for evidence_item in evidence_items:
             insert_evidence_item(connection, evidence_item)
-        # Inside the guard: a signal during commit must not leave it open.
-        connection.commit()
-    except BaseException:
-        connection.rollback()
-        raise
 
 
 def _classify(
@@ -418,6 +413,11 @@ def import_payload(
     }
     attempted: list[ImportedRecord] = []
 
+    def attach(error: Exp2ResError, outcome: ImportOutcome) -> Exp2ResError:
+        error.import_outcome = outcome
+        error.import_classified = is_complete(outcome)
+        return error
+
     def is_complete(outcome: ImportOutcome) -> bool:
         # §14.14 rules 4–5: completeness is derived from the reported outcome,
         # not set by a statement a signal could land in front of.
@@ -463,51 +463,40 @@ def import_payload(
                     progress = _cancelled_report(
                         connection, attempted=attempted, classified=classified
                     )
-                    if "locked" in str(error).lower() or "busy" in str(error).lower():
-                        busy = WorkspaceBusyError()
-                        busy.import_outcome = progress
-                        busy.import_classified = is_complete(progress)
-                        raise busy from error
+                    if is_busy(error):
+                        raise attach(WorkspaceBusyError(), progress) from error
                     # Non-busy failure is still class 1, but the base class keeps
                     # §19.4 rule 4's committed rows reportable.
-                    internal = Exp2ResError()
-                    internal.import_outcome = progress
-                    internal.import_classified = is_complete(progress)
-                    raise internal from error
+                    raise attach(Exp2ResError(), progress) from error
                 except KeyboardInterrupt:
                     # §14.14 rule 6: committed records are reported, not restored.
-                    cancelled = OperationCancelledError()
-                    cancelled.import_outcome = _cancelled_report(
-                        connection, attempted=attempted, classified=classified
-                    )
-                    cancelled.import_classified = is_complete(cancelled.import_outcome)
-                    raise cancelled from None
+                    raise attach(
+                        OperationCancelledError(),
+                        _cancelled_report(
+                            connection, attempted=attempted, classified=classified
+                        ),
+                    ) from None
                 except Exp2ResError as error:
                     # §19.4 rule 4: a failure never withdraws an accepted record.
-                    error.import_outcome = _cancelled_report(
-                        connection, attempted=attempted, classified=classified
+                    attach(
+                        error,
+                        _cancelled_report(
+                            connection, attempted=attempted, classified=classified
+                        ),
                     )
-                    error.import_classified = is_complete(error.import_outcome)
                     raise
     except KeyboardInterrupt:
         # Signal outside the loop (lock wait, preamble, or teardown): the
         # connection is closed, so the in-memory classification is reported.
-        cancelled = OperationCancelledError()
-        cancelled.import_outcome = report()
-        cancelled.import_classified = is_complete(cancelled.import_outcome)
-        raise cancelled from None
+        raise attach(OperationCancelledError(), report()) from None
     except Exp2ResError as error:
         # Typed failure from the payload gate or `writer_database` itself.
         if getattr(error, "import_outcome", None) is None:
-            error.import_outcome = report()
-            error.import_classified = is_complete(error.import_outcome)
+            attach(error, report())
         raise
     except Exception as error:
         # §14.14 rule 6: a teardown failure still reports committed records.
-        internal = Exp2ResError()
-        internal.import_outcome = report()
-        internal.import_classified = is_complete(internal.import_outcome)
-        raise internal from error
+        raise attach(Exp2ResError(), report()) from error
     # §14.14 rule 6: durable and unreported from here, so hold delivery.
     defer_interrupt()
     return report()

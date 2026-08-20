@@ -38,25 +38,6 @@ from exp2res.storage.workspace import (
 )
 
 
-__all__ = [
-    "CONTENT_TYPE",
-    "MIRROR_ROUTE",
-    "PROCESSING_TIMEOUT_FACTOR",
-    "QUESTIONS_ROUTE",
-    "ROUTES",
-    "ViewPage",
-    "authority_not_bound_page",
-    "internal_error_page",
-    "malformed_request_page",
-    "method_not_allowed_page",
-    "processing_timeout_page",
-    "resolve",
-    "route_not_found_page",
-    "schema_incompatible_page",
-    "workspace_busy_page",
-]
-
-
 MIRROR_ROUTE = b"/mirror"
 QUESTIONS_ROUTE = b"/questions"
 ROUTES = (MIRROR_ROUTE, QUESTIONS_ROUTE)
@@ -244,48 +225,32 @@ def _refusal_page(refusal: _Refusal) -> ViewPage:
     return notice_page(refusal.outcome, refusal.message, refusal.command)
 
 
-def route_not_found_page() -> ViewPage:
-    return notice_page(
-        "route_not_found",
+_NOTICES = {
+    "route_not_found": (
         "This server serves the mirror at /mirror and the open questions at "
-        "/questions, each with one explicit selector.",
-    )
-
-
-def method_not_allowed_page() -> ViewPage:
-    return notice_page(
-        "method_not_allowed",
-        "The local views are read-only and answer GET and HEAD requests only.",
-    )
-
-
-def malformed_request_page() -> ViewPage:
-    return notice_page(
-        "malformed_request",
+        "/questions, each with one explicit selector."
+    ),
+    "method_not_allowed": (
+        "The local views are read-only and answer GET and HEAD requests only."
+    ),
+    "malformed_request": (
         "These views answer a bounded HTTP/1.1 request that carries no body. "
         "A request Exp2Res cannot read as one is refused rather than "
-        "interpreted.",
-    )
-
-
-def authority_not_bound_page() -> ViewPage:
-    return notice_page(
-        "authority_not_bound",
+        "interpreted."
+    ),
+    "authority_not_bound": (
         "Open this view through the loopback address it is bound to. Another "
-        "authority or declared origin is refused before any state is read.",
-    )
+        "authority or declared origin is refused before any state is read."
+    ),
+    "internal_error": "The selected view cannot be served.",
+    "workspace_busy": _WORKSPACE_BUSY,
+    "processing_timeout": _PROCESSING_TIMEOUT,
+}
 
 
-def internal_error_page() -> ViewPage:
-    return notice_page("internal_error", "The selected view cannot be served.")
-
-
-def workspace_busy_page() -> ViewPage:
-    return notice_page("workspace_busy", _WORKSPACE_BUSY)
-
-
-def processing_timeout_page() -> ViewPage:
-    return notice_page("processing_timeout", _PROCESSING_TIMEOUT)
+def standard_page(outcome: Outcome) -> ViewPage:
+    """The fixed notice page for one §30 outcome that needs no remedy command."""
+    return notice_page(outcome, _NOTICES[outcome])
 
 
 def schema_incompatible_page(workspace: Path) -> ViewPage:
@@ -545,7 +510,7 @@ def _composed(page: ViewPage, deadline: float) -> ViewPage:
 
     if page.outcome == "processing_timeout" or _remaining(deadline) > 0:
         return page
-    return processing_timeout_page()
+    return standard_page("processing_timeout")
 
 
 def resolve(
@@ -562,7 +527,7 @@ def resolve(
     `register_connection` lets a transport interrupt the read on cancellation."""
 
     if route not in ROUTES:
-        return _composed(route_not_found_page(), deadline)
+        return _composed(standard_page("route_not_found"), deadline)
     try:
         selector = _parse_selector(query)
 
@@ -635,5 +600,5 @@ def resolve(
         return _composed(_refusal_page(refusal), deadline)
     except (Exp2ResError, sqlite3.Error, OSError, ValueError):
         # §30 rule 7: fail closed, name no detail.
-        return _composed(internal_error_page(), deadline)
+        return _composed(standard_page("internal_error"), deadline)
     return _composed(page, deadline)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from datetime import timedelta
 import json
 from pathlib import Path
@@ -909,20 +911,19 @@ def test_interrupt_after_orchestration_creation_reports_committed_run(
         item_specs=(("evi_vera_orchestration_interrupt", "manual_claim"),),
     )
     _install_lifecycle_runner(monkeypatch)
-    real_transaction = lifecycle_service._held_transaction
+    real_transaction = lifecycle_service.transaction
     transaction_count = 0
 
-    def interrupt_after_first_commit(connection, operation):
+    @contextmanager
+    def interrupt_after_first_commit(connection):
         nonlocal transaction_count
-        result = real_transaction(connection, operation)
+        with real_transaction(connection) as held:
+            yield held
         transaction_count += 1
         if transaction_count == 1:
             raise KeyboardInterrupt()
-        return result
 
-    monkeypatch.setattr(
-        lifecycle_service, "_held_transaction", interrupt_after_first_commit
-    )
+    monkeypatch.setattr(lifecycle_service, "transaction", interrupt_after_first_commit)
     result, envelope = _invoke_json(workspace, ["--yes", "recompute"])
 
     assert result.exit_code == 9

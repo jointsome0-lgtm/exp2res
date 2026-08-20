@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,7 +20,6 @@ from exp2res.domain.results import (
 )
 from exp2res.errors import (
     IdCollisionError,
-    InvalidInputError,
     OperationCancelledError,
     SelectorNotFoundError,
     WorkspaceBusyError,
@@ -39,6 +37,7 @@ from exp2res.pipeline.orchestration import (
 )
 from exp2res.services.capture import (
     build_capture_evidence_items,
+    invalid_capture,
     new_id,
     validate_project_label,
 )
@@ -46,6 +45,7 @@ from exp2res.services.source_files import (
     authorize_artifact_locators,
     read_capture_file,
 )
+from exp2res.services.writers import held_writer
 from exp2res.storage.repository import (
     get_raw_log,
     insert_evidence_item,
@@ -88,14 +88,6 @@ class CorrectionOutcome:
     invalidated_views: tuple[InvalidatedView, ...]
     invalidated_branches: tuple[InvalidatedBranch, ...]
     residual_paths: tuple[str, ...]
-
-
-def _capture_error(error: BaseException) -> InvalidInputError:
-    failure = InvalidInputError()
-    failure.diagnostic_class = "capture_validation_failed"
-    failure.public_message = "Correction capture failed strict validation."
-    failure.__cause__ = error
-    return failure
 
 
 def validate_correction_selection(workspace: Path, *, log_id: str) -> RawLog:
@@ -176,12 +168,9 @@ def capture_correction(
     last_collision: IdCollisionError | None = None
 
     # §8.1: `correction add` passes the writer authority it holds across rebuild.
-    held = (
-        nullcontext(connection)
-        if connection is not None
-        else writer_database(workspace, timeout_ms=timeout_ms)
-    )
-    with held as connection:
+    with held_writer(
+        connection, writer_database, workspace, timeout_ms=timeout_ms
+    ) as connection:
         try:
             connection.execute("BEGIN IMMEDIATE")
             target = get_raw_log(connection, log_id)
@@ -242,7 +231,9 @@ def capture_correction(
                         id_factory=id_factory,
                     )
                 except (ValidationError, ValueError, TypeError) as error:
-                    raise _capture_error(error) from error
+                    raise invalid_capture(
+                        error, "Correction capture failed strict validation."
+                    ) from error
                 savepoint = f"correction_{attempt}"
                 connection.execute(f"SAVEPOINT {savepoint}")
                 try:

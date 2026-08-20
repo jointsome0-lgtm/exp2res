@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -50,6 +49,7 @@ from exp2res.services.privacy import (
     purge_managed_backups as _purge_managed_backups,
     report_unproven_residual,
 )
+from exp2res.services.writers import held_writer
 from exp2res.storage.repository import (
     get_job_description,
     list_job_descriptions as _list_job_descriptions,
@@ -271,29 +271,6 @@ def _dependent_purge_targets(
     return bullet_ids, finding_ids, generation_ids
 
 
-def _committed_outcome(
-    *,
-    run_id: str,
-    selected: JobDescription,
-    purged_branches: tuple[PurgedBranch, ...],
-    purged_bullet_ids: tuple[str, ...],
-    purged_finding_ids: tuple[str, ...],
-    purged_generation_ids: tuple[str, ...],
-    removed_paths: Iterable[str],
-    residuals: Iterable[str],
-) -> JobDescriptionDeleteOutcome:
-    return JobDescriptionDeleteOutcome(
-        run_id=run_id,
-        selected=selected,
-        purged_branches=purged_branches,
-        purged_bullet_ids=purged_bullet_ids,
-        purged_finding_ids=purged_finding_ids,
-        purged_generation_ids=purged_generation_ids,
-        removed_managed_paths=tuple(sorted(set(removed_paths), key=_path_key)),
-        residual_paths=tuple(sorted(set(residuals), key=_path_key)),
-    )
-
-
 def delete_job_description(
     workspace: Path,
     *,
@@ -309,10 +286,8 @@ def delete_job_description(
     allocate_id = id_factory or new_id
     residual_paths: list[str] = []
     removed_paths: list[str] = []
-    held = (
-        nullcontext(connection)
-        if connection is not None
-        else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
+    held = held_writer(
+        connection, writer_database, workspace, owner_delete=True, timeout_ms=timeout_ms
     )
     # §14.14 rule 6: these cells make checkpoint, result build, and lock
     # teardown one cancellation boundary that still reports a committed
@@ -473,15 +448,17 @@ def _delete_locked(
         write_ahead_log = str(database.with_name(database.name + "-wal"))
 
         def build_outcome(residuals: Iterable[str]) -> JobDescriptionDeleteOutcome:
-            return _committed_outcome(
+            return JobDescriptionDeleteOutcome(
                 run_id=orchestration_run_id,
                 selected=selected,
                 purged_branches=purged_branches,
                 purged_bullet_ids=purged_bullet_ids,
                 purged_finding_ids=purged_finding_ids,
                 purged_generation_ids=purged_generation_ids,
-                removed_paths=removed_paths,
-                residuals=residuals,
+                removed_managed_paths=tuple(
+                    sorted(set(removed_paths), key=_path_key)
+                ),
+                residual_paths=tuple(sorted(set(residuals), key=_path_key)),
             )
 
         # `in_transaction` is false both before BEGIN and after COMMIT.

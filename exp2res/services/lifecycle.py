@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +26,7 @@ from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
 from exp2res.pipeline.stage4 import Stage4Result, run_detection_generation
 from exp2res.services.capture import new_id
 from exp2res.services.stages import build_llm_execution
+from exp2res.services.writers import held_writer, transaction
 from exp2res.storage.telemetry import (
     committed_runs,
     create_processing_run,
@@ -148,17 +148,6 @@ class LifecycleResult:
         )
 
 
-def _held_transaction(
-    connection: sqlite3.Connection, operation: Callable[[sqlite3.Connection], None]
-) -> None:
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        operation(connection)
-        connection.commit()
-    except BaseException:
-        connection.rollback()
-        raise
-
 
 def _has_current_assessment_view(connection: sqlite3.Connection) -> bool:
     row = connection.execute(
@@ -211,7 +200,8 @@ def record_cancelled_lifecycle(
             failure_code="cancelled",
         )
 
-    _held_transaction(connection, record)
+    with transaction(connection) as held:
+        record(held)
     return LifecycleResult(orchestration_run_id)
 
 
@@ -240,18 +230,14 @@ def run_recompute(
 
     # §8.1: one writer authority spans the orchestration row, the stage swaps
     # and the terminal transition; correction/deletion pass the one they hold.
-    held = (
-        nullcontext(connection)
-        if connection is not None
-        else writer_database(workspace, reconcile=True)
-    )
-    with held as connection:
+    with held_writer(
+        connection, writer_database, workspace, reconcile=True
+    ) as connection:
         try:
             # Inside the error boundary: an interrupt after this commit must
             # still terminally fail the durable `13.13` row.
-            _held_transaction(
-                connection,
-                lambda held: create_processing_run(
+            with transaction(connection) as held:
+                create_processing_run(
                     held,
                     run_id=orchestration_run_id,
                     stage="13.13",
@@ -263,8 +249,7 @@ def run_recompute(
                     metadata={
                         "mode": "full" if log_id is None else "selected_lineage"
                     },
-                ),
-            )
+                )
             # §29.2: selection is eager even for a zero-lineage recompute;
             # LazyPreflightRunner keeps it offline.
             selection, budgets, runner = build_llm_execution(workspace)
@@ -294,9 +279,8 @@ def run_recompute(
             partial = LifecycleResult(orchestration_run_id, stage3, stage4)
             # Inside the boundary: a late failure must still carry Stage 3-4.
             has_current_view = _has_current_assessment_view(connection)
-            _held_transaction(
-                connection,
-                lambda held: finish_processing_run(
+            with transaction(connection) as held:
+                finish_processing_run(
                     held,
                     run_id=orchestration_run_id,
                     finished_at=now(),
@@ -306,8 +290,7 @@ def run_recompute(
                         for group in partial.affected_ids.created
                         for entity_id in group.ids
                     ),
-                ),
-            )
+                )
         except BaseException as error:
             failure_code = (
                 error.failure_code
@@ -319,16 +302,14 @@ def run_recompute(
                 else "internal_error"
             )
             try:
-                _held_transaction(
-                    connection,
-                    lambda held: finish_processing_run(
+                with transaction(connection) as held:
+                    finish_processing_run(
                         held,
                         run_id=orchestration_run_id,
                         finished_at=now(),
                         status="failed",
                         failure_code=failure_code,
-                    ),
-                )
+                    )
             except Exception:
                 pass
             # §14.14 rule 6: a stage interrupted after its committed swap
@@ -342,45 +323,25 @@ def run_recompute(
             if isinstance(error, KeyboardInterrupt):
                 # §14.14 rule 6: a raw KeyboardInterrupt would reach the CLI as
                 # an empty envelope, so leave as the in-stage class-9 error.
-                cancelled = LLMCancelledError()
-                try:
-                    extend_committed(
-                        cancelled,
-                        run_ids=list(
-                            committed_runs(connection, allocated_runs)
-                        ),
-                    )
-                except Exception:
-                    extend_committed(cancelled, run_ids=[])
-                cancelled.lifecycle_result = progress
-                raise cancelled from error
-            if isinstance(error, Exp2ResError):
-                try:
-                    extend_committed(
-                        error,
-                        run_ids=list(
-                            committed_runs(connection, allocated_runs)
-                        ),
-                    )
-                except Exception:
-                    extend_committed(error, run_ids=[])
-                error.lifecycle_result = progress
-                raise
-            if isinstance(error, Exception):
+                carrier: Exp2ResError = LLMCancelledError()
+            elif isinstance(error, Exp2ResError):
+                carrier = error
+            elif isinstance(error, Exception):
                 # Secret-safe class-1 error that still carries the result.
-                internal = Exp2ResError()
-                try:
-                    extend_committed(
-                        internal,
-                        run_ids=list(
-                            committed_runs(connection, allocated_runs)
-                        ),
-                    )
-                except Exception:
-                    extend_committed(internal, run_ids=[])
-                internal.lifecycle_result = progress
-                raise internal from error
-            raise
+                carrier = Exp2ResError()
+            else:
+                raise
+            try:
+                extend_committed(
+                    carrier,
+                    run_ids=list(committed_runs(connection, allocated_runs)),
+                )
+            except Exception:
+                extend_committed(carrier, run_ids=[])
+            carrier.lifecycle_result = progress
+            if carrier is error:
+                raise
+            raise carrier from error
     return LifecycleResult(
         orchestration_run_id,
         stage3,

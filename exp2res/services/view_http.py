@@ -9,17 +9,6 @@ from typing import Literal
 from exp2res.services.views import ViewPage
 
 
-__all__ = [
-    "MAX_FIELD_LINES",
-    "MAX_HEADER_OCTETS",
-    "MAX_REQUEST_LINE_OCTETS",
-    "ParsedRequest",
-    "RequestParser",
-    "compose_response",
-    "compose_response_parts",
-]
-
-
 # §30 rule 9: fixed constants, not configurable.
 MAX_REQUEST_LINE_OCTETS = 8192
 MAX_HEADER_OCTETS = 32768
@@ -301,6 +290,3 @@ def compose_response_parts(page: ViewPage, *, head: bool) -> tuple[bytes, bytes]
     return header, b"" if head else page.body
 
 
-def compose_response(page: ViewPage, *, head: bool) -> bytes:
-    header, body = compose_response_parts(page, head=head)
-    return header + body

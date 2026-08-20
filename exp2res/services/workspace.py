@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import os
@@ -23,6 +22,7 @@ from exp2res.services.privacy import (
     remove_managed_backups,
     vacuum_residuals,
 )
+from exp2res.services.writers import held_writer
 from exp2res.storage.schema import PURGE_ENTITY_TABLES, PURGE_TABLE_ORDER
 from exp2res.storage.workspace import (
     CURRENT_SCHEMA_VERSION,
@@ -96,10 +96,8 @@ def purge_workspace(
     clock: Callable[[], datetime] | None = None,
 ) -> PurgeOutcome:
     residual_paths: list[str] = []
-    held = (
-        nullcontext(connection)
-        if connection is not None
-        else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
+    held = held_writer(
+        connection, writer_database, workspace, owner_delete=True, timeout_ms=timeout_ms
     )
     # §14.14 rule 6: one cancellation boundary over erasure, result
     # construction and teardown; a committed purge is never reported empty.

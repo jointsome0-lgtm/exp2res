@@ -14,9 +14,9 @@ from exp2res.services.view_http import (
     MAX_HEADER_OCTETS,
     MAX_REQUEST_LINE_OCTETS,
     RequestParser,
-    compose_response,
+    compose_response_parts,
 )
-from exp2res.services.views import ViewPage, method_not_allowed_page
+from exp2res.services.views import ViewPage, standard_page
 
 
 pytestmark = [pytest.mark.unit]
@@ -346,7 +346,7 @@ def test_bytes_after_the_terminating_empty_line_are_dropped_never_framed():
 
 def test_compose_response_emits_exact_closed_headers():
     page = ViewPage(outcome="served", status=200, body=b"<p>Vera Example</p>")
-    assert compose_response(page, head=False) == (
+    assert b"".join(compose_response_parts(page, head=False)) == (
         b"HTTP/1.1 200 OK\r\n"
         b"Exp2Res-View-Outcome: served\r\n"
         b"Cache-Control: no-store\r\n"
@@ -360,14 +360,16 @@ def test_compose_response_emits_exact_closed_headers():
 
 def test_head_response_keeps_headers_and_content_length_without_body():
     page = ViewPage(outcome="served", status=200, body=b"<p>Vera Example</p>")
-    head = compose_response(page, head=True)
+    head = b"".join(compose_response_parts(page, head=True))
     assert head.endswith(b"\r\n\r\n")
     assert b"Content-Length: 19\r\n" in head
     assert b"<p>" not in head
 
 
 def test_method_not_allowed_response_declares_allow():
-    response = compose_response(method_not_allowed_page(), head=False)
+    response = b"".join(
+        compose_response_parts(standard_page("method_not_allowed"), head=False)
+    )
     assert response.startswith(b"HTTP/1.1 405 Method Not Allowed\r\n")
     assert b"Allow: GET, HEAD\r\n" in response
     assert b"Exp2Res-View-Outcome: method_not_allowed\r\n" in response

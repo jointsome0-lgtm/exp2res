@@ -100,20 +100,6 @@ _LOCKED_DATABASE_IDENTITY: ContextVar[os.stat_result | None] = ContextVar(
 
 
 @contextmanager
-def anchor_locked_database(workspace: Path) -> Iterator[None]:
-    """Anchor §13.14 rule 9's identity for one held writer lock.
-
-    The anchor belongs to the lock, not the cleaning frame: a stage may run a
-    whole LLM invocation after the lock was taken, so a later self-read could
-    describe a replaced workspace. Absent anchor = refusal, never permission.
-    """
-
-    with anchor_locked_database_identity(locked_database_identity(workspace)):
-        with anchor_locked_tree_identities(locked_tree_paths(workspace)):
-            yield
-
-
-@contextmanager
 def anchor_locked_database_identity(
     identity: os.stat_result | None,
 ) -> Iterator[None]:

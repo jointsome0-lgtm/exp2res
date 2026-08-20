@@ -86,10 +86,12 @@ def new_id(kind: str) -> str:
     return f"{prefix}_{uuid4().hex}"
 
 
-def _invalid_capture(error: BaseException) -> InvalidInputError:
+def invalid_capture(
+    error: BaseException, message: str = "Manual capture failed strict validation."
+) -> InvalidInputError:
     failure = InvalidInputError()
     failure.diagnostic_class = "capture_validation_failed"
-    failure.public_message = "Manual capture failed strict validation."
+    failure.public_message = message
     failure.__cause__ = error
     return failure
 
@@ -188,7 +190,7 @@ def capture_manual(
                 id_factory=id_factory,
             )
         except (ValidationError, ValueError, TypeError) as error:
-            raise _invalid_capture(error) from error
+            raise invalid_capture(error) from error
         bundle = RawLogBundle(raw_log, evidence_items)
         try:
             persist_manual_capture(
@@ -416,7 +418,7 @@ def capture_gap_answer(
                             id_factory=id_factory,
                         )
                     except (ValidationError, ValueError, TypeError) as error:
-                        raise _invalid_capture(error) from error
+                        raise invalid_capture(error) from error
 
                     savepoint = f"gap_answer_{attempt}"
                     connection.execute(f"SAVEPOINT {savepoint}")

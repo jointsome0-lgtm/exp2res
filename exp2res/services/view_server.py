@@ -34,24 +34,6 @@ from exp2res.services.view_http import (
 from exp2res.storage.workspace import DEFAULT_BUSY_TIMEOUT_MS
 
 
-__all__ = [
-    "DEFAULT_HOST",
-    "DEFAULT_PORT",
-    "GLOBAL_SELECTOR",
-    "LISTEN_BACKLOG",
-    "LOOPBACK_HOSTS",
-    "MAX_CONNECTIONS",
-    "MAX_PORT",
-    "MIN_PORT",
-    "BindAddress",
-    "ServeResult",
-    "Timeouts",
-    "ViewServer",
-    "bound_urls",
-    "validate_bind",
-]
-
-
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8731
 LOOPBACK_HOSTS = ("127.0.0.1", "::1")
@@ -371,7 +353,7 @@ def _run_resolver_process(
                 busy_timeout_ms=busy_timeout_ms,
             )
         except BaseException:
-            page = views.internal_error_page()
+            page = views.standard_page("internal_error")
         with suppress(BrokenPipeError, EOFError, OSError):
             _write_process_result(sender, page)
     finally:
@@ -865,24 +847,24 @@ class ViewServer:
         """§30 rule 7's ordered pre-state refusals — authority, method, body — then the resolver."""
 
         if parser.malformed:
-            return self._within(views.malformed_request_page(), deadline)
+            return self._within(views.standard_page("malformed_request"), deadline)
         request = parser.request
         assert request is not None
         if request.host != self._authority:
-            return self._within(views.authority_not_bound_page(), deadline)
+            return self._within(views.standard_page("authority_not_bound"), deadline)
         if request.origin is not None and request.origin != self._origin:
-            return self._within(views.authority_not_bound_page(), deadline)
+            return self._within(views.standard_page("authority_not_bound"), deadline)
         if request.method not in _SAFE_METHODS:
-            return self._within(views.method_not_allowed_page(), deadline)
+            return self._within(views.standard_page("method_not_allowed"), deadline)
         if request.framing == "declared_body":
-            return self._within(views.malformed_request_page(), deadline)
+            return self._within(views.standard_page("malformed_request"), deadline)
         return self._resolve_abandonable(request, deadline, lease)
 
     def _within(self, page: views.ViewPage, deadline: float) -> views.ViewPage:
         # The processing deadline bounds every check, pre-state refusals included.
         if self._clock() < deadline:
             return page
-        return views.processing_timeout_page()
+        return views.standard_page("processing_timeout")
 
     def _resolve_abandonable(
         self,
@@ -903,13 +885,13 @@ class ViewServer:
         if self._immediate.is_set() or self._drain_expired():
             return None
         if self._phase_deadline(deadline) - self._clock() <= 0:
-            return views.processing_timeout_page()
+            return views.standard_page("processing_timeout")
         if not self._ensure_process_reaper():
-            return self._within(views.internal_error_page(), deadline)
+            return self._within(views.standard_page("internal_error"), deadline)
         try:
             receiver, sender = self._process_context.Pipe(duplex=False)
         except Exception:
-            return self._within(views.internal_error_page(), deadline)
+            return self._within(views.standard_page("internal_error"), deadline)
         try:
             cancelled = self._process_context.Event()
             start_allowed = self._process_context.Event()
@@ -930,7 +912,7 @@ class ViewServer:
         except Exception:
             receiver.close()
             sender.close()
-            return self._within(views.internal_error_page(), deadline)
+            return self._within(views.standard_page("internal_error"), deadline)
         handle = _ProcessHandle(
             process,
             starting=True,
@@ -943,19 +925,19 @@ class ViewServer:
         try:
             try:
                 if not self._begin_process_start(handle, sender):
-                    return self._within(views.internal_error_page(), deadline)
+                    return self._within(views.standard_page("internal_error"), deadline)
                 if forced or self._drain_expired():
                     handle.wake()
                     return None
                 remaining = self._phase_deadline(deadline) - self._clock()
                 if remaining <= 0 or not handle.wait_started(remaining):
                     handle.wake()
-                    return views.processing_timeout_page()
+                    return views.standard_page("processing_timeout")
                 if self._immediate.is_set() or self._drain_expired():
                     handle.wake()
                     return None
                 if handle.start_failed:
-                    return self._within(views.internal_error_page(), deadline)
+                    return self._within(views.standard_page("internal_error"), deadline)
                 return self._receive_process_result(receiver, process, deadline)
             finally:
                 if not handle.finish():
@@ -1034,7 +1016,7 @@ class ViewServer:
 
             remaining = self._phase_deadline(deadline) - self._clock()
             if remaining <= 0:
-                return views.processing_timeout_page()
+                return views.standard_page("processing_timeout")
             ready = wait_for_connections(
                 (receiver, process.sentinel), remaining
             )
@@ -1044,7 +1026,7 @@ class ViewServer:
                     if self._immediate.is_set() or self._drain_expired():
                         return None
                     if self._clock() >= deadline:
-                        return views.processing_timeout_page()
+                        return views.standard_page("processing_timeout")
                     try:
                         chunk = os.read(receiver.fileno(), 65536)
                     except BlockingIOError:
@@ -1056,12 +1038,12 @@ class ViewServer:
                     if self._immediate.is_set() or self._drain_expired():
                         return None
                     if self._clock() >= deadline:
-                        return views.processing_timeout_page()
+                        return views.standard_page("processing_timeout")
                     if metadata_size is None and len(buffer) >= _RESULT_LENGTH.size:
                         metadata_size = _RESULT_LENGTH.unpack_from(buffer)[0]
                         if metadata_size > _RESULT_METADATA_LIMIT:
                             return self._within(
-                                views.internal_error_page(), deadline
+                                views.standard_page("internal_error"), deadline
                             )
                     if (
                         metadata_size is not None
@@ -1075,11 +1057,11 @@ class ViewServer:
                             )
                         except (UnicodeDecodeError, json.JSONDecodeError):
                             return self._within(
-                                views.internal_error_page(), deadline
+                                views.standard_page("internal_error"), deadline
                             )
                         if not isinstance(decoded, dict):
                             return self._within(
-                                views.internal_error_page(), deadline
+                                views.standard_page("internal_error"), deadline
                             )
                         candidate_body_size = decoded.get("body_length")
                         if (
@@ -1088,7 +1070,7 @@ class ViewServer:
                             or candidate_body_size < 0
                         ):
                             return self._within(
-                                views.internal_error_page(), deadline
+                                views.standard_page("internal_error"), deadline
                             )
                         metadata = decoded
                         body_offset = metadata_end
@@ -1098,7 +1080,7 @@ class ViewServer:
                         if len(buffer) >= framed_size:
                             if len(buffer) != framed_size:
                                 return self._within(
-                                    views.internal_error_page(), deadline
+                                    views.standard_page("internal_error"), deadline
                                 )
                             eof = True
                             break
@@ -1109,7 +1091,7 @@ class ViewServer:
             or body_size is None
             or len(buffer) != body_offset + body_size
         ):
-            return self._within(views.internal_error_page(), deadline)
+            return self._within(views.standard_page("internal_error"), deadline)
         outcome = metadata.get("outcome")
         status = metadata.get("status")
         published_member = metadata.get("published_member")
@@ -1121,7 +1103,7 @@ class ViewServer:
             or not isinstance(published_member, bool)
             or not isinstance(content_type, str)
         ):
-            return self._within(views.internal_error_page(), deadline)
+            return self._within(views.standard_page("internal_error"), deadline)
         page = views.ViewPage(
             outcome=outcome,
             status=status,
@@ -1202,7 +1184,7 @@ class ViewServer:
                 worker.start()
             except RuntimeError:
                 # §30 rule 7 still owes one outcome; this thread can emit it.
-                return self._within(views.internal_error_page(), deadline)
+                return self._within(views.standard_page("internal_error"), deadline)
             finished = handle.done.wait(
                 max(0.0, self._phase_deadline(deadline) - self._clock())
             )
@@ -1214,7 +1196,7 @@ class ViewServer:
                 return None
             if not finished or handle.page is None:
                 handle.abandon()
-                return views.processing_timeout_page()
+                return views.standard_page("processing_timeout")
             return handle.page
         finally:
             with self._state_lock:
@@ -1234,7 +1216,7 @@ class ViewServer:
             )
         except BaseException:
             # Anything escaping `resolve` still yields one page.
-            page = views.internal_error_page()
+            page = views.standard_page("internal_error")
         handle.deliver(page)
 
     def _emit(
@@ -1252,7 +1234,7 @@ class ViewServer:
             # §14.17: composition is inside processing. The ordinary deadline
             # only, never `min(phase, drain)` — §30 rule 7 lets a drain
             # truncate delivery but never relabel a composed outcome.
-            page = views.processing_timeout_page()
+            page = views.standard_page("processing_timeout")
             header, body = compose_response_parts(page, head=head)
         deadline = self._clock() + self._timeouts.emit
         for part in (header, body):

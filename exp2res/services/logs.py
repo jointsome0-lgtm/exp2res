@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -19,13 +18,13 @@ from exp2res.domain.results import (
 from exp2res.errors import (
     OperationCancelledError,
     SelectorNotFoundError,
-    WorkspaceBusyError,
 )
 from exp2res.exports.managed import remove_all_managed_output_entries
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
     remove_managed_backups as _remove_managed_backups,
 )
+from exp2res.services.writers import business_transaction, held_writer
 from exp2res.storage.repository import (
     RawLogBundle,
     get_bundle,
@@ -84,14 +83,10 @@ def delete_log(
 ) -> DeleteOutcome:
     residual_paths: list[str] = []
     # §8.1: `logs delete` passes the owner-delete authority it holds across rebuild.
-    held = (
-        nullcontext(connection)
-        if connection is not None
-        else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
-    )
-    with held as connection:
-        try:
-            connection.execute("BEGIN IMMEDIATE")
+    with held_writer(
+        connection, writer_database, workspace, owner_delete=True, timeout_ms=timeout_ms
+    ) as connection:
+        with business_transaction(connection):
             selected = get_raw_log(connection, log_id)
             if selected is None:
                 raise SelectorNotFoundError()
@@ -215,15 +210,6 @@ def delete_log(
                 "UPDATE llm_calls SET input_hash = NULL, output_hash = NULL"
             )
             connection.execute("DELETE FROM raw_logs WHERE id = ?", (log_id,))
-            connection.commit()
-        except sqlite3.OperationalError as error:
-            connection.rollback()
-            if "locked" in str(error).lower() or "busy" in str(error).lower():
-                raise WorkspaceBusyError() from error
-            raise
-        except BaseException:
-            connection.rollback()
-            raise
 
         def build_outcome(residuals: tuple[str, ...]) -> DeleteOutcome:
             return DeleteOutcome(

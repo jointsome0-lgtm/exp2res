@@ -20,6 +20,7 @@ from exp2res.exports.managed import (
     reconcile_managed_outputs as _reconcile_managed_outputs,
 )
 from exp2res.pipeline.stage10 import validated_branch_name
+from exp2res.services.writers import transaction
 from exp2res.storage.repository import current_branch_by_folded_name
 from exp2res.storage.workspace import writer_database
 
@@ -76,8 +77,7 @@ def export_assessment(
         residuals = _reconcile_managed_outputs(workspace)
         if residuals:
             raise ManagedOutputIncompleteError(residuals)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
+        with transaction(connection):
             snapshot_row, snapshot = load_current_snapshot(connection, snapshot_id)
             require_export_eligible(snapshot.verification_status)
             graph = load_assessment_graph(
@@ -88,10 +88,6 @@ def export_assessment(
             _manifest, managed_paths = publish_assessment(
                 workspace, graph, clock=clock
             )
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
 
     manifest_path = next(
         path for path in managed_paths if Path(path).name == "manifest.json"
@@ -116,8 +112,7 @@ def export_bullet_pack(
         residuals = _reconcile_managed_outputs(workspace)
         if residuals:
             raise ManagedOutputIncompleteError(residuals)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
+        with transaction(connection):
             selected = current_branch_by_folded_name(connection, validated)
             if selected is None:
                 raise SelectorNotFoundError()
@@ -126,10 +121,6 @@ def export_bullet_pack(
                 connection, branch_row=branch_row, branch=branch
             )
             _manifest, managed_paths = publish_branch(workspace, graph, clock=clock)
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
 
     manifest_path = next(
         path for path in managed_paths if Path(path).name == "manifest.json"
