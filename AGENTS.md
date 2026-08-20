@@ -94,6 +94,18 @@ lanes, and review policy stay local to each repository.
 
 Git worktrees: create them only in `.worktrees/<name>` inside the repo (globally gitignored via `~/.config/git/ignore`), never as sibling directories. Any work that will open a PR branches and builds in such a worktree, never in the primary checkout — the primary checkout stays on a clean `main` so parallel sessions don't fight for its index. Trivial read-only work and single-file doc edits on a clean main need no worktree. Remove the worktree and delete its local branch once its PR merges.
 
+## Context budget
+
+Every domain must fit in one agent context window whole: ≤150k tokens of
+code, measured without tests, data, and docs (bytes ÷ 4 is close enough).
+The whole repo fitting is the goal; 3× reduction comes before any new
+abstraction. Prefer deleting and merging over splitting into packages —
+a domain that needs a map to be read is too big. When a change grows a
+domain past the budget, the change is wrong, not the budget.
+
+Baseline (2026-08-20): 366k code; largest domain `services` 82k. Every domain fits today.
+Target: whole package ≤150k.
+
 ## Style
 
 - Avoid code comments unless explicitly asked to add comments.
