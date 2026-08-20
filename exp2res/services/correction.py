@@ -99,8 +99,6 @@ def _capture_error(error: BaseException) -> InvalidInputError:
 
 
 def validate_correction_selection(workspace: Path, *, log_id: str) -> RawLog:
-    """Resolve the retained raw selector before capture input or adapter work."""
-
     require_compatible(workspace)
     with read_database(workspace) as connection:
         selected = get_raw_log(connection, log_id)
@@ -112,18 +110,9 @@ def validate_correction_selection(workspace: Path, *, log_id: str) -> RawLog:
 def read_correction_source(
     workspace: Path, *, source_path: str
 ) -> tuple[str, str | None]:
-    """Acquire §14.4 non-prompt correction text under §14.2's gates.
-
-    Compatibility fails closed before the private source is opened, and the
-    caller reads outside the writer lock so no file I/O happens inside the
-    §13.13 capture-and-rebuild transaction. Unlike `capture_retro_file` this
-    resolves no local time: a correction that copies the target's placement
-    uses no local-time feature, so §14.14 rule 8's timezone requirement
-    belongs to the explicit temporal-replacement branch alone — exactly as
-    the interactive form, which accepts an already-offset-aware placement,
-    has always behaved.
-    """
-
+    # §14.2 gates, read outside the writer lock. No timezone check here: a
+    # correction copying the target's placement uses no local-time feature
+    # (§14.14 rule 8 applies to the explicit temporal-replacement branch only).
     require_compatible(workspace)
     config = load_workspace_config(workspace)
     return read_capture_file(source_path, config=config)
@@ -178,8 +167,6 @@ def capture_correction(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     connection: sqlite3.Connection | None = None,
 ) -> CorrectionOutcome:
-    """Commit correction + complete current-graph invalidation in one transaction."""
-
     require_compatible(workspace)
     validate_project_label(project)
     authorized_artifacts = authorize_artifact_locators(
@@ -188,8 +175,7 @@ def capture_correction(
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     last_collision: IdCollisionError | None = None
 
-    # §8.1: `correction add` holds one writer authority across capture and
-    # rebuild and passes it here; a direct call still acquires its own.
+    # §8.1: `correction add` passes the writer authority it holds across rebuild.
     held = (
         nullcontext(connection)
         if connection is not None
@@ -244,9 +230,7 @@ def capture_correction(
                         occurred=occurred,
                         raw_text=raw_text,
                         project=project,
-                        # §14.4's non-prompt form persists the canonical real
-                        # path §29.4 authorized; prompt and stdin capture
-                        # select no filesystem object and record none.
+                        # §14.4/§29.4: the authorized real path, file form only.
                         external_ref=external_ref,
                         corrects_log_id=target.id,
                         metadata={},
@@ -281,9 +265,8 @@ def capture_correction(
             mark_contradictions_superseded(
                 connection, superseded_contradiction_ids, now
             )
-            # §13.13 rule 4: the correction's one visibility boundary
-            # supersedes every current resume branch and bullet too, before
-            # the anchoring snapshots stop being current.
+            # §13.13 rule 4: branches and bullets go before their anchoring
+            # snapshots stop being current.
             branch_swap = supersede_current_branches(connection, superseded_at=now)
             superseded_generation_ids = tuple(
                 sorted(
@@ -295,9 +278,8 @@ def capture_correction(
             mark_assessment_snapshots_superseded(
                 connection, superseded_snapshot_ids, now
             )
-            # Pre-commit pending report (same pattern as the Stage 3-7
-            # trigger sites): an interrupt in the commit-to-cleanup window
-            # still reports the stale sets; a proven rollback withdraws.
+            # Pending report before commit: the commit-to-cleanup window still
+            # reports the stale sets; a proven rollback withdraws.
             pending_stale_paths = (
                 *assessment_set_paths(workspace, superseded_snapshot_ids),
                 *branch_set_paths(workspace, branch_swap.branch_ids),
@@ -356,9 +338,7 @@ def capture_correction(
                 removed_ledger=cleaned_sets,
             )
         except KeyboardInterrupt:
-            # §14.14 rule 6: the correction transaction committed before this
-            # cleanup, so the class-9 error carries the committed outcome and
-            # the pending stale paths stay reported as residuals.
+            # §14.14 rule 6: already committed, so the cancellation carries it.
             cancelled = OperationCancelledError()
             cancelled.correction_outcome = build_outcome(
                 unfinished_stale_paths(pending_stale_paths, cleaned_sets)

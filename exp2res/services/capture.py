@@ -95,8 +95,7 @@ def _invalid_capture(error: BaseException) -> InvalidInputError:
 
 
 def validate_project_label(project: str | None) -> None:
-    """Reject §12 rule 14's invalid non-null blank identity at acquisition."""
-
+    # §12 rule 14: a non-null blank project label is rejected at acquisition.
     if project is not None and not canonical_project_key(project):
         raise BlankProjectLabelError()
 
@@ -198,9 +197,7 @@ def capture_manual(
                 evidence_items=evidence_items,
                 timeout_ms=timeout_ms,
                 after_raw_insert=after_raw_insert,
-                # §14.14 rule 6: the pair is durable before the writer lock is
-                # released, so a failure in that teardown still owes the
-                # envelope these identities.
+                # §14.14 rule 6: a failing lock teardown still reports the pair.
                 on_committed=lambda error: carry_committed(
                     error, capture_outcome(bundle)
                 ),
@@ -225,7 +222,7 @@ def capture_daily(
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
     validate_project_label(project)
-    # Fail closed before reading configuration or owner content (§12.14).
+    # §12.14: fail closed before reading configuration or owner content.
     require_compatible(workspace)
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     config = load_workspace_config(workspace)
@@ -258,8 +255,7 @@ def capture_daily_file(
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
     validate_project_label(project)
-    # Fail closed before acquiring the private source file (§12.14, §22);
-    # the local-time contract gates source acquisition too (§14.14).
+    # §12.14, §14.14: compatibility and timezone gate source acquisition.
     require_compatible(workspace)
     config = load_workspace_config(workspace)
     workspace_zone(require_timezone(config))
@@ -318,8 +314,6 @@ def capture_retro_file(
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
     after_raw_insert: FailureHook | None = None,
 ) -> RawLogBundle:
-    """Acquire retrospective text after compatibility and timezone gates."""
-
     validate_project_label(project)
     require_compatible(workspace)
     config = load_workspace_config(workspace)
@@ -351,22 +345,16 @@ def _select_answerable_gap(connection, gap_id: str):
 
 
 def validate_gap_answer_selection(workspace: Path, *, gap_id: str) -> None:
-    """Resolve the selector before answer acquisition (§14.14 rule 4)."""
-
+    # §14.14 rule 4: resolve the selector before answer acquisition.
     require_compatible(workspace)
     with read_database(workspace) as connection:
         _select_answerable_gap(connection, gap_id)
 
 
 def _gap_answer_is_durable(connection, gap_id: str) -> bool | None:
-    """Answer from the database whether the transition survived, or None.
-
-    `commit()` can raise after SQLite has already made the transaction
-    durable, so the caller reads the answered gap rather than a flag. The two
-    duties that consult it default in opposite directions, which is why
-    unknown is its own answer rather than either boolean.
-    """
-
+    # `commit()` can raise after the transaction is durable, so read the row;
+    # None (unknown) is a distinct answer because its two consumers default
+    # in opposite directions.
     try:
         if connection.in_transaction:
             return False
@@ -389,17 +377,13 @@ def capture_gap_answer(
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
 ) -> RawLogBundle:
-    """Persist the answer bundle and gap transition in one transaction."""
-
     require_compatible(workspace)
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     config = load_workspace_config(workspace)
     occurred = today_occurred(now=now, timezone_name=require_timezone(config))
     authorized_artifacts = authorize_artifact_locators(artifacts, config=config)
     last_collision: IdCollisionError | None = None
-    # §14.14 rule 6: set once the answer is provably durable, so every exit
-    # below — the managed cleanup, the connection close, the lock release —
-    # reports the pair rather than cancelling as though nothing had happened.
+    # §14.14 rule 6: set once provably durable; every later exit reports it.
     answered: Outcome | None = None
 
     try:
@@ -449,12 +433,9 @@ def capture_gap_answer(
                         last_collision = error
                         continue
                     connection.execute(f"RELEASE {savepoint}")
-                    # §13 stale-export trigger: answering a gap keeps every view
-                    # current, but its rendered answer state changed. The current
-                    # snapshot sets are enumerated and reported pending before
-                    # COMMIT, so an interrupt in the commit-to-cleanup window
-                    # still reports the retained stale set; rollback withdraws
-                    # the report. Cleanup failure never rolls the answer back.
+                    # §13 stale-export trigger: stale sets are reported pending
+                    # before COMMIT so the commit-to-cleanup window still
+                    # reports them; rollback withdraws the report.
                     snapshot_ids = tuple(
                         row[0]
                         for row in connection.execute(
@@ -468,13 +449,8 @@ def capture_gap_answer(
                         defer_interrupt()
                         connection.commit()
                     except BaseException:
-                        # Two duties with opposite defaults. A reported stale set
-                        # is withdrawn only on a proven rollback, because a
-                        # spurious residual is recoverable and a dropped one is
-                        # not. An identity is named only on a proven commit,
-                        # because rule 6 owes the envelope a commit and never an
-                        # attempt. Unknown therefore keeps the report and names
-                        # nothing.
+                        # Withdraw the report only on proven rollback; name the
+                        # pair only on proven commit; unknown does neither.
                         durable = _gap_answer_is_durable(connection, gap.id)
                         if durable is False:
                             withdraw_managed_residuals(pending)
@@ -491,8 +467,7 @@ def capture_gap_answer(
                         snapshot_ids=snapshot_ids,
                     )
                     bundle = RawLogBundle(raw_log, evidence_items, residuals)
-                    # The teardown below can still fail, so the report it would
-                    # carry names what the cleanup could not resolve as well.
+                    # Teardown can still fail; its report carries the residuals.
                     answered = capture_outcome(bundle)
                     return bundle
                 raise IdCollisionError() from last_collision
@@ -505,9 +480,7 @@ def capture_gap_answer(
                 connection.rollback()
                 raise
     except BaseException as error:
-        # The writer teardown raises outside the block above — a lock the
-        # platform could not release, a connection that would not close — and
-        # rule 6 owes the envelope the durable pair on that exit too.
+        # Rule 6: writer teardown failures still report the durable pair.
         if answered is not None:
             carry_committed(error, answered)
         raise
@@ -523,8 +496,6 @@ def capture_gap_answer_file(
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
 ) -> RawLogBundle:
-    """Acquire a local answer file only after compatibility/timezone gates."""
-
     require_compatible(workspace)
     config = load_workspace_config(workspace)
     workspace_zone(require_timezone(config))
@@ -550,9 +521,7 @@ def capture_outcome(bundle) -> Outcome:
                 ("raw_log", [bundle.raw_log.id]),
             )
         ),
-        # A capture that cleaned up managed output and could not finish carries
-        # those paths; §14.14 rule 5 wants them on the failed and cancelled
-        # envelopes this projection becomes, not only on the successful one.
+        # §14.14 rule 5: residual paths ride failed and cancelled envelopes too.
         residual_paths=list(bundle.residual_paths),
         human_result=(
             f"Created raw log {bundle.raw_log.id} with evidence "

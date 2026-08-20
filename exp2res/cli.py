@@ -101,30 +101,29 @@ from exp2res.pipeline.stage11 import (
     bullets_verify_outcome,
     Stage11Result,
 )
-from exp2res.services.bullets import run_bullets_generate, run_bullets_verify
 from exp2res.pipeline.stage6 import assess_generate_outcome, repair_outcome
 from exp2res.pipeline.stage7 import assess_verify_outcome
-from exp2res.services.assessment import (
+from exp2res.pipeline.stage4 import detections_generate_outcome
+from exp2res.pipeline.stage3 import stage3_outcome
+from exp2res.services.stages import (
+    Stage3Result,
+    Stage4Result,
     Stage6Result,
     Stage7Result,
+    list_current_contradictions,
+    list_current_gaps,
     list_current_snapshots,
+    list_facts,
     run_assess_generate,
     run_assess_repair,
     run_assess_verify,
-    show_snapshot,
-)
-from exp2res.pipeline.stage4 import detections_generate_outcome
-from exp2res.services.detection import (
-    Stage4Result,
-    list_current_contradictions,
-    list_current_gaps,
+    run_bullets_generate,
+    run_bullets_verify,
     run_detections_generate,
-    show_contradiction,
-)
-from exp2res.pipeline.stage3 import stage3_outcome
-from exp2res.services.extraction import (
-    Stage3Result,
     run_extract,
+    show_contradiction,
+    show_fact,
+    show_snapshot,
     validate_extract_selection,
 )
 from exp2res.services.export import (
@@ -132,7 +131,6 @@ from exp2res.services.export import (
     export_bullet_pack,
     require_export_eligible,
 )
-from exp2res.services.facts import list_facts, show_fact
 from exp2res.pipeline.stage8 import (
     jd_add_affected,
     jd_add_outcome,

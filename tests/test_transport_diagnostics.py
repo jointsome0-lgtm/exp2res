@@ -279,7 +279,7 @@ def test_orchestration_level_failures_also_name_the_failing_surface(
         {"facts": [first, second], "warnings": []}, separators=(",", ":")
     ).encode("utf-8")
     monkeypatch.setattr(
-        "exp2res.services.extraction.new_id",
+        "exp2res.services.stages.new_id",
         lambda kind: "fact_vera_collision" if kind == "fact" else f"{kind}_vera_1",
     )
     install_fake_execution(monkeypatch, FakeContractRunner([collision]))

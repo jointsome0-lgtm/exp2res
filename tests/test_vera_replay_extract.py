@@ -18,7 +18,7 @@ import pytest
 from typer.testing import CliRunner
 
 import exp2res.services.capture as capture_service
-import exp2res.services.extraction as extraction_service
+import exp2res.services.stages as extraction_service
 from exp2res.cli import app
 from exp2res.domain.models import EvidenceItem, OccurredAt, RawLog
 from exp2res.services.capture import capture_daily_file, capture_retro

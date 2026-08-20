@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-import exp2res.services.assessment as assessment_service
+import exp2res.services.stages as assessment_service
 from exp2res.storage.repository import (
     list_self_claims_for_snapshot,
     list_verification_findings,

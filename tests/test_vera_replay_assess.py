@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-import exp2res.services.assessment as assessment_service
-import exp2res.services.detection as detection_service
+import exp2res.services.stages as assessment_service
+import exp2res.services.stages as detection_service
 from exp2res.cli import app
 from exp2res.storage.repository import list_assessment_snapshots
 from exp2res.storage.workspace import read_database

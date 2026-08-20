@@ -71,8 +71,7 @@ class LifecycleResult:
 
     @property
     def invalidated_branches(self) -> tuple[InvalidatedBranch, ...]:
-        # §13.13 rule 9: one report per branch name, whichever stage
-        # invalidated it; both stages replace the same current branch set.
+        # §13.13 rule 9: one report per branch name across both stages.
         by_name: dict[str, InvalidatedBranch] = {}
         for result in (self.stage3, self.stage4):
             if result:
@@ -92,8 +91,7 @@ class LifecycleResult:
             if result
             for path in result.residual_paths
         }
-        # fsencode: filesystem-derived residual paths may carry
-        # surrogateescape'd undecodable bytes that plain UTF-8 rejects.
+        # fsencode: residual paths may carry surrogateescape'd bytes.
         return tuple(sorted(values, key=os.fsencode))
 
     @property
@@ -118,13 +116,7 @@ class LifecycleResult:
 
     @property
     def affected_ids(self) -> AffectedIds:
-        """Merge both stages' §14.14 rule 5 reports, ordering classes by name.
-
-        The one `AffectedIds.of` caller without a fixed pair order to inherit:
-        two stages contribute overlapping classes, so neither stage's own
-        sequence is the merged order.
-        """
-
+        # §14.14 rule 5: overlapping classes from two stages, so order by name.
         created: dict[str, set[str]] = {}
         superseded: dict[str, set[str]] = {}
 
@@ -195,8 +187,6 @@ def record_cancelled_lifecycle(
     id_factory: Callable[[str], str] | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> LifecycleResult:
-    """Record a committed source lifecycle cancelled before rebuild began."""
-
     ids = id_factory or new_id
     now = clock or (lambda: datetime.now(timezone.utc))
     orchestration_run_id = ids("run")
@@ -233,8 +223,6 @@ def run_recompute(
     clock: Callable[[], datetime] | None = None,
     connection: sqlite3.Connection | None = None,
 ) -> LifecycleResult:
-    """Replace selected/all lineages, then rebuild the global Stage 4-5 graph."""
-
     require_compatible(workspace)
     ids = id_factory or new_id
     now = clock or (lambda: datetime.now(timezone.utc))
@@ -250,11 +238,8 @@ def run_recompute(
             allocated_runs.append(value)
         return value
 
-    # §8.1: the whole Stage 3-4 lifecycle runs under one held writer
-    # authority — no other business writer can interleave between the
-    # orchestration row, the stage swaps, and the terminal transition. A
-    # correction or deletion command passes the authority it already holds
-    # so its committed lifecycle boundary and this rebuild share one lock.
+    # §8.1: one writer authority spans the orchestration row, the stage swaps
+    # and the terminal transition; correction/deletion pass the one they hold.
     held = (
         nullcontext(connection)
         if connection is not None
@@ -262,9 +247,8 @@ def run_recompute(
     )
     with held as connection:
         try:
-            # Initial telemetry creation is inside the same decorated error
-            # boundary as every stage: an interrupt after its commit must
-            # report and terminally fail that durable `13.13` row.
+            # Inside the error boundary: an interrupt after this commit must
+            # still terminally fail the durable `13.13` row.
             _held_transaction(
                 connection,
                 lambda held: create_processing_run(
@@ -281,10 +265,8 @@ def run_recompute(
                     },
                 ),
             )
-            # §29.2 selection stays eagerly required exactly like a direct
-            # `extract` (PR #125): a zero-lineage recompute still resolves the
-            # configured adapter, while LazyPreflightRunner keeps it offline —
-            # the stage runners plan zero calls and complete empty runs.
+            # §29.2: selection is eager even for a zero-lineage recompute;
+            # LazyPreflightRunner keeps it offline.
             selection, budgets, runner = build_llm_execution(workspace)
             stage3 = run_fact_extraction(
                 workspace,
@@ -310,9 +292,7 @@ def run_recompute(
                 cli_version=__version__,
             )
             partial = LifecycleResult(orchestration_run_id, stage3, stage4)
-            # This read is part of the lifecycle result, not an unprotected
-            # output tail: a late interrupt or storage failure must still
-            # carry every Stage 3-4 effect that already committed.
+            # Inside the boundary: a late failure must still carry Stage 3-4.
             has_current_view = _has_current_assessment_view(connection)
             _held_transaction(
                 connection,
@@ -352,8 +332,7 @@ def run_recompute(
             except Exception:
                 pass
             # §14.14 rule 6: a stage interrupted after its committed swap
-            # carries its complete result on the class-9 error; fold it in
-            # so the cancelled envelope reports the committed effects.
+            # carries its result on the error; fold it in.
             carried = getattr(error, "stage_result", None)
             if isinstance(carried, Stage3Result) and stage3 is None:
                 stage3 = carried
@@ -361,11 +340,8 @@ def run_recompute(
                 stage4 = carried
             progress = LifecycleResult(orchestration_run_id, stage3, stage4)
             if isinstance(error, KeyboardInterrupt):
-                # §14.14 rule 6: an interrupt between committed stage swaps
-                # still reports every committed effect and run — a raw
-                # KeyboardInterrupt would reach the CLI as an empty cancelled
-                # envelope, so it leaves as the same class-9 §15.10 error the
-                # in-stage path raises.
+                # §14.14 rule 6: a raw KeyboardInterrupt would reach the CLI as
+                # an empty envelope, so leave as the in-stage class-9 error.
                 cancelled = LLMCancelledError()
                 try:
                     extend_committed(
@@ -391,8 +367,7 @@ def run_recompute(
                 error.lifecycle_result = progress
                 raise
             if isinstance(error, Exception):
-                # Keep unexpected failures secret-safe while preserving the
-                # committed lifecycle result for the class-1 envelope.
+                # Secret-safe class-1 error that still carries the result.
                 internal = Exp2ResError()
                 try:
                     extend_committed(

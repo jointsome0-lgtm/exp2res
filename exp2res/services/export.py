@@ -36,8 +36,7 @@ _ASSESSMENT_EXPORT_ALLOWLIST = frozenset(
 
 
 def require_export_eligible(verification_status: str) -> None:
-    """Apply the §16.11 assessment-export allowlist to a loaded status."""
-
+    # §16.11 assessment-export allowlist.
     if verification_status not in _ASSESSMENT_EXPORT_ALLOWLIST:
         raise AssessmentExportBlockedError()
 
@@ -57,8 +56,7 @@ class BulletPackExportResult:
 
 
 def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
-    """Run the §13.14 writer preamble under the business-writer lock."""
-
+    # §13.14 writer preamble under the business-writer lock.
     with writer_database(workspace):
         return _reconcile_managed_outputs(workspace)
 
@@ -69,15 +67,11 @@ def export_assessment(
     snapshot_id: str,
     clock=None,
 ) -> AssessmentExportResult:
-    """Render, publish, and revalidate one current assessment snapshot."""
-
-    # The caller-supplied selector is rejected before workspace/output I/O;
-    # the selected stored row is validated again by the managed writer.
+    # Selector hygiene precedes workspace/output I/O.
     if ENTITY_ID.fullmatch(snapshot_id) is None:
         raise InvalidInputError()
 
-    # §15.10 rule 8: export is a later compatible writer, so the default
-    # abandoned-telemetry reconciliation runs before its business operation.
+    # §15.10 rule 8: abandoned-telemetry reconciliation precedes the business op.
     with writer_database(workspace) as connection:
         residuals = _reconcile_managed_outputs(workspace)
         if residuals:
@@ -114,15 +108,11 @@ def export_bullet_pack(
     branch_name: str,
     clock=None,
 ) -> BulletPackExportResult:
-    """Render, publish, and revalidate one current branch's verified pack."""
-
-    # §14.14 rule 4: selector hygiene precedes workspace and output I/O, the
-    # same treatment `bullets verify` gives the branch name.
+    # §14.14 rule 4: selector hygiene precedes workspace and output I/O.
     validated = validated_branch_name(branch_name)
 
     with writer_database(workspace) as connection:
-        # §15.10 rule 8: export is a later compatible writer, so the default
-        # abandoned-telemetry reconciliation runs before its business operation.
+        # §15.10 rule 8.
         residuals = _reconcile_managed_outputs(workspace)
         if residuals:
             raise ManagedOutputIncompleteError(residuals)

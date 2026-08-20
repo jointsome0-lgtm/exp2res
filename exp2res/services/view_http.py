@@ -1,24 +1,5 @@
-"""§30 rule 9's transport grammar as a pure incremental parser.
-
-This module performs no I/O and reads no clock: the transport feeds it the
-bytes one socket produced and asks `receive_budget` how many more octets it
-may read. That budget is always the applicable §30 rule 9 cap's remaining
-allowance plus the one deciding octet, so the parser establishes overflow by
-reading at most one octet beyond a cap and never buffers more than the capped
-component plus that octet.
-
-The grammar is exact and closed: CRLF line endings only, tchar field names,
-SP/HTAB/visible-ASCII field values, origin-form `HTTP/1.1` request lines, and
-exactly one `Host` field. Nothing is normalized — no folding, joining,
-case-folding of values, or duplicate-field policy — so §30 rule 2's framing
-classification and rule 1's authority comparison run over the exact received
-bytes and no parser behavior can change an outcome.
-
-`compose_response` is the one writer of response bytes: every §30 rule 6
-response header — the outcome class, `Cache-Control: no-store`, the exact
-media type, and `Connection: close` — comes from here and from the composed
-`ViewPage`, never from request bytes.
-"""
+"""§30 rule 9's closed transport grammar as a pure incremental parser (no I/O,
+no clock, nothing normalized) plus the one writer of §30 rule 6 response bytes."""
 
 from __future__ import annotations
 
@@ -39,8 +20,7 @@ __all__ = [
 ]
 
 
-# §30 rule 9: fixed service constants with no flag, environment, or
-# configuration representation.
+# §30 rule 9: fixed constants, not configurable.
 MAX_REQUEST_LINE_OCTETS = 8192
 MAX_HEADER_OCTETS = 32768
 MAX_FIELD_LINES = 64
@@ -51,12 +31,8 @@ _TCHAR = frozenset(
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     b"abcdefghijklmnopqrstuvwxyz"
 )
-# Origin-form's byte set: RFC 3986 `pchar` — unreserved, sub-delims, `:` and
-# `@` — plus `/` for segment separators, `?` for the query, and `%` for a
-# percent-encoded octet. Every other visible byte, including `"`, `<`, `>`,
-# `\`, `^`, `` ` ``, `{`, `}`, `|`, and the fragment's `#`, is outside the
-# target grammar, so §30 rule 9 refuses it during transport parsing instead
-# of letting it reach a route or a selector.
+# Origin-form bytes: RFC 3986 `pchar` plus `/`, `?`, `%`. §30 rule 9 refuses
+# anything else (`#`, `\`, `"`, …) here, before it can reach a route.
 _TARGET = frozenset(
     b"-._~!$&'()*+,;=:@/?%"
     b"0123456789"
@@ -72,15 +48,8 @@ Framing = Literal["bodyless", "declared_body"]
 
 
 def _complete_escapes(path: bytes) -> bool:
-    """Every `%` in the path opens a full `%` HEXDIG HEXDIG triplet.
-
-    The byte set alone accepts `%` anywhere, so `/mirror%` and `/mirror%GG`
-    would parse and reach a route. Neither is an absolute path, and nothing
-    downstream decodes one — rule 6 matches the path literally — so the
-    escape is checked here, where §30 rule 9 puts it. The query is
-    deliberately excluded: rule 6 hands its escapes to selector parsing.
-    Work stays bounded by the request line's own cap.
-    """
+    """§30 rule 9: every `%` in the path is a full triplet; the query is
+    excluded because rule 6 hands its escapes to selector parsing."""
 
     index = path.find(b"%")
     while index >= 0:
@@ -93,13 +62,8 @@ def _complete_escapes(path: bytes) -> bool:
 
 @dataclass(frozen=True)
 class ParsedRequest:
-    """One complete request envelope, reduced to the fields the rules consult.
-
-    `host` and `origin` are the OWS-trimmed exact value bytes for §30 rule 1's
-    literal comparison; `origin` is `None` only when the request carried no
-    `Origin` field, which passes that check. Every other header was validated
-    syntactically and then ignored (§30 rule 6).
-    """
+    """The fields the rules consult; `host`/`origin` are OWS-trimmed exact
+    bytes for §30 rule 1, `origin` None when the field was absent."""
 
     method: bytes
     path: bytes
@@ -110,15 +74,8 @@ class ParsedRequest:
 
 
 class RequestParser:
-    """An incremental state machine over one request's raw envelope.
-
-    Feed it exact received byte fragments; counts are cumulative across
-    fragments, so splitting a line or section never resets a bound. Once
-    `done`, the request is either `malformed` — §30 rule 7's first-ordered
-    refusal — or available as `request`, and any bytes past the terminating
-    empty line are dropped unread: the connection serves one request and
-    closes, so no undrained byte is ever framed as a next request.
-    """
+    """Incremental state machine over one request envelope; counts are
+    cumulative across fragments, and bytes past the empty line are dropped."""
 
     def __init__(self) -> None:
         self._buffer = bytearray()
@@ -148,7 +105,7 @@ class RequestParser:
 
     @property
     def receive_budget(self) -> int:
-        """How many octets the transport may still read: cap remainder + 1."""
+        """Cap remainder + 1: overflow is established by one octet past the cap."""
 
         if self.done:
             return 0
@@ -167,7 +124,7 @@ class RequestParser:
                 self._check_partial()
                 return
             if index == 0 or self._buffer[index - 1] != _CR:
-                # A bare LF never terminates a line (§30 rule 9).
+                # §30 rule 9: a bare LF never terminates a line.
                 self._fail()
                 return
             content = bytes(self._buffer[: index - 1])
@@ -179,7 +136,7 @@ class RequestParser:
             self._consume_line(content, index + 1)
 
     def _check_partial(self) -> None:
-        """Bound the incomplete tail: overflow and a bare CR fail here."""
+        """Overflow and a bare CR in the incomplete tail fail here."""
 
         if self._buffer.find(_CR, 0, len(self._buffer) - 1) >= 0:
             self._fail()
@@ -211,13 +168,7 @@ class RequestParser:
         self._parse_field_line(content)
 
     def _parse_request_line(self, content: bytes) -> None:
-        """Exactly method SP origin-form-target SP `HTTP/1.1` (§30 rule 9).
-
-        Splitting on the single SP byte makes extra whitespace an empty part,
-        so any other spacing fails; absolute-form, authority-form,
-        asterisk-form, and every other HTTP version fail the closed shape and
-        are never normalized into a route.
-        """
+        """§30 rule 9: exactly method SP origin-form-target SP `HTTP/1.1`."""
 
         parts = content.split(b" ")
         if len(parts) != 3:
@@ -230,22 +181,15 @@ class RequestParser:
         if not method or any(byte not in _TCHAR for byte in method):
             self._fail()
             return
-        # §30 rule 9 puts transport parsing first, so a target that is not a
-        # well-formed origin-form — a raw `#` opening a fragment, a `\` or `"`
-        # no absolute path or query may contain, a `%` that is not a complete
-        # escape — is `malformed_request` here rather than a later
-        # `route_not_found` or `invalid_selector` reached by normalizing it
-        # into a route.
+        # §30 rule 9: a malformed target is `malformed_request` here, never
+        # normalized into a later `route_not_found` or `invalid_selector`.
         if not target.startswith(b"/") or any(
             byte not in _TARGET for byte in target
         ):
             self._fail()
             return
         path, separator, query = target.partition(b"?")
-        # Escapes are checked in the path alone. §30 rule 6 gives the query's
-        # to selector parsing, where a malformed or truncated escape in a
-        # selector value is `invalid_selector` — a refusal of what the value
-        # says, not of the request envelope.
+        # Path only; §30 rule 6 gives the query's escapes to selector parsing.
         if not _complete_escapes(path):
             self._fail()
             return
@@ -255,12 +199,8 @@ class RequestParser:
         self._state = "headers"
 
     def _parse_field_line(self, content: bytes) -> None:
-        """One field line: tchar name, immediate `:`, bounded value bytes.
-
-        A line beginning with SP or HTAB — obsolete folding — fails the name
-        grammar here, so folding is never unfolded. Field names are
-        recognized ASCII-case-insensitively; values are never case-folded.
-        """
+        """tchar name, immediate `:`, bounded value; folding fails the name
+        grammar, names match case-insensitively, values are never folded."""
 
         colon = content.find(b":")
         if colon <= 0:
@@ -288,8 +228,7 @@ class RequestParser:
             self._transfer_encodings += 1
 
     def _finalize(self) -> None:
-        # §30 rule 9: exactly one Host, counting every spelling; §30 rule 1:
-        # at most one declared Origin, even with byte-equal repetition.
+        # §30 rule 9: exactly one Host; §30 rule 1: at most one Origin.
         if len(self._host_values) != 1 or len(self._origin_values) > 1:
             self._fail()
             return
@@ -311,13 +250,7 @@ class RequestParser:
         self._state = "complete"
 
     def _classify_framing(self) -> Framing | None:
-        """§30 rule 2's one closed classification; `None` is a parse failure.
-
-        Any `Transfer-Encoding`, any field combination or repetition, and any
-        `Content-Length` value outside the two canonical forms fail before
-        the method check, so no joining, overflow behavior, or duplicate
-        policy can change the outcome.
-        """
+        """§30 rule 2's closed classification; `None` is a parse failure."""
 
         if self._transfer_encodings:
             return None
@@ -351,13 +284,8 @@ _REASONS = {
 
 
 def compose_response_parts(page: ViewPage, *, head: bool) -> tuple[bytes, bytes]:
-    """Serialize one outcome without copying its potentially large body.
-
-    A `HEAD` response carries exactly the `GET` outcome's status and headers
-    — `Content-Length` included — with an empty body (§30 rule 2). The body
-    part is the original bytes object: for the mirror it is the revalidated
-    published member, which nothing may rewrite or copy during composition.
-    """
+    """Header and body parts; §30 rule 2 HEAD keeps GET's headers with an
+    empty body, and the body is the original (never copied) bytes object."""
 
     lines = [
         f"HTTP/1.1 {page.status} {_REASONS[page.status]}",
@@ -374,7 +302,5 @@ def compose_response_parts(page: ViewPage, *, head: bool) -> tuple[bytes, bytes]
 
 
 def compose_response(page: ViewPage, *, head: bool) -> bytes:
-    """Serialize one composed outcome as its complete HTTP/1.1 response."""
-
     header, body = compose_response_parts(page, head=head)
     return header + body

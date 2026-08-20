@@ -38,9 +38,7 @@ def resolve_local(value: datetime, zone: ZoneInfo) -> datetime:
         try:
             round_trip = candidate.astimezone(timezone.utc).astimezone(zone)
         except OverflowError as error:
-            # A local time within a day of either end of the calendar has no
-            # UTC instant in a zone offset the wrong way. §11 rule 54 refuses
-            # it, and owner-typed input leaves as §14.14 exit class 2.
+            # §11 rule 54: no UTC instant at the calendar's edge; §14.14 class 2.
             raise _time_error(
                 "invalid_time", "The time value is invalid."
             ) from error
@@ -78,9 +76,7 @@ def today_occurred(*, now: datetime, timezone_name: str) -> OccurredAt:
         local_today = now.astimezone(zone).date()
     except OverflowError as error:
         raise _time_error("invalid_time", "The time value is invalid.") from error
-    # A clock-derived day is still a value, not a workspace defect, so §11
-    # rule 54's refusal leaves through the same §14.14 translation an
-    # owner-typed one does rather than as exit class 1.
+    # §11 rule 54 / §14.14: a clock-derived day fails as class 2, not class 1.
     return _build_occurred(
         start=day_start(local_today, zone),
         end=None,
@@ -110,8 +106,7 @@ def _named_anchor(value: str, precision: TemporalPrecision, zone: ZoneInfo) -> d
                     zone,
                 )
     except ValueError as error:
-        # Out-of-range calendar anchors (month 13, week 99, year 0000) are
-        # §14.14 exit-class-2 owner input, not exit 1.
+        # §14.14: out-of-range anchors are class-2 owner input.
         raise _time_error("invalid_time", "The time value is invalid.") from error
     return _parse_datetime(value, zone)
 
@@ -120,8 +115,7 @@ def _build_occurred(**kwargs: object) -> OccurredAt:
     try:
         return OccurredAt(**kwargs)  # type: ignore[arg-type]
     except ValidationError as error:
-        # Owner-typed shapes (a reversed range, an unknown precision or
-        # confidence literal) are §14.14 exit-class-2 input, not exit 1.
+        # §14.14: a bad owner-typed shape is class-2 input.
         raise _time_error(
             "invalid_time_shape", "The temporal shape is invalid."
         ) from error

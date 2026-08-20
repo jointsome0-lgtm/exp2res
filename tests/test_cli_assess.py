@@ -12,9 +12,9 @@ from typer.testing import CliRunner
 import exp2res.cli as cli_module
 import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage6 as stage6_module
-import exp2res.services.assessment as assessment_service
-import exp2res.services.detection as detection_service
-import exp2res.services.extraction as extraction_service
+import exp2res.services.stages as assessment_service
+import exp2res.services.stages as detection_service
+import exp2res.services.stages as extraction_service
 from exp2res.cli import app
 from exp2res.errors import IntegrityFailureError
 from exp2res.storage.repository import (

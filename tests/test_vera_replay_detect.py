@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-import exp2res.services.detection as detection_service
-import exp2res.services.extraction as extraction_service
+import exp2res.services.stages as detection_service
+import exp2res.services.stages as extraction_service
 from exp2res.cli import app
 from exp2res.pipeline.stage4 import run_detection_generation
 from exp2res.storage.repository import list_contradictions, list_experience_facts

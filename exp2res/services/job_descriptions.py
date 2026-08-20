@@ -83,13 +83,7 @@ class JobDescriptionDeleteOutcome:
 
 @dataclass(frozen=True)
 class JobDescriptionCleanupOutcome:
-    """Managed cleanup that outlived a cancellation before the deletion.
-
-    §13.13 rule 10 removes managed paths before the database transaction, so
-    an interrupt in between leaves the vacancy in place with filesystem work
-    already done. §14.14 rule 6 still requires that work reported, and it
-    cannot travel as a delete outcome: nothing was deleted.
-    """
+    """§14.14 rule 6 carrier for managed cleanup done before a cancelled deletion."""
 
     selected: JobDescription
     removed_managed_paths: tuple[str, ...]
@@ -103,13 +97,8 @@ def _path_key(value: str) -> bytes:
 def _committed_effects(
     workspace: Path, run_ids: list[str]
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Report the runs that committed and the records they actually created.
-
-    Creation is read back from each completed run's own `output_ids`, which
-    name the rows its commit wrote. Allocated IDs cannot stand in: §12 rule 11
-    allocation retries a collision, so a candidate the allocator rejected
-    would otherwise be reported as this command's creation.
-    """
+    # Created rows come from each completed run's `output_ids`, not allocated
+    # IDs: §12 rule 11 retries collisions, so a rejected candidate is not a creation.
 
     if not run_ids:
         return (), ()
@@ -138,13 +127,8 @@ def _created_job_descriptions(created: Iterable[str]) -> AffectedIds:
 
 
 def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
-    """Resolve configured execution lazily and run the one Stage 8 parse."""
-
     require_compatible(workspace)
-    # §14.14 rule 4: boundary text is rejected in exit class 2 before any
-    # adapter is built or any writer authority is taken, so an empty or
-    # control-bearing vacancy never reaches §15.9's payload as an
-    # unclassified internal failure after the writer preamble ran.
+    # §14.14 rule 4: boundary text fails in class 2 before any adapter or writer.
     try:
         validate_free_text(raw_text, raw=True, nonempty=True)
     except (ValidationError, ValueError, TypeError) as error:
@@ -165,9 +149,7 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         )
     except LLMInvocationError as error:
         runs, created = _committed_effects(workspace, tracking.allocated_runs)
-        # §14.14 rule 6: an interrupt delivered as Stage 8's business commit
-        # returns leaves the row durable, so cancellation reports the created
-        # job description rather than an effect-free envelope.
+        # §14.14 rule 6: an interrupt as the commit returns leaves the row durable.
         extend_committed(
             error,
             run_ids=list(runs),
@@ -179,10 +161,8 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
         )
         raise
     except KeyboardInterrupt as error:
-        # The same rule one frame further out: the interrupt may also land
-        # after Stage 8 returned from its commit — while its result is built,
-        # or while the writer lock and connection tear down — where nothing
-        # has classified it yet. A durable creation still gets reported.
+        # Same rule one frame out: an interrupt during result build or lock
+        # teardown is unclassified here, but a durable creation is still reported.
         runs, created = _committed_effects(workspace, tracking.allocated_runs)
         if not created:
             raise
@@ -197,12 +177,7 @@ def run_jd_add(workspace: Path, *, raw_text: str) -> Stage8Result:
 
 
 def run_jd_add_file(workspace: Path, *, source_path: str) -> Stage8Result:
-    """Acquire the vacancy file under §29.4, then run the one Stage 8 parse."""
-
-    # §14.10 declares a positional filesystem path; stdin belongs to §14.2's
-    # explicitly declared `--file -` capture forms, and accepting it here
-    # would be an undeclared input surface that never reaches §29.4's
-    # path gate at all.
+    # §14.10 declares a path only; stdin (`-`) is §14.2's surface, not this one.
     if source_path == "-":
         raise InvalidInputError()
     # Fail closed before acquiring the private source file (§12.14, §22).
@@ -210,8 +185,7 @@ def run_jd_add_file(workspace: Path, *, source_path: str) -> Stage8Result:
     raw_text, _external_ref = read_capture_file(
         source_path, config=load_workspace_config(workspace)
     )
-    # A job description records no source locator: §11.13 has no
-    # `external_ref`, and §14.14 rule 5's projection would not expose one.
+    # §11.13 has no `external_ref`, so the locator is dropped.
     return run_jd_add(workspace, raw_text=raw_text)
 
 
@@ -228,8 +202,6 @@ def show_job_description(
     job_description_id: str,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
 ) -> JobDescription:
-    """Resolve one selector read-only, before any writer authority is taken."""
-
     with read_database(workspace, timeout_ms=timeout_ms) as connection:
         selected = get_job_description(connection, job_description_id)
     if selected is None:
@@ -253,11 +225,8 @@ def _allocate_run_id(
     raise IdCollisionError()
 
 
-# §13.13 rule 10's dependent set, always derived from the one vacancy ID.
-# Binding a placeholder per captured row would make a large branch exceed the
-# connection's SQLITE_LIMIT_VARIABLE_NUMBER, and a privacy operation that fails
-# on the size of its own input would leave the vacancy and every dependent
-# generated bullet in place.
+# §13.13 rule 10's dependent set, derived from the one vacancy ID: a placeholder
+# per row could exceed SQLITE_LIMIT_VARIABLE_NUMBER on a large branch.
 _DEPENDENT_BRANCHES = "SELECT id FROM resume_branches WHERE job_description_id = ?"
 _DEPENDENT_BULLETS = (
     f"SELECT id FROM resume_bullets WHERE branch_id IN ({_DEPENDENT_BRANCHES})"
@@ -267,8 +236,6 @@ _DEPENDENT_BULLETS = (
 def _dependent_purge_targets(
     connection: sqlite3.Connection, job_description_id: str
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    """Return this vacancy's dependent bullets, findings, and generation IDs."""
-
     bullet_ids = tuple(
         row[0]
         for row in connection.execute(
@@ -285,8 +252,7 @@ def _dependent_purge_targets(
             (job_description_id,),
         )
     )
-    # §14.14 rule 5 reports every invalidated generation ID, and §12 rule 13
-    # shares one ID across a branch and its bullets, so both tables are read.
+    # §14.14 rule 5 / §12 rule 13: one generation ID spans branch and bullets.
     generation_ids = tuple(
         sorted(
             {
@@ -316,8 +282,6 @@ def _committed_outcome(
     removed_paths: Iterable[str],
     residuals: Iterable[str],
 ) -> JobDescriptionDeleteOutcome:
-    """Report one committed deletion, however it reached its end."""
-
     return JobDescriptionDeleteOutcome(
         run_id=run_id,
         selected=selected,
@@ -339,7 +303,7 @@ def delete_job_description(
     id_factory: Callable[[str], str] | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> JobDescriptionDeleteOutcome:
-    """Run §13.13 rule 10's dependent purge for one vacancy."""
+    """§13.13 rule 10: dependent purge for one vacancy."""
 
     now = clock or (lambda: datetime.now(timezone.utc))
     allocate_id = id_factory or new_id
@@ -350,14 +314,10 @@ def delete_job_description(
         if connection is not None
         else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
     )
-    # §14.14 rule 6: once the deletion commits, no later interrupt may produce
-    # an empty cancelled envelope. This cell makes the whole remaining region —
-    # checkpoint, result construction, lock and connection teardown — one
-    # cancellation boundary instead of a sequence of narrower guarded blocks.
+    # §14.14 rule 6: these cells make checkpoint, result build, and lock
+    # teardown one cancellation boundary that still reports a committed
+    # deletion — or, one step earlier, managed cleanup done before it.
     committed: list[JobDescriptionDeleteOutcome] = []
-    # The same guarantee one step earlier: managed cleanup runs before the
-    # transaction, so its effects have to survive a cancellation that reaches
-    # the command before anything was deleted.
     cleaned: list[JobDescriptionCleanupOutcome] = []
     try:
         return _delete_locked(
@@ -403,19 +363,11 @@ def _delete_locked(
         if selected is None:
             raise SelectorNotFoundError()
         database_identity = locked_database_anchor()
-        # §13.13 rule 10 orders managed-path removal before the database
-        # transaction, so the writer lock is never held across filesystem I/O
-        # and an interrupt between the two leaves no half-open transaction.
-        # §12 rule 11 / §13.13 rule 6: a telemetry ID that collided with a
-        # retained run would abort the transaction and leave the vacancy in
-        # place, so the value is allocated against the retained set with the
-        # same bounded local retry Stage 8 uses.
+        # §12 rule 11 / §13.13 rule 6: allocate against the retained set so a
+        # colliding telemetry ID cannot abort the purge.
         orchestration_run_id = _allocate_run_id(connection, allocate_id)
-        # §13.13 rule 10 captures every current or historical branch naming this
-        # job description before the transaction, because the captured opaque
-        # IDs are also the only source for the `out/branch/<branch-id>/` half of
-        # the managed removal below: no branch outside this set can own or spare
-        # one of those directories (§12 rule 11).
+        # §13.13 rule 10: managed removal precedes the transaction, and these
+        # captured branch IDs are the only source for `out/branch/<id>/`.
         purged_branches = tuple(
             PurgedBranch(id=row["id"], name=row["name"])
             for row in connection.execute(
@@ -429,9 +381,7 @@ def _delete_locked(
             purged_finding_ids,
             purged_generation_ids,
         ) = _dependent_purge_targets(connection, job_description_id)
-        # The pass reports removals as it makes them, so an interrupt mid-pass
-        # still names what it had already unlinked (§14.14 rule 6). What it
-        # had yet to reach is unproven, which the root residual states.
+        # §14.14 rule 6: a mid-pass interrupt still names what was unlinked.
         unlinked: list[str] = []
         try:
             if database_identity is None:
@@ -453,10 +403,7 @@ def _delete_locked(
             raise
         removed_paths.extend(removed)
         residual_paths.extend(backup_residuals)
-        # §13.13 rule 10: the exact ID-keyed resume sets of the captured
-        # branches, deduplicated with the backup removal above. A matching,
-        # missing, or invalid manifest never redirects this to a name-derived
-        # path — §13.14 owns exact-path validation and no-follow removal.
+        # §13.13 rule 10: exact ID-keyed sets only; §13.14 owns path validation.
         branch_ids = tuple(branch.id for branch in purged_branches)
         branch_parent = str((workspace / "out" / "branch").absolute())
         unlinked_sets: list[str] = []
@@ -465,10 +412,8 @@ def _delete_locked(
 
             existing_branch_sets = branch_set_paths(workspace, branch_ids)
             if not database_is_live():
-                # The pathname no longer resolves to the database this command
-                # holds open, so removing anything under it would purge a
-                # foreign tree while this workspace's own sets survive. Every
-                # set is reported residual instead (§13.13 rule 6), exactly as
+                # §13.13 rule 6: the pathname no longer binds to the held
+                # database, so removal would purge a foreign tree.
                 residual_paths.extend(
                     branch_set_paths(workspace, branch_ids, existing_only=False)
                 )
@@ -482,16 +427,14 @@ def _delete_locked(
                     )
                 )
                 if database_is_live():
-                    # A path counts as removed only when it is proven gone: a
+                    # Removed only when proven gone.
                     surviving = set(branch_set_paths(workspace, branch_ids))
                     removed_paths.extend(
                         path for path in existing_branch_sets if path not in surviving
                     )
                 else:
-                    # The names are pathnames. Once the binding is gone they
-                    # address the replacement, which may hold untouched sets
-                    # at the same paths, so nothing is reported removed and
-                    # every selected path goes out unproven (§13.13 rule 6).
+                    # §13.13 rule 6: binding lost mid-pass — the names now
+                    # address a replacement, so nothing is proven removed.
                     unlinked_sets.clear()
                     report_unproven_residual(
                         branch_set_paths(workspace, branch_ids, existing_only=False)
@@ -500,16 +443,11 @@ def _delete_locked(
                         branch_set_paths(workspace, branch_ids, existing_only=False)
                     )
         except OSError:
-            # §13.13 rule 6: cleanup never blocks the deletion. An unreadable
-            # managed parent is reported residual and the purge continues, or
-            # the owner would be left with both the vacancy and its generated
-            # prose because a directory could not be stat'ed.
+            # §13.13 rule 6: cleanup never blocks the deletion.
             removed_paths.extend(unlinked_sets)
             residual_paths.append(branch_parent)
         except KeyboardInterrupt:
-            # §14.14 rule 6: whatever this pass already unlinked is durable
-            # even though nothing was deleted, and the cleanup-only outcome is
-            # its only carrier.
+            # §14.14 rule 6: what was unlinked is durable; only this carries it.
             removed_paths.extend(unlinked_sets)
             cleaned.append(
                 JobDescriptionCleanupOutcome(
@@ -546,21 +484,16 @@ def _delete_locked(
                 residuals=residuals,
             )
 
-        # `in_transaction` alone cannot tell a finished commit from a
-        # transaction that never opened: both report false. Only a commit that
-        # was actually reached may be read as durable below.
+        # `in_transaction` is false both before BEGIN and after COMMIT.
         commit_reached = False
         try:
             connection.execute("BEGIN IMMEDIATE")
-            # The selector is revalidated under the writer authority: the
-            # read above could not hold it.
+            # Revalidated under writer authority.
             selected = get_job_description(connection, job_description_id)
             if selected is None:
                 raise SelectorNotFoundError()
-            # §13.13 rule 10 / §24.47: the deletion's own content-free
-            # orchestration telemetry, committed with the deletion so a
-            # rolled-back purge leaves no run claiming it happened. No
-            # provider is involved and no recompute follows.
+            # §13.13 rule 10 / §24.47: content-free telemetry, committed with
+            # the deletion so a rollback leaves no run claiming it happened.
             create_processing_run(
                 connection,
                 run_id=orchestration_run_id,
@@ -572,14 +505,8 @@ def _delete_locked(
                 input_ids=(job_description_id,),
                 metadata={"mode": "job_description"},
             )
-            # §13.13 rule 10: findings, then bullets, then the dependent
-            # branches, then the vacancy itself, so no foreign key ever blocks
-            # the privacy operation. Each statement reaches its rows through
-            # the vacancy ID under the writer authority — the same set the
-            # capture above reported — rather than binding one parameter per
-            # captured row. Current assessment views and every
-            # snapshot, claim, and claim finding are untouched: they do not
-            # depend on a job description, and no recompute follows.
+            # §13.13 rule 10: findings → bullets → branches → vacancy, so no
+            # foreign key blocks it; snapshots and claims are untouched.
             connection.execute(
                 "DELETE FROM verification_findings "
                 "WHERE target_type = 'resume_bullet' "
@@ -597,8 +524,7 @@ def _delete_locked(
             connection.execute(
                 "DELETE FROM job_descriptions WHERE id = ?", (job_description_id,)
             )
-            # §13.13 rule 10 applies rule 5's global redaction: a deterministic
-            # hash of guessable purged vacancy text would remain an oracle.
+            # §13.13 rule 10 applies rule 5's redaction: a hash is an oracle.
             connection.execute(
                 "UPDATE llm_calls SET input_hash = NULL, output_hash = NULL"
             )
@@ -616,18 +542,14 @@ def _delete_locked(
                 raise WorkspaceBusyError() from error
             raise
         except BaseException:
-            # §14.14 rule 6: an interrupt delivered as `commit()` returns
-            # leaves the deletion durable, so a rollback here would only
-            # discard the report of something that already happened. The WAL
-            # stays residual until a checkpoint proves erasure.
+            # §14.14 rule 6: an interrupt as `commit()` returns is durable;
+            # the WAL stays residual until a checkpoint proves erasure.
             if connection.in_transaction or not commit_reached:
                 connection.rollback()
                 raise
             committed.append(build_outcome((*residual_paths, write_ahead_log)))
             raise
-        # From here the deletion is durable. The pessimistic outcome is banked
-        # before any further work, so an interrupt anywhere below — checkpoint,
-        # teardown, or the caller's own result assembly — still reports it.
+        # Durable from here: bank the pessimistic outcome before any more work.
         committed.append(build_outcome((*residual_paths, write_ahead_log)))
         residual_paths.extend(_delete_checkpoint_residuals(connection, database))
         outcome = build_outcome(tuple(residual_paths))
@@ -655,10 +577,7 @@ def jd_delete_result(deleted: JobDescriptionDeleteOutcome) -> JdDeleteResult:
             PurgedBranchProjection(id=branch.id, name=branch.name)
             for branch in deleted.purged_branches
         ],
-        # Undecodable POSIX names reach here surrogate-escaped from
-        # `os.scandir`; the envelope serializes with `ensure_ascii=False`, so
-        # the same rendering the residual finalizer applies keeps a committed
-        # removal reportable instead of failing stdout encoding.
+        # Surrogate-escaped names must render or stdout encoding fails.
         removed_managed_paths=[
             render_path(path) for path in deleted.removed_managed_paths
         ],
@@ -666,9 +585,7 @@ def jd_delete_result(deleted: JobDescriptionDeleteOutcome) -> JdDeleteResult:
 
 
 def jd_delete_human_result(deleted: JobDescriptionDeleteOutcome) -> str:
-    # §14.15 requires the same reporting in both modes: the closed result
-    # record is serialized only under `--json`, so every purged branch and
-    # every removed managed path is named here too.
+    # §14.15: both modes report the same branches and paths.
     lines = [
         f"Deleted job description {deleted.selected.id}; no derived "
         "state remained."
@@ -707,7 +624,7 @@ def jd_delete_outcome(deleted: JobDescriptionDeleteOutcome) -> Outcome:
 def job_description_projection(
     job_description: JobDescription,
 ) -> JobDescriptionProjection:
-    """§14.15: the discovery projection, with `raw_text` and `parsed` absent."""
+    """§14.15 discovery projection: no `raw_text`, no `parsed`."""
 
     return JobDescriptionProjection(
         id=job_description.id,

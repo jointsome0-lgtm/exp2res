@@ -69,12 +69,7 @@ def _by_id(rows):
 
 
 class LazyPreflightRunner:
-    """Defer adapter preflight to the first physical request.
-
-    A zero-lineage run plans no calls, so probing Codex/bwrap/auth up front
-    would fail it as `capability_mismatch` for an adapter it never needs;
-    the zero-call decision stays under the writer lock after planning.
-    """
+    """Defer adapter preflight to the first request: a zero-call run never probes."""
 
     def __init__(self, build: Callable[[], ContractRunner]) -> None:
         self._build = build
@@ -89,8 +84,7 @@ class LazyPreflightRunner:
         return self.materialize().run_contract(call)
 
     def runtime_version(self) -> str | None:
-        # Non-materializing: preflight must stay behind the run/call telemetry
-        # rows so a failed build is inspectable via `runs show` (§24.46).
+        # §24.46: non-materializing, so preflight stays behind the telemetry rows.
         probe = getattr(self._runner, "runtime_version", None)
         return probe() if callable(probe) else None
 
@@ -98,8 +92,6 @@ class LazyPreflightRunner:
 def build_llm_execution(
     workspace: Path,
 ) -> tuple[LLMSelection, CallBudgets, ContractRunner]:
-    """Resolve config-owned bounds eagerly; runner preflight waits for first use."""
-
     config = load_workspace_config(workspace).llm
     selected = config.selection
     selection = resolve_selection(selected.adapter, selected.model)
@@ -122,13 +114,7 @@ def build_llm_execution(
 
 
 class RunTracking:
-    """Record the run IDs one command allocates, for its failure to report.
-
-    §14.14 rule 5: a raised §15 failure carries its committed run IDs out to
-    the envelope; `committed_runs` (read after writer authority is gone) is
-    what tells a durable row from an ID no stage ever wrote. `new_id` is a
-    parameter so each command's own allocator — the one tests replace — runs.
-    """
+    """§14.14 rule 5: the run IDs a command allocated, so a failure reports the committed ones."""
 
     def __init__(self, new_id: Callable[[str], str]) -> None:
         self.allocated_runs: list[str] = []
@@ -151,12 +137,7 @@ class RunTracking:
 
 
 def launch_stage(workspace: Path, stage: Callable[..., Any], **selectors: Any) -> Any:
-    """Build the lazy execution and run `stage`, reporting committed runs on failure.
-
-    Callers check `require_compatible` and their selectors first (§14.14 rule
-    4: selector errors precede adapter resolution).
-    """
-
+    # §14.14 rule 4: callers check compatibility and selectors before this.
     selection, budgets, runner = build_llm_execution(workspace)
     tracking = RunTracking(new_id)
     try:
@@ -178,8 +159,7 @@ def launch_stage(workspace: Path, stage: Callable[..., Any], **selectors: Any) -
 
 
 def validate_extract_selection(workspace: Path, *, log_id: str | None) -> None:
-    # §14.14 rule 4: an unknown `--log-id` is class 2 before any provider-side
-    # construction; the lineage planner re-checks under the writer lock.
+    # §14.14 rule 4: class 2 before any adapter work; re-checked under the lock.
     require_compatible(workspace)
     if log_id is None:
         return
@@ -314,8 +294,7 @@ def show_snapshot(workspace: Path, *, snapshot_id: str) -> AssessmentDetails:
 def validate_generate_selection(
     workspace: Path, *, job_description_id: str, snapshot_id: str
 ) -> None:
-    # §14.14 rule 4: a bad selector is class 2, so it precedes the adapter;
-    # Stage 10 re-resolves both under its writer lock in this same class.
+    # §14.14 rule 4: class 2 before any adapter work; re-checked under the lock.
     with read_database(workspace) as connection:
         if get_job_description(connection, job_description_id) is None:
             raise SelectorNotFoundError()
@@ -351,8 +330,7 @@ def run_bullets_generate(
 
 def run_bullets_verify(workspace: Path, *, branch_name: str) -> Stage11Result:
     require_compatible(workspace)
-    # §14.14 rule 4: `--branch` hygiene and resolution settle in class 2 before
-    # any adapter is built; Stage 11 re-resolves under the writer lock.
+    # §14.14 rule 4: class 2 before any adapter work; re-checked under the lock.
     branch_name = validated_branch_name(branch_name)
     with read_database(workspace) as connection:
         if current_branch_by_folded_name(connection, branch_name) is None:

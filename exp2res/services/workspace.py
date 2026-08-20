@@ -50,8 +50,7 @@ def _sorted_paths(paths: tuple[str, ...] | list[str]) -> tuple[str, ...]:
 
 
 def _unproven_erasure_paths(database: Path) -> tuple[str, ...]:
-    """The live database and WAL, unproven until §8.1's sequence completes."""
-
+    # §8.1: unproven until the checkpoint/VACUUM sequence completes.
     return (str(database), str(database.with_name(database.name + "-wal")))
 
 
@@ -96,18 +95,14 @@ def purge_workspace(
     connection: sqlite3.Connection | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> PurgeOutcome:
-    """Remove all managed workspace content while retaining initialization."""
-
     residual_paths: list[str] = []
     held = (
         nullcontext(connection)
         if connection is not None
         else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
     )
-    # §14.14 rule 6: once the purge transaction commits, no later interrupt may
-    # produce an empty cancelled envelope. This cell makes the whole remaining
-    # region — erasure, result construction, lock and connection teardown — one
-    # cancellation boundary instead of a sequence of narrower guarded blocks.
+    # §14.14 rule 6: one cancellation boundary over erasure, result
+    # construction and teardown; a committed purge is never reported empty.
     committed: list[PurgeOutcome] = []
     try:
         return _purge_locked(
@@ -121,12 +116,8 @@ def purge_workspace(
         if committed:
             interrupted = committed[-1]
         elif residual_paths:
-            # Interrupted inside the pre-transaction cleanup. No row was
-            # purged, so there are no deleted IDs, but managed removal already
-            # ran and its unresolved paths must survive the cancellation
-            # instead of being dropped as an effect-free interrupt. Managed
-            # entries this run did remove are unrepresentable in the version-1
-            # envelope, which declares no removed-path field for this command.
+            # Pre-transaction cleanup already ran: its unresolved paths survive
+            # the cancellation (the v1 envelope has no removed-path field).
             interrupted = PurgeOutcome(
                 deleted_ids=(),
                 generation_ids=(),
@@ -148,11 +139,8 @@ def _purge_locked(
     clock: Callable[[], datetime] | None,
 ) -> PurgeOutcome:
     with held as connection:
-        # §14.16: enumerate and attempt every managed removal before the one
-        # database purge transaction. The managed-output helper covers final,
-        # candidate, rollback, and other entries under both reserved parents.
-        # §13.13 rule 6: no filesystem failure may block the database purge, so
-        # an error the helpers cannot classify still becomes a residual path.
+        # §14.16: managed removal before the purge transaction; §13.13 rule 6:
+        # no filesystem failure blocks the purge, so it becomes a residual.
         for remove, fallback in (
             (remove_managed_backups, workspace / ".exp2res" / "backup"),
             (remove_all_managed_output_entries, workspace / "out"),
@@ -204,31 +192,20 @@ def _purge_locked(
             if connection.in_transaction:
                 connection.rollback()
                 raise
-            # SQLite already ended the transaction, so the purge and its fresh
-            # schema_meta row are durable even though control never reached the
-            # line below — an interrupt delivered on `commit()`'s return is the
-            # reachable case. Record the durable state and let the caller's one
-            # cancellation boundary report it.
+            # Not in a transaction: the commit landed before the interrupt was
+            # delivered, so the purge is durable and must be reported.
             committed.append(outcome(_unproven_erasure_paths(database)))
             raise
 
-        # Everything from here on is post-commit: the purge is durable and the
-        # erasure paths stay unproven until their steps succeed. Recording the
-        # outcome now, before any further work, is what lets an interrupt in
-        # the erasure sequence, in result construction, or in lock and
-        # connection teardown still report the committed deletion.
+        # Post-commit: bank the outcome before any further work so a later
+        # interrupt still reports the committed deletion.
         committed.append(outcome(_unproven_erasure_paths(database)))
 
-        # §8.1: checkpoint, VACUUM outside any transaction, then checkpoint
-        # again. Each step is attempted even if an earlier erasure step reports
-        # incomplete, because the committed privacy deletion is never restored.
+        # §8.1: checkpoint, VACUUM, checkpoint; every step runs regardless.
         residual_paths.extend(checkpoint_residuals(connection, database))
         residual_paths.extend(vacuum_residuals(connection, database))
-        # In WAL mode the `VACUUM` rewrite lands in the WAL, so an untruncated
-        # final checkpoint leaves the main database still holding pre-purge
-        # bytes. Reporting only the WAL would understate that, so the live
-        # database joins the residual list whenever this checkpoint cannot
-        # truncate (§8.1, §14.16).
+        # §8.1, §14.16: the VACUUM rewrite lives in the WAL, so an untruncated
+        # final checkpoint leaves pre-purge bytes in the main database too.
         final_checkpoint = checkpoint_residuals(connection, database)
         if final_checkpoint:
             residual_paths.extend((*final_checkpoint, str(database)))
@@ -251,8 +228,7 @@ def purge_outcome(purged: PurgeOutcome) -> Outcome:
         generation_ids=list(purged.generation_ids),
         residual_paths=list(purged.residual_paths),
         result=None,
-        # One home for the incompleteness claim: `_run_command` appends it
-        # from the merged residual set, which this operation cannot see.
+        # `_run_command` appends the incompleteness claim from the merged set.
         human_result=(
             "Purged the workspace database; the initialized workspace remains."
         ),
