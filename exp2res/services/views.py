@@ -1,21 +1,5 @@
-"""§30 local-view resolution behind the §14.17 `view serve` command.
-
-This module is the whole state-dependent half of a served request: it parses
-one closed selector, resolves it, applies §16.11's gate, revalidates the
-§13.14 managed set, and composes exactly one §30 rule 7 outcome. It owns no
-socket, no HTTP framing, and no CLI form — the transport hands it a route and
-a query and receives a `ViewPage`.
-
-Every read is read-only and uncached (§30 rule 6): the database reads happen
-inside one §8.1 read transaction that closes before the managed-filesystem
-revalidation begins, nothing is carried between requests, and no business
-row, managed output, telemetry row, or provider call is ever written.
-
-The pages composed here reuse §17's HTML emitter, so every document is inert
-by construction — no script, no form, no URL, one hash-admitted inline
-stylesheet — and every nonliteral value passes through §17's one total
-escaping function on its way in.
-"""
+"""§30 local-view resolution behind §14.17 `view serve`: route + query in,
+one read-only, uncached §30 rule 7 `ViewPage` out (no socket, framing, or CLI)."""
 
 from __future__ import annotations
 
@@ -54,40 +38,18 @@ from exp2res.storage.workspace import (
 )
 
 
-__all__ = [
-    "CONTENT_TYPE",
-    "MIRROR_ROUTE",
-    "PROCESSING_TIMEOUT_FACTOR",
-    "QUESTIONS_ROUTE",
-    "ROUTES",
-    "ViewPage",
-    "authority_not_bound_page",
-    "internal_error_page",
-    "malformed_request_page",
-    "method_not_allowed_page",
-    "processing_timeout_page",
-    "resolve",
-    "route_not_found_page",
-    "schema_incompatible_page",
-    "workspace_busy_page",
-]
-
-
 MIRROR_ROUTE = b"/mirror"
 QUESTIONS_ROUTE = b"/questions"
 ROUTES = (MIRROR_ROUTE, QUESTIONS_ROUTE)
 
-# §14.17: the absolute processing budget is exactly three §8.1 contention
-# timeouts, and the request's first SQLite read may not begin with fewer than
-# two of them left. The transport owns the clock; these constants keep both
-# bounds one shared definition rather than two.
+# §14.17: the budget is three §8.1 contention timeouts; the first SQLite
+# read needs two of them left. The transport owns the clock.
 PROCESSING_TIMEOUT_FACTOR = 3
 _FIRST_READ_MARGIN_FACTOR = 2
 
 CONTENT_TYPE = "text/html; charset=utf-8"
 
-# §30 rule 7's closed outcome set. Each label is the service-owned literal the
-# response carries in `Exp2Res-View-Outcome`; none is ever a request value.
+# §30 rule 7's closed outcome set, carried in `Exp2Res-View-Outcome`.
 Outcome = Literal[
     "served",
     "malformed_request",
@@ -191,12 +153,7 @@ _EXPORT_RESIDUAL = (
 
 @dataclass(frozen=True)
 class ViewPage:
-    """One complete §30 rule 7 outcome: its class, status, and exact bytes.
-
-    `published_member` marks the one body the transport may not touch: the
-    mirror serves exactly the revalidated `report.html` bytes, so nothing —
-    not even outcome metadata — may be added to or rewritten inside it.
-    """
+    """One §30 rule 7 outcome; `published_member` bodies are served byte-exact."""
 
     outcome: Outcome
     status: int
@@ -210,14 +167,12 @@ ConnectionRegistrar = Callable[[sqlite3.Connection], ContextManager[object]]
 
 @contextmanager
 def _unregistered(_connection: sqlite3.Connection) -> Iterator[None]:
-    """Register nothing: the default when no transport owns cancellation."""
-
     yield
 
 
 @dataclass(frozen=True)
 class _Selector:
-    """Exactly one of §30 rule 3's two closed selector forms."""
+    """One of §30 rule 3's two selector forms."""
 
     snapshot_id: str | None = None
     scope: str | None = None
@@ -228,7 +183,7 @@ class _Selector:
 
 
 class _Refusal(Exception):
-    """One decided outcome, carrying only renderer-owned text and a remedy."""
+    """One decided outcome: renderer-owned text plus an optional remedy."""
 
     def __init__(
         self, outcome: Outcome, message: str, command: str | None = None
@@ -242,13 +197,7 @@ class _Refusal(Exception):
 def notice_page(
     outcome: Outcome, message: str, command: str | None = None
 ) -> ViewPage:
-    """Render one owner-visible outcome page under §30 rules 6–7.
-
-    The page states its outcome class and, where one exists, the §14 command
-    that resolves it, and nothing else about local state. `command` is
-    composed from renderer-owned literals plus at most one stored entity ID
-    that resolution already proved current — never from request bytes.
-    """
+    """§30 rules 6–7 outcome page; `command` never derives from request bytes."""
 
     blocks: tuple[Block, ...] = ()
     if command is not None:
@@ -276,48 +225,32 @@ def _refusal_page(refusal: _Refusal) -> ViewPage:
     return notice_page(refusal.outcome, refusal.message, refusal.command)
 
 
-def route_not_found_page() -> ViewPage:
-    return notice_page(
-        "route_not_found",
+_NOTICES = {
+    "route_not_found": (
         "This server serves the mirror at /mirror and the open questions at "
-        "/questions, each with one explicit selector.",
-    )
-
-
-def method_not_allowed_page() -> ViewPage:
-    return notice_page(
-        "method_not_allowed",
-        "The local views are read-only and answer GET and HEAD requests only.",
-    )
-
-
-def malformed_request_page() -> ViewPage:
-    return notice_page(
-        "malformed_request",
+        "/questions, each with one explicit selector."
+    ),
+    "method_not_allowed": (
+        "The local views are read-only and answer GET and HEAD requests only."
+    ),
+    "malformed_request": (
         "These views answer a bounded HTTP/1.1 request that carries no body. "
         "A request Exp2Res cannot read as one is refused rather than "
-        "interpreted.",
-    )
-
-
-def authority_not_bound_page() -> ViewPage:
-    return notice_page(
-        "authority_not_bound",
+        "interpreted."
+    ),
+    "authority_not_bound": (
         "Open this view through the loopback address it is bound to. Another "
-        "authority or declared origin is refused before any state is read.",
-    )
+        "authority or declared origin is refused before any state is read."
+    ),
+    "internal_error": "The selected view cannot be served.",
+    "workspace_busy": _WORKSPACE_BUSY,
+    "processing_timeout": _PROCESSING_TIMEOUT,
+}
 
 
-def internal_error_page() -> ViewPage:
-    return notice_page("internal_error", "The selected view cannot be served.")
-
-
-def workspace_busy_page() -> ViewPage:
-    return notice_page("workspace_busy", _WORKSPACE_BUSY)
-
-
-def processing_timeout_page() -> ViewPage:
-    return notice_page("processing_timeout", _PROCESSING_TIMEOUT)
+def standard_page(outcome: Outcome) -> ViewPage:
+    """The fixed notice page for one §30 outcome that needs no remedy command."""
+    return notice_page(outcome, _NOTICES[outcome])
 
 
 def schema_incompatible_page(workspace: Path) -> ViewPage:
@@ -327,12 +260,7 @@ def schema_incompatible_page(workspace: Path) -> ViewPage:
 
 
 def _schema_remedy(workspace: Path) -> str:
-    """Name a migration only where §12.14 offers one to run.
-
-    A stored version newer than this build needs a newer build, and an
-    unrecognized workspace has no migration path at all; both are answered by
-    the read-only status command rather than by guidance that would fail.
-    """
+    """Name `db migrate` only where §12.14 offers a path; else `db status`."""
 
     try:
         status = inspect_workspace(workspace, require_managed_root=False)
@@ -352,13 +280,7 @@ def _verify_command(snapshot_id: str) -> str:
 
 
 def _percent_decode(raw: bytes) -> str | None:
-    """Decode one selector value exactly once, as §30 rule 6 requires.
-
-    Only a value is decoded, and only here: no second pass ever runs, so a
-    double-encoded value yields a literal percent sequence that resolves to
-    nothing instead of becoming some other selector. `+` is not a space: this
-    is a URI escape, never a form encoding.
-    """
+    """§30 rule 6: decode a selector value exactly once; `+` is not a space."""
 
     decoded = bytearray()
     index = 0
@@ -383,13 +305,7 @@ def _percent_decode(raw: bytes) -> str | None:
 
 
 def _split_pairs(query: bytes) -> list[tuple[bytes, bytes]] | None:
-    """Split the query on its literal `&` and `=` bytes, before any decoding.
-
-    Structure is matched as the bytes received (§30 rule 6): a percent-escape
-    standing in a structural position is never decoded into a delimiter or a
-    parameter name, and a field carrying no `=`, or a second one, does not
-    match the one accepted shape.
-    """
+    """§30 rule 6: split on literal `&`/`=` bytes before any decoding."""
 
     pairs: list[tuple[bytes, bytes]] = []
     for field in query.split(b"&"):
@@ -413,8 +329,7 @@ def _parse_selector(query: bytes | None) -> _Selector:
     if value is None:
         raise _Refusal("invalid_selector", _SELECTOR_SHAPE)
     if name == b"scope":
-        # §30 rule 3: `global` is the only `AssessmentScope` value, so it is
-        # the only identity this form names.
+        # §30 rule 3: `global` is the only `AssessmentScope` value.
         if value != "global":
             raise _Refusal("invalid_selector", _SELECTOR_SHAPE)
         return _Selector(scope="global")
@@ -425,8 +340,6 @@ def _parse_selector(query: bytes | None) -> _Selector:
 
 
 def _resolve_snapshot(connection: sqlite3.Connection, selector: _Selector):
-    """Resolve one explicit selector to exactly one current snapshot row."""
-
     if selector.snapshot_id is not None:
         try:
             snapshot_row, snapshot = load_current_snapshot(
@@ -441,10 +354,7 @@ def _resolve_snapshot(connection: sqlite3.Connection, selector: _Selector):
             ) from error
         return snapshot_row, snapshot
 
-    # §30 rule 3: the identity form resolves only to the unique current
-    # snapshot of exactly that view — never the newest of several. §11.7
-    # admits at most one current snapshot, so both zero and more than one are
-    # fail-closed outcomes rather than a choice.
+    # §30 rule 3 / §11.7: the unique current snapshot, never the newest of several.
     current = connection.execute(
         "SELECT id FROM assessment_snapshots WHERE superseded_at IS NULL"
     ).fetchall()
@@ -456,9 +366,7 @@ def _resolve_snapshot(connection: sqlite3.Connection, selector: _Selector):
             _ASSESS_GENERATE,
         )
     if len(current) > 1:
-        # §13.6 admits one current snapshot per view identity and is not a
-        # corruption-repair surface, so this outcome names no command: the
-        # owner recovers the invariant outside the §14 command surface.
+        # §13.6 is not a corruption-repair surface, so no command is named.
         raise _Refusal(
             "assessment_inconsistent",
             "More than one current snapshot claims the global assessment "
@@ -469,14 +377,12 @@ def _resolve_snapshot(connection: sqlite3.Connection, selector: _Selector):
 
 
 def _require_integrity(selector: _Selector, snapshot, claims) -> None:
-    """Run §16.11's integrity half, which precedes its status half."""
-
+    # §16.11: the integrity half precedes the status half.
     failure = assessment_integrity_failure(snapshot, claims)
     if failure is None:
         return
     if failure == "aggregate_mismatch":
-        # Verification recomputes the aggregate on exactly this snapshot, so
-        # it is the remedy under either selector form.
+        # Verification recomputes the aggregate on this exact snapshot.
         raise _Refusal(
             "assessment_inconsistent",
             "This snapshot's stored verification aggregate is no longer the "
@@ -484,8 +390,7 @@ def _require_integrity(selector: _Selector, snapshot, claims) -> None:
             "verdict serving can be read against.",
             _verify_command(snapshot.id),
         )
-    # Claim membership belongs to generation, and generation creates a new ID:
-    # it repairs the identity URL but never this exact-ID one.
+    # Generation creates a new ID: it repairs the identity URL, not an exact-ID one.
     raise _Refusal(
         "assessment_inconsistent",
         "This snapshot does not carry exactly one narrative summary claim "
@@ -497,17 +402,7 @@ def _require_integrity(selector: _Selector, snapshot, claims) -> None:
 
 @contextmanager
 def _stored_state(selector: _Selector) -> Iterator[None]:
-    """Report a broken stored assessment graph as §30's own 409, not a 500.
-
-    Every check inside the read transaction that raises `IntegrityFailureError`
-    — an empty or superseded claim set, a claim from another generation, a row
-    that no longer hydrates, a source or answer-log reference the graph
-    requires — reports stored state that breaks an invariant serving depends
-    on and that no corrected request can repair. That is rule 7's
-    `assessment_inconsistent`, and only an unexpected failure is
-    `internal_error`. Claim membership belongs to generation, so the remedy is
-    the one rule 7 gives the other claim-set invariant.
-    """
+    """§30 rule 7: `IntegrityFailureError` in the read is a 409, not a 500."""
 
     try:
         yield
@@ -522,19 +417,14 @@ def _stored_state(selector: _Selector) -> Iterator[None]:
 
 
 def _require_export_gate(selector: _Selector, snapshot) -> None:
-    """Apply §16.11's assessment-export allowlist as a completed refusal."""
-
+    # §16.11's export allowlist as a completed refusal.
     try:
         require_export_eligible(snapshot.verification_status)
     except AssessmentExportBlockedError as error:
         if snapshot.verification_status == "unverified":
-            # Verification updates exactly the selected snapshot, so it is the
-            # remedy under either selector form.
             command = _verify_command(snapshot.id)
         else:
-            # A completed negative verdict needs replacement claims, which
-            # only generation produces — and generation creates a new ID, so
-            # it repairs an identity URL but never an exact-ID one.
+            # A negative verdict needs generation, which creates a new ID.
             command = _ASSESS_GENERATE if selector.by_identity else _ASSESS_LIST
         raise _Refusal(
             "assessment_blocked",
@@ -547,20 +437,13 @@ def _require_export_gate(selector: _Selector, snapshot) -> None:
 def _questions_document(
     members: dict[str, bytes], *, export_command: str
 ) -> ReportDocument:
-    """Project §30 rule 5's open-question set and nothing else.
-
-    The companion is revalidated as the closed §13.12 document before it is
-    read, and only the `question` values of unanswered `unknowns` reach the
-    page: no gap ID, target, reason, priority, claim, contradiction, or
-    snapshot field is emitted, so a question stays readable without becoming
-    an answer link-back token.
-    """
+    """§30 rule 5: only the `question` text of unanswered `unknowns` — no IDs
+    or fields that could become an answer link-back token."""
 
     try:
         document = SelfClaimsDocument.model_validate_json(members["self_claims.json"])
     except ValueError as error:
-        # An expected projection-integrity failure over a matching-digest
-        # member, never an unexpected local failure (§30 rule 7).
+        # §30 rule 7: an expected projection failure, not `internal_error`.
         raise _Refusal(
             "question_companion_invalid",
             "The published question set matches its recorded digest but is "
@@ -595,14 +478,8 @@ def _entry_is_present_non_directory(path: Path) -> bool:
 
 
 def _compatibility_refusal(workspace: Path) -> _Refusal:
-    """Tell an unreadable schema apart from an unusable managed root.
-
-    The §8.1 read gate refuses both, but §30 answers them differently: a
-    symlinked or non-directory `out/` entry under a schema this build reads is
-    §13.14 rule 6's containment failure, which no migration resolves. An
-    absent root never arrives here — the §30 read does not require one, so
-    that state is classified in phase 2 with the rest of the managed output.
-    """
+    """Tell an unreadable schema from a non-directory `out/` (§13.14 rule 6),
+    which the §8.1 read gate refuses alike but no migration resolves."""
 
     try:
         status = inspect_workspace(workspace, require_managed_root=False)
@@ -629,17 +506,11 @@ def _remaining(deadline: float) -> float:
 
 
 def _composed(page: ViewPage, deadline: float) -> ViewPage:
-    """Return one composed page, or the timeout that outlived composing it.
-
-    §14.17's ordinary deadline is an outer boundary over determining *and*
-    composing a row: a row that is not fully composed when the budget expires
-    is not this request's outcome, whatever it would have said. Only the fixed
-    timeout page itself is exempt, because it is what that expiry composes.
-    """
+    """§14.17: a page not fully composed by the deadline is a timeout instead."""
 
     if page.outcome == "processing_timeout" or _remaining(deadline) > 0:
         return page
-    return processing_timeout_page()
+    return standard_page("processing_timeout")
 
 
 def resolve(
@@ -651,35 +522,20 @@ def resolve(
     register_connection: ConnectionRegistrar = _unregistered,
     busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
 ) -> ViewPage:
-    """Answer one §30 request: resolve, revalidate, and compose one outcome.
-
-    `route` and `query` are the exact received bytes of the already-split
-    origin-form target, with `query` `None` when the target carried no `?`.
-    Structure is matched on those bytes and only a selector value is decoded.
-
-    `deadline` is §14.17's absolute processing deadline as a `time.monotonic`
-    value. It is checked before the first SQLite read — which needs two full
-    contention timeouts of budget left, so a contended read still completes
-    its own bounded wait and composes `workspace_busy` — and again at each
-    later composition point.
-
-    `register_connection` publishes the open SQLite connection to the caller
-    for the length of the read transaction, so a transport can interrupt it on
-    cancellation. It defaults to registering nothing.
-    """
+    """Answer one §30 request. `route`/`query` are the received target bytes
+    (`query` None without `?`); `deadline` is §14.17's `time.monotonic` bound;
+    `register_connection` lets a transport interrupt the read on cancellation."""
 
     if route not in ROUTES:
-        return _composed(route_not_found_page(), deadline)
+        return _composed(standard_page("route_not_found"), deadline)
     try:
         selector = _parse_selector(query)
 
         if _remaining(deadline) < _FIRST_READ_MARGIN_FACTOR * busy_timeout_ms / 1000:
-            # §14.17: without room for one complete contention wait plus fixed
-            # composition, the read transaction never opens.
+            # §14.17: no room for a full contention wait — never open the read.
             raise _Refusal("processing_timeout", _PROCESSING_TIMEOUT)
 
-        # Phase 1 — every business read inside one §8.1 read transaction,
-        # which re-reads §12.14 compatibility and closes before phase 2.
+        # Phase 1 — one §8.1 read transaction, closed before phase 2.
         try:
             with read_database(
                 workspace, timeout_ms=busy_timeout_ms, require_managed_root=False
@@ -705,8 +561,7 @@ def resolve(
         if _remaining(deadline) <= 0:
             raise _Refusal("processing_timeout", _PROCESSING_TIMEOUT)
 
-        # Phase 2 — §13.14 revalidation over the managed filesystem, with no
-        # transaction open and no database value re-read.
+        # Phase 2 — §13.14 revalidation with no transaction open.
         read = read_current_assessment_members(workspace, graph)
         if read.status == "not_current":
             raise _Refusal(
@@ -727,8 +582,7 @@ def resolve(
             raise _Refusal("processing_timeout", _PROCESSING_TIMEOUT)
 
         if route == MIRROR_ROUTE:
-            # §30 rule 3: exactly the revalidated member bytes, never a second
-            # rendering of the same projection.
+            # §30 rule 3: exactly the revalidated member bytes.
             page = ViewPage(
                 outcome="served",
                 status=_STATUS["served"],
@@ -745,7 +599,6 @@ def resolve(
     except _Refusal as refusal:
         return _composed(_refusal_page(refusal), deadline)
     except (Exp2ResError, sqlite3.Error, OSError, ValueError):
-        # Fail closed and say nothing more: an unexpected local failure names
-        # no path, row, or exception detail (§30 rule 7).
-        return _composed(internal_error_page(), deadline)
+        # §30 rule 7: fail closed, name no detail.
+        return _composed(standard_page("internal_error"), deadline)
     return _composed(page, deadline)

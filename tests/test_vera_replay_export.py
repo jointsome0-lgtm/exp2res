@@ -14,11 +14,11 @@ from pathlib import Path
 
 import pytest
 
-import exp2res.services.assessment as assessment_service
-import exp2res.services.bullets as bullets_service
+import exp2res.services.stages as assessment_service
+import exp2res.services.stages as bullets_service
 import exp2res.services.capture as capture_service
-import exp2res.services.detection as detection_service
-import exp2res.services.extraction as extraction_service
+import exp2res.services.stages as detection_service
+import exp2res.services.stages as extraction_service
 import exp2res.services.job_descriptions as jd_service
 from exp2res.pipeline.stage3 import run_fact_extraction
 from exp2res.pipeline.stage4 import run_detection_generation
@@ -89,21 +89,7 @@ def _run_cli_stage(
             FakeContractRunner(response_bytes),
         ),
     )
-    stage_name = {
-        extraction_service: "run_fact_extraction",
-        detection_service: "run_detection_generation",
-        assessment_service: (
-            "run_assessment_verification"
-            if real_stage is run_assessment_verification
-            else "run_assessment_generation"
-        ),
-        jd_service: "run_job_description_parse",
-        bullets_service: (
-            "run_bullet_verification"
-            if real_stage is run_bullet_verification
-            else "run_bullet_generation"
-        ),
-    }[service]
+    stage_name = real_stage.__name__
     monkeypatch.setattr(service, stage_name, _fixed_stage(real_stage, ids))
     result, envelope = invoke_json(workspace, ["--yes", *command])
     assert result.exit_code in expected, (result.exit_code, result.stderr, envelope)

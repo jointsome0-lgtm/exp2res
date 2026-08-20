@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -19,13 +18,13 @@ from exp2res.domain.results import (
 from exp2res.errors import (
     OperationCancelledError,
     SelectorNotFoundError,
-    WorkspaceBusyError,
 )
 from exp2res.exports.managed import remove_all_managed_output_entries
 from exp2res.services.privacy import (
     checkpoint_residuals as _delete_checkpoint_residuals,
     remove_managed_backups as _remove_managed_backups,
 )
+from exp2res.services.writers import business_transaction, held_writer
 from exp2res.storage.repository import (
     RawLogBundle,
     get_bundle,
@@ -83,22 +82,15 @@ def delete_log(
     connection: sqlite3.Connection | None = None,
 ) -> DeleteOutcome:
     residual_paths: list[str] = []
-    # §8.1: `logs delete` holds one owner-delete writer authority across the
-    # purge and its §13.13 rule 5 rebuild and passes it here; a direct call
-    # still acquires its own.
-    held = (
-        nullcontext(connection)
-        if connection is not None
-        else writer_database(workspace, owner_delete=True, timeout_ms=timeout_ms)
-    )
-    with held as connection:
-        try:
-            connection.execute("BEGIN IMMEDIATE")
+    # §8.1: `logs delete` passes the owner-delete authority it holds across rebuild.
+    with held_writer(
+        connection, writer_database, workspace, owner_delete=True, timeout_ms=timeout_ms
+    ) as connection:
+        with business_transaction(connection):
             selected = get_raw_log(connection, log_id)
             if selected is None:
                 raise SelectorNotFoundError()
-            # §14.14 rule 5 orders reported ID groups by stable identity, not
-            # by §13.1's presentation order for a record's evidence bundle.
+            # §14.14 rule 5: report order is stable identity, not §13.1 order.
             evidence_ids = tuple(
                 sorted(
                     (item.id for item in get_evidence_for_log(connection, log_id)),
@@ -161,8 +153,7 @@ def delete_log(
                     "SELECT id FROM resume_bullets ORDER BY CAST(id AS BLOB)"
                 )
             )
-            # §13.13 rule 9: after owner deletion this branch report is command
-            # output only, never persisted derived state.
+            # §13.13 rule 9: command output only, never persisted.
             invalidated_branches = tuple(
                 invalidated_branch(
                     name=row["name"],
@@ -201,17 +192,13 @@ def delete_log(
                 )
             )
             residual_paths.extend(_remove_managed_backups(workspace))
-            # §13.13 rule 5: owner deletion attempts every final, candidate,
-            # rollback, or other entry under both reserved managed parents
-            # before the privacy purge; database deletion still commits.
+            # §13.13 rule 5: every managed entry goes before the privacy purge;
+            # the database deletion commits regardless.
             residual_paths.extend(remove_all_managed_output_entries(workspace))
-            # §13.13 rule 5: detections and claims are generated prose and
-            # leave with the facts; purging before the raw_logs delete keeps the
-            # answer_log_id ON DELETE SET NULL action from firing into the
-            # gap_questions answered-iff CHECK.
+            # §13.13 rule 5: purge before the raw_logs delete so answer_log_id's
+            # ON DELETE SET NULL never fires into the answered-iff CHECK.
             connection.execute("DELETE FROM verification_findings")
-            # §13.13 rule 5: bullets and branches are generated prose too, and
-            # they go before the snapshots their anchor foreign key names.
+            # Bullets and branches go before the snapshots their FK names.
             connection.execute("DELETE FROM resume_bullets")
             connection.execute("DELETE FROM resume_branches")
             connection.execute("DELETE FROM self_claims")
@@ -223,15 +210,6 @@ def delete_log(
                 "UPDATE llm_calls SET input_hash = NULL, output_hash = NULL"
             )
             connection.execute("DELETE FROM raw_logs WHERE id = ?", (log_id,))
-            connection.commit()
-        except sqlite3.OperationalError as error:
-            connection.rollback()
-            if "locked" in str(error).lower() or "busy" in str(error).lower():
-                raise WorkspaceBusyError() from error
-            raise
-        except BaseException:
-            connection.rollback()
-            raise
 
         def build_outcome(residuals: tuple[str, ...]) -> DeleteOutcome:
             return DeleteOutcome(
@@ -257,9 +235,8 @@ def delete_log(
                 _delete_checkpoint_residuals(connection, database)
             )
         except KeyboardInterrupt:
-            # §14.14 rule 6: the privacy purge committed before checkpoint
-            # work, so cancellation carries the complete durable deletion and
-            # treats the WAL as residual until a later writer proves erasure.
+            # §14.14 rule 6: already committed; the WAL stays residual until a
+            # later writer proves erasure.
             cancelled = OperationCancelledError()
             cancelled.delete_outcome = build_outcome(
                 (

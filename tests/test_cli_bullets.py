@@ -12,7 +12,7 @@ import exp2res.cli as cli_module
 import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage10 as stage10_module
 import exp2res.pipeline.stage11 as stage11_module
-import exp2res.services.bullets as bullets_service
+import exp2res.services.stages as bullets_service
 from exp2res.cli import bullets_generate_outcome, app
 from exp2res.pipeline.stage10 import Stage10Result
 from exp2res.storage.repository import (

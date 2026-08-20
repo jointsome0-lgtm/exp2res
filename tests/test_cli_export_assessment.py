@@ -13,7 +13,7 @@ import exp2res.cli as cli_module
 import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage6 as stage6_module
 import exp2res.pipeline.stage7 as stage7_module
-import exp2res.services.assessment as assessment_service
+import exp2res.services.stages as assessment_service
 import exp2res.services.capture as capture_service
 import exp2res.services.lifecycle as lifecycle_service
 from exp2res.cli import app

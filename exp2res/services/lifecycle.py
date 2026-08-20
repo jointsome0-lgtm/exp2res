@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +25,8 @@ from exp2res.llm.contracts import ContractWarning
 from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
 from exp2res.pipeline.stage4 import Stage4Result, run_detection_generation
 from exp2res.services.capture import new_id
-from exp2res.services.extraction import build_llm_execution
+from exp2res.services.stages import build_llm_execution
+from exp2res.services.writers import held_writer, transaction
 from exp2res.storage.telemetry import (
     committed_runs,
     create_processing_run,
@@ -71,8 +71,7 @@ class LifecycleResult:
 
     @property
     def invalidated_branches(self) -> tuple[InvalidatedBranch, ...]:
-        # §13.13 rule 9: one report per branch name, whichever stage
-        # invalidated it; both stages replace the same current branch set.
+        # §13.13 rule 9: one report per branch name across both stages.
         by_name: dict[str, InvalidatedBranch] = {}
         for result in (self.stage3, self.stage4):
             if result:
@@ -92,8 +91,7 @@ class LifecycleResult:
             if result
             for path in result.residual_paths
         }
-        # fsencode: filesystem-derived residual paths may carry
-        # surrogateescape'd undecodable bytes that plain UTF-8 rejects.
+        # fsencode: residual paths may carry surrogateescape'd bytes.
         return tuple(sorted(values, key=os.fsencode))
 
     @property
@@ -118,13 +116,7 @@ class LifecycleResult:
 
     @property
     def affected_ids(self) -> AffectedIds:
-        """Merge both stages' §14.14 rule 5 reports, ordering classes by name.
-
-        The one `AffectedIds.of` caller without a fixed pair order to inherit:
-        two stages contribute overlapping classes, so neither stage's own
-        sequence is the merged order.
-        """
-
+        # §14.14 rule 5: overlapping classes from two stages, so order by name.
         created: dict[str, set[str]] = {}
         superseded: dict[str, set[str]] = {}
 
@@ -156,17 +148,6 @@ class LifecycleResult:
         )
 
 
-def _held_transaction(
-    connection: sqlite3.Connection, operation: Callable[[sqlite3.Connection], None]
-) -> None:
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        operation(connection)
-        connection.commit()
-    except BaseException:
-        connection.rollback()
-        raise
-
 
 def _has_current_assessment_view(connection: sqlite3.Connection) -> bool:
     row = connection.execute(
@@ -195,8 +176,6 @@ def record_cancelled_lifecycle(
     id_factory: Callable[[str], str] | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> LifecycleResult:
-    """Record a committed source lifecycle cancelled before rebuild began."""
-
     ids = id_factory or new_id
     now = clock or (lambda: datetime.now(timezone.utc))
     orchestration_run_id = ids("run")
@@ -221,7 +200,8 @@ def record_cancelled_lifecycle(
             failure_code="cancelled",
         )
 
-    _held_transaction(connection, record)
+    with transaction(connection) as held:
+        record(held)
     return LifecycleResult(orchestration_run_id)
 
 
@@ -233,8 +213,6 @@ def run_recompute(
     clock: Callable[[], datetime] | None = None,
     connection: sqlite3.Connection | None = None,
 ) -> LifecycleResult:
-    """Replace selected/all lineages, then rebuild the global Stage 4-5 graph."""
-
     require_compatible(workspace)
     ids = id_factory or new_id
     now = clock or (lambda: datetime.now(timezone.utc))
@@ -250,24 +228,16 @@ def run_recompute(
             allocated_runs.append(value)
         return value
 
-    # §8.1: the whole Stage 3-4 lifecycle runs under one held writer
-    # authority — no other business writer can interleave between the
-    # orchestration row, the stage swaps, and the terminal transition. A
-    # correction or deletion command passes the authority it already holds
-    # so its committed lifecycle boundary and this rebuild share one lock.
-    held = (
-        nullcontext(connection)
-        if connection is not None
-        else writer_database(workspace, reconcile=True)
-    )
-    with held as connection:
+    # §8.1: one writer authority spans the orchestration row, the stage swaps
+    # and the terminal transition; correction/deletion pass the one they hold.
+    with held_writer(
+        connection, writer_database, workspace, reconcile=True
+    ) as connection:
         try:
-            # Initial telemetry creation is inside the same decorated error
-            # boundary as every stage: an interrupt after its commit must
-            # report and terminally fail that durable `13.13` row.
-            _held_transaction(
-                connection,
-                lambda held: create_processing_run(
+            # Inside the error boundary: an interrupt after this commit must
+            # still terminally fail the durable `13.13` row.
+            with transaction(connection) as held:
+                create_processing_run(
                     held,
                     run_id=orchestration_run_id,
                     stage="13.13",
@@ -279,12 +249,9 @@ def run_recompute(
                     metadata={
                         "mode": "full" if log_id is None else "selected_lineage"
                     },
-                ),
-            )
-            # §29.2 selection stays eagerly required exactly like a direct
-            # `extract` (PR #125): a zero-lineage recompute still resolves the
-            # configured adapter, while LazyPreflightRunner keeps it offline —
-            # the stage runners plan zero calls and complete empty runs.
+                )
+            # §29.2: selection is eager even for a zero-lineage recompute;
+            # LazyPreflightRunner keeps it offline.
             selection, budgets, runner = build_llm_execution(workspace)
             stage3 = run_fact_extraction(
                 workspace,
@@ -310,13 +277,10 @@ def run_recompute(
                 cli_version=__version__,
             )
             partial = LifecycleResult(orchestration_run_id, stage3, stage4)
-            # This read is part of the lifecycle result, not an unprotected
-            # output tail: a late interrupt or storage failure must still
-            # carry every Stage 3-4 effect that already committed.
+            # Inside the boundary: a late failure must still carry Stage 3-4.
             has_current_view = _has_current_assessment_view(connection)
-            _held_transaction(
-                connection,
-                lambda held: finish_processing_run(
+            with transaction(connection) as held:
+                finish_processing_run(
                     held,
                     run_id=orchestration_run_id,
                     finished_at=now(),
@@ -326,8 +290,7 @@ def run_recompute(
                         for group in partial.affected_ids.created
                         for entity_id in group.ids
                     ),
-                ),
-            )
+                )
         except BaseException as error:
             failure_code = (
                 error.failure_code
@@ -339,21 +302,18 @@ def run_recompute(
                 else "internal_error"
             )
             try:
-                _held_transaction(
-                    connection,
-                    lambda held: finish_processing_run(
+                with transaction(connection) as held:
+                    finish_processing_run(
                         held,
                         run_id=orchestration_run_id,
                         finished_at=now(),
                         status="failed",
                         failure_code=failure_code,
-                    ),
-                )
+                    )
             except Exception:
                 pass
             # §14.14 rule 6: a stage interrupted after its committed swap
-            # carries its complete result on the class-9 error; fold it in
-            # so the cancelled envelope reports the committed effects.
+            # carries its result on the error; fold it in.
             carried = getattr(error, "stage_result", None)
             if isinstance(carried, Stage3Result) and stage3 is None:
                 stage3 = carried
@@ -361,51 +321,27 @@ def run_recompute(
                 stage4 = carried
             progress = LifecycleResult(orchestration_run_id, stage3, stage4)
             if isinstance(error, KeyboardInterrupt):
-                # §14.14 rule 6: an interrupt between committed stage swaps
-                # still reports every committed effect and run — a raw
-                # KeyboardInterrupt would reach the CLI as an empty cancelled
-                # envelope, so it leaves as the same class-9 §15.10 error the
-                # in-stage path raises.
-                cancelled = LLMCancelledError()
-                try:
-                    extend_committed(
-                        cancelled,
-                        run_ids=list(
-                            committed_runs(connection, allocated_runs)
-                        ),
-                    )
-                except Exception:
-                    extend_committed(cancelled, run_ids=[])
-                cancelled.lifecycle_result = progress
-                raise cancelled from error
-            if isinstance(error, Exp2ResError):
-                try:
-                    extend_committed(
-                        error,
-                        run_ids=list(
-                            committed_runs(connection, allocated_runs)
-                        ),
-                    )
-                except Exception:
-                    extend_committed(error, run_ids=[])
-                error.lifecycle_result = progress
+                # §14.14 rule 6: a raw KeyboardInterrupt would reach the CLI as
+                # an empty envelope, so leave as the in-stage class-9 error.
+                carrier: Exp2ResError = LLMCancelledError()
+            elif isinstance(error, Exp2ResError):
+                carrier = error
+            elif isinstance(error, Exception):
+                # Secret-safe class-1 error that still carries the result.
+                carrier = Exp2ResError()
+            else:
                 raise
-            if isinstance(error, Exception):
-                # Keep unexpected failures secret-safe while preserving the
-                # committed lifecycle result for the class-1 envelope.
-                internal = Exp2ResError()
-                try:
-                    extend_committed(
-                        internal,
-                        run_ids=list(
-                            committed_runs(connection, allocated_runs)
-                        ),
-                    )
-                except Exception:
-                    extend_committed(internal, run_ids=[])
-                internal.lifecycle_result = progress
-                raise internal from error
-            raise
+            try:
+                extend_committed(
+                    carrier,
+                    run_ids=list(committed_runs(connection, allocated_runs)),
+                )
+            except Exception:
+                extend_committed(carrier, run_ids=[])
+            carrier.lifecycle_result = progress
+            if carrier is error:
+                raise
+            raise carrier from error
     return LifecycleResult(
         orchestration_run_id,
         stage3,

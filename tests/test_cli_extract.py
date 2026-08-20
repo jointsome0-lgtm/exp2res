@@ -13,8 +13,8 @@ from typer.testing import CliRunner
 import exp2res.cli as cli_module
 import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage3 as stage3_module
-import exp2res.services.extraction as extraction_service
-import exp2res.services.facts as facts_service
+import exp2res.services.stages as extraction_service
+import exp2res.services.stages as facts_service
 from exp2res.cli import app
 from exp2res.config import DEFAULT_LLM_CONFIG, load_workspace_config
 from exp2res.domain.models import ExperienceFact

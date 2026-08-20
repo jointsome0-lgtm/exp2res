@@ -18,7 +18,8 @@ from exp2res.errors import (
 )
 from exp2res.exports import managed
 import exp2res.services.privacy as privacy_service
-from exp2res.services.privacy import anchor_locked_database, remove_managed_backups
+from conftest import anchor_locked_database
+from exp2res.services.privacy import remove_managed_backups
 import exp2res.storage.workspace as workspace_module
 from exp2res.storage.workspace import writer_database
 

@@ -17,7 +17,7 @@ from typer.testing import CliRunner
 import exp2res.cli as cli_module
 import exp2res.pipeline.stage1 as stage1_module
 import exp2res.services.capture as capture_service
-import exp2res.services.detection as detection_service
+import exp2res.services.stages as detection_service
 from exp2res.cli import app
 from exp2res.errors import WorkspaceBusyError
 from exp2res.services.logs import list_logs, show_log

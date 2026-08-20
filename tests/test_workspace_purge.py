@@ -17,7 +17,7 @@ from exp2res.cli import app
 import exp2res.exports.managed as managed_outputs
 import exp2res.services.workspace as workspace_service
 from exp2res.services.capture import capture_daily
-from exp2res.services.privacy import anchor_locked_database
+from conftest import anchor_locked_database
 from exp2res.storage.schema import PURGE_ENTITY_TABLES, PURGE_TABLE_ORDER
 from exp2res.storage.workspace import CURRENT_SCHEMA_VERSION
 

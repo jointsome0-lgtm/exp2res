@@ -21,11 +21,8 @@ from typing import Callable, Iterable, Iterator
 from typer.testing import CliRunner
 
 import exp2res.cli as cli_module
-import exp2res.services.assessment as assessment_service
-import exp2res.services.bullets as bullets_service
 import exp2res.services.capture as capture_service
-import exp2res.services.detection as detection_service
-import exp2res.services.extraction as extraction_service
+import exp2res.services.stages as stages_service
 import exp2res.services.job_descriptions as jd_service
 from exp2res.cli import app
 from exp2res.exports.companions import (
@@ -454,7 +451,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     clock.set("2026-07-11T10:00:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
-        service=extraction_service, stage_name="run_fact_extraction",
+        service=stages_service, stage_name="run_fact_extraction",
         real_stage=run_fact_extraction,
         response_names=[f"demo-extract-call-{index:02d}.json" for index in range(1, 4)],
         arguments=["extract"],
@@ -462,7 +459,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     clock.set("2026-07-11T10:05:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
-        service=detection_service, stage_name="run_detection_generation",
+        service=stages_service, stage_name="run_detection_generation",
         real_stage=run_detection_generation, response_names=["demo-detection.json"],
         arguments=["detections", "generate"],
     )
@@ -477,7 +474,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     clock.set("2026-07-11T10:15:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
-        service=assessment_service, stage_name="run_assessment_generation",
+        service=stages_service, stage_name="run_assessment_generation",
         real_stage=run_assessment_generation,
         response_names=["demo-assessment-overclaim.json"],
         arguments=["assess", "generate"],
@@ -487,7 +484,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     clock.set("2026-07-11T10:17:00+02:00")
     verify_result = _stage_command(
         transcript, workspace, ids, clock,
-        service=assessment_service, stage_name="run_assessment_verification",
+        service=stages_service, stage_name="run_assessment_verification",
         real_stage=run_assessment_verification,
         response_names=[
             "demo-verification-rejected.json",
@@ -509,7 +506,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     clock.set("2026-07-11T10:25:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
-        service=assessment_service, stage_name="run_assessment_generation",
+        service=stages_service, stage_name="run_assessment_generation",
         real_stage=run_assessment_generation,
         response_names=["demo-assessment-supported.json"],
         arguments=["assess", "generate"],
@@ -518,7 +515,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     clock.set("2026-07-11T10:27:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
-        service=assessment_service, stage_name="run_assessment_verification",
+        service=stages_service, stage_name="run_assessment_verification",
         real_stage=run_assessment_verification,
         response_names=["demo-verification-supported.json"] * 2,
         arguments=["assess", "verify", "--snapshot", published_snapshot],
@@ -560,7 +557,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     clock.set("2026-07-12T10:05:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
-        service=bullets_service, stage_name="run_bullet_generation",
+        service=stages_service, stage_name="run_bullet_generation",
         real_stage=run_bullet_generation, response_names=["demo-bullets.json"],
         arguments=[
             "bullets", "generate",
@@ -573,7 +570,7 @@ def run_demo(workspace: Path, *, emit: bool = True) -> bytes:
     clock.set("2026-07-12T10:07:00+02:00")
     _stage_command(
         transcript, workspace, ids, clock,
-        service=bullets_service, stage_name="run_bullet_verification",
+        service=stages_service, stage_name="run_bullet_verification",
         real_stage=run_bullet_verification,
         response_names=["demo-bullet-verification.json"],
         arguments=["bullets", "verify", "--branch", DEMO_BRANCH],

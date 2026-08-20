@@ -1,4 +1,4 @@
-"""§14.5 source-local import under §19.4's record and identity semantics."""
+"""§14.5 source-local import under §19.4."""
 
 from __future__ import annotations
 
@@ -50,6 +50,7 @@ from exp2res.services.capture import (
     validate_project_label,
 )
 from exp2res.services.source_files import open_payload_file, read_document_file
+from exp2res.services.writers import is_busy, transaction
 from exp2res.storage.repository import (
     RawLogBundle,
     committed_import_records,
@@ -66,23 +67,21 @@ from exp2res.storage.workspace import (
 
 @dataclass(frozen=True)
 class ImportedRecord:
-    """One §19.4 rule 5 record result, plus its non-result reason code."""
+    """One §19.4 rule 5 record result."""
 
     record_number: int
     source_record_id: Optional[str]
     raw_log_id: Optional[str] = None
     reason: Optional[str] = None
-    # §14.14 rule 5's closed projection carries neither of these; they reach
-    # the envelope's `affected_ids` and its rejection diagnostic instead.
+    # Not in §14.14 rule 5's projection.
     evidence_item_ids: tuple[str, ...] = ()
-    # §19.4 rule 3's hash, kept beside the identity so an interrupted run can
-    # ask the workspace whether a stored row is this record (§19.4 rule 2).
+    # §19.4 rule 3 hash: identifies this record's row after an interrupt.
     content_hash: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class ImportOutcome:
-    """The three §14.5 classes, each in input order, partitioning the input."""
+    """The three §14.5 classes, each in input order."""
 
     accepted: tuple[ImportedRecord, ...] = ()
     duplicate: tuple[ImportedRecord, ...] = ()
@@ -92,8 +91,6 @@ class ImportOutcome:
 def _validated_record(
     contract: SourceContract, raw: Mapping[str, Any]
 ) -> SourceRecord:
-    """Hydrate one record through the §11 JSON boundary."""
-
     return contract.record_model.model_validate_json(
         json.dumps(raw, ensure_ascii=False)
     )
@@ -102,9 +99,7 @@ def _validated_record(
 def _import_metadata(
     contract: SourceContract, *, identity: str, digest: str
 ) -> dict[str, Any]:
-    # §19.4 rule 2's three reserved keys are the whole imported metadata
-    # object: no V1 source contract declares a pass-through `metadata` field,
-    # so there is no source value to merge or to collide with them.
+    # §19.4 rule 2: the whole metadata object.
     return {
         "source_system": contract.source_system,
         "source_record_id": identity,
@@ -156,20 +151,11 @@ def _persist(
     raw_log: RawLog,
     evidence_items: tuple[EvidenceItem, ...],
 ) -> None:
-    """Commit one record's §13.1 rule 5 pair in its own transaction."""
-
-    connection.execute("BEGIN IMMEDIATE")
-    try:
+    """§13.1 rule 5 pair, one transaction per record."""
+    with transaction(connection):
         insert_raw_log(connection, raw_log)
         for evidence_item in evidence_items:
             insert_evidence_item(connection, evidence_item)
-        # Inside the guard: a signal during the commit itself must leave the
-        # transaction resolved, never open behind a raised exception where a
-        # later read could mistake its rows for a committed record.
-        connection.commit()
-    except BaseException:
-        connection.rollback()
-        raise
 
 
 def _classify(
@@ -185,24 +171,13 @@ def _classify(
     classified: dict[str, list[ImportedRecord]],
 ) -> tuple[str, ImportedRecord]:
     def bank(outcome: str, result: ImportedRecord) -> tuple[str, ImportedRecord]:
-        """Record one §19.4 rule 5 classification where it is decided.
-
-        A `duplicate` or `rejected` record leaves no row for
-        `committed_import_records` to recover, so banking it in the caller
-        would leave a window in which a signal discards a classification the
-        record had already earned (§14.14 rule 5).
-        """
-
+        # §14.14 rule 5: banked where decided — a non-accepted record leaves no row to recover.
         classified[outcome].append(result)
         return outcome, result
 
     number = parsed.record_number
     raw = parsed.value
-    # §19.4 rule 5 reports the source identity of a rejected record too, so it
-    # is recovered from the raw object whenever the identity itself is valid —
-    # including for a record the parse already rejected, whose defect may sit
-    # anywhere but on its identity. A record that never decoded into a mapping
-    # carries whatever the parse could still salvage, and null otherwise.
+    # §19.4 rule 5: a rejected record still reports a valid identity.
     identity = (
         contract.raw_identity(raw) if isinstance(raw, dict) else parsed.identity
     )
@@ -221,9 +196,7 @@ def _classify(
         )
     try:
         record = _validated_record(contract, raw)
-    # §11 rule 54 leaves the `OverflowError` arm covering no known input; it
-    # stays because §19.4 rule 5's per-record outcome must not rest on every
-    # future contract remembering to translate. One escape aborts the import.
+    # §11 rule 54 / §19.4 rule 5: no known input, kept so one escape cannot abort the import.
     except (ValidationError, OverflowError):
         return bank(
             "rejected",
@@ -241,9 +214,6 @@ def _classify(
     try:
         digest = content_hash(record)
     except OverflowError:
-        # §19.4 rule 3's UTC canonicalization, which §11 rule 54 now
-        # guarantees. Kept for the reason above, over any reachability
-        # argument about the content this hash walks.
         return bank(
             "rejected",
             ImportedRecord(number, identity, reason="record_invalid"),
@@ -252,8 +222,7 @@ def _classify(
     if stored is not None:
         if stored == digest:
             return bank("duplicate", ImportedRecord(number, identity))
-        # Corrected upstream content must arrive under a new identity; the
-        # retained rows are never mutated and there is no conflict class.
+        # Retained rows are never mutated.
         return bank(
             "rejected",
             ImportedRecord(number, identity, reason="content_hash_conflict"),
@@ -290,18 +259,12 @@ def _classify(
             evidence_item_ids=tuple(item.id for item in evidence_items),
             content_hash=digest,
         )
-        # Recorded before the transaction opens: a signal can land between
-        # `_persist`'s commit and any bookkeeping after it, and the workspace
-        # is then the only authority on whether this candidate committed.
+        # Before the transaction: after a signal only the workspace knows if this committed.
         attempted.append(candidate)
         try:
             _persist(connection, raw_log=raw_log, evidence_items=evidence_items)
         except IdCollisionError as error:
-            # This candidate's ID belongs to a row that already existed, so
-            # leaving it registered would name a row this payload never wrote.
-            # A signal can outrun this line while `_persist` unwinds, so it is
-            # the cheap path, not the guarantee: `committed_import_records`
-            # matches the stored identity and hash and rejects it either way.
+            # Cheap path; `committed_import_records` matches identity and hash regardless.
             attempted.pop()
             last_collision = error
             continue
@@ -316,23 +279,12 @@ def _cancelled_report(
     attempted: list[ImportedRecord],
     classified: dict[str, list[ImportedRecord]],
 ) -> ImportOutcome:
-    """Report exactly the records whose transaction reached the database.
-
-    The in-memory classification is not the authority: a signal can arrive
-    after `_persist` commits and before the loop files the record, which
-    would drop a durable §14.14 rule 6 boundary from the report. Every
-    candidate this payload tried to persist is therefore checked against the
-    workspace under the still held writer lock. A failed read leaves the
-    classified accepted records as the reported set, which is a subset of
-    what committed and never invents one.
-    """
+    """§14.14 rule 6: re-read every attempted candidate under the lock (a signal may
+    follow the commit); a failed read falls back to the classified subset."""
 
     try:
         if connection.in_transaction:
-            # An open transaction at this point is by definition uncommitted:
-            # §19.4 rule 4 gives each record its own, and the signal outran
-            # its resolution. Resolving it here keeps the query's visibility
-            # a statement about committed rows.
+            # §19.4 rule 4: an open transaction is uncommitted.
             connection.rollback()
         keys = [
             (record.raw_log_id or "", record.source_record_id, record.content_hash)
@@ -342,8 +294,7 @@ def _cancelled_report(
     except sqlite3.Error:
         accepted = tuple(classified["accepted"])
     else:
-        # Matched per candidate, not per ID: two candidates in one run can
-        # hold the same generated ID, and only one of them wrote the row.
+        # Per candidate: two candidates can share a generated ID.
         accepted = tuple(
             record for record, key in zip(attempted, keys) if key in committed
         )
@@ -363,24 +314,10 @@ def import_design_document(
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
 ) -> RawLogBundle:
-    """Import one local design document as a §14.5 `import file` record.
-
-    §14.5 states this form is not a §19 record, so it shares none of
-    `import_payload`'s identity, duplicate, or per-record machinery: there is
-    one document, it is either recorded or the command fails, and nothing
-    about it is addressable as a source record. What it does share is §13.1's
-    ordinary raw-capture shape, so it commits the same atomic rule 5 pair a
-    manual capture does.
-
-    §14.5 rejects other local-file categories rather than guessing an entry
-    type. The gates that decide this are the typed ones already in the path:
-    §29.4 refuses anything that is not a selectable regular file, and the
-    §11 boundary refuses a non-UTF-8, oversized, or empty document. Each is
-    an ordinary typed error, never a silent skip.
-    """
+    """§14.5 `import file`: a §13.1 rule 5 capture pair, not a §19 record."""
 
     validate_project_label(project)
-    # Fail closed before acquiring the owner's document (§12.14, §14.14).
+    # §12.14: fail closed before reading the document.
     require_compatible(workspace)
     config = load_workspace_config(workspace)
     raw_text, canonical_path = read_document_file(source_path, config=config)
@@ -395,9 +332,7 @@ def import_design_document(
                 recorded_at=recorded_at,
                 entry_type="design_doc",
                 source_type="imported_artifact",
-                # A local document carries no occurrence the workspace may
-                # read. §13.1 rule 3 wants that stated, and §5 forbids
-                # inventing one from filesystem metadata.
+                # §13.1 rule 3: no occurrence from file metadata.
                 occurred=OccurredAt(
                     start=None,
                     end=None,
@@ -432,9 +367,7 @@ def import_design_document(
                 raw_log=raw_log,
                 evidence_items=evidence_items,
                 timeout_ms=timeout_ms,
-                # §14.5 shares §14.2's record shape, so it owes §14.14 rule 6
-                # the same report: the pair is durable and the retry the owner
-                # would make against an empty cancellation would duplicate it.
+                # §14.14 rule 6: report the durable pair.
                 on_committed=lambda error: carry_committed(
                     error, capture_outcome(bundle)
                 ),
@@ -455,10 +388,10 @@ def import_payload(
     id_factory: IdFactory = new_id,
     timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
 ) -> ImportOutcome:
-    """Import one §19-backed payload record by record under one writer lock."""
+    """Import one §19 payload record by record under one lock."""
 
     contract = CONTRACTS[source_system]
-    # Fail closed before acquiring the owner's payload (§12.14, §14.14).
+    # §12.14: fail closed before reading the payload.
     require_compatible(workspace)
     config = load_workspace_config(workspace)
 
@@ -470,18 +403,13 @@ def import_payload(
     }
     attempted: list[ImportedRecord] = []
 
+    def attach(error: Exp2ResError, outcome: ImportOutcome) -> Exp2ResError:
+        error.import_outcome = outcome
+        error.import_classified = is_complete(outcome)
+        return error
+
     def is_complete(outcome: ImportOutcome) -> bool:
-        """Do this outcome's three lists partition every parsed record?
-
-        §14.14 rule 5's complete primary result is a property of the outcome
-        being reported, so it is derived from that outcome rather than written
-        by a separate statement a signal could land in front of. A record the
-        loop never reached and a record whose commit the signal outran both
-        leave the same gap, and both mean `result = null` (§14.14 rule 4). A
-        payload whose boundaries were never established has nothing to
-        partition and reports the same null.
-        """
-
+        # §14.14 rules 4–5: derived from the outcome, not set by a statement a signal could precede.
         if records is None:
             return False
         return len(outcome.accepted) + len(outcome.duplicate) + len(
@@ -500,14 +428,11 @@ def import_payload(
             records = PayloadRecords(payload, contract=contract)
             context = PlanContext(payload_root=root, config=config)
             recorded_at = (clock or (lambda: datetime.now(timezone.utc)))()
-            # Before the §8.1 writer lock, so a payload already rewritten is
-            # refused with nothing committed rather than part-way through.
+            # Before the §8.1 lock: refused with nothing committed.
             replay = iter(records)
             with writer_database(workspace, timeout_ms=timeout_ms) as connection:
                 try:
-                    # One scan under the §8.1 writer lock: no other writer can add
-                    # an imported row while this command runs, so the map stays
-                    # exact as each accepted record extends it.
+                    # One scan under the §8.1 lock, extended as records are accepted.
                     retained = retained_import_hashes(
                         connection, contract.source_system
                     )
@@ -527,77 +452,38 @@ def import_payload(
                     progress = _cancelled_report(
                         connection, attempted=attempted, classified=classified
                     )
-                    if "locked" in str(error).lower() or "busy" in str(error).lower():
-                        busy = WorkspaceBusyError()
-                        busy.import_outcome = progress
-                        busy.import_classified = is_complete(progress)
-                        raise busy from error
-                    # A non-busy operational failure — a full disk, a damaged
-                    # file — is still §14.14 class 1, but §19.4 rule 4's committed
-                    # records survive it. Raw propagation would reach the CLI's
-                    # untyped handler, which reports no boundary at all; the base
-                    # class carries the same exit code and diagnostic while
-                    # keeping the rows reportable.
-                    internal = Exp2ResError()
-                    internal.import_outcome = progress
-                    internal.import_classified = is_complete(progress)
-                    raise internal from error
+                    if is_busy(error):
+                        raise attach(WorkspaceBusyError(), progress) from error
+                    # Class 1, but the base class keeps §19.4 rule 4's rows reportable.
+                    raise attach(Exp2ResError(), progress) from error
                 except KeyboardInterrupt:
-                    # §14.14 rule 6: rule 4 commits each accepted record in its
-                    # own transaction, so those records are lifecycle boundaries
-                    # that remain committed and are reported rather than restored.
-                    # A signal that lands on the last record's own classification
-                    # leaves nothing unreported, so completeness is read off the
-                    # outcome instead of assumed from where the signal landed.
-                    cancelled = OperationCancelledError()
-                    cancelled.import_outcome = _cancelled_report(
-                        connection, attempted=attempted, classified=classified
-                    )
-                    cancelled.import_classified = is_complete(cancelled.import_outcome)
-                    raise cancelled from None
+                    # §14.14 rule 6: reported, not restored.
+                    raise attach(
+                        OperationCancelledError(),
+                        _cancelled_report(
+                            connection, attempted=attempted, classified=classified
+                        ),
+                    ) from None
                 except Exp2ResError as error:
-                    # §19.4 rule 4: a failure fails only its own record and never
-                    # withdraws an accepted one, so a classified failure carries
-                    # the rows already committed behind it. A payload rewritten
-                    # under the replay reaches here having classified every
-                    # boundary, so the completeness flag travels with the rows.
-                    error.import_outcome = _cancelled_report(
-                        connection, attempted=attempted, classified=classified
+                    # §19.4 rule 4: a failure never withdraws an accepted record.
+                    attach(
+                        error,
+                        _cancelled_report(
+                            connection, attempted=attempted, classified=classified
+                        ),
                     )
-                    error.import_classified = is_complete(error.import_outcome)
                     raise
     except KeyboardInterrupt:
-        # The signal landed outside the record loop: in the payload open or
-        # `writer_database` entry — the §8.1 lock wait or the §13.14 preamble,
-        # before any record was read — or in either teardown, after every
-        # record was classified. Only the second reports a complete primary
-        # result; §14.14 rule 4 gives the first `result = null`. Either way the
-        # committed rows are durable and reported, and the closed connection is
-        # no longer available to re-read.
-        cancelled = OperationCancelledError()
-        cancelled.import_outcome = report()
-        cancelled.import_classified = is_complete(cancelled.import_outcome)
-        raise cancelled from None
+        # Outside the loop the connection is closed: report the in-memory classification.
+        raise attach(OperationCancelledError(), report()) from None
     except Exp2ResError as error:
-        # A typed failure raised by the payload gate or by `writer_database`
-        # itself, past every handler that knows this import's progress.
         if getattr(error, "import_outcome", None) is None:
-            error.import_outcome = report()
-            error.import_classified = is_complete(error.import_outcome)
+            attach(error, report())
         raise
     except Exception as error:
-        # Teardown — §8.1 lock release, connection close, payload close — can
-        # fail after every record has already committed. §14.14 rule 6 keeps
-        # those boundaries reported, and the base class carries the same
-        # class-1 exit the raw exception would have produced.
-        internal = Exp2ResError()
-        internal.import_outcome = report()
-        internal.import_classified = is_complete(internal.import_outcome)
-        raise internal from error
-    # §14.14 rule 6: the loop above stays interruptible per §19.4 rule 4's
-    # record boundaries, but from here the records are durable and unreported.
-    # The return itself and the caller's assembly are one bytecode apart, so
-    # delivery is held until the §14.14 boundary has the envelope out.
+        # §14.14 rule 6: a teardown failure still reports.
+        raise attach(Exp2ResError(), report()) from error
+    # §14.14 rule 6: durable and unreported, hold delivery.
     defer_interrupt()
     return report()
 
@@ -610,13 +496,7 @@ def import_record_line(record: ImportedRecord, outcome_name: str) -> str:
 
 
 def import_created(imported: ImportOutcome) -> AffectedIds:
-    """Report the rows committed accepted records left behind.
-
-    §14.14 rule 5 orders every entity group by its own stable identity, and an
-    entity ID is allocated randomly under §12 rule 11 — so neither group may
-    keep the input order its `result` records are reported in.
-    """
-
+    # §14.14 rule 5: by identity, not input order.
     return AffectedIds.of(
         created=(
             (
@@ -655,14 +535,7 @@ def import_result(imported: ImportOutcome) -> ImportResult:
 
 
 def import_outcome(imported: ImportOutcome) -> Outcome:
-    """Project one §19.4 classification into its §14.14 envelope.
-
-    Every established record appears exactly once under its input
-    `record_number`, and none of the three lists is ever truncated: §14.14
-    rule 5 exempts local stdout from §11's list caps precisely so a large
-    payload still reports every record.
-    """
-
+    # §14.14 rule 5: local stdout is exempt from §11's list caps.
     result = import_result(imported)
     lines = [
         f"accepted {result.counts.accepted}, "
@@ -675,17 +548,14 @@ def import_outcome(imported: ImportOutcome) -> Outcome:
         ("rejected", imported.rejected),
     ):
         lines.extend(import_record_line(record, outcome_name) for record in group)
-    # §14.14 rule 5: a fully classified result with rejections is a completed
-    # report, so it exits through class 2 still carrying its complete result.
+    # §14.14 rule 5: class 2 with the complete result.
     rejected = result.counts.rejected > 0
     return Outcome(
         exit_code=2 if rejected else 0,
         diagnostic_class="import_records_rejected" if rejected else None,
         affected_ids=import_created(imported),
         result=result,
-        # §14.14 rule 4: this class 2 is a completion, not a rejected input, so
-        # an incomplete managed-output cleanup observed beside it still
-        # promotes to class 8 the way a completed class 0 or 10 does.
+        # §14.14 rule 4: a completion; incomplete cleanup promotes to class 8.
         completed_report=True,
         human_result="\n".join(lines),
     )

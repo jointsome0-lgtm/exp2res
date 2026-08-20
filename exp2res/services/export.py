@@ -20,6 +20,7 @@ from exp2res.exports.managed import (
     reconcile_managed_outputs as _reconcile_managed_outputs,
 )
 from exp2res.pipeline.stage10 import validated_branch_name
+from exp2res.services.writers import transaction
 from exp2res.storage.repository import current_branch_by_folded_name
 from exp2res.storage.workspace import writer_database
 
@@ -36,8 +37,7 @@ _ASSESSMENT_EXPORT_ALLOWLIST = frozenset(
 
 
 def require_export_eligible(verification_status: str) -> None:
-    """Apply the §16.11 assessment-export allowlist to a loaded status."""
-
+    # §16.11 assessment-export allowlist.
     if verification_status not in _ASSESSMENT_EXPORT_ALLOWLIST:
         raise AssessmentExportBlockedError()
 
@@ -57,8 +57,7 @@ class BulletPackExportResult:
 
 
 def reconcile_managed_outputs(workspace: Path) -> tuple[str, ...]:
-    """Run the §13.14 writer preamble under the business-writer lock."""
-
+    # §13.14 writer preamble under the business-writer lock.
     with writer_database(workspace):
         return _reconcile_managed_outputs(workspace)
 
@@ -69,21 +68,16 @@ def export_assessment(
     snapshot_id: str,
     clock=None,
 ) -> AssessmentExportResult:
-    """Render, publish, and revalidate one current assessment snapshot."""
-
-    # The caller-supplied selector is rejected before workspace/output I/O;
-    # the selected stored row is validated again by the managed writer.
+    # Selector hygiene precedes workspace/output I/O.
     if ENTITY_ID.fullmatch(snapshot_id) is None:
         raise InvalidInputError()
 
-    # §15.10 rule 8: export is a later compatible writer, so the default
-    # abandoned-telemetry reconciliation runs before its business operation.
+    # §15.10 rule 8: abandoned-telemetry reconciliation precedes the business op.
     with writer_database(workspace) as connection:
         residuals = _reconcile_managed_outputs(workspace)
         if residuals:
             raise ManagedOutputIncompleteError(residuals)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
+        with transaction(connection):
             snapshot_row, snapshot = load_current_snapshot(connection, snapshot_id)
             require_export_eligible(snapshot.verification_status)
             graph = load_assessment_graph(
@@ -94,10 +88,6 @@ def export_assessment(
             _manifest, managed_paths = publish_assessment(
                 workspace, graph, clock=clock
             )
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
 
     manifest_path = next(
         path for path in managed_paths if Path(path).name == "manifest.json"
@@ -114,20 +104,15 @@ def export_bullet_pack(
     branch_name: str,
     clock=None,
 ) -> BulletPackExportResult:
-    """Render, publish, and revalidate one current branch's verified pack."""
-
-    # §14.14 rule 4: selector hygiene precedes workspace and output I/O, the
-    # same treatment `bullets verify` gives the branch name.
+    # §14.14 rule 4: selector hygiene precedes workspace and output I/O.
     validated = validated_branch_name(branch_name)
 
     with writer_database(workspace) as connection:
-        # §15.10 rule 8: export is a later compatible writer, so the default
-        # abandoned-telemetry reconciliation runs before its business operation.
+        # §15.10 rule 8.
         residuals = _reconcile_managed_outputs(workspace)
         if residuals:
             raise ManagedOutputIncompleteError(residuals)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
+        with transaction(connection):
             selected = current_branch_by_folded_name(connection, validated)
             if selected is None:
                 raise SelectorNotFoundError()
@@ -136,10 +121,6 @@ def export_bullet_pack(
                 connection, branch_row=branch_row, branch=branch
             )
             _manifest, managed_paths = publish_branch(workspace, graph, clock=clock)
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
 
     manifest_path = next(
         path for path in managed_paths if Path(path).name == "manifest.json"

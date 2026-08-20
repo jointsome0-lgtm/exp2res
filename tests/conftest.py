@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import os
 from pathlib import Path
 
 import pytest
 
+from exp2res.services.privacy import (
+    anchor_locked_database_identity,
+    anchor_locked_tree_identities,
+    locked_database_identity,
+    locked_tree_paths,
+)
 from exp2res.storage.workspace import initialize_workspace
 
 
@@ -52,3 +59,11 @@ def workspace(tmp_path: Path) -> Path:
     initialize_workspace(root, clock=lambda: FIXED_NOW)
     configure_timezone(root)
     return root
+
+
+@contextmanager
+def anchor_locked_database(workspace: Path):
+    """Test stand-in for a held writer lock's §13.14 rule 9 identity anchor."""
+    with anchor_locked_database_identity(locked_database_identity(workspace)):
+        with anchor_locked_tree_identities(locked_tree_paths(workspace)):
+            yield
