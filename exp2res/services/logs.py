@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
-from exp2res.domain.canonical import id_key
+from exp2res.domain.canonical import byte_sorted
 from exp2res.domain.models import RawLog
 from exp2res.domain.results import (
     InvalidatedBranch,
@@ -19,6 +19,7 @@ from exp2res.exports.managed import remove_all_managed_output_entries
 from exp2res.services.privacy import (
     cancelled_with,
     checkpoint_residuals as _delete_checkpoint_residuals,
+    generation_ids,
     remove_managed_backups as _remove_managed_backups,
     sorted_paths,
     table_ids,
@@ -103,11 +104,8 @@ def delete_log(
             if selected is None:
                 raise SelectorNotFoundError()
             # §14.14 rule 5: report order is stable identity, not §13.1 order.
-            evidence_ids = tuple(
-                sorted(
-                    (item.id for item in get_evidence_for_log(connection, log_id)),
-                    key=id_key,
-                )
+            evidence_ids = byte_sorted(
+                item.id for item in get_evidence_for_log(connection, log_id)
             )
             purged = {table: table_ids(connection, table) for table in _PURGED_TABLES}
             snapshot_rows = connection.execute(
@@ -136,18 +134,13 @@ def delete_log(
                     "ORDER BY CAST(branch.name AS BLOB)"
                 )
             )
-            purged_generation_ids = tuple(
-                sorted(
-                    {
-                        row[0]
-                        for table in _PURGED_TABLES
-                        if table != "verification_findings"
-                        for row in connection.execute(
-                            f"SELECT DISTINCT generation_id FROM {table}"
-                        )
-                    },
-                    key=id_key,
-                )
+            purged_generation_ids = generation_ids(
+                connection,
+                (
+                    (table, "", ())
+                    for table in _PURGED_TABLES
+                    if table != "verification_findings"
+                ),
             )
             residual_paths.extend(_remove_managed_backups(workspace))
             # §13.13 rule 5: every managed entry goes before the privacy purge;

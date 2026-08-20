@@ -11,7 +11,6 @@ from typing import Callable, Iterable
 
 from pydantic import ValidationError
 
-from exp2res.domain.canonical import id_key
 from exp2res import __version__
 from exp2res.config import load_workspace_config
 from exp2res.domain.models import JobDescription, validate_free_text
@@ -45,6 +44,7 @@ from exp2res.services.privacy import (
     cancelled_with,
     checkpoint_residuals as _delete_checkpoint_residuals,
     deletion_outcome,
+    generation_ids,
     locked_database_anchor,
     purge_managed_backups as _purge_managed_backups,
     report_unproven_residual,
@@ -249,22 +249,13 @@ def _dependent_purge_targets(
         )
     )
     # §12 rule 13: one generation ID spans branch and bullets.
-    generation_ids = tuple(
-        sorted(
-            {
-                row[0]
-                for statement in (
-                    "SELECT DISTINCT generation_id FROM resume_branches "
-                    "WHERE job_description_id = ?",
-                    "SELECT DISTINCT generation_id FROM resume_bullets "
-                    f"WHERE branch_id IN ({_DEPENDENT_BRANCHES})",
-                )
-                for row in connection.execute(statement, (job_description_id,))
-            },
-            key=id_key,
-        )
+    return bullet_ids, finding_ids, generation_ids(
+        connection,
+        (
+            ("resume_branches", "job_description_id = ?", (job_description_id,)),
+            ("resume_bullets", f"branch_id IN ({_DEPENDENT_BRANCHES})", (job_description_id,)),
+        ),
     )
-    return bullet_ids, finding_ids, generation_ids
 
 
 def delete_job_description(

@@ -10,6 +10,7 @@ from pathlib import Path
 import sqlite3
 import stat
 
+from exp2res.domain.canonical import byte_sorted
 from exp2res.domain.results import Outcome
 from exp2res.errors import OperationCancelledError
 
@@ -28,6 +29,31 @@ def table_ids(
     return tuple(
         row[0] for row in connection.execute(f"{statement} ORDER BY CAST(id AS BLOB)")
     )
+
+
+def generation_ids(
+    connection: sqlite3.Connection,
+    specs: Iterable[tuple[str, str, tuple]],
+    *,
+    probe_column: bool = False,
+) -> tuple[str, ...]:
+    """Distinct generation IDs across `(table, where, params)` specs, in `id_key` order.
+
+    `probe_column` skips a table whose schema has no `generation_id` column."""
+
+    values: set[str] = set()
+    for table, where, params in specs:
+        if probe_column and "generation_id" not in {
+            row["name"] for row in connection.execute(f"PRAGMA table_info({table})")
+        }:
+            continue
+        statement = f"SELECT DISTINCT generation_id FROM {table}"
+        if where:
+            statement += f" WHERE {where}"
+        values.update(
+            row[0] for row in connection.execute(statement, params) if row[0] is not None
+        )
+    return byte_sorted(values)
 
 
 def wal_path(database: Path) -> str:
