@@ -14,11 +14,8 @@ from pathlib import Path
 
 import pytest
 
-import exp2res.services.stages as assessment_service
-import exp2res.services.stages as bullets_service
+import exp2res.services.stages as stages_service
 import exp2res.services.capture as capture_service
-import exp2res.services.stages as detection_service
-import exp2res.services.stages as extraction_service
 import exp2res.services.job_descriptions as jd_service
 from exp2res.pipeline.stage3 import run_fact_extraction
 from exp2res.pipeline.stage4 import run_detection_generation
@@ -113,7 +110,7 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
 
     extracted = _run_cli_stage(
         monkeypatch,
-        extraction_service,
+        stages_service,
         run_fact_extraction,
         ids,
         [fact_response([captured.evidence_items[0].id])],
@@ -140,7 +137,7 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
     ).encode("utf-8")
     detected = _run_cli_stage(
         monkeypatch,
-        detection_service,
+        stages_service,
         run_detection_generation,
         ids,
         [detector_payload],
@@ -151,7 +148,7 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
 
     generated = _run_cli_stage(
         monkeypatch,
-        assessment_service,
+        stages_service,
         run_assessment_generation,
         ids,
         [assessment_response(fact_ids=[fact_id])],
@@ -171,7 +168,7 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
 
     _run_cli_stage(
         monkeypatch,
-        assessment_service,
+        stages_service,
         run_assessment_verification,
         ids,
         [verifier_response()] * claim_count,
@@ -259,7 +256,7 @@ def test_vera_e6_cli_export_goldens_and_artifact_lifecycle(
     ).encode("utf-8")
     replaced = _run_cli_stage(
         monkeypatch,
-        detection_service,
+        stages_service,
         run_detection_generation,
         ids,
         [replacement_payload],
@@ -503,7 +500,7 @@ def _verified_anchor(
     )
     extracted = _run_cli_stage(
         monkeypatch,
-        extraction_service,
+        stages_service,
         run_fact_extraction,
         ids,
         [_anchor_facts(captured.evidence_items[0].id)],
@@ -514,7 +511,7 @@ def _verified_anchor(
 
     generated = _run_cli_stage(
         monkeypatch,
-        assessment_service,
+        stages_service,
         run_assessment_generation,
         ids,
         [assessment_response(fact_ids=list(fact_ids))],
@@ -533,7 +530,7 @@ def _verified_anchor(
         )
     _run_cli_stage(
         monkeypatch,
-        assessment_service,
+        stages_service,
         run_assessment_verification,
         ids,
         [verifier_response()] * len(claim_ids),
@@ -592,7 +589,7 @@ def test_vera_e10_cli_bullet_pack_matches_pinned_goldens(
 
     generated = _run_cli_stage(
         monkeypatch,
-        bullets_service,
+        stages_service,
         run_bullet_generation,
         ids,
         [
@@ -652,7 +649,7 @@ def test_vera_e10_cli_bullet_pack_matches_pinned_goldens(
 
     verified = _run_cli_stage(
         monkeypatch,
-        bullets_service,
+        stages_service,
         run_bullet_verification,
         ids,
         [
@@ -724,7 +721,7 @@ def test_vera_e11_cli_learning_evidence_never_reaches_production_claims(
 
     generated = _run_cli_stage(
         monkeypatch,
-        bullets_service,
+        stages_service,
         run_bullet_generation,
         ids,
         [
@@ -773,7 +770,7 @@ def test_vera_e11_cli_learning_evidence_never_reaches_production_claims(
 
     verified = _run_cli_stage(
         monkeypatch,
-        bullets_service,
+        stages_service,
         run_bullet_verification,
         ids,
         [

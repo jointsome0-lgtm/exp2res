@@ -25,6 +25,7 @@ from exp2res.llm.contracts import ContractWarning
 from exp2res.pipeline.stage3 import Stage3Result, run_fact_extraction
 from exp2res.pipeline.stage4 import Stage4Result, run_detection_generation
 from exp2res.services.capture import new_id
+from exp2res.services.privacy import table_ids
 from exp2res.services.stages import build_llm_execution
 from exp2res.services.writers import held_writer, transaction
 from exp2res.storage.telemetry import (
@@ -156,16 +157,50 @@ def _has_current_assessment_view(connection: sqlite3.Connection) -> bool:
     return row is not None
 
 
-def _lifecycle_input_ids(
-    connection: sqlite3.Connection, log_id: str | None
-) -> tuple[str, ...]:
-    if log_id is not None:
-        return (log_id,)
-    return tuple(
-        row[0]
-        for row in connection.execute(
-            "SELECT id FROM raw_logs ORDER BY CAST(id AS BLOB)"
-        )
+def create_orchestration_run(
+    connection: sqlite3.Connection,
+    *,
+    run_id: str,
+    started_at: datetime,
+    input_ids: tuple[str, ...],
+    mode: str,
+) -> None:
+    """§24.47: the content-free `13.13` telemetry row."""
+
+    create_processing_run(
+        connection,
+        run_id=run_id,
+        stage="13.13",
+        started_at=started_at,
+        provider=None,
+        model=None,
+        prompt_policy_hash=None,
+        input_ids=input_ids,
+        metadata={"mode": mode},
+    )
+
+
+def _create_lifecycle_run(
+    connection: sqlite3.Connection, *, run_id: str, started_at: datetime, log_id: str | None
+) -> None:
+    create_orchestration_run(
+        connection,
+        run_id=run_id,
+        started_at=started_at,
+        input_ids=(log_id,) if log_id is not None else table_ids(connection, "raw_logs"),
+        mode="full" if log_id is None else "selected_lineage",
+    )
+
+
+def _fail_run(
+    connection: sqlite3.Connection, *, run_id: str, finished_at: datetime, failure_code: str
+) -> None:
+    finish_processing_run(
+        connection,
+        run_id=run_id,
+        finished_at=finished_at,
+        status="failed",
+        failure_code=failure_code,
     )
 
 
@@ -180,28 +215,13 @@ def record_cancelled_lifecycle(
     now = clock or (lambda: datetime.now(timezone.utc))
     orchestration_run_id = ids("run")
 
-    def record(held: sqlite3.Connection) -> None:
-        create_processing_run(
-            held,
-            run_id=orchestration_run_id,
-            stage="13.13",
-            started_at=now(),
-            provider=None,
-            model=None,
-            prompt_policy_hash=None,
-            input_ids=_lifecycle_input_ids(held, log_id),
-            metadata={"mode": "full" if log_id is None else "selected_lineage"},
-        )
-        finish_processing_run(
-            held,
-            run_id=orchestration_run_id,
-            finished_at=now(),
-            status="failed",
-            failure_code="cancelled",
-        )
-
     with transaction(connection) as held:
-        record(held)
+        _create_lifecycle_run(
+            held, run_id=orchestration_run_id, started_at=now(), log_id=log_id
+        )
+        _fail_run(
+            held, run_id=orchestration_run_id, finished_at=now(), failure_code="cancelled"
+        )
     return LifecycleResult(orchestration_run_id)
 
 
@@ -237,18 +257,8 @@ def run_recompute(
             # Inside the error boundary: an interrupt after this commit must
             # still terminally fail the durable `13.13` row.
             with transaction(connection) as held:
-                create_processing_run(
-                    held,
-                    run_id=orchestration_run_id,
-                    stage="13.13",
-                    started_at=now(),
-                    provider=None,
-                    model=None,
-                    prompt_policy_hash=None,
-                    input_ids=_lifecycle_input_ids(held, log_id),
-                    metadata={
-                        "mode": "full" if log_id is None else "selected_lineage"
-                    },
+                _create_lifecycle_run(
+                    held, run_id=orchestration_run_id, started_at=now(), log_id=log_id
                 )
             # §29.2: selection is eager even for a zero-lineage recompute;
             # LazyPreflightRunner keeps it offline.
@@ -303,11 +313,10 @@ def run_recompute(
             )
             try:
                 with transaction(connection) as held:
-                    finish_processing_run(
+                    _fail_run(
                         held,
                         run_id=orchestration_run_id,
                         finished_at=now(),
-                        status="failed",
                         failure_code=failure_code,
                     )
             except Exception:

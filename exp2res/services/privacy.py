@@ -10,18 +10,61 @@ from pathlib import Path
 import sqlite3
 import stat
 
+from exp2res.domain.results import Outcome
+from exp2res.errors import OperationCancelledError
+
+
+def sorted_paths(paths: Iterable[str]) -> tuple[str, ...]:
+    return tuple(sorted(set(paths), key=os.fsencode))
+
+
+def table_ids(
+    connection: sqlite3.Connection, table: str, where: str = ""
+) -> tuple[str, ...]:
+    # §14.14 rule 5: report order is stable identity, not §13.1 order.
+    statement = f"SELECT id FROM {table}"
+    if where:
+        statement += f" WHERE {where}"
+    return tuple(
+        row[0] for row in connection.execute(f"{statement} ORDER BY CAST(id AS BLOB)")
+    )
+
+
+def wal_path(database: Path) -> str:
+    return str(database.with_name(database.name + "-wal"))
+
+
+def cancelled_with(**carried: object) -> OperationCancelledError:
+    """§14.14 rule 6: a cancellation carrying the outcome already committed."""
+
+    cancelled = OperationCancelledError()
+    for name, value in carried.items():
+        setattr(cancelled, name, value)
+    return cancelled
+
+
+def deletion_outcome(residual_paths: Iterable[str], **fields: object) -> Outcome:
+    """§14.15/§14.16: exit 8 `deletion_incomplete` whenever a residual remains."""
+
+    residuals = list(residual_paths)
+    return Outcome(
+        exit_code=8 if residuals else 0,
+        diagnostic_class="deletion_incomplete" if residuals else None,
+        residual_paths=residuals,
+        **fields,
+    )
+
 
 def checkpoint_residuals(
     connection: sqlite3.Connection, database: Path
 ) -> tuple[str, ...]:
     """Run the required truncating checkpoint and report its WAL on failure."""
 
-    wal_path = str(database.with_name(database.name + "-wal"))
     try:
         checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-        return () if checkpoint is not None and checkpoint[0] == 0 else (wal_path,)
+        return () if checkpoint is not None and checkpoint[0] == 0 else (wal_path(database),)
     except sqlite3.DatabaseError:
-        return (wal_path,)
+        return (wal_path(database),)
 
 
 def vacuum_residuals(
@@ -66,6 +109,11 @@ def locked_database_identity_at(marker_fd: int) -> os.stat_result | None:
     except OSError:
         return None
     return current if stat.S_ISREG(current.st_mode) else None
+
+
+def same_file(a: os.stat_result, b: os.stat_result) -> bool:
+    """Device+inode identity."""
+    return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
 
 
 def locked_database_identity(workspace: Path) -> os.stat_result | None:
@@ -208,10 +256,7 @@ def workspace_database_is_live(
     current = locked_database_identity(workspace)
     if current is None:
         return False
-    return (current.st_dev, current.st_ino) == (
-        expected_database.st_dev,
-        expected_database.st_ino,
-    )
+    return same_file(current, expected_database)
 
 
 def purge_managed_backups(
@@ -235,6 +280,7 @@ def purge_managed_backups(
     """
 
     backup_root = workspace / ".exp2res" / "backup"
+    root_residual = ((), (str(backup_root.absolute()),))
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     descriptors: list[int] = []
@@ -255,13 +301,10 @@ def purge_managed_backups(
                 )
             except OSError:
                 return False
-            return (current.st_dev, current.st_ino) == (
-                expected_database.st_dev,
-                expected_database.st_ino,
-            )
+            return same_file(current, expected_database)
 
         if not database_is_live():
-            return (), (str(backup_root.absolute()),)
+            return root_residual
         try:
             backup_fd = os.open("backup", directory_flags | no_follow, dir_fd=marker_fd)
         except FileNotFoundError:
@@ -275,10 +318,10 @@ def purge_managed_backups(
             except FileNotFoundError:
                 if recorded_absent:
                     return (), ()
-                return (), (str(backup_root.absolute()),)
+                return root_residual
             except OSError:
-                return (), (str(backup_root.absolute()),)
-            return (), (str(backup_root.absolute()),)
+                return root_residual
+            return root_residual
         descriptors.append(backup_fd)
 
         def _same_entry(name: str, parent_fd: int, opened_fd: int) -> bool:
@@ -287,7 +330,7 @@ def purge_managed_backups(
                 opened = os.fstat(opened_fd)
             except OSError:
                 return False
-            return (named.st_dev, named.st_ino) == (opened.st_dev, opened.st_ino)
+            return same_file(named, opened)
 
         def workspace_is_named() -> bool:
             # The topmost level has no parent descriptor to match against, so
@@ -298,7 +341,7 @@ def purge_managed_backups(
                 opened = os.fstat(workspace_fd)
             except OSError:
                 return False
-            return (named.st_dev, named.st_ino) == (opened.st_dev, opened.st_ino)
+            return same_file(named, opened)
 
         def backup_is_established() -> bool:
             # Name-to-descriptor matching is satisfied by a replacement too;
@@ -328,7 +371,7 @@ def purge_managed_backups(
             )
 
         if not root_is_live():
-            return (), (str(backup_root.absolute()),)
+            return root_residual
 
         removed: list[str] = []
         refused: list[str] = []
@@ -390,14 +433,14 @@ def purge_managed_backups(
             # Root moved mid-pass: the survivors scan describes another directory.
             if removed_ledger is not None:
                 del removed_ledger[ledger_mark:]
-            return (), (str(backup_root.absolute()),)
+            return root_residual
         residuals = sorted({*refused, *surviving}, key=os.fsencode)
         return (
             tuple(path for path in removed if path not in surviving),
             tuple(residuals),
         )
     except OSError:
-        return (), (str(backup_root.absolute()),)
+        return root_residual
     finally:
         for descriptor in reversed(descriptors):
             os.close(descriptor)

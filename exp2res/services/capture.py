@@ -25,7 +25,6 @@ from exp2res.domain.models import (
 from exp2res.errors import (
     BlankProjectLabelError,
     GapAlreadyAnsweredError,
-    IdCollisionError,
     InvalidInputError,
     SelectorNotFoundError,
     WorkspaceBusyError,
@@ -36,6 +35,8 @@ from exp2res.exports.managed import (
 )
 from exp2res.pipeline.stage1 import FailureHook, persist_manual_capture
 from exp2res.services.interrupts import defer_interrupt
+from exp2res.services.privacy import table_ids
+from exp2res.services.writers import is_busy, retry_id_collisions, savepoint
 from exp2res.services.source_files import (
     ArtifactLocator,
     authorize_artifact_locators,
@@ -149,6 +150,30 @@ def build_capture_evidence_items(
     )
 
 
+def build_capture_pair(
+    *,
+    recorded_at: datetime,
+    artifacts: tuple[ArtifactLocator, ...],
+    id_factory: IdFactory,
+    message: str = "Manual capture failed strict validation.",
+    **fields,
+) -> tuple[RawLog, tuple[EvidenceItem, ...]]:
+    """Allocate the raw-log ID and build its §13.1 pair; class 2 on strict failure."""
+
+    raw_id = id_factory("raw_log")
+    try:
+        raw_log = RawLog(id=raw_id, recorded_at=recorded_at, **fields)
+        evidence_items = build_capture_evidence_items(
+            raw_log_id=raw_id,
+            created_at=recorded_at,
+            artifacts=artifacts,
+            id_factory=id_factory,
+        )
+    except (ValidationError, ValueError, TypeError) as error:
+        raise invalid_capture(error, message) from error
+    return raw_log, evidence_items
+
+
 def capture_manual(
     workspace: Path,
     *,
@@ -167,48 +192,34 @@ def capture_manual(
     validate_project_label(project)
     authorized_artifacts = _authorized_artifacts(workspace, artifacts)
     recorded_at = (clock or (lambda: datetime.now(timezone.utc)))()
-    last_collision: IdCollisionError | None = None
-    for _attempt in range(3):
-        raw_id = id_factory("raw_log")
-        try:
-            raw_log = RawLog(
-                id=raw_id,
-                recorded_at=recorded_at,
-                entry_type=entry_type,
-                source_type=source_type,
-                occurred=occurred,
-                raw_text=raw_text,
-                project=project,
-                external_ref=external_ref,
-                corrects_log_id=None,
-                metadata={},
-            )
-            evidence_items = build_capture_evidence_items(
-                raw_log_id=raw_id,
-                created_at=recorded_at,
-                artifacts=authorized_artifacts,
-                id_factory=id_factory,
-            )
-        except (ValidationError, ValueError, TypeError) as error:
-            raise invalid_capture(error) from error
+
+    def attempt(_index: int) -> RawLogBundle:
+        raw_log, evidence_items = build_capture_pair(
+            recorded_at=recorded_at,
+            artifacts=authorized_artifacts,
+            id_factory=id_factory,
+            entry_type=entry_type,
+            source_type=source_type,
+            occurred=occurred,
+            raw_text=raw_text,
+            project=project,
+            external_ref=external_ref,
+            corrects_log_id=None,
+            metadata={},
+        )
         bundle = RawLogBundle(raw_log, evidence_items)
-        try:
-            persist_manual_capture(
-                workspace,
-                raw_log=raw_log,
-                evidence_items=evidence_items,
-                timeout_ms=timeout_ms,
-                after_raw_insert=after_raw_insert,
-                # §14.14 rule 6: a failing lock teardown still reports the pair.
-                on_committed=lambda error: carry_committed(
-                    error, capture_outcome(bundle)
-                ),
-            )
-            return bundle
-        except IdCollisionError as error:
-            last_collision = error
-            continue
-    raise IdCollisionError() from last_collision
+        persist_manual_capture(
+            workspace,
+            raw_log=raw_log,
+            evidence_items=evidence_items,
+            timeout_ms=timeout_ms,
+            after_raw_insert=after_raw_insert,
+            # §14.14 rule 6: a failing lock teardown still reports the pair.
+            on_committed=lambda error: carry_committed(error, capture_outcome(bundle)),
+        )
+        return bundle
+
+    return retry_id_collisions(attempt)
 
 
 def capture_daily(
@@ -384,7 +395,6 @@ def capture_gap_answer(
     config = load_workspace_config(workspace)
     occurred = today_occurred(now=now, timezone_name=require_timezone(config))
     authorized_artifacts = authorize_artifact_locators(artifacts, config=config)
-    last_collision: IdCollisionError | None = None
     # §14.14 rule 6: set once provably durable; every later exit reports it.
     answered: Outcome | None = None
 
@@ -393,89 +403,69 @@ def capture_gap_answer(
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 gap = _select_answerable_gap(connection, gap_id)
-                for attempt in range(3):
-                    raw_id = id_factory("raw_log")
-                    try:
-                        raw_log = RawLog(
-                            id=raw_id,
-                            recorded_at=now,
-                            entry_type="gap_answer",
-                            source_type="manual_entry",
-                            occurred=occurred,
-                            raw_text=raw_text,
-                            project=None,
-                            external_ref=external_ref,
-                            corrects_log_id=None,
-                            metadata={
-                                "question_text": gap.question,
-                                "question_reason": gap.reason,
-                            },
-                        )
-                        evidence_items = build_capture_evidence_items(
-                            raw_log_id=raw_id,
-                            created_at=now,
-                            artifacts=authorized_artifacts,
-                            id_factory=id_factory,
-                        )
-                    except (ValidationError, ValueError, TypeError) as error:
-                        raise invalid_capture(error) from error
 
-                    savepoint = f"gap_answer_{attempt}"
-                    connection.execute(f"SAVEPOINT {savepoint}")
-                    try:
+                def attempt(index: int) -> tuple[RawLog, tuple[EvidenceItem, ...]]:
+                    raw_log, evidence_items = build_capture_pair(
+                        recorded_at=now,
+                        artifacts=authorized_artifacts,
+                        id_factory=id_factory,
+                        entry_type="gap_answer",
+                        source_type="manual_entry",
+                        occurred=occurred,
+                        raw_text=raw_text,
+                        project=None,
+                        external_ref=external_ref,
+                        corrects_log_id=None,
+                        metadata={
+                            "question_text": gap.question,
+                            "question_reason": gap.reason,
+                        },
+                    )
+
+                    def insert() -> None:
                         insert_raw_log(connection, raw_log)
                         for evidence_item in evidence_items:
                             insert_evidence_item(connection, evidence_item)
                         mark_gap_answered(
                             connection, gap_id=gap.id, answer_log_id=raw_log.id
                         )
-                    except IdCollisionError as error:
-                        connection.execute(f"ROLLBACK TO {savepoint}")
-                        connection.execute(f"RELEASE {savepoint}")
-                        last_collision = error
-                        continue
-                    connection.execute(f"RELEASE {savepoint}")
-                    # §13 stale-export trigger: stale sets are reported pending
-                    # before COMMIT so the commit-to-cleanup window still
-                    # reports them; rollback withdraws the report.
-                    snapshot_ids = tuple(
-                        row[0]
-                        for row in connection.execute(
-                            "SELECT id FROM assessment_snapshots "
-                            "WHERE superseded_at IS NULL ORDER BY CAST(id AS BLOB)"
-                        )
-                    )
-                    pending = assessment_set_paths(workspace, snapshot_ids)
-                    try:
-                        report_managed_residuals(pending)
-                        defer_interrupt()
-                        connection.commit()
-                    except BaseException:
-                        # Withdraw the report only on proven rollback; name the
-                        # pair only on proven commit; unknown does neither.
-                        durable = _gap_answer_is_durable(connection, gap.id)
-                        if durable is False:
-                            withdraw_managed_residuals(pending)
-                        elif durable:
-                            answered = capture_outcome(
-                                RawLogBundle(raw_log, evidence_items)
-                            )
-                        raise
-                    answered = capture_outcome(
-                        RawLogBundle(raw_log, evidence_items)
-                    )
-                    residuals = remove_managed_sets_for_locked_database(
-                        workspace,
-                        snapshot_ids=snapshot_ids,
-                    )
-                    bundle = RawLogBundle(raw_log, evidence_items, residuals)
-                    # Teardown can still fail; its report carries the residuals.
-                    answered = capture_outcome(bundle)
-                    return bundle
-                raise IdCollisionError() from last_collision
+
+                    savepoint(connection, f"gap_answer_{index}", insert)
+                    return raw_log, evidence_items
+
+                raw_log, evidence_items = retry_id_collisions(attempt)
+                # §13 stale-export trigger: stale sets are reported pending
+                # before COMMIT so the commit-to-cleanup window still
+                # reports them; rollback withdraws the report.
+                snapshot_ids = table_ids(
+                    connection, "assessment_snapshots", "superseded_at IS NULL"
+                )
+                pending = assessment_set_paths(workspace, snapshot_ids)
+                try:
+                    report_managed_residuals(pending)
+                    defer_interrupt()
+                    connection.commit()
+                except BaseException:
+                    # Withdraw the report only on proven rollback; name the
+                    # pair only on proven commit; unknown does neither.
+                    durable = _gap_answer_is_durable(connection, gap.id)
+                    if durable is False:
+                        withdraw_managed_residuals(pending)
+                    elif durable:
+                        answered = capture_outcome(RawLogBundle(raw_log, evidence_items))
+                    raise
+                answered = capture_outcome(RawLogBundle(raw_log, evidence_items))
+                residuals = remove_managed_sets_for_locked_database(
+                    workspace,
+                    snapshot_ids=snapshot_ids,
+                )
+                bundle = RawLogBundle(raw_log, evidence_items, residuals)
+                # Teardown can still fail; its report carries the residuals.
+                answered = capture_outcome(bundle)
+                return bundle
             except sqlite3.OperationalError as error:
                 connection.rollback()
-                if "locked" in str(error).lower() or "busy" in str(error).lower():
+                if is_busy(error):
                     raise WorkspaceBusyError() from error
                 raise
             except BaseException:

@@ -13,8 +13,7 @@ from typer.testing import CliRunner
 import exp2res.cli as cli_module
 import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage3 as stage3_module
-import exp2res.services.stages as extraction_service
-import exp2res.services.stages as facts_service
+import exp2res.services.stages as stages_service
 from exp2res.cli import app
 from exp2res.config import DEFAULT_LLM_CONFIG, load_workspace_config
 from exp2res.domain.models import ExperienceFact
@@ -68,7 +67,7 @@ def install_fake_execution(
     selection: LLMSelection = SELECTION,
 ) -> None:
     monkeypatch.setattr(
-        extraction_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (selection, budgets(), fake),
     )
@@ -116,7 +115,7 @@ def test_build_llm_execution_uses_workspace_selection_and_budget_defaults(
     )
 
     selection, resolved_budgets, selected_runner = (
-        extraction_service.build_llm_execution(workspace)
+        stages_service.build_llm_execution(workspace)
     )
     assert selection == LLMSelection("codex-cli", "gpt-5.6-sol")
     assert resolved_budgets.transport_attempt_cap == (
@@ -135,7 +134,7 @@ def test_build_llm_execution_uses_workspace_selection_and_budget_defaults(
     )
     # Preflight is deferred to first use; materializing yields the
     # registered runner over the preflighted runtime.
-    assert isinstance(selected_runner, extraction_service.LazyPreflightRunner)
+    assert isinstance(selected_runner, stages_service.LazyPreflightRunner)
     materialized = selected_runner.materialize()
     assert isinstance(materialized, CodexCLIRunner)
     assert materialized.codex_binary == runtime.codex_binary
@@ -287,7 +286,7 @@ def test_extract_unknown_selector_has_no_run_row(
     def refuse_build(_workspace: Path):
         raise AssertionError("adapter preflight ran for an invalid selector")
 
-    monkeypatch.setattr(extraction_service, "build_llm_execution", refuse_build)
+    monkeypatch.setattr(stages_service, "build_llm_execution", refuse_build)
     result, envelope = invoke_json(
         workspace, ["--yes", "extract", "--log-id", "log_vera_missing"]
     )
@@ -347,7 +346,7 @@ def test_facts_list_show_round_trip_complete_values_via_read_seam(
     assert extracted.exit_code == 0
     fact_id = extraction_envelope["affected_ids"]["created"][0]["ids"][0]
 
-    real_read_database = facts_service.read_database
+    real_read_database = stages_service.read_database
     read_calls: list[Path] = []
 
     @contextmanager
@@ -356,7 +355,7 @@ def test_facts_list_show_round_trip_complete_values_via_read_seam(
         with real_read_database(selected, **kwargs) as connection:
             yield connection
 
-    monkeypatch.setattr(facts_service, "read_database", tracked_read_database)
+    monkeypatch.setattr(stages_service, "read_database", tracked_read_database)
 
     listed, list_envelope = invoke_json(workspace, ["facts", "list"])
     shown, show_envelope = invoke_json(

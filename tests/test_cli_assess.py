@@ -12,9 +12,7 @@ from typer.testing import CliRunner
 import exp2res.cli as cli_module
 import exp2res.exports.managed as managed_module
 import exp2res.pipeline.stage6 as stage6_module
-import exp2res.services.stages as assessment_service
-import exp2res.services.stages as detection_service
-import exp2res.services.stages as extraction_service
+import exp2res.services.stages as stages_service
 from exp2res.cli import app
 from exp2res.errors import IntegrityFailureError
 from exp2res.storage.repository import (
@@ -82,7 +80,7 @@ def generate_snapshot(
 ) -> tuple[str, tuple[str, ...]]:
     facts = prepare_graph(workspace)
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -118,7 +116,7 @@ def test_the_retired_scope_selectors_are_class_2(
     """
 
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
     )
@@ -135,7 +133,7 @@ def test_generate_runs_without_yes_or_confirmation(
     facts = prepare_graph(workspace)
     response = assessment_response(fact_ids=list(facts))
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -160,7 +158,7 @@ def test_verify_runs_without_yes_or_confirmation(
 ) -> None:
     snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -186,7 +184,7 @@ def test_verify_missing_selector_precedes_adapter(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
     )
@@ -204,7 +202,7 @@ def test_verify_superseded_selector_precedes_adapter(
     facts = prepare_graph(workspace)
     response = assessment_response(fact_ids=list(facts))
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), FakeContractRunner([response, response])),
     )
@@ -217,7 +215,7 @@ def test_verify_superseded_selector_precedes_adapter(
     assert first_result.exit_code == second_result.exit_code == 0
     superseded_id = first["affected_ids"]["created"][0]["ids"][0]
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
     )
@@ -244,7 +242,7 @@ def test_verify_happy_envelope_and_complete_human_rewrite_presentation(
         verifier_response(),
     ]
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), FakeContractRunner(responses)),
     )
@@ -274,7 +272,7 @@ def test_verify_happy_envelope_and_complete_human_rewrite_presentation(
     assert run["status"] == "completed"
 
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -319,7 +317,7 @@ def test_verify_blocked_is_completed_semantic_result(
 ) -> None:
     snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -368,7 +366,7 @@ def test_repair_envelope_requires_no_consent_and_reports_the_swap(
     assert early_envelope["diagnostic_class"] == "snapshot_not_verified"
 
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -385,7 +383,7 @@ def test_repair_envelope_requires_no_consent_and_reports_the_swap(
 
     # No --yes: repair makes no cost-bearing call and prompts for nothing.
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (_ for _ in ()).throw(AssertionError("adapter built")),
     )
@@ -440,7 +438,7 @@ def test_repeated_repair_human_result_counts_only_current_adoptions(
 
     snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -466,7 +464,7 @@ def test_repeated_repair_human_result_counts_only_current_adoptions(
             key=lambda claim: claim.id.encode("utf-8"),
         )
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -511,7 +509,7 @@ def test_run_creation_commit_interrupt_reports_and_finalizes_the_run(
 
     snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -557,7 +555,7 @@ def test_business_commit_interrupt_reports_the_committed_swap(
 
     snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -611,7 +609,7 @@ def test_failed_run_finalization_interrupt_still_reports_the_run(
 
     snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -666,7 +664,7 @@ def test_repair_post_commit_interrupt_reports_the_committed_swap(
 
     snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -726,7 +724,7 @@ def test_verify_invalid_after_retry_reports_failed_run(
     snapshot_id, _facts = generate_snapshot(workspace, monkeypatch)
     invalid = verifier_response(include_reason=False)
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (
             SELECTION,
@@ -756,7 +754,7 @@ def test_generate_list_show_and_current_only_replacement(
     response = assessment_response(fact_ids=list(facts))
     fake = FakeContractRunner([response, response])
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), fake),
     )
@@ -817,7 +815,7 @@ def test_logs_delete_reports_purged_assessment_groups_and_view(
         [assessment_response(fact_ids=list(facts))]
     )
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), fake),
     )
@@ -849,7 +847,7 @@ def test_extract_envelope_reports_invalidated_assessment_view(
         [assessment_response(fact_ids=list(facts))]
     )
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), assessment_runner),
     )
@@ -861,7 +859,7 @@ def test_extract_envelope_reports_invalidated_assessment_view(
 
     extractor = FakeContractRunner([fact_response(["evi_vera_signal_0"])])
     monkeypatch.setattr(
-        extraction_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), extractor),
     )
@@ -884,7 +882,7 @@ def test_detection_replacement_envelope_reports_invalidated_view(
         [assessment_response(fact_ids=list(facts))]
     )
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), assessment_runner),
     )
@@ -904,7 +902,7 @@ def test_detection_replacement_envelope_reports_invalidated_view(
         ]
     )
     monkeypatch.setattr(
-        detection_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), detector),
     )

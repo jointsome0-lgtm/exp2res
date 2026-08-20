@@ -31,6 +31,7 @@ from exp2res.exports.graph import (
 from exp2res.exports.html import render_html
 from exp2res.exports.managed import ENTITY_ID, read_current_assessment_members
 from exp2res.services.export import require_export_eligible
+from exp2res.services.writers import is_busy
 from exp2res.storage.workspace import (
     DEFAULT_BUSY_TIMEOUT_MS,
     inspect_workspace,
@@ -70,43 +71,57 @@ Outcome = Literal[
     "processing_timeout",
 ]
 
-_STATUS: dict[str, int] = {
-    "served": 200,
-    "malformed_request": 400,
-    "invalid_selector": 400,
-    "assessment_blocked": 403,
-    "route_not_found": 404,
-    "no_current_view": 404,
-    "method_not_allowed": 405,
-    "assessment_inconsistent": 409,
-    "export_not_current": 409,
-    "question_companion_invalid": 409,
-    "export_residual": 409,
-    "schema_incompatible": 409,
-    "export_changed": 409,
-    "authority_not_bound": 421,
-    "internal_error": 500,
-    "workspace_busy": 503,
-    "processing_timeout": 503,
-}
-
-_TITLES: dict[str, str] = {
-    "malformed_request": "Request Not Accepted",
-    "invalid_selector": "Selector Not Accepted",
-    "assessment_blocked": "Assessment Not Verified for Export",
-    "route_not_found": "No Such View",
-    "no_current_view": "No Current Assessment View",
-    "method_not_allowed": "Method Not Supported",
-    "assessment_inconsistent": "Stored Assessment State Is Inconsistent",
-    "export_not_current": "Published Assessment Is Not Current",
-    "question_companion_invalid": "Published Question Set Is Not Readable",
-    "export_residual": "Published Assessment Needs Manual Repair",
-    "schema_incompatible": "Workspace Schema Is Not Supported",
-    "export_changed": "Published Assessment Changed While Reading",
-    "authority_not_bound": "Request Authority Not Served",
-    "internal_error": "View Unavailable",
-    "workspace_busy": "Workspace Is Busy",
-    "processing_timeout": "Request Took Too Long",
+# §30 rule 7: one row per outcome — HTTP status, page title, and the fixed
+# notice text for the outcomes that need no remedy command.
+_OUTCOMES: dict[str, tuple[int, str, str | None]] = {
+    "served": (200, "", None),
+    "malformed_request": (
+        400,
+        "Request Not Accepted",
+        "These views answer a bounded HTTP/1.1 request that carries no body. "
+        "A request Exp2Res cannot read as one is refused rather than "
+        "interpreted.",
+    ),
+    "invalid_selector": (400, "Selector Not Accepted", None),
+    "assessment_blocked": (403, "Assessment Not Verified for Export", None),
+    "route_not_found": (
+        404,
+        "No Such View",
+        "This server serves the mirror at /mirror and the open questions at "
+        "/questions, each with one explicit selector.",
+    ),
+    "no_current_view": (404, "No Current Assessment View", None),
+    "method_not_allowed": (
+        405,
+        "Method Not Supported",
+        "The local views are read-only and answer GET and HEAD requests only.",
+    ),
+    "assessment_inconsistent": (409, "Stored Assessment State Is Inconsistent", None),
+    "export_not_current": (409, "Published Assessment Is Not Current", None),
+    "question_companion_invalid": (409, "Published Question Set Is Not Readable", None),
+    "export_residual": (409, "Published Assessment Needs Manual Repair", None),
+    "schema_incompatible": (409, "Workspace Schema Is Not Supported", None),
+    "export_changed": (409, "Published Assessment Changed While Reading", None),
+    "authority_not_bound": (
+        421,
+        "Request Authority Not Served",
+        "Open this view through the loopback address it is bound to. Another "
+        "authority or declared origin is refused before any state is read.",
+    ),
+    "internal_error": (500, "View Unavailable", "The selected view cannot be served."),
+    "workspace_busy": (
+        503,
+        "Workspace Is Busy",
+        "Another SQLite operation held this workspace longer than the bounded "
+        "wait allows. Nothing partial is served; reload once it finishes.",
+    ),
+    "processing_timeout": (
+        503,
+        "Request Took Too Long",
+        "This request did not finish inside its fixed processing budget, so its "
+        "unfinished work was released. Reload; if this persists, stop serving and "
+        "inspect local workspace or filesystem health.",
+    ),
 }
 
 _ASSESS_LIST = "exp2res assess list"
@@ -129,15 +144,6 @@ _SNAPSHOT_GRAMMAR = (
 _SCHEMA_INCOMPATIBLE = (
     "This workspace is not at a schema version this build can read, so "
     "nothing is served."
-)
-_WORKSPACE_BUSY = (
-    "Another SQLite operation held this workspace longer than the bounded "
-    "wait allows. Nothing partial is served; reload once it finishes."
-)
-_PROCESSING_TIMEOUT = (
-    "This request did not finish inside its fixed processing budget, so its "
-    "unfinished work was released. Reload; if this persists, stop serving and "
-    "inspect local workspace or filesystem health."
 )
 _EXPORT_NOT_CURRENT = (
     "The published assessment set for this view is missing, stale, or no "
@@ -183,14 +189,15 @@ class _Selector:
 
 
 class _Refusal(Exception):
-    """One decided outcome: renderer-owned text plus an optional remedy."""
+    """One decided outcome: renderer-owned text (the table's fixed notice by
+    default) plus an optional remedy."""
 
     def __init__(
-        self, outcome: Outcome, message: str, command: str | None = None
+        self, outcome: Outcome, message: str | None = None, command: str | None = None
     ) -> None:
         super().__init__(outcome)
         self.outcome = outcome
-        self.message = message
+        self.message = _OUTCOMES[outcome][2] if message is None else message
         self.command = command
 
 
@@ -209,48 +216,24 @@ def notice_page(
                 )
             ),
         )
+    status, title, _notice = _OUTCOMES[outcome]
     document = ReportDocument(
-        title=_TITLES[outcome],
+        title=title,
         header=((Val(message),), (Key("Outcome"), Val(outcome, style="token"))),
         sections=(
             (Section(heading="What Resolves This", blocks=blocks),) if blocks else ()
         ),
     )
-    return ViewPage(
-        outcome=outcome, status=_STATUS[outcome], body=render_html(document)
-    )
+    return ViewPage(outcome=outcome, status=status, body=render_html(document))
 
 
 def _refusal_page(refusal: _Refusal) -> ViewPage:
     return notice_page(refusal.outcome, refusal.message, refusal.command)
 
 
-_NOTICES = {
-    "route_not_found": (
-        "This server serves the mirror at /mirror and the open questions at "
-        "/questions, each with one explicit selector."
-    ),
-    "method_not_allowed": (
-        "The local views are read-only and answer GET and HEAD requests only."
-    ),
-    "malformed_request": (
-        "These views answer a bounded HTTP/1.1 request that carries no body. "
-        "A request Exp2Res cannot read as one is refused rather than "
-        "interpreted."
-    ),
-    "authority_not_bound": (
-        "Open this view through the loopback address it is bound to. Another "
-        "authority or declared origin is refused before any state is read."
-    ),
-    "internal_error": "The selected view cannot be served.",
-    "workspace_busy": _WORKSPACE_BUSY,
-    "processing_timeout": _PROCESSING_TIMEOUT,
-}
-
-
 def standard_page(outcome: Outcome) -> ViewPage:
     """The fixed notice page for one §30 outcome that needs no remedy command."""
-    return notice_page(outcome, _NOTICES[outcome])
+    return _refusal_page(_Refusal(outcome))
 
 
 def schema_incompatible_page(workspace: Path) -> ViewPage:
@@ -484,7 +467,7 @@ def _compatibility_refusal(workspace: Path) -> _Refusal:
     try:
         status = inspect_workspace(workspace, require_managed_root=False)
     except WorkspaceBusyError:
-        return _Refusal("workspace_busy", _WORKSPACE_BUSY)
+        return _Refusal("workspace_busy")
     if (
         status.recognized
         and status.compatible
@@ -494,11 +477,6 @@ def _compatibility_refusal(workspace: Path) -> _Refusal:
     return _Refusal(
         "schema_incompatible", _SCHEMA_INCOMPATIBLE, _schema_remedy(workspace)
     )
-
-
-def _is_contention(error: sqlite3.Error) -> bool:
-    text = str(error).lower()
-    return "locked" in text or "busy" in text
 
 
 def _remaining(deadline: float) -> float:
@@ -533,7 +511,7 @@ def resolve(
 
         if _remaining(deadline) < _FIRST_READ_MARGIN_FACTOR * busy_timeout_ms / 1000:
             # §14.17: no room for a full contention wait — never open the read.
-            raise _Refusal("processing_timeout", _PROCESSING_TIMEOUT)
+            raise _Refusal("processing_timeout")
 
         # Phase 1 — one §8.1 read transaction, closed before phase 2.
         try:
@@ -552,14 +530,14 @@ def resolve(
         except SchemaCompatibilityError as error:
             raise _compatibility_refusal(workspace) from error
         except WorkspaceBusyError as error:
-            raise _Refusal("workspace_busy", _WORKSPACE_BUSY) from error
+            raise _Refusal("workspace_busy") from error
         except sqlite3.OperationalError as error:
-            if not _is_contention(error):
+            if not is_busy(error):
                 raise
-            raise _Refusal("workspace_busy", _WORKSPACE_BUSY) from error
+            raise _Refusal("workspace_busy") from error
 
         if _remaining(deadline) <= 0:
-            raise _Refusal("processing_timeout", _PROCESSING_TIMEOUT)
+            raise _Refusal("processing_timeout")
 
         # Phase 2 — §13.14 revalidation with no transaction open.
         read = read_current_assessment_members(workspace, graph)
@@ -579,13 +557,13 @@ def resolve(
         members = read.members or {}
 
         if _remaining(deadline) <= 0:
-            raise _Refusal("processing_timeout", _PROCESSING_TIMEOUT)
+            raise _Refusal("processing_timeout")
 
         if route == MIRROR_ROUTE:
             # §30 rule 3: exactly the revalidated member bytes.
             page = ViewPage(
                 outcome="served",
-                status=_STATUS["served"],
+                status=_OUTCOMES["served"][0],
                 body=members["report.html"],
                 published_member=True,
             )
@@ -594,7 +572,7 @@ def resolve(
                 members, export_command=_export_command(snapshot.id)
             )
             page = ViewPage(
-                outcome="served", status=_STATUS["served"], body=render_html(document)
+                outcome="served", status=_OUTCOMES["served"][0], body=render_html(document)
             )
     except _Refusal as refusal:
         return _composed(_refusal_page(refusal), deadline)

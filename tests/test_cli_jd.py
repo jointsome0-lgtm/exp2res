@@ -1137,7 +1137,7 @@ def test_a_cleanup_only_cancellation_still_reports_its_removals(
     def interrupting_run(*_arguments, **_keywords):
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(jd_service, "create_processing_run", interrupting_run)
+    monkeypatch.setattr(jd_service, "create_orchestration_run", interrupting_run)
 
     result, envelope = invoke_json(
         workspace, ["--yes", "jd", "delete", "--jd", job_description_id]

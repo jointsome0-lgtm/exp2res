@@ -407,6 +407,47 @@ def _validate_absolute_uri(value: str) -> None:
         raise ValueError("invalid URI authority") from error
 
 
+Refusals = dict[str, Callable[[], Exception]]
+
+
+def _classify_resolved(resolved: Path, *, config: WorkspaceConfig, refuse: Refusals) -> str:
+    """§29.4 rules 9–14 on a resolved path: denied → ignored → canonical form.
+
+    `refuse` maps the kind (`denied`, `ignored`, `invalid`) to the site's error."""
+
+    folded = _case_insensitive_lookup(resolved)
+    if _mandatory_denied(resolved, folded=folded):
+        raise refuse["denied"]()
+    if _ignored(resolved, config=config, folded=folded):
+        raise refuse["ignored"]()
+    try:
+        return validate_posix_path(resolved.as_posix())
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise refuse["invalid"]() from error
+
+
+_LOCAL_LOCATOR_REFUSALS: Refusals = {
+    "denied": ArtifactLocatorDeniedError,
+    "ignored": ArtifactLocatorIgnoredError,
+    "invalid": ArtifactLocatorInvalidError,
+}
+_SELECTED_FILE_REFUSALS: Refusals = {
+    kind: ForbiddenPathError for kind in ("denied", "ignored", "invalid")
+}
+_PAYLOAD_LOCATOR_REFUSALS: Refusals = {
+    "denied": lambda: PayloadLocatorError("payload_locator_denied"),
+    "ignored": lambda: PayloadLocatorError("payload_locator_ignored"),
+    "invalid": PayloadLocatorError,
+}
+
+
+def _scheme(value: str) -> str | None:
+    """The case-folded URI scheme, or None for a bare path."""
+
+    scheme_match = URI_SCHEME.match(value)
+    return None if scheme_match is None else value[: scheme_match.end() - 1].casefold()
+
+
 def _authorize_local_locator(
     value: str, *, config: WorkspaceConfig
 ) -> str:
@@ -420,15 +461,7 @@ def _authorize_local_locator(
         resolved = Path(value).resolve(strict=True)
     except (OSError, RuntimeError) as error:
         raise ArtifactLocatorUnresolvableError() from error
-    folded = _case_insensitive_lookup(resolved)
-    if _mandatory_denied(resolved, folded=folded):
-        raise ArtifactLocatorDeniedError()
-    if _ignored(resolved, config=config, folded=folded):
-        raise ArtifactLocatorIgnoredError()
-    try:
-        return validate_posix_path(resolved.as_posix())
-    except (UnicodeError, ValueError, TypeError) as error:
-        raise ArtifactLocatorInvalidError() from error
+    return _classify_resolved(resolved, config=config, refuse=_LOCAL_LOCATOR_REFUSALS)
 
 
 def authorize_artifact_locators(
@@ -445,12 +478,7 @@ def authorize_artifact_locators(
         except (UnicodeError, ValueError, TypeError) as error:
             raise ArtifactLocatorInvalidError() from error
 
-        scheme_match = URI_SCHEME.match(value)
-        scheme = (
-            value[: scheme_match.end() - 1].casefold()
-            if scheme_match is not None
-            else None
-        )
+        scheme = _scheme(value)
         if WINDOWS_DRIVE.match(value) is not None:
             raise ArtifactLocatorUnsupportedPathError()
         if scheme is not None and scheme != "file":
@@ -485,12 +513,7 @@ def reauthorize_prompt_locators(
                     and child is not None
                     and isinstance(child, str)
                 ):
-                    scheme_match = URI_SCHEME.match(child)
-                    scheme = (
-                        child[: scheme_match.end() - 1].casefold()
-                        if scheme_match is not None
-                        else None
-                    )
+                    scheme = _scheme(child)
                     # Same order as capture-time authorization, or the re-check diverges.
                     windows_form = _forbidden_supplied_form(
                         child, uri_authority=True
@@ -611,15 +634,11 @@ def _authorize_selected_file(
         resolved = Path(supplied).resolve(strict=True)
     except OSError as error:
         raise InvalidInputError() from error
-    folded = _case_insensitive_lookup(resolved)
-    if not resolved.is_file() or _mandatory_denied(resolved, folded=folded):
+    if not resolved.is_file():
         raise ForbiddenPathError()
-    if _ignored(resolved, config=config, folded=folded):
-        raise ForbiddenPathError()
-    try:
-        return resolved, validate_posix_path(resolved.as_posix())
-    except (UnicodeError, ValueError, TypeError) as error:
-        raise ForbiddenPathError() from error
+    return resolved, _classify_resolved(
+        resolved, config=config, refuse=_SELECTED_FILE_REFUSALS
+    )
 
 
 @contextmanager
@@ -702,10 +721,10 @@ def validate_remote_locator(value: str) -> str:
         raise ArtifactLocatorInvalidError() from error
     if _forbidden_supplied_form(value, uri_authority=True):
         raise ArtifactLocatorUnsupportedPathError()
-    scheme_match = URI_SCHEME.match(value)
-    if scheme_match is None:
+    scheme = _scheme(value)
+    if scheme is None:
         raise ArtifactLocatorInvalidError()
-    if value[: scheme_match.end() - 1].casefold() == "file":
+    if scheme == "file":
         raise ArtifactLocatorUnsupportedPathError()
     try:
         _validate_absolute_uri(value)
@@ -739,12 +758,4 @@ def authorize_payload_locator(
     # Containment after symlink resolution.
     if resolved != root and root not in resolved.parents:
         raise PayloadLocatorError("payload_locator_non_selected")
-    folded = _case_insensitive_lookup(resolved)
-    if _mandatory_denied(resolved, folded=folded):
-        raise PayloadLocatorError("payload_locator_denied")
-    if _ignored(resolved, config=config, folded=folded):
-        raise PayloadLocatorError("payload_locator_ignored")
-    try:
-        return validate_posix_path(resolved.as_posix())
-    except (UnicodeError, ValueError, TypeError) as error:
-        raise PayloadLocatorError() from error
+    return _classify_resolved(resolved, config=config, refuse=_PAYLOAD_LOCATOR_REFUSALS)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import os
 from pathlib import Path
 import sqlite3
 from typing import Callable
@@ -15,14 +14,18 @@ from exp2res.domain.results import (
     Outcome,
 )
 from exp2res import __version__
-from exp2res.errors import OperationCancelledError, WorkspaceBusyError
 from exp2res.exports.managed import remove_all_managed_output_entries
 from exp2res.services.privacy import (
+    cancelled_with,
     checkpoint_residuals,
+    deletion_outcome,
     remove_managed_backups,
+    sorted_paths,
+    table_ids,
     vacuum_residuals,
+    wal_path,
 )
-from exp2res.services.writers import held_writer
+from exp2res.services.writers import banked_transaction, held_writer
 from exp2res.storage.schema import PURGE_ENTITY_TABLES, PURGE_TABLE_ORDER
 from exp2res.storage.workspace import (
     CURRENT_SCHEMA_VERSION,
@@ -45,26 +48,12 @@ def _purge_time(clock: Callable[[], datetime] | None) -> datetime:
     return now
 
 
-def _sorted_paths(paths: tuple[str, ...] | list[str]) -> tuple[str, ...]:
-    return tuple(sorted(set(paths), key=os.fsencode))
-
-
-def _unproven_erasure_paths(database: Path) -> tuple[str, ...]:
-    # §8.1: unproven until the checkpoint/VACUUM sequence completes.
-    return (str(database), str(database.with_name(database.name + "-wal")))
-
-
 def _capture_deleted_ids(
     connection: sqlite3.Connection,
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
     captured = []
     for table, entity_type in PURGE_ENTITY_TABLES:
-        ids = tuple(
-            row[0]
-            for row in connection.execute(
-                f"SELECT id FROM {table} ORDER BY CAST(id AS BLOB)"
-            )
-        )
+        ids = table_ids(connection, table)
         if ids:
             captured.append((entity_type, ids))
     return tuple(captured)
@@ -119,13 +108,11 @@ def purge_workspace(
             interrupted = PurgeOutcome(
                 deleted_ids=(),
                 generation_ids=(),
-                residual_paths=_sorted_paths(residual_paths),
+                residual_paths=sorted_paths(residual_paths),
             )
         else:
             raise
-        cancelled = OperationCancelledError()
-        cancelled.purge_outcome = interrupted
-        raise cancelled from None
+        raise cancelled_with(purge_outcome=interrupted) from None
 
 
 def _purge_locked(
@@ -156,13 +143,14 @@ def _purge_locked(
             return PurgeOutcome(
                 deleted_ids=deleted_ids,
                 generation_ids=generation_ids,
-                residual_paths=_sorted_paths(
-                    [*residual_paths, *extra_residuals]
-                ),
+                residual_paths=sorted_paths([*residual_paths, *extra_residuals]),
             )
 
-        try:
-            connection.execute("BEGIN IMMEDIATE")
+        # §8.1: unproven until the checkpoint/VACUUM sequence completes.
+        unproven = (str(database), wal_path(database))
+        with banked_transaction(
+            connection, lambda: committed.append(outcome(unproven))
+        ):
             deleted_ids = _capture_deleted_ids(connection)
             generation_ids = _capture_generation_ids(connection)
             for table in PURGE_TABLE_ORDER:
@@ -179,25 +167,6 @@ def _purge_locked(
                     __version__,
                 ),
             )
-            connection.commit()
-        except sqlite3.OperationalError as error:
-            if connection.in_transaction:
-                connection.rollback()
-            if "locked" in str(error).lower() or "busy" in str(error).lower():
-                raise WorkspaceBusyError() from error
-            raise
-        except BaseException:
-            if connection.in_transaction:
-                connection.rollback()
-                raise
-            # Not in a transaction: the commit landed before the interrupt was
-            # delivered, so the purge is durable and must be reported.
-            committed.append(outcome(_unproven_erasure_paths(database)))
-            raise
-
-        # Post-commit: bank the outcome before any further work so a later
-        # interrupt still reports the committed deletion.
-        committed.append(outcome(_unproven_erasure_paths(database)))
 
         # §8.1: checkpoint, VACUUM, checkpoint; every step runs regardless.
         residual_paths.extend(checkpoint_residuals(connection, database))
@@ -218,13 +187,10 @@ def purge_affected(purged: PurgeOutcome) -> AffectedIds:
 
 
 def purge_outcome(purged: PurgeOutcome) -> Outcome:
-    exit_code = 8 if purged.residual_paths else 0
-    return Outcome(
-        exit_code=exit_code,
-        diagnostic_class="deletion_incomplete" if exit_code else None,
+    return deletion_outcome(
+        purged.residual_paths,
         affected_ids=purge_affected(purged),
         generation_ids=list(purged.generation_ids),
-        residual_paths=list(purged.residual_paths),
         result=None,
         # `_run_command` appends the incompleteness claim from the merged set.
         human_result=(

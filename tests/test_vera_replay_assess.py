@@ -8,8 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-import exp2res.services.stages as assessment_service
-import exp2res.services.stages as detection_service
+import exp2res.services.stages as stages_service
 from exp2res.cli import app
 from exp2res.storage.repository import list_assessment_snapshots
 from exp2res.storage.workspace import read_database
@@ -39,7 +38,7 @@ def test_vera_e4_cli_assessment_is_navigable_then_regeneration_invalidates(
         [assessment_response(fact_ids=list(fact_ids), confidence="low")]
     )
     monkeypatch.setattr(
-        assessment_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), assessment_runner),
     )
@@ -77,7 +76,7 @@ def test_vera_e4_cli_assessment_is_navigable_then_regeneration_invalidates(
         ]
     )
     monkeypatch.setattr(
-        detection_service,
+        stages_service,
         "build_llm_execution",
         lambda _workspace: (SELECTION, budgets(), replacement_runner),
     )
