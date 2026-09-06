@@ -1,18 +1,47 @@
-# Exp2Res — Experience to Self-Assessment to Verified Bullet Pack
+# exp2res: LLM output under contract, exports that fail closed
 
-> A mirror first. A verified-bullet-pack exporter second.
+## What it does
 
-Exp2Res is a local-first, provenance-heavy self-assessment system.
+exp2res takes an owner's work logs and turns them into a self-assessment whose every claim points at evidence. Eight pipeline stages call a model to extract facts, find gaps and contradictions, write claims, verify each claim against the sources, parse a job description and write bullets. A claim the verifier cannot ground is rejected, and the export of a rejected assessment is blocked at the command line. The resume product on top is unfinished; the engine underneath is what this page is about.
 
-It turns owner-controlled experience evidence that automation cannot rewrite into an honest model of skills, patterns, gaps, contradictions, and uncertainty. A verified bullet pack is a secondary export: job-targeted bullets are generated only from supported evidence and verified before export. A full resume document model is deferred to a post-mirror iteration.
+## See it in four seconds
 
-## Project stage: implementation-ready with controlled amendments
+```bash
+git clone https://github.com/jointsome0-lgtm/exp2res && cd exp2res
+make demo-reset demo-run demo-verify
+```
 
-The design docs in `SDD.md` + `spec/` describe what exp2res is. Changes flow issue → PR, and a § file changes in the same PR that moves the contract it documents. The manual-capture and private-workspace foundation is implemented, together with isolated Codex and Claude agent-backed runner substrates and the model-backed pipeline from fact extraction through gap/contradiction detection, assessment, and verification; current work proceeds phase by phase against the §22 phase status below, sequenced by the open issues. [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implemented and verified the global Mirror as a CLI-generated assessment export, and [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98) now serves that Mirror plus unanswered Gap Questions on loopback through `exp2res view serve`. The verified bullet pack now exists as a CLI slice — `bullets generate`, `bullets verify`, and `bullets export` publish a job-targeted pack with its closed §13.12 companions — but this is still not a resume product, and a full resume document model stays deferred. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
+Act 1: a claim of "operated production Kubernetes systems for ten years" is rejected with counterevidence from the corpus, the verifier exits 10, and `export assessment` refuses. Act 2: a narrower claim is supported and its export publishes, byte-identical across reruns. The full run is in [`demo/transcript.txt`](demo/transcript.txt).
 
-§22 phase status: Phases 0–4 complete, including the §14.17 view-serving slice and the pinned golden export tests for Stages 8 and 10–12. Phase 5 has all four §14.5 forms under one `import` command group: the three §19-backed importers and `import file`, which records a local design document as an ordinary raw log rather than a §19 source record.
+The demo runs on canned model responses, zero network calls. It shows the contracts and the system's behavior around a model. It does not measure the quality of any live model. That measurement does not exist in this repository yet.
 
-Exp2Res remains a public engine. Real owner data lives in a private workspace outside this repository, never in the public checkout.
+## How the model is called
+
+[`exp2res/llm/`](exp2res/llm/), 17 modules, 4,193 lines. Each call is a strict JSON-schema contract sent to the Codex CLI or the Claude agent CLI inside a bubblewrap sandbox with a read-confinement canary. The runner owns budgets, deadlines with process-group kill, one retry that only fires on invalid structured output, a failure taxonomy, and a telemetry row per attempt in SQLite. The adapter is provider-neutral; a provider is a declaration plus a preflight.
+
+## Decisions
+
+Each entry has a longer form with its rejected alternative in [`DECISION-LOG.md`](DECISION-LOG.md).
+
+- The model never creates or mutates a raw log. Inference starts at the fact level and stays attributed to a processing run. Rejected: an LLM raw-log producer, because it would put interpretation where the evidence lives. (2026-07-11, issue 21)
+- Verification separates generated voice from source voice. Every untagged model string is generated; only typed, byte-verified source segments may pass through as quotes. Rejected: trusting quotation marks. (issue 4)
+- One validated semantic pass per claim. Retries fire only on invalid structured output, findings go back to the owner, and verifiers never call writers or touch derived rows. (issue 27)
+- Only a foreground run started by the owner may send the typed payloads to an explicitly selected provider. Every other network path is denied. (issue 5)
+- Evidence-to-confidence calibration is capability-based, with deterministic ceilings and propagation caps; a candidate above its cap is invalid, not clipped. (2026-07-12, issue 58)
+
+## Numbers
+
+| | |
+|---|---|
+| Commits | 482, 2026-07-03 to 2026-08-20 |
+| Python | 79.4k lines, of which 42.6k are tests |
+| Tests | 61 files, 1,034 functions, CI green on main |
+| Eval cases | 60 given/when/then cases in TOML, each mapped to a test |
+| Specification | [`SDD.md`](SDD.md) plus 31 section files under [`spec/`](spec/) |
+
+## Limits, stated
+
+No live-model measurement. Invocation goes through vendor CLIs, there is no API client. A fresh install needs typer pinned to 0.27.1 until [#339](https://github.com/jointsome0-lgtm/exp2res/issues/339) closes. The resume product is unfinished. Most commits carry an AI co-author trailer; the design, the decision log and the review are the owner's.
 
 ## What is in this repository
 
@@ -24,6 +53,14 @@ Exp2Res remains a public engine. Real owner data lives in a private workspace ou
 - [`scripts/`](scripts/) — repository-owned offline checks: public hygiene, the spec map and canon validators, the Decision Log linter vendored from selfos-skills with its recorded version, and the aggregate `scripts/check.py`; all validate in a fresh offline checkout.
 
 To read the design, start with the § index in `SDD.md` and open the section files you need; §1 (executive summary) and §28 (final design statement) are the shortest complete picture.
+
+## Project stage: implementation-ready with controlled amendments
+
+The design docs in `SDD.md` + `spec/` describe what exp2res is. Changes flow issue → PR, and a § file changes in the same PR that moves the contract it documents. The manual-capture and private-workspace foundation is implemented, together with isolated Codex and Claude agent-backed runner substrates and the model-backed pipeline from fact extraction through gap/contradiction detection, assessment, and verification; current work proceeds phase by phase against the §22 phase status below, sequenced by the open issues. [#97](https://github.com/jointsome0-lgtm/exp2res/issues/97) implemented and verified the global Mirror as a CLI-generated assessment export, and [#98](https://github.com/jointsome0-lgtm/exp2res/issues/98) now serves that Mirror plus unanswered Gap Questions on loopback through `exp2res view serve`. The verified bullet pack now exists as a CLI slice — `bullets generate`, `bullets verify`, and `bullets export` publish a job-targeted pack with its closed §13.12 companions — but this is still not a resume product, and a full resume document model stays deferred. Project-scoped mirrors and the JD-to-bullet-pack browser workflow are later slices.
+
+§22 phase status: Phases 0–4 complete, including the §14.17 view-serving slice and the pinned golden export tests for Stages 8 and 10–12. Phase 5 has all four §14.5 forms under one `import` command group: the three §19-backed importers and `import file`, which records a local design document as an ordinary raw log rather than a §19 source record.
+
+Exp2Res remains a public engine. Real owner data lives in a private workspace outside this repository, never in the public checkout.
 
 ## Design boundaries
 
